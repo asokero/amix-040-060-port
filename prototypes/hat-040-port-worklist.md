@@ -155,3 +155,64 @@ lsll #11 at b6a74/b68ec, 256-stride leaf walk b6c30, page-table backing `<<11`).
 **So page_init won't advance until hat_pteload AND hat_ptalloc (+ hat_sdtalloc,
 hat_growsdt for the 128-entry 512-aligned root) are all ported.**  hat040.s starts
 with hat_pteload; the others follow in the same object before the first 040 test.
+
+### BATCH SCOPE (measured 2026-06-18)
+`hat_init` (b4148, 64 B) needs NO port -- it only zeroes the free-list heads
+(sdtfreelist/free_pts/active_pts), no table build, no format-critical code.  It is
+global and stays as-is.
+
+| fn | size | fmt sites | difficulty | notes |
+|----|------|-----------|------------|-------|
+| hat_pt2ptdat | 292 | 3 (1 page>>11, 2 pack>>17) | EASY | reverse lookup; mostly the SW ptdat@(4) packing (keep 030) -> verify, maybe 1 edit |
+| hat_sdtalloc | 668 | ~6 (4x 11->12; 2x asll#2 keep) | MED | mostly SW bitmask free-list (setmask[], 32 seg/node -- NOT MMU fmt); page shifts |
+| hat_ptalloc  | 1126 | ~10 (2x asll#3->x4, 1 DT bfclr, 3x PFN 21->20, 3x 11->12, 2048->4096) | MED-HARD | big but mechanical; page table stays 256 B; free-list carving stride/count per phys page needs rethink |
+| hat_growsdt  | 726 | ~16 (11x asll#3->x4, 5 DT bfclr/bfins, entry counts) | HARDEST | the descriptor BUILDER; 8->4-byte multi-level descs; 8192->128-entry level change lives here |
+
+Page-table size is UNCHANGED at 256 B (64 entries x 4) on both 030 and 040 -- the
+`pea 0x100` allocations and the 256-stride leaf walk (addaw #256) stay.
+
+### OPEN QUESTION (resolve BEFORE the batch) -- kernel ROOT table allocation
+hat_pteload now indexes the root with `va>>25 & 0x7F` (128 entries) instead of
+`va>>30 & 3` (4).  The kernel address-space root (`hat@(12)@(20)`) must therefore be
+128-entry / 512-aligned.  WHO allocates it for the kernel is not yet traced -- it
+may NOT be in this batch (could be hat_alloc, a static table, or vstart/mlsetup).
+Must be resolved or the root walk corrupts.  [investigation below]
+
+### Recommended order (risk-first)
+1. trace the kernel root allocation (short but decisive)  2. hat_ptalloc (mechanical,
+momentum, pteload's direct callee)  3. hat_pt2ptdat (easy)  4. hat_sdtalloc (med)
+5. hat_growsdt (hardest last, once the pattern is routine).
+
+### OPEN-QUESTION RESOLVED (2026-06-18) — kernel root is NOT hat_alloc
+Traced the boot-critical kernel-VM chain.  Findings:
+- **hat_alloc** (b4188, 88 B, GLOBAL): allocates a per-address-space root via
+  `mem_align(&seg@(24),16)` -> `seg@(20)`, then zeroes 4 entries (`asll #3`,
+  `bfclr @(3){6:2}`).  Needs the 4-entry/8-byte -> 128-entry/4-byte/512-align
+  resize.  BUT only called from **as_alloc / as_dup** (user fork) -> a 7th batch
+  function, NOT boot-critical for page_init.
+- **The kernel root is STATIC, not hat_alloc.**  Boot path: `mlsetup -> kvm_init`
+  (b48c2e) sets up `kas`/`kvseg` + static tables.  `ksegtbl` (BSS, 32 B) is a
+  software seg#->pt# byte map (indexed `(va-syssegs)>>17 & 0x1FFF`), NOT the MMU
+  root.  Kernel page mapping goes `sptalloc -> segkmem_mapin -> hat_vtokp_prot`.
+- **hat_vtokp_prot** (b5fae, 134 B, GLOBAL): a protection-flag translator (jump
+  table), NO page-table walk, format-agnostic -> NO PORT.  Same for **hat_init**.
+- **hat_getkpfnum** (b5f2e, 28 B, GLOBAL): kernel pfn lookup, just `>>11` -> needs
+  11->12.  Tiny, used widely.
+- **kseg/unkseg** (a8d1a/a8e26, GLOBAL): encode 030 seg math (`>>17 &0x1FFF <<11`)
+  but called only by RFS/IPC (rf_daemon/msginit/rfsr_*) -> NOT boot-critical, DEFER.
+
+### NEXT TRACE (first task of implementation phase)
+`segkmem_mapin` (a8904) calls only `hat_vtokp_prot` (a no-op for format) among HAT
+fns -- so it installs the kernel PTE by some OTHER mechanism (direct write, or a
+call not in my filter).  Pin down EXACTLY what builds the kvseg page tables the 040
+MMU walks at page_init: re-disassemble segkmem_mapin + sptalloc fully, and check
+whether kvm_init/mlsetup pre-build the kernel root the HAT then fills.  This tells
+us whether the page_init milestone needs the full HAT batch or a smaller segkmem
+path.  (hat_pteload is still needed -- hat_memload/hat_devload are its callers for
+general kernel maps -- but the FIRST kvseg fault may go through segkmem directly.)
+
+### Updated batch tally (for page_init milestone)
+Likely: hat_pteload (DONE) + hat_ptalloc + hat_sdtalloc + hat_growsdt + the segkmem
+kvseg-builder (TBD by the next trace) + hat_getkpfnum (tiny).  NO port: hat_init,
+hat_vtokp_prot.  Deferred (not boot-critical): hat_alloc (user fork), kseg/unkseg
+(RFS/IPC), hat_dup/hat_exec/hat_map/swtch/etc. (process mgmt, Phase 3 tail).
