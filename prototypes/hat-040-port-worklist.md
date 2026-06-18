@@ -397,3 +397,30 @@ segkmem `click<<11` still works since clicks are even -- fewer sites but mixes t
 page sizes, fragile).  Model A infra (pstart040 scaffold, relink/override, kvseg
 structure) carries over; segkmem leaf edits flip from "keep <<11" to "<<12 / {0:20}"
 under B.
+
+### MODEL B SCOPE (measured 2026-06-18) -- page-size sites on the boot-critical path
+Counted page-size-context immediates (shift-by-11, #2048/#2047, 21-bit pfn bitfields)
+across the whole kernel, attributed per function:
+- **~892 total sites / 279 functions** -- but the MAJORITY are NOT boot-critical
+  (filesystems ufs/s5/nfs getapage/bmap/putpage, /proc prfast*, mmrw, device DMA,
+  memcntl, ...).  Those defer to "after single-user".
+- **~186 sites / 45 functions on the boot-critical path** (VM/mem/proc/exec core).
+Tiers within the 45:
+- **Tier 0 (unblock the CURRENT fault, reach further than kmem):** segkmem_alloc(2),
+  segkmem_free(5), segkmem_mapout(5), kmem_alloc(3), kmem_free(2), sptalloc(2),
+  sptfree(3), page_get(2) + page allocator helpers.  ~6-10 functions, ~30 sites.
+- **Tier 1 (first user process -> single-user shell):** the HAT process fns
+  (hat_exec 8, hat_dup 7, hat_unload 6, hat_chgprot 6, hat_ptalloc 6, hat_load,
+  hat_sdtalloc, hat_pteload...), segvn_fault(8)/create(6)/unmap(9), execmap(8),
+  coffcore(9), as_fault/setprot, bp_map/bp_mapout(8 each).  ~30 functions, ~150 sites.
+  MANY overlap the HAT batch already on the port list, so they aren't all "new".
+- **Already ported under Model A (need a small re-touch under B):** hat_pteload,
+  segkmem_mapin, sysseginit (leaf edits flip "keep <<11" -> "<<12 / {0:20}").
+
+KEY CONSIDERATION -- Model B is LESS incrementally testable than Model A: the page
+frame size is a global invariant (maxclick computed once in mlsetup, pages[] sized
+once); ported (4KB) and un-ported (2KB) functions on the same path disagree, so the
+core page-frame set must flip together-ish, then test.  Model A allowed per-function
+test cadence; Model B is more big-batch.  (The hybrid "4KB allocator + 2KB
+accounting" keeps maxclick/pages[]/btoc at 2KB -- fewer functions -- but mixes two
+page sizes; the wart is variable-size sub-4KB allocations.)
