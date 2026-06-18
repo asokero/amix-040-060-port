@@ -1,4 +1,32 @@
-# RESUME HERE — AMIX 68040 port status (2026-06-18)
+# RESUME HERE — AMIX 68040 port status (2026-06-19)
+
+## ★ MAJOR MILESTONE (2026-06-19): 040 CPU/MMU/VM/fork port COMPLETE.
+The kernel now boots all the way through MMU-enable -> paging -> kmem -> mlsetup/
+kvm_init -> svirtophys -> **fork1/procdup (first process, HAT page tables) -> main()
+-> vfs_mountroot**.  The HAT first-fork port (hat_pteload linked + ptalloc/sdtalloc/
+pt2ptdat byte-patches + kas@0x14=kroot040) WORKED -- procdup's child-u-area bcopy no
+longer faults.  The hard part (the whole 040 virtual-memory bring-up) is DONE.
+
+## NOW AT: root filesystem mount (DEVICE/FS domain, not MMU)
+`s5mountroot VOP_OPEN error 6` (ENXIO) -> `nfs_mountroot` fallback -> PANIC
+`vfs_mountroot: cannot mount root: errno 89`.  The root device (`rootdev` = 0x00480016
+= major 18 / minor 22, a SCSI disk) open returned ENXIO = device not configured/found.
+FACTS: disk IS attached in the emulator (user confirmed).  The kernel does NOT set
+rootdev from bootinfo (only s5/ufs_mountroot write it) -> it uses the COMPILED default
+0x00480016.  SCSI drivers present: a3091 (A2091/A3091 WD33C93 host), sd* (disk class).
+SUSPECTS (in order): (1) the SCSI host controller didn't autoconfigure on 040 -- check
+the device-config console messages (need a full boot scrollback: did "SCSI"/"sd0"
+appear?); (2) **040 DMA cache-coherency** -- the WD33C93/DMAC does DMA to main RAM; 040
+copyback cache needs push-before-DMA-out / invalidate-after-DMA-in, a KNOWN 040 concern
+(a3091.c); a stale INQUIRY during the bus scan -> no slave -> ENXIO; (3) the disk's SCSI
+unit in the emulator doesn't match rootdev's major/minor.  NEXT: get the full kernel
+console (scroll up before the panic) to see if the SCSI controller + disk were detected,
+then disassemble the SCSI host autoconfig / DMA path for 040 cache ops.
+This is a NEW phase (device drivers on 040); the VM port that this file mostly documents
+is finished.
+
+---
+# (historical) RESUME HERE — AMIX 68040 port status (2026-06-18)
 
 One-line: **68040 bootstrap paging works; kernel boots to `page_init` which
 bus-errors writing the `pages[]` array (lives in unmapped kvseg).  pstart040 now
