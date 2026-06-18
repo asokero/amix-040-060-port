@@ -35,14 +35,27 @@ python3 prototypes/check_relink_relocs.py       # MUST print "0 complaints"
 The kernel's console is hardcoded to the native Amiga display, so clean panics
 render in the emulator — read the panic `pc=` to identify each blocker.
 
-## NEXT TASK — port the HAT (Phase 3)
-Full plan + inventory + the exact 030→040 format change: **`prototypes/hat-040-port-worklist.md`**.
-Start with **`hat_pteload`** (the central PTE loader, 0xb4d64, ~710 B): relink-replace
-it via `--weaken-symbol hat_pteload` (a new `hat040.s`), transcribe verbatim, then:
-- (a) same-size immediate patches: VA decode `>>30/&3 -> >>25/&0x7F`, `>>17/&0x1FFF ->
-  >>18/&0x7F`, page `>>11/+2047 -> >>12/+4095`, table stride `*8 -> *4`;
-- (b) structural: 030 8-byte long descriptors -> 040 4-byte descriptors.
-Then hat_ptalloc/hat_sdtalloc/hat_growsdt/hat_init -> kvseg maps -> page_init works.
+## NEXT TASK — port the HAT (Phase 3)  [hat_pteload DONE]
+Full plan + inventory + the exact 030→040 format change + per-fn port spec:
+**`prototypes/hat-040-port-worklist.md`**.
+
+**DONE: `hat_pteload`** — `prototypes/hat040.s` (040 port, byte-faithful, relocs
+clean, reloc-validator 0 complaints).  Two infrastructure results proven en route:
+- **Local-symbol override mechanism** (`relink-hat.sh`): HAT fns are file-LOCAL,
+  so `--weaken-symbol` alone can't override them.  Use `objcopy --globalize-symbol`
+  (local→global) on every referenced/replaced HAT fn, THEN `--weaken-symbol` the
+  replaced ones.  Verified: kernel callers redirect to our def, validator clean.
+- Leaf PTEs are format-compatible (030 status {0,1,5} == 040 PDT/W bits); only the
+  page shift 11→12 + PFN width 21→20 change.  Structural rewrites are confined to
+  the root/pointer descriptor read+build (8-byte→4-byte).  (Details in worklist.)
+
+**NEXT: the coupled batch** — `hat_pteload` can't run until its callees are ported
+too (page_init stays blocked).  Port into `hat040.s`, in order:
+`hat_ptalloc` (0xb688e, allocates leaf page tables — its own 11→12 / ×8→×4 / DT
+sites), then `hat_sdtalloc`/`hat_growsdt` (build the 128-entry 512-aligned 040 root),
+then `hat_pt2ptdat`.  Add each to `relink-hat.sh`'s GLOBALIZE/WEAKEN lists and the
+`.globl` list in `hat040.s`.  Then build (`sh relink-hat.sh`), fold in pstart040,
+run `patch_pflusha_040.py`/`patch_pmmu_040.py`, and test on 040 → page_init.
 
 ## Map of the docs
 - `hat-040-port-worklist.md` — the HAT-port plan (NEXT work).

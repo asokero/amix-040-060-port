@@ -78,3 +78,80 @@ split (mmu-format doc §ref).
 
 Tooling ready: relink via `--weaken-symbol` (relink-pstart.sh pattern),
 `check_relink_relocs.py` (validate relocs), clean panics for per-function verify.
+
+---
+
+## hat_pteload — worked port spec (2026-06-18)
+
+Full disasm analysed (0xb4d64–0xb5028, 710 B). Calls: `cmn_err`, `hat_ptalloc`,
+`hat_pt2ptdat`, `flushmmu`.  Frame `linkw -56`, saves d2-d3/a2-a4.
+Args: fp@(8)=hat (→@(12)=seg, →@(20)=root table), fp@(12)=va→d2, fp@(16)=pp→a2,
+fp@(20)=pfn, fp@(24)=prot, fp@(28)=lockflag.  Locals: fp@(-4)=ptdat,
+fp@(-28)=Aidx, fp@(-36)=Bidx, fp@(-44)=leaf status, fp@(-52/-56)=A-desc longs.
+
+### KEY DISCOVERY — leaf PTE low bits are format-compatible
+030 leaf status values {0,1,5} = {invalid, page, page+WP} sit at PDT(1:0)+W(2) —
+**identical bit positions on 040** (PDT=01 resident, W=bit2). M=bit4, U=bit3 on
+BOTH.  So the C-level leaf needs only: page shift 11→12, PFN extract width 21→20.
+The M/U-propagation bfextu sites (@(3){4:1},{3:1}) and status logic are VERBATIM.
+
+### The three structural (length-changing) rewrites
+1. **Root (A) desc read** (b4d94–b4dcc): 030 reads long0+long1 (8 B) + DT + limit
+   check.  040: read ONE long → `UDT=desc&3`; if UDT not resident → cmn_err(panic);
+   `Btable = desc & 0xFFFFFE00` (ptr table 512-aligned).  Drop the limit word/check.
+2. **Pointer (B) desc walk** (b4de2–b4dee, b4eb4): stride Bidx*8→*4; base from the
+   single long: `pagetable = Bdesc & 0xFFFFFF00` (page table 256-aligned), not @(4).
+   The `bfextu a3@(3){6:2}` DT/UDT read is UNCHANGED (UDT also = low 2 bits).
+3. **Pointer (B) desc build** (b4e66–b4e90): 030 wrote a4→@(4), bfins status@(2),
+   bfins DT=2@(3), limit@.  040: `*a3 = a4 | 0x02` (UDT=2 resident; tables carry no
+   cache/limit on 040). The ptdat bookkeeping writes (@(0)=seg,@(4),@(6),@(7)) are
+   SOFTWARE state — KEEP verbatim.
+
+### Same-size immediate changes
+- A index: `>>30 &3` → `>>25 &0x7F`   (b4d76 moveq 30→25; b4d7a moveq 3→0x7f)
+- B index: `>>17 &0x1FFF` → `>>18 &0x7F` (b4d84 17→18; b4d8a andil →0x7f)
+- A,B table stride: asll #3 → #2 (b4da0, b4dea)
+- C index: `>>11 &63` shift 11→12 (b4e96, b4ea8); stride asll #2 unchanged (4-B leaf)
+- leaf pfn<<11 → <<12 (b4f66, b4fda); PFN extract {0:21}→{0:20} (b4ebe)
+
+### Deferred (NOT in bring-up version, documented as TODO in hat040.s)
+- **Device cache-mode**: 030 routed prot&8 to the (now-gone) B-table status byte.
+  On 040 cache mode is per-LEAF (CM bits 6:5).  Deferred: pstart040's DTT0/DTT1
+  cover the device identity regions, so early kernel maps are cacheable RAM only.
+  When device page-table maps are needed: capture prot&8 before `prot&=7`, OR
+  CM=10 (0x40) into the leaf.
+- **ptdat@(4) packing**: kept at 030 `(va>>17)*2` (software free-path bookkeeping,
+  read by hat_ptalloc/hat_ptfree — NOT the MMU, NOT boot-critical).  Re-pack to the
+  040 layout when hat_ptalloc is ported so the two stay consistent.
+
+### STATUS: hat_pteload DONE (ported + verified, not yet runtime-tested)
+`prototypes/hat040.s` holds the 040 hat_pteload.  Verified: assembles clean
+(660 B .text, mult-of-4); disassembly is byte-faithful to the original except the
+documented sites; 4 relocs all resolve to real kernel symbols (cmn_err/flushmmu
+global; hat_ptalloc/hat_pt2ptdat local -> see mechanism below); reloc validator
+0 complaints.  Runtime test blocked on the coupled batch (below).
+
+### KEY MECHANISM — overriding FILE-LOCAL functions (proven 2026-06-18)
+The pstart `--weaken-symbol` trick only works on GLOBAL symbols.  Every boot-
+critical HAT fn is file-LOCAL (`t`): hat_pteload, hat_ptalloc, hat_pt2ptdat,
+hat_sdtalloc, hat_growsdt, hat_ptfree, hat_sdtfree.  To override a local AND
+redirect its callers:
+```
+objcopy --globalize-symbol NAME ... unix-stage1   # local t -> global T (per fn)
+objcopy --weaken-symbol   NAME      unix-stage1   # the one(s) we REPLACE -> weak W
+m68k-cbm-sysv4-ld -r -o unix-040 unix-stage1 hat040.o   # strong def overrides
+```
+Globalize EVERY local HAT fn that hat040.o references or replaces; weaken only the
+ones hat040.o actually redefines.  VERIFIED: after this, the kernel's internal
+`jsr hat_pteload` relocs (b4ce2, b4d08) resolve to our appended def (0xd71a8), the
+old body becomes dead weight, and check_relink_relocs.py = 0 complaints.  (Fns we
+DON'T replace yet but DO call -- e.g. hat_pt2ptdat while only pteload is ported --
+just get --globalize-symbol so our UND ref binds to the kernel's 030 version.)
+
+### COUPLING — first testable increment is bigger than one function
+hat_pteload calls hat_ptalloc to allocate page tables.  hat_ptalloc ALSO speaks the
+030 format (asll #3 at b6b52/b6b70, DT bfclr @(3){6:2} at b6b84, page rounding
+lsll #11 at b6a74/b68ec, 256-stride leaf walk b6c30, page-table backing `<<11`).
+**So page_init won't advance until hat_pteload AND hat_ptalloc (+ hat_sdtalloc,
+hat_growsdt for the 128-entry 512-aligned root) are all ported.**  hat040.s starts
+with hat_pteload; the others follow in the same object before the first 040 test.
