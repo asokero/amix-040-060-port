@@ -294,11 +294,41 @@ bfextu/addql/bfins on fp@(-8)); the page-base compare mask `andiw #-2047 -> #-40
 field is still bits 31:11).  REQUIRES the mapped base click to be even (4KB-aligned)
 -- verify sptalloc/segkmem_alloc hand even clicks (kernel allocs are contiguous from
 an aligned base; check `v`/kptbl base alignment).
-kvm_init (48c2e): (1) `kas@(0x14) = root040` not cpuroot+4 (export root040 from
-pstart040, or reuse kptr040-512); (2) the two kvsegmap/kvsegu loops -> write 040
-pointer descriptors into **kptr040** (slot = kptr040 + ((va>>18)-4096)*4), single
-long `*slot = leaftable | UDT(2)`; index `>>17&0x1FFF -> >>18`, stride `asll#3->#2`,
-drop the limit/status/DT template; leaf-table base `<<11` stays (clicks), stride per
-pointer entry `#512` and the `+64` page count: on model A a pointer entry still
-covers 64 *4KB* pages = 256KB, and the leaf table is 64*4=256 B -- reconcile the
-`#512` leaf stride (030 used 512 B/seg; keep or tighten to 256) when writing it.
+### segkmem_mapin — DONE (prototypes/kvm040.s, verified, committed)
+Model A port done & mnemonic-diffed vs original (only intended edits + equivalent
+restructures).  GLOBAL -> --weaken.
+
+### kvm_init — DESIGN (worked out 2026-06-18; the geometry is the tricky bit)
+Prep DONE: pstart040 now exports `kroot040` (0040 kernel root) AND `kptr040`.
+kvm_init is LOCAL (t) -> globalize+weaken.  Port = transcribe VERBATIM except:
+1. **48c3a** `kas@(0x14) = cpuroot+4` -> `kas@(0x14) = kroot040` (the 040 kernel root;
+   used on context-switch movec ...,srp).  Not strictly the page_init blocker but
+   correct.
+2. **The two map loops** (kvsegmap 48d0c-48d60, kvsegu 48dc0-48e14): rebuild as 040
+   pointer descriptors in kptr040.  GEOMETRY (the careful part):
+   - 030: st_top1[va>>17 &0x1FFF] (8-byte B-desc, 128KB granularity) -> leaf table;
+     loop `d0 += 64 clicks` until `smsegs*64`, leaf base `d1 = v<<11`, `d1 += 512`/seg.
+   - 040 Model A: pointer entry = va>>18 = **256KB** = 64 x 4KB = 2 kernel-segments;
+     leaf table = 64 PTEs = **256 B**.  Consistency with segkmem_mapin (which writes
+     kptbl[(va-base)>>12]): `kptr040[(va>>18)-4096] -> kptbl + relptr*256` makes
+     PTE(va) = kptbl + relptr*256 + ((va>>12)&0x3F)*4 = kptbl + ((va-base)>>12)*4. OK.
+   - So 040 loop: `slot = kptr040 + ((kvsegmap>>18)-4096)*4`; `leaf = v<<11` (kptbl,
+     2KB-aligned => fine for a 256-B/256-aligned page table, NO 4KB rounding needed --
+     the even-click/4KB requirement is on the PHYS PAGES segkmem maps, not the leaf-
+     TABLE addresses); `num = ceil(smsegs*128KB / 256KB) = ceil(smsegs/2)` (round UP;
+     slight over-map is harmless -- extra pointer entries point at empty leaves and
+     page_init only touches the pages[] range).  Per entry: `*slot = leaf | UDT(2)`;
+     `slot += 4`; `leaf += 256`.  Set ksegmappt = v<<11, eksegmappt = leaf-end.
+   - kptbl is allocated by **sysseginit** (ref 48c16) -- CONFIRM its size before
+     writing (040 uses ~1/4 the 030 leaf space: 256-B vs 512-B leaves AND half the
+     count, so it fits, but verify).  smsegs/susegs computations stay VERBATIM (they
+     count 128KB segments from maxclick -- software, Model A leaves the click model
+     intact).  All seg_attach/segkmem_create/sptalloc/hat_init/page_init/memialloc/
+     kmem_init/seg_alloc/segmap_create/segu_create calls stay VERBATIM.
+3. Build: add kvm_init to relink-kvm.sh GLOBALIZE+WEAKEN, segkmem_mapin to WEAKEN,
+   link pstart040.o + kvm040.o, run patch_pflusha/patch_pmmu, test -> page_init.
+
+OPEN before writing kvm_init: (a) sysseginit's kptbl size/layout; (b) confirm the
+`v` arg (fp@8) and the v<<11 leaf base; (c) does kvsegu use a separate kptbl region
+or continue in the same one (the 030 code continues d1/d5 from kvsegmap's end into
+kvsegu -- mirror that).

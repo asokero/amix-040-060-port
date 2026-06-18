@@ -224,6 +224,7 @@ Lpuarea:
 	addil	&511,%d1
 	andil	&0xfffffe00,%d1
 	movel	%d1,%a1			| a1 = root040 = uarea040+8KB (512-aligned)
+	movel	%d1,kroot040		| export the 040 kernel root for kvm_init (kas@0x14)
 	movel	%d1,%d3
 	addil	&512,%d3		| d3 = kptr040 = root040 + 512  (512-aligned)
 	movel	%d3,kptr040		| export the pointer-table base for kvm_init
@@ -322,6 +323,7 @@ Lpepi:
 	rts
 	nop
 	nop
+	nop
 	nop			| pad .text to a 4-byte multiple (loader copies text+data as one block)
 
 	.data
@@ -331,6 +333,12 @@ Lpepi:
 | write 040 pointer descriptors into it: slot for VA = kptr040 + ((va>>18)-4096)*4.
 	.globl	kptr040
 kptr040:
+	.long	0
+| kroot040: the 040 kernel root table base (root040), set at runtime.  GLOBAL so the
+| ported kvm_init can set kas@(0x14) = kroot040 (the kernel root pointer used on
+| context switch), replacing the 030 `kas@(0x14) = cpuroot+4`.
+	.globl	kroot040
+kroot040:
 	.long	0
 
 | Static, zero-initialized storage for the 040 tables.  In .data so it is copied
