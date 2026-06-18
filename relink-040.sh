@@ -21,12 +21,11 @@ echo "[*] assembling pstart040.s + kvm040.s"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/pstart040.s" -o "$HERE/build/pstart040.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/kvm040.s"    -o "$HERE/build/kvm040.o"
 
-echo "[*] globalize sysseginit (local); weaken pstart / segkmem_mapin / sysseginit"
+echo "[*] globalize sysseginit (local); weaken pstart / sysseginit"
 cp "$STOCK" "$HERE/build/unix-stage1"
 m68k-linux-gnu-objcopy --globalize-symbol sysseginit "$HERE/build/unix-stage1"
 m68k-linux-gnu-objcopy \
 	--weaken-symbol pstart \
-	--weaken-symbol segkmem_mapin \
 	--weaken-symbol sysseginit \
 	"$HERE/build/unix-stage1"
 
@@ -37,7 +36,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart segkmem_mapin sysseginit; do
+for s in pstart sysseginit; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
@@ -60,6 +59,9 @@ echo
 echo "[*] patching remaining 030 PMMU instructions (pflusha, ptest stubs)"
 python3 "$HERE/prototypes/patch_pflusha_040.py" "$OUT" | tail -2
 python3 "$HERE/prototypes/patch_pmmu_040.py" "$OUT" | tail -2
+
+echo "[*] Model B (4KB page frame) Tier-0 byte patches"
+python3 "$HERE/prototypes/patch_modelb.py" "$OUT" | tail -3
 
 echo
 echo "[*] reloc validation:"

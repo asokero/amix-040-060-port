@@ -65,15 +65,17 @@ page_init MILESTONE PATH").  The kvseg maps the 040 MMU walks at page_init are b
 by `kvm_init` (writes kvseg pointer descriptors into `st_top1`, pstart's B-table) +
 `segkmem_mapin` (writes leaf PTEs into `seg->s_ptbl`) — neither calls hat_pteload.
 
-**BUILD READY TO TEST (2026-06-18):** `sh relink-040.sh` -> `build/unix-040` combines
-pstart040 (kvseg scaffold) + kvm040 (sysseginit + segkmem_mapin), patches PMMU, 0
-reloc complaints.  This should advance past the page_init+0x4a bus error IF the kvseg
-map is correct.  **Boot it on 040 and read the next panic pc.**  Key insight from the
-trace: the milestone needs **sysseginit** (builds kvseg pointer descs into kptr040)
-+ **segkmem_mapin** (leaf PTEs) -- NOT kvm_init (its loops feed segmap/segu, used
-later, and write to the inert st_top1).  Both ported under Model A (2KB clicks paired
-into 4KB pages); consistent (kptr040[(va>>18)-4096] -> kptbl+P*256; segkmem writes
-kptbl[(va-0x40040000)>>12]).
+**MODEL B Tier-0 BUILD READY TO TEST (2026-06-18):** `sh relink-040.sh` ->
+`build/unix-040`.  Model A got PAST page_init but hit its wall at the kmem allocator
+(page_get returns physically scattered 2KB clicks -> can't be paired into 4KB pages).
+Switched to **Model B (4KB page frame)**: each click IS a 4KB page, so scattered
+clicks map 1:1.  Tier-0 = 21 SAME-SIZE byte patches (patch_modelb.py: mlsetup
+maxclick+sptmap, kvm_init page_hash size, segkmem_alloc + segkmem_mapin leaf builders,
+sptalloc) + 1 structural override (sysseginit -> kptr040, re-touched to Model B in
+kvm040.s).  Build: 0 reloc complaints, contiguous.  **Boot on 040, read next panic
+pc.**  Expect to advance past kmem_allocspool+0x19c (0x41D1A).  If a new page-size
+fault appears, add its site to patch_modelb.py (Tier-1 fns: hat_*, segvn_*, execmap,
+coffcore -- see worklist Model B scope).
 
 **NEXT (page_init milestone), in order:**
 1. **pstart040 — DONE.**  Extended to build the 040 root with entries 32..63 ->
