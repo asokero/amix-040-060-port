@@ -85,10 +85,34 @@ after mlsetup (Lpepi restores it from the saved-reg frame).  +4 bytes, .text sta
 4-aligned, relink clean (0 complaints).  This also makes smsegs ~= half the 030 value,
 which is exactly why the Tier-1 `<<18` kvsegmap/kvsegu window patches are correct
 (half the segments x double the per-seg bytes = same window).  Built: `sh relink-040.sh`.
-**NEXT: BOOT build/unix-040 on 040 and read the panic pc.**  Expect to pass the smsegs
-check (0x48cc0) and the susegs check (0x48d88, also v-derived -- should now pass too),
-then reach the kvsegmap/kvsegu seg_alloc + segmap_create/segu_create (LC%2..LC%5) or
-advance into the rest of mlsetup (dispinit/hrtinit/itinit/p0init/pid_init) and main.
+**TEST RESULT (smsegs fix): PASSED -- boot went through ALL of mlsetup+kvm_init**
+(smsegs, susegs, kvsegmap/kvsegu seg_alloc, segmap/segu_create, p0init's own
+svirtophys(u-area)) and hit the NEXT panic at pstart040's tail: **"PANIC: Svirtophys:
+SDE_invalid"** (fs-uae + WinUAE identical).
+
+**svirtophys FIX (2026-06-18, applied):** pstart040's tail calls
+`svirtophys((*proc_sched + 95) & ~15)`.  `*proc_sched = &proc[0]` (a kmem_zalloc'd proc
+struct in **kvseg**, region 1 ~0x40040000+).  `svirtophys` walks the **inert 030 tree**
+via `vatosde` (`kas@(0x14)` -> tbl[1].addr=st_top1 -> st_top1[(va>>17)&0x1fff]); but the
+kvseg mappings now live ONLY in the live **040 kptr040 tree** (sysseginit/segkmem write
+there, not st_top1), so st_top1[kvseg_idx]=DT0 -> SDE_invalid.  (p0init's own
+svirtophys(u=0x40000000) worked because pstart040 DOES populate st_top1[0]=the u-area.)
+KEY: svirtophys's DT switch + cmn_err + phys assembly are FORMAT-AGNOSTIC -- it reads
+the descriptor type via `bfextu @(3){6:2}` = byte-3 low 2 bits, which is the 030 DT AND
+the 040 UDT (same bits).  So only the WALKERS change:
+- **vatosde/vatopte ported to 040** (kvm040.s, GLOBAL T -> --weaken-symbol): vatosde
+  returns `&kptr040[((va>>18)-4096)*4]` (the flat 040 pointer descriptor, exactly how
+  sysseginit/kvm_init address it); vatopte returns `(*sde & 0xffffff00) +
+  ((va>>12)&0x3f)*4` (040 leaf PTE).  No kas@(0x14) change needed -- vatosde reads
+  kptr040 directly.  Also fixes krnxmemflt (the only other vatosde caller).
+- **svirtophys phys assembly 4KB-patched** (patch_modelb.py: 0xb77c0 `&-2048->-4096`,
+  0xb77c8 `&2047->4095`).
+Built clean (`sh relink-040.sh`: vatosde/vatopte single strong defs, contiguous, 0
+reloc complaints, 28 Model B patches).
+**NEXT: BOOT build/unix-040 on 040, read next panic pc.**  Expect past the tail
+svirtophys (proc[0] phys now resolvable) -> pstart returns -> _start stores it to
+*ublksde -> main().  Watch for the next 030-ism (likely more VM walkers: uvirtophys/
+uvatosde for user procs come later; nearer term, anything main() touches early).
 
 **MODEL B Tier-0 PASSED (2026-06-18 earlier test):** got PAST kmem_allocspool -- the bus
 error is gone, now a CLEAN panic "No space for mapping files" at the kvsegmap/segmap

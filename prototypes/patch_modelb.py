@@ -73,6 +73,11 @@ P = [
  # restores the 030-equivalent byte size); kvsegmap (48ee6) + kvsegu (48f58)
  (0x48ee6, b"\x7c\x11", b"\x7c\x12", "kvm:kvsegmap size <<17->18"),
  (0x48f58, b"\x7c\x11", b"\x7c\x12", "kvm:kvsegu size <<17->18"),
+ # svirtophys: final phys assembly is page-granular (2KB->4KB).  The DT/UDT switch
+ # and vatosde/vatopte are handled by the 040 ports (kvm040.s); only the leaf-PTE
+ # masking here is a size flip: phys = (PTE & ~page) | (va & page-1).
+ (0xb77c0, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "svp:PTE page mask &-2048->-4096"),
+ (0xb77c8, b"\x02\x81\x00\x00\x07\xff", b"\x02\x81\x00\x00\x0f\xff", "svp:va off &2047->4095"),
 ]
 
 def main():

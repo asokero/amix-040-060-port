@@ -27,6 +27,8 @@ m68k-linux-gnu-objcopy --globalize-symbol sysseginit "$HERE/build/unix-stage1"
 m68k-linux-gnu-objcopy \
 	--weaken-symbol pstart \
 	--weaken-symbol sysseginit \
+	--weaken-symbol vatosde \
+	--weaken-symbol vatopte \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -36,7 +38,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit; do
+for s in pstart sysseginit vatosde vatopte; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"

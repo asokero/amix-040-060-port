@@ -64,4 +64,55 @@ Lss_loop:
 	moveal	%d0,%a0
 	unlk	%fp
 	rts
+
+| ============================================================================
+| vatosde (orig 0xb74a2, GLOBAL T) -- given a region-1 kernel VA, return the
+| address of its SEGMENT descriptor (the entry svirtophys/krnxmemflt inspect for
+| the DT/UDT type, then hand to vatopte).  The 030 original walks `kas@(0x14)` ->
+| tbl[1].addr (st_top1) -> &st_top1[(va>>17)&0x1fff] (8-byte SDE).
+|
+| 040: the live tree is root040 -> kptr040 (built by pstart040, filled by
+| sysseginit/kvm_init/segkmem_mapin).  kptr040 is a FLAT array of the region-1
+| pointer tables, indexed (va>>18)-4096 -- the exact addressing sysseginit/kvm_init
+| use -- so the pointer descriptor for va is simply &kptr040[((va>>18)-4096)*4].
+| Its low 2 bits are the 040 UDT (0=invalid, 2=resident); svirtophys reads them via
+| `bfextu @(3){6:2}` exactly like the 030 DT (both live in byte-3 bits 1:0), so the
+| svirtophys DT-switch is format-agnostic -- only this walk + vatopte change.
+| ============================================================================
+	.globl	vatosde
+vatosde:
+	linkw	%fp,&0
+	movel	%fp@(8),%d0
+	moveq	&18,%d1
+	lsrl	%d1,%d0			| va>>18
+	subil	&4096,%d0		| - 4096 (region-1 base index)
+	asll	&2,%d0			| * 4 (long pointer descriptors)
+	addl	kptr040,%d0		| + kptr040 base
+	moveal	%d0,%a0			| a0 = &kptr040[flat] = 040 pointer descriptor
+	unlk	%fp
+	rts
+
+| ============================================================================
+| vatopte (orig 0xb7540, GLOBAL T) -- given a VA and its segment descriptor (the
+| vatosde result), return the address of the leaf PTE.  030 original: leaf base =
+| sde@(4) (the +4 addr field of the 8-byte SDE), index (va>>11)&0x3f, *4.
+| 040: the descriptor is a single long `leaf|UDT`; leaf base = *sde & 0xffffff00
+| (256 B / 64-entry 4KB-page leaf tables), index (va>>12)&0x3f, *4.  svirtophys then
+| reads *PTE and assembles phys with the 4KB page mask (Model B patch in svirtophys).
+| ============================================================================
+	.globl	vatopte
+vatopte:
+	linkw	%fp,&0
+	moveal	%fp@(12),%a0		| a0 = pointer descriptor address (from vatosde)
+	movel	%a0@,%d0
+	andil	&0xffffff00,%d0		| d0 = leaf page-table base
+	movel	%fp@(8),%d1
+	lsrl	&8,%d1
+	lsrl	&4,%d1			| d1 = va>>12
+	andil	&0x3f,%d1		| & 0x3f (64-entry 4KB-page leaf)
+	asll	&2,%d1			| * 4
+	addl	%d1,%d0			| d0 = &PTE
+	moveal	%d0,%a0
+	unlk	%fp
+	rts
 	nop			| pad .text to a 4-byte multiple (loader copies text+data as one block)
