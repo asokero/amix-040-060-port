@@ -258,3 +258,47 @@ hat_pteload (DONE) + hat_ptalloc/sdtalloc/growsdt remain correct and necessary f
 the LATER milestone (as_alloc / hat_memload / first user process), but are NOT the
 page_init blocker.  hat_pteload's leaf-format analysis transfers directly to
 segkmem_mapin (same low-byte PTE format).
+
+### *** CENTRAL DESIGN DECISION (2026-06-18) — the CLICK (2KB) vs PAGE (4KB) duality ***
+Traced the click model fully.  `mlsetup`: `maxclick = memsize >> 11` => the kernel's
+**click/page = 2 KB**, baked as immediates (`#2048`, `<<11`/`>>11`) -- NOT a runtime
+constant.  `sptalloc -> segkmem_mapin`: the pfn handed in is a **2 KB click number**;
+the leaf PTE is `click << 11 | flags` (030: phys in bits 31:11).  The 040 MMU's min
+page is **4 KB** (phys in bits 31:12).  These mismatch.  Three ways to reconcile:
+
+  A. **Click stays 2 KB; pair 2 clicks per 4 KB MMU page** (recommended).  Change ONLY
+     the leaf-build / table-walk sites: leaf index `va>>11 -> va>>12`, loop step
+     `#2048 -> #4096`, pfn increment `+1 -> +2`, PTE base stays `click<<11` (a 4KB-
+     aligned even click puts phys in bits 31:12 already -> a VALID 040 PTE, no shift
+     change!).  Two adjacent clicks share one 4 KB page + protection.  Localizes the
+     change to the MMU-facing code (kvm_init/segkmem_mapin/hat leaves); the kernel's
+     2 KB click accounting (maxclick, pages[], btoc/ctob) is UNTOUCHED.  Caveat: a
+     single 2 KB click can't be independently protected (fine for kernel maps; a
+     Phase-4 / user-page concern).
+  B. **Change click -> 4 KB everywhere** (NBPC/btoc/ctob/maxclick/pages[]): the
+     pervasive ~176-site change the mmu-format doc warned of.  Cleanest model, most
+     work + risk (touches the whole VM, not just the MMU-facing edges).
+  C. **8 KB clicks/pages**: pairs cleanly with nothing; rejected earlier.
+
+  => GO WITH (A).  Key simplification it buys: the leaf PTE construction `click<<11`
+  needs NO shift change -- only the loop granularity (index >>12, step 4KB, pfn +=2)
+  and that mapped regions start on an even (4KB-aligned) click.  This refines the
+  earlier "segkmem_mapin leaf edits" spec: NOT `>>11->>>12` on the PTE value, but on
+  the INDEX/STEP, keeping `click<<11`.
+
+### REVISED segkmem_mapin / kvm_init port (under model A)
+segkmem_mapin (a8904): page index `(addr-base)>>11 -> >>12` (a892e); loop step
+`#2048 -> #4096` (a8a4e); pfn increment per page `+1 -> +2` (a8a42, the
+bfextu/addql/bfins on fp@(-8)); the page-base compare mask `andiw #-2047 -> #-4095`
+(a89bc/a89c4); PTE value `click<<11` UNCHANGED; PFN-extract widths stay (the click
+field is still bits 31:11).  REQUIRES the mapped base click to be even (4KB-aligned)
+-- verify sptalloc/segkmem_alloc hand even clicks (kernel allocs are contiguous from
+an aligned base; check `v`/kptbl base alignment).
+kvm_init (48c2e): (1) `kas@(0x14) = root040` not cpuroot+4 (export root040 from
+pstart040, or reuse kptr040-512); (2) the two kvsegmap/kvsegu loops -> write 040
+pointer descriptors into **kptr040** (slot = kptr040 + ((va>>18)-4096)*4), single
+long `*slot = leaftable | UDT(2)`; index `>>17&0x1FFF -> >>18`, stride `asll#3->#2`,
+drop the limit/status/DT template; leaf-table base `<<11` stays (clicks), stride per
+pointer entry `#512` and the `+64` page count: on model A a pointer entry still
+covers 64 *4KB* pages = 256KB, and the leaf table is 64*4=256 B -- reconcile the
+`#512` leaf stride (030 used 512 B/seg; keep or tighten to 256) when writing it.
