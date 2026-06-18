@@ -1,8 +1,18 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-18)
 
-One-line: **68040 bootstrap paging WORKS; the kernel boots past pstart and prints
-clean panics. Next = port the binary-only HAT/VM layer from 030 2KB page tables
-to 040 4KB tables (the big phase).**
+One-line: **68040 bootstrap paging works; kernel boots to `page_init` which
+bus-errors writing the `pages[]` array (lives in unmapped kvseg).  pstart040 now
+builds the kvseg-wide 040 scaffold (kptr040); NEXT = port kvm_init + segkmem_mapin
+to FILL it so kvseg maps and page_init advances.**
+
+## LAST TEST (2026-06-18, WinUAE on 040) — confirms the target
+PANIC: KERNEL FAULT pc=0x70AF474 vector=0x2 (Bus Error).  Kernel loads at
+0x07000000 -> fault = offset 0xAF474 = **page_init+0x4a** = `orib #0x80,%a0@`, the
+loop initializing each `pages[]` struct (a0 = `pages`, stride 60, to `epages`).
+`pages` is in kvsegmap (0x40440000+), unmapped because kvm_init hasn't filled
+kptr040 yet.  EXACTLY the predicted blocker; pstart040 scaffold caused NO regression
+(still reaches page_init cleanly).  (The DOUBLE PANIC pc=0xF80C34 is the panic
+handler faulting again -- secondary, ignore.)
 
 ## Where we are (the journey)
 ```
