@@ -363,3 +363,37 @@ kptr040[1+P] -> kptbl + P*256 ; PTE(va) = kptbl + P*256 + ((va>>12)&0x3F)*4 =
 kptbl + ((va-base)>>12)*4.  OK.  (kvseg s_base = syssegs = 0x40040000; s_ptbl = kptbl.)
 RISK to watch: the kptbl leaf memory (at v<<11) must be ZEROED before use (invalid
 initial PTEs) -- the 030 path relies on it; verify if the test faults oddly.
+
+### *** MILESTONE RESULT + MODEL A HIT ITS WALL (2026-06-18 eve) ***
+Test of the sysseginit+segkmem_mapin build (after fixing a runaway-loop bug --
+segkmem_mapin used `bne` on a 4KB `addil #-4096` step; odd-click len never hit 0 ->
+infinite loop, Gary timeout; fixed with `bgt`):
+**PAGE_INIT PASSED.**  Fault moved from page_init+0x4a (0xAF474) to
+**kmem_allocspool+0x19c (0x41D1A)**, which runs AFTER page_init in kvm_init.  Visual
+console restored.  So the kvseg map + sysseginit + segkmem_mapin (Model A) WORK end
+to end for page_init.  Huge: validated pstart040 scaffold + override machinery +
+the whole static kvseg path.
+
+**But the new fault exposes Model A's fundamental limit:** kmem_allocspool ->
+`sptalloc(...,phys=0,...)` -> **segkmem_alloc** (a86ba, the allocate-AND-map sibling
+of segkmem_mapin, NOT ported).  segkmem_alloc maps pages from **page_get**, which
+returns a **LINKED LIST of physically SCATTERED 2KB clicks** (page_sub follows the
+page-struct links at off 16/20, not +1).  It maps each scattered click to a
+**2KB-packed consecutive VA**.  On 040 this is IMPOSSIBLE under Model A:
+  - a 4KB MMU page needs 4KB CONTIGUOUS phys -- two scattered 2KB clicks can't form one;
+  - 040 forces 4KB VA granularity -- you can't map a 2KB-packed VA stream.
+So the kernel's page ALLOCATOR (page_get/page_free/pages[]) being 2KB-granular is
+irreconcilable with 4KB MMU pages.  Model A's "keep 2KB clicks" works for
+pre-mapped/contiguous regions (pstart040 u-area, kvseg leaves) but NOT for the
+scattered-click allocator path.  This is the "pikkuhattu" caveat materializing --
+earlier than expected (kernel kmem allocator, not user pages).
+
+=> DECISION NEEDED: the page frame must become 4KB-granular.  Either full **Model B**
+(4KB clicks everywhere: NBPC/btoc/ctob/maxclick/pages[]/page_get + leaf PTE pfn<<12
+& {0:20}; ~176 immediate sites, mechanical, the "correct" model real 040 ports use)
+or a narrower "4KB allocator + keep 2KB accounting" hybrid (change only page_get/
+page_free/page_init/pages[] to hand 4KB-aligned even-click pairs; then Model A's
+segkmem `click<<11` still works since clicks are even -- fewer sites but mixes two
+page sizes, fragile).  Model A infra (pstart040 scaffold, relink/override, kvseg
+structure) carries over; segkmem leaf edits flip from "keep <<11" to "<<12 / {0:20}"
+under B.
