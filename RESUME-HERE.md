@@ -144,9 +144,24 @@ HAT PORT WORKLIST (the Phase-4 sub-project; full per-fn specs in
   so the root install is hat_alloc or the kas/segu setup -- find it).
 - **flushmmu** -- called by hat_pteload; verify pflusha (already patched) or its own edit.
 
-**NEXT: implement the HAT port (above), link hat040.o, wire kernel-hat-root=kroot040, test.**
-Phase-4 milestone (first user process).  Later: uvirtophys/uvatosde/uvatopte (user-side
-v->p walkers), trap/exception-frame 040 work (bites on first syscall/fault).
+**HAT FIRST-FORK PORT DONE (2026-06-19) -- ready to boot-test.**  Scoping showed the
+procdup-bcopy fault needs FAR less than the full HAT port: the child u-area uses the
+KERNEL hat (already kptr040-rooted via kas@0x14=kroot040), and on first fork memory is
+plentiful so the allocators take their SUCCESS paths -- which skip the structural
+8->4-byte descriptor code (the page-table STEAL path) and never call hat_growsdt.  So:
+- hat_pteload (040 walk, hat040.s) LINKED (relink-040.sh: globalize+weaken hat_pteload;
+  globalize hat_ptalloc/hat_pt2ptdat so hat040.o's calls bind to the kernel LOCAL defs).
+- hat_ptalloc/hat_sdtalloc/hat_pt2ptdat success-path click->byte shifts byte-patched
+  (patch_modelb.py: b6a74, b63d6/b6484/b6524, b5e1c -- all `moveq #11->#12`).  Carve
+  keeps 4 tables/page in the low 2KB of the 4KB click; >>11 page-frame index -> >>12.
+- kas@0x14=kroot040 (pstart040 tail).  flushmmu pflusha already in patch_pflusha_040.
+Build clean: hat_pteload single strong def, 33 Model B patches, 0 reloc complaints,
+UND==stock.  **NEXT: BOOT build/unix-040 -- expect past procdup's bcopy (child u-area
+now mapped on 040).**
+DEFERRED (next blockers, when proc 1 faults in USER pages via its OWN hat): hat_growsdt
+(8192->128 descriptor builder), hat_alloc (4->128 child-hat root), the hat_ptalloc STEAL
+path (structural 8->4-byte descs + PFN 21->20 + asll#3->#2), uvirtophys/uvatosde/uvatopte
+(user v->p walkers), and trap/exception-frame 040 work (bites on first syscall/fault).
 
 **MODEL B Tier-0 PASSED (2026-06-18 earlier test):** got PAST kmem_allocspool -- the bus
 error is gone, now a CLEAN panic "No space for mapping files" at the kvsegmap/segmap
