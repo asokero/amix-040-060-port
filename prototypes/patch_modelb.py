@@ -64,6 +64,15 @@ P = [
  # --- sptalloc: click->byte args for segkmem (<<11 -> <<12) ---
  (0xa8bfa, b"\x72\x0b", b"\x72\x0c", "spt:click<<11 (alloc branch)"),
  (0xa8c3e, b"\x72\x0b", b"\x72\x0c", "spt:click<<11 (mapin branch)"),
+ # ===== Tier-1: kvsegmap/segmap setup (seg_alloc -> as_addseg) =====
+ # seg_alloc: round base down / size up to a PAGE (2KB -> 4KB)
+ (0xb2832, b"\x02\x41\xf8\x00", b"\x02\x41\xf0\x00", "seg_alloc:base &-2048->-4096"),
+ (0xb283e, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "seg_alloc:size round +2047"),
+ (0xb2844, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "seg_alloc:size &-2048->-4096"),
+ # kvm_init segmap byte size: segment 128KB->256KB (smsegs halved under B, so <<18
+ # restores the 030-equivalent byte size); kvsegmap (48ee6) + kvsegu (48f58)
+ (0x48ee6, b"\x7c\x11", b"\x7c\x12", "kvm:kvsegmap size <<17->18"),
+ (0x48f58, b"\x7c\x11", b"\x7c\x12", "kvm:kvsegu size <<17->18"),
 ]
 
 def main():
