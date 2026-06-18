@@ -82,6 +82,15 @@ Lss_loop:
 	.globl	vatosde
 vatosde:
 	linkw	%fp,&0
+	| ---- DEBUG (real-HW localization): print va on entry.  If this prints on real
+	| 040, p0init's svirtophys stack-push WORKED and we reached vatosde -> the fault
+	| is in the 040 table walk / svirtophys.  If it does NOT print, the fault is the
+	| stack push itself (sp/stack).  cmn_err(1=CE_CONT, fmt, va).  Remove after debug.
+	movel	%fp@(8),%sp@-
+	pea	Ldbg_vts
+	pea	1
+	jsr	cmn_err
+	addaw	&12,%sp
 	movel	%fp@(8),%d0
 	moveq	&18,%d1
 	lsrl	%d1,%d0			| va>>18
@@ -116,3 +125,8 @@ vatopte:
 	unlk	%fp
 	rts
 	nop			| pad .text to a 4-byte multiple (loader copies text+data as one block)
+
+	.data
+	.even
+Ldbg_vts:
+	.asciz	"DBG vatosde va=%x\n"
