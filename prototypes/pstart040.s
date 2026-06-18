@@ -241,6 +241,30 @@ Lpuarea:
 	oril	&0x02,%d1
 	movel	%d1,%a1@(128)
 
+	| --- u-area CONSISTENCY: point kuptr[0..3] at uarea040 too ---
+	| The kernel finds the u-area's physical pages via kuptr (e.g. mlsetup /
+	| proc p_addr).  Since VA 0x40000000 now maps to uarea040 (our buffer), kuptr
+	| must point at the SAME memory, or writes via the physical path and reads via
+	| VA (or vice versa) diverge -> the kernel reads zeros -> null pointers ->
+	| jsr to 0.  kuptr[i] = (uarea040 + i*0x800) | 1  (030 2KB page descriptors).
+	| d0 still = uarea040 here.
+	movel	kuptr,%a0
+	movel	%d0,%d1
+	oril	&1,%d1
+	movel	%d1,%a0@
+	movel	%d0,%d1
+	addil	&0x800,%d1
+	oril	&1,%d1
+	movel	%d1,%a0@(4)
+	movel	%d0,%d1
+	addil	&0x1000,%d1
+	oril	&1,%d1
+	movel	%d1,%a0@(8)
+	movel	%d0,%d1
+	addil	&0x1800,%d1
+	oril	&1,%d1
+	movel	%d1,%a0@(12)
+
 	| SRP = URP = root040_phys
 	movel	%a1,%d0
 	.word	0x4e7b,0x0807		| movec %d0,%srp
@@ -279,6 +303,7 @@ Lpepi:
 	moveal	%d0,%a0
 	unlk	%fp
 	rts
+	nop
 	nop			| pad .text to a 4-byte multiple (loader copies text+data as one block)
 
 	.data

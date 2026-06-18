@@ -44,10 +44,15 @@ else
     MODE="custom pstart replacement"
 fi
 
-# 2. Rename the kernel's original pstart -> pstart_030.
-echo "[*] renaming stock pstart -> pstart_030"
+# 2. WEAKEN the kernel's original pstart, so the replacement object's STRONG
+#    `pstart` overrides it AND existing callers (_start's `jsr pstart`) re-resolve
+#    to the replacement.  NOTE: `--redefine-sym pstart=pstart_030` does NOT work
+#    here -- it renames the *reference* too, so _start keeps calling the original
+#    (the replacement ends up dead).  --weaken-symbol keeps the name `pstart` and
+#    lets the strong definition win, redirecting the caller.  (Verified empirically.)
+echo "[*] weakening stock pstart (strong replacement will override + redirect callers)"
 cp "$STOCK" "$HERE/build/unix-stage1"
-m68k-linux-gnu-objcopy --redefine-sym pstart=pstart_030 "$HERE/build/unix-stage1"
+m68k-linux-gnu-objcopy --weaken-symbol pstart "$HERE/build/unix-stage1"
 
 # 3. Relink the kernel with the replacement object (cross ld -r).
 echo "[*] relinking -> $OUT"
@@ -56,8 +61,10 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" "$REPL"
 # 4. Verify the override resolved.
 echo
 echo "[*] result symbols:"
-m68k-linux-gnu-nm "$OUT" | grep -E ' (pstart|pstart_030)$' | sed 's/^/      /'
+m68k-linux-gnu-nm "$OUT" | grep -E ' pstart$' | sed 's/^/      /'
 NEW=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="pstart"{print $1}')
+echo "[*] CRITICAL: _start's 'jsr pstart' must now resolve to the replacement (0x$NEW):"
+m68k-linux-gnu-objdump -dr "$OUT" 2>/dev/null | grep -E 'R_68K_32\s+pstart$' | sed 's/^/      caller-reloc: /' | head -3
 echo "[*] new pstart @ 0x$NEW:"
 m68k-linux-gnu-objdump -dr --start-address=0x$NEW --stop-address=$((0x$NEW+12)) "$OUT" \
     2>/dev/null | sed -n '/<pstart>:/,$p' | sed 's/^/      /' | head -6
