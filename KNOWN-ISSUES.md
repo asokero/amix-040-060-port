@@ -1,0 +1,78 @@
+# Known issues — deferred, with enough context to resume
+
+## ISSUE-1: our rebuilt `unix_boot` causes a 68030 MMU Configuration Error at the kernel's `pstart` (clib2/bebbo build)
+
+**Status:** DEFERRED (2026-06-17). Does NOT block the 68040 line — see "Why deferred".
+We continue 040 work using the toolchain split in "Workaround" below.
+
+### Symptom
+Booting **our** rebuilt `unix_boot` (`build/unix_boot040`, bebbo amiga-gcc 6.5 +
+`-mcrt=clib2`) on a **68030** with *any* kernel (stock `unix`, `unix-piccolo`,
+`unix-040-relinktest`) → AmigaOS "Software Failure" guru **`8000 0038`** right
+after the loader hands off. Reproduced on real A3000, fs-uae, and WinUAE.
+The stock/upstream `unix_boot` (`unix_boot/bin/unix_boot`, original gcc2 build)
+boots the same kernels fine on 030.
+
+### What `8000 0038` decodes to
+`0x80000038` = `AT_DeadEnd | 56`. AmigaOS CPU-trap alerts use the convention
+`0x80000000 | <vector number>` (cross-check: `ACPU_Format = 0x8000000E` = vector
+14, from NDK `exec/alerts.h`). **Vector 56 = 68030 MMU Configuration Error** — a
+PMMU fault. So the crash is in the **MMU-enable path**, i.e. the kernel's
+`pstart` executing its `pmove` sequence (TC/CRP/SRP), NOT in bootinfo or the copy.
+
+Because it surfaces as an AmigaOS guru (not the kernel's own
+`PANIC: KERNEL FAULT`), it happens **before** the kernel installs its trap
+handlers — i.e. very early, at `pstart`'s MMU enable (≈ kernel offset 0xFD6).
+
+### Unifies with the 68040 observation
+Our loader **hands off correctly** — the kernel runs to `pstart` on both CPUs:
+- **040:** kernel reaches `pstart`, `pmove` → B-Trap F010 (F-line; pmove is
+  illegal on 040). Expected — that's the whole 040 problem (Draft 2 fixes it).
+- **030:** kernel reaches `pstart`, `pmove` executes but raises MMU Config Error.
+- Draft 1 (MMU-disabled probe) ran with our loader on 040 **deep** into the
+  kernel (`vstart`/`mlsetup`/`krnlflt`). So the handoff + kernel image are sound.
+
+### Verified CLEAN (ruled out)
+- **bootinfo content** — on-screen dump shows correct boards (e.g. A2065
+  `0202:70` @ 0xE90000), correct mem regions, and contiguous kernel offsets
+  (tvaddr+tsize=dvaddr, toffset+tsize=doffset).
+- **bootinfo struct layout** — bebbo compiles AmigaOS structs at the right
+  2-byte ABI: `Node`=14, `ConfigDev`=68, `MemHeader`=32, `ln_Name`@10,
+  `cd_Rom`@16 (measured).
+- **copyit** — the 030 path is byte-identical in operation to upstream
+  (`pmove tc/crp/srp/tt0/tt1`, all gated 040 ops behind AttnFlags btst branches a
+  030 never takes); `_copyit` resolves correctly; copyit.o = 188 B (fits the
+  512 B `memcpy`), no relocations (position-independent).
+- **rel.c relocation logic** — unchanged from upstream; ELF structs are all
+  4-byte members → packing-independent; image executes to `pstart` so it is not
+  corrupt.
+
+### Leading hypothesis
+A subtle **runtime-state difference introduced by the clib2/bebbo rebuild** (vs
+the original gcc2 minimal startup) that makes the kernel's 030 `pmove` config-
+error. Not a source-logic bug (everything above is verified). Candidate: clib2's
+heavier crt0 leaves the CPU/MMU/cache or some register state different at handoff.
+Note: our copyit leaves the 030 MMU bit-for-bit as upstream does, yet the kernel's
+own `pmove` still faults — so the trigger is non-obvious.
+
+### Cheapest experiment to resume with
+Rebuild the loader with a **lighter C runtime** to test the clib2-startup theory:
+try `-mcrt=libnix` (or another `-mcrt=` flavor) instead of `-mcrt=clib2` in
+`unix_boot/src/Makefile`. If libnix provides `open/read/close/stat` and the
+lighter startup boots cleanly on 030 → root cause confirmed as clib2 startup.
+If that fails, the fallback is hunk surgery to relocate a 040-aware copyit into
+the **upstream** binary (blocked by size: our copyit ~140+ B vs the upstream
+104 B slot at 0x148, with `rel.c`'s `_symvaddr` immediately after at 0x1b0 —
+can't overwrite in place; would need to relocate + repoint the `memcpy(copyit)`
+reference).
+
+### Why deferred (does not block 040)
+The kernel image is sound and our loader's handoff works on 040 (proven by Draft 1
+reaching `krnlflt`). The 030 MMU Config Error is specific to the 030 `pmove`
+path, which the 040 work replaces with `movec` (Draft 2). So:
+
+### Workaround (current toolchain split)
+- **030 baseline / regression:** boot with the **upstream** loader
+  `unix_boot/bin/unix_boot` (works).
+- **040 development (Draft 2):** boot with **our** loader `build/unix_boot040`
+  (proven to reach `pstart` and beyond on 040).

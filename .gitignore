@@ -1,0 +1,27 @@
+# --- Build artifacts (regenerated from source) ---
+build/
+*.o
+*.uaem
+unix_boot/src/unix_boot
+
+# --- Licensed / copyrighted (AT&T / Commodore) — NOT redistributable ---
+# AMIX kernel sources extracted from amix-sources.tar
+amix-src/
+# Kernel binaries and the upstream loader binary
+unix_boot/unix
+unix_boot/bin/
+# AT&T SVR4 ELF headers (must be supplied from one's own licensed AMIX install)
+unix_boot/src/include/sys/
+unix_boot/src/include/elf.h
+# Original distribution archive(s)
+*.lha
+
+# --- Third-party AmigaOS support libs (ARP) — not our work ---
+unix_boot/ARP_13/
+unix_boot/arp.library
+unix_boot/arp40_2/
+
+# --- Machine-specific / editor ---
+.claude/settings.local.json
+*~
+*.swp
