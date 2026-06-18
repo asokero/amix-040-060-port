@@ -109,10 +109,44 @@ the 040 UDT (same bits).  So only the WALKERS change:
   0xb77c8 `&2047->4095`).
 Built clean (`sh relink-040.sh`: vatosde/vatopte single strong defs, contiguous, 0
 reloc complaints, 28 Model B patches).
-**NEXT: BOOT build/unix-040 on 040, read next panic pc.**  Expect past the tail
-svirtophys (proc[0] phys now resolvable) -> pstart returns -> _start stores it to
-*ublksde -> main().  Watch for the next 030-ism (likely more VM walkers: uvirtophys/
-uvatosde for user procs come later; nearer term, anything main() touches early).
+**TEST RESULT (svirtophys fix): PASSED.**  Boot went svirtophys -> pstart returns ->
+main() -> vfs_mountroot -> **fork1 -> newproc -> procdup** (creating proc 1) and hit a
+**BUS ERROR pc=0x70002E6 = mcpy** (memcpy/bcopy worker; bcopy `bral`s to mcpy).
+proc=0x4007EC00 (proc[0] now in kvseg -- proc_sched resolved correctly).
+
+**THE HAT / fork MILESTONE (2026-06-18, Phase 4 -- the big remaining chunk):**
+procdup does `bcopy(u=0x40000000, child_uarea, 0x2000)` to copy the u-area into the
+child.  The child u-area comes from `segu_get` (segu = kvsegu 0x48440000, region 1),
+which maps it via `hat_memload` (0xb4cb0, a tiny wrapper: pfn=(pp-pages)/60+pages_base,
+then `hat_pteload`).  **hat_pteload writes the page-table entry the MMU walks -- but it
+is (a) not linked into this build and (b) the kernel hat's root isn't the 040 root**, so
+the child u-area VA is unmapped on 040 -> bcopy faults.  First PER-PROCESS mapping path.
+
+ARCHITECTURE (verified): `hat_pteload` roots its walk at `arg@(12)@(20)` = the hat's
+ROOT table, walking `root[va>>25&0x7F] -> ptr[va>>18&0x7F] -> leaf[va>>12&0x3F]`.  For a
+region-1 kernel VA this standard 040 walk lands on the SAME `kptr040` entry as
+sysseginit/vatosde's flat `(va>>18)-4096` indexing (root040[32+k]->kptr040+k*512, and
+(kptr040+k*512)[Bidx] == kptr040[(va>>18)-4096]).  So IF the kernel hat's root = kroot040,
+hat_pteload writes into root040->kptr040->leaf and the 040 MMU (SRP=root040) sees it.
+`kroot040` is already exported by pstart040 for exactly this.
+
+HAT PORT WORKLIST (the Phase-4 sub-project; full per-fn specs in
+`prototypes/hat-040-port-worklist.md`):
+- **hat_pteload** -- DONE (`prototypes/hat040.s`, 040 walk).  NOT YET in the build -- add
+  hat040.o to relink-040.sh (it's `t` LOCAL -> globalize+weaken hat_pteload).
+- **hat_memload** -- no port needed (page-struct arithmetic; calls hat_pteload).
+- **hat_ptalloc** (0xb688e) -- allocate a leaf page table (4KB/64-entry on 040); port.
+- **hat_pt2ptdat** (0xb5e0a) -- page-table addr -> ptdat; check page-size sites.
+- **hat_growsdt** (0xb6058) / **hat_sdtalloc** (0xb632e) -- segment-descriptor-table
+  alloc/grow (pointer-table level); port to 040 4-byte descs.
+- **hat_alloc** (0xb4188) -- allocates the hat root via mem_align (4-entry 030 -> 128-entry
+  040); AND the KERNEL hat's root must be set to kroot040 (hat_init only sets free-lists,
+  so the root install is hat_alloc or the kas/segu setup -- find it).
+- **flushmmu** -- called by hat_pteload; verify pflusha (already patched) or its own edit.
+
+**NEXT: implement the HAT port (above), link hat040.o, wire kernel-hat-root=kroot040, test.**
+Phase-4 milestone (first user process).  Later: uvirtophys/uvatosde/uvatopte (user-side
+v->p walkers), trap/exception-frame 040 work (bites on first syscall/fault).
 
 **MODEL B Tier-0 PASSED (2026-06-18 earlier test):** got PAST kmem_allocspool -- the bus
 error is gone, now a CLEAN panic "No space for mapping files" at the kvsegmap/segmap
