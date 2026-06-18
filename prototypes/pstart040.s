@@ -318,6 +318,14 @@ Lkroot:
 	lsrl	&1,%d2
 	movel	%d2,%sp@-
 	jsr	mlsetup
+	| 040 kernel-hat root: kvm_init set kas@(0x14) = cpuroot+4 (the INERT 030 root).
+	| hat_pteload walks a kernel seg's root via seg@(12)@(20) = kas@(20) = kas@(0x14)
+	| (seg_attach sets seg@(12)=as; offset 0x14 == 20).  Re-point it at the LIVE 040
+	| root so kernel-seg maps (segu u-area, segvn...) land in root040->kptr040 = what
+	| the 040 MMU walks (SRP=root040).  Done after mlsetup, before main()'s first
+	| hat_pteload (fork1->procdup->segu_get).
+	movel	kroot040,%d0
+	movel	%d0,kas+0x14
 	moveq	&95,%d0
 	addl	proc_sched,%d0
 	moveq	&-16,%d1
