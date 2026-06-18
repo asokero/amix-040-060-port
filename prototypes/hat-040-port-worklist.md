@@ -216,3 +216,45 @@ Likely: hat_pteload (DONE) + hat_ptalloc + hat_sdtalloc + hat_growsdt + the segk
 kvseg-builder (TBD by the next trace) + hat_getkpfnum (tiny).  NO port: hat_init,
 hat_vtokp_prot.  Deferred (not boot-critical): hat_alloc (user fork), kseg/unkseg
 (RFS/IPC), hat_dup/hat_exec/hat_map/swtch/etc. (process mgmt, Phase 3 tail).
+
+### *** MAJOR FINDING (2026-06-18) — page_init path is the STATIC map, NOT the HAT ***
+Traced segkmem_mapin + kvm_init fully.  The kernel maps that the 040 MMU walks at
+page_init are built by a STATIC path that DOES NOT touch hat_pteload/hat_ptalloc:
+
+```
+  mlsetup -> kvm_init (48c2e, LOCAL t, ~926 B)   builds the kvseg B-level descs
+        -> sptalloc (a8bb6, GLOBAL) -> segkmem_mapin (a8904, GLOBAL)  writes leaves
+```
+- **kvm_init** sets `kas root = cpuroot+4` (pstart's 4-entry A-table) and builds the
+  B-level (pointer) descriptors for **kvsegmap (0x40440000)** and **kvsegu
+  (0x48440000)** DIRECTLY into `st_top1` (the SAME B-table pstart allocates), in 030
+  8-byte format: `Bidx=va>>17 &0x1FFF` (48d12), `asll #3` stride (48d1c), template
+  `limit=63 / status=0xC0 / DT=2` (48cf2/48cf8/48d06), two-long writes a0@ + a0@(4)
+  (48d34/48d3e), page-table addr `d5<<11` (48d2a/48d56), B-desc step `addqw #8`
+  (48d4c), `addil #512` per page table (48d42).  Repeats for kvsegu (48dc0+).
+- **segkmem_mapin** writes the LEAF PTEs straight into `seg->s_ptbl` (seg@(28)):
+  page index `(addr-seg@(4))>>11` (a892e, 2KB), PTE stride `asll #2` (a8932,
+  already 4-byte -> KEEP), PTE = `pfn{0:21} | prot bfins{5:1}(W bit2) | DT orib#1`
+  (a8976/a897c -- low-byte format = hat_pteload's leaf, COMPATIBLE), page step
+  `addil #2048` (a8a4e, 2KB), page-base mask `andiw #-2047`=0xF801 (a89bc/a89c4).
+
+### *** THE REAL page_init MILESTONE PATH (reprioritized) ***
+To make the 040 MMU walk the kvseg maps, port the STATIC path -- a CLEANER, more
+bounded route than the HAT batch (and it extends pstart040's proven approach):
+1. **pstart040**: the 040 root must have pointer table(s) covering the kvseg VA
+   range so kvm_init can fill them.  0x40000000>>25=32 (u-area, done), kvsegmap
+   0x40440000>>25=34, kvsegu 0x48440000>>25=36.  Need 040 root entries 32..36+ ->
+   pointer tables; make `st_top1` (or a fresh table) the 040 pointer table kvm_init
+   writes into.
+2. **kvm_init** (LOCAL t -> globalize+weaken): B-level build to 040 4-byte pointer
+   descriptors: `>>17 &0x1FFF -> >>18 &0x7F`, `asll #3 -> #2`, single-long
+   `*a0 = pagetable<<12 | UDT(2)`, drop limit/status template; `<<11 -> <<12`.
+3. **segkmem_mapin** (GLOBAL -> just weaken): leaf edits `>>11->>>12`,
+   `#2048->#4096`, `{0:21}->{0:20}`, `andiw #-2047 -> #-4095`(0xF001); PTE low-byte
+   format unchanged.  (sptalloc: 2x `moveq #11` -> 12.)
+4. **hat_getkpfnum** (28 B) if reached: `>>11 -> >>12`.
+
+hat_pteload (DONE) + hat_ptalloc/sdtalloc/growsdt remain correct and necessary for
+the LATER milestone (as_alloc / hat_memload / first user process), but are NOT the
+page_init blocker.  hat_pteload's leaf-format analysis transfers directly to
+segkmem_mapin (same low-byte PTE format).

@@ -49,13 +49,26 @@ clean, reloc-validator 0 complaints).  Two infrastructure results proven en rout
   page shift 11→12 + PFN width 21→20 change.  Structural rewrites are confined to
   the root/pointer descriptor read+build (8-byte→4-byte).  (Details in worklist.)
 
-**NEXT: the coupled batch** — `hat_pteload` can't run until its callees are ported
-too (page_init stays blocked).  Port into `hat040.s`, in order:
-`hat_ptalloc` (0xb688e, allocates leaf page tables — its own 11→12 / ×8→×4 / DT
-sites), then `hat_sdtalloc`/`hat_growsdt` (build the 128-entry 512-aligned 040 root),
-then `hat_pt2ptdat`.  Add each to `relink-hat.sh`'s GLOBALIZE/WEAKEN lists and the
-`.globl` list in `hat040.s`.  Then build (`sh relink-hat.sh`), fold in pstart040,
-run `patch_pflusha_040.py`/`patch_pmmu_040.py`, and test on 040 → page_init.
+**REPRIORITIZED (trace 2026-06-18): page_init is reached via the STATIC kernel-map
+path, NOT the HAT batch.**  Full trace in the worklist ("MAJOR FINDING"/"THE REAL
+page_init MILESTONE PATH").  The kvseg maps the 040 MMU walks at page_init are built
+by `kvm_init` (writes kvseg pointer descriptors into `st_top1`, pstart's B-table) +
+`segkmem_mapin` (writes leaf PTEs into `seg->s_ptbl`) — neither calls hat_pteload.
+
+**NEXT (page_init milestone), in order:**
+1. **pstart040**: give the 040 root pointer tables for root indices 32..36+ (kvseg
+   VA 0x40000000–0x48xxxxxx) so kvm_init can fill them; make `st_top1` the 040
+   pointer table it writes into.
+2. **kvm_init** (LOCAL → globalize+weaken): B-level build → 040 4-byte pointer descs
+   (`>>17&0x1FFF→>>18&0x7F`, `asll#3→#2`, single-long `*a0=pt<<12|2`, `<<11→<<12`).
+3. **segkmem_mapin** (GLOBAL → weaken): leaf edits (`>>11→>>12`, `#2048→#4096`,
+   `{0:21}→{0:20}`, `andiw#-2047→#-4095`); PTE low-byte format unchanged.  +sptalloc.
+Build alongside pstart040, run `patch_pflusha_040.py`/`patch_pmmu_040.py`, test → page_init.
+
+**LATER (next milestone — first user process):** the HAT batch.  `hat_pteload` is
+DONE (`hat040.s`); add `hat_ptalloc`/`hat_sdtalloc`/`hat_growsdt`/`hat_pt2ptdat`
+(+ `hat_alloc` 4→128 root) to `hat040.s` & `relink-hat.sh`.  hat_pteload's leaf
+analysis transfers directly to segkmem_mapin (same PTE low-byte format).
 
 ## Map of the docs
 - `hat-040-port-worklist.md` — the HAT-port plan (NEXT work).
