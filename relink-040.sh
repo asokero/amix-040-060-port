@@ -17,28 +17,39 @@ ENV="/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
 . "$ENV"
 mkdir -p "$HERE/build"
 
-echo "[*] assembling pstart040.s + kvm040.s"
+echo "[*] assembling pstart040.s + kvm040.s + hat040.s"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/pstart040.s" -o "$HERE/build/pstart040.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/kvm040.s"    -o "$HERE/build/kvm040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat040.s"    -o "$HERE/build/hat040.o"
 
-echo "[*] globalize sysseginit (local); weaken pstart / sysseginit"
+echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
 cp "$STOCK" "$HERE/build/unix-stage1"
-m68k-linux-gnu-objcopy --globalize-symbol sysseginit "$HERE/build/unix-stage1"
+# sysseginit, hat_pteload are REPLACED (globalize+weaken).  hat_ptalloc, hat_pt2ptdat
+# are file-LOCAL but CALLED by our hat040.o (and byte-patched in place by patch_modelb),
+# so globalize them too -- else ld -r can't bind hat040.o's refs to the kernel's local
+# defs (the crashsw/crash_sync RELA-guru lesson).
+m68k-linux-gnu-objcopy \
+	--globalize-symbol sysseginit \
+	--globalize-symbol hat_pteload \
+	--globalize-symbol hat_ptalloc \
+	--globalize-symbol hat_pt2ptdat \
+	"$HERE/build/unix-stage1"
 m68k-linux-gnu-objcopy \
 	--weaken-symbol pstart \
 	--weaken-symbol sysseginit \
 	--weaken-symbol vatosde \
 	--weaken-symbol vatopte \
+	--weaken-symbol hat_pteload \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
 echo "[*] relinking -> $OUT"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
-	"$HERE/build/pstart040.o" "$HERE/build/kvm040.o"
+	"$HERE/build/pstart040.o" "$HERE/build/kvm040.o" "$HERE/build/hat040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte; do
+for s in pstart sysseginit vatosde vatopte hat_pteload; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"

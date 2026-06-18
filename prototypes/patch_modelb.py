@@ -78,6 +78,16 @@ P = [
  # masking here is a size flip: phys = (PTE & ~page) | (va & page-1).
  (0xb77c0, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "svp:PTE page mask &-2048->-4096"),
  (0xb77c8, b"\x02\x81\x00\x00\x07\xff", b"\x02\x81\x00\x00\x0f\xff", "svp:va off &2047->4095"),
+ # ===== HAT page-table allocators: click->byte uses a 2KB shift -> 4KB =====
+ # hat_pteload itself is REPLACED by hat040.s (040 walk).  Its allocator callees
+ # are byte-patched in place (success path only; the steal/reuse paths that need
+ # structural 8->4-byte descriptor edits are not hit while memory is plentiful).
+ # Each `moveq #11,Dn` (click<<11 / addr>>11, 2KB) becomes `#12` (4KB click).
+ (0xb6a74, b"\x76\x0b", b"\x76\x0c", "hat_ptalloc:pfn<<11 (phys page base)"),
+ (0xb63d6, b"\x7a\x0b", b"\x7a\x0c", "hat_sdtalloc:pfn<<11 (free-list node)"),
+ (0xb6484, b"\x7a\x0b", b"\x7a\x0c", "hat_sdtalloc:page_get size d3<<11"),
+ (0xb6524, b"\x7a\x0b", b"\x7a\x0c", "hat_sdtalloc:pfn<<11 (new node base)"),
+ (0xb5e1c, b"\x78\x0b", b"\x78\x0c", "hat_pt2ptdat:pt>>11 (page-frame index)"),
 ]
 
 def main():
