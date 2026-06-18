@@ -200,46 +200,63 @@ Lpuarea:
 	movel	%d1,ublksde
 
 | ================= 68040 MMU enable (replaces 0xfcc..0xfe6) =================
-| The 030 build above left kuptr[0] = (u_phys_page0 | 1).  Recover u_phys and
-| build a minimal 040 tree mapping VA 0x40000000 (u-area, 2 x 4KB) to it, then
-| enable the 040 MMU.  Registers: d0/d1/a0/a1 are scratch; d2 MUST be preserved
-| (the tail passes it to mlsetup).
-	| u-area: a fresh 4KB-aligned 8KB region in .data, mapped to VA 0x40000000.
-	| We do NOT reuse kuptr[0]'s page: the 030 build allocated it 2KB-aligned,
-	| and a 68040 4KB page descriptor cannot encode a 2KB-aligned base (the HW
-	| uses only bits 31..12).  Draft 2 only needs VA 0x40000000 backed by valid
-	| zeroed RAM to clear the recursive u-area bus error; reconciling
-	| kuptr/ublksde with the real backing page is a HAT-phase (2KB->4KB) concern.
+| Build the 040 translation tree, NOW EXTENDED to cover the whole kvseg VA range
+| (0x40000000-0x7FFFFFFF, the old 030 A-entry-1 1GB) so the kernel VM (kvm_init ->
+| segkmem_mapin, once ported to 040) can fill in the kvseg/kvsegmap/kvsegu maps.
+|
+| Structure (all in mmu040_buf, .data => loader-zeroed => unused entries invalid):
+|   root040   128 x 4 = 512 B, 512-aligned.  root040[32..63] -> kptr040[k] tables.
+|   kptr040   32 pointer tables x (128 x 4 = 512 B) = 16 KB, 512-aligned.  A FLAT
+|             040 pointer-table array for root entries 32..63, addressed by
+|             (va>>18)-4096.  EXPORTED as global `kptr040`; the ported kvm_init
+|             writes 040 pointer descriptors here (NOT into st_top1: st_top1 is the
+|             030 B-table still read by sysseginit/p0init/bp_map/swapinub/segu_get,
+|             so it must stay 030-format until those are ported).
+|   uarea_pt  64 x 4 = 256 B leaf page table for the u-area (VA 0x40000000), entries
+|             0,1 -> the two u-area 4KB pages.  Hung off kptr040[0] (root32/ptr0).
+| Registers: d0=uarea040(phys), a1=root040, d3=kptr040, d6=uarea_pt; d1/a0 scratch.
+| d3-d6/a2-a3 are saved/restored by the prologue; d2 MUST be preserved (mlsetup).
 	movel	&mmu040_buf,%d0
 	addil	&4095,%d0
-	andil	&0xfffff000,%d0		| d0 = u_phys = uarea040 (4KB-aligned)
-	movel	%d0,%d1			| tables live 8KB past the u-area, 512-aligned
+	andil	&0xfffff000,%d0		| d0 = u_phys = uarea040 (4KB-aligned, 8KB)
+	movel	%d0,%d1
 	addil	&8192,%d1
 	addil	&511,%d1
 	andil	&0xfffffe00,%d1
-	movel	%d1,%a1			| a1 = root040 (512-aligned); ptr=+512 page=+1024
+	movel	%d1,%a1			| a1 = root040 = uarea040+8KB (512-aligned)
+	movel	%d1,%d3
+	addil	&512,%d3		| d3 = kptr040 = root040 + 512  (512-aligned)
+	movel	%d3,kptr040		| export the pointer-table base for kvm_init
+	movel	%d3,%d6
+	addil	&16384,%d6		| d6 = uarea_pt = kptr040 + 16KB (512 => 256-aligned)
 
-	| page040[0] = u_phys | S(0x80)|nocache(0x60)|PDT(0x01) = | 0xE1
+	| uarea_pt[0] = u_phys | S(0x80)|nocache(0x60)|PDT(0x01) = | 0xE1
+	moveal	%d6,%a0
 	movel	%d0,%d1
 	oril	&0xe1,%d1
-	movel	%d1,%a1@(1024)
-	| page040[1] = (u_phys+0x1000) | 0xE1
+	movel	%d1,%a0@
+	| uarea_pt[1] = (u_phys+0x1000) | 0xE1
 	movel	%d0,%d1
 	addil	&0x1000,%d1
 	oril	&0xe1,%d1
-	movel	%d1,%a1@(1028)
+	movel	%d1,%a0@(4)
 
-	| ptr040[0] = page040_phys | UDT(0x02)
-	movel	%a1,%d1
-	addil	&1024,%d1
+	| kptr040[0] = uarea_pt | UDT(0x02)   (root32/ptr0 -> the u-area page table)
+	moveal	%d3,%a0
+	movel	%d6,%d1
 	oril	&0x02,%d1
-	movel	%d1,%a1@(512)
+	movel	%d1,%a0@
 
-	| root040[32] = ptr040_phys | UDT(0x02)   (VA0x40000000>>25 = 32, *4 = 128)
-	movel	%a1,%d1
-	addil	&512,%d1
+	| root040[32..63] = kptr040[k] | UDT(0x02)   (k=0..31; VA 0x40000000>>25 = 32)
+	lea	%a1@(128),%a0		| a0 = &root040[32]  (32 * 4)
+	movel	%d3,%d4			| d4 = running pointer-table addr
+	moveq	&31,%d5			| 32 entries (k=0..31)
+Lkroot:
+	movel	%d4,%d1
 	oril	&0x02,%d1
-	movel	%d1,%a1@(128)
+	movel	%d1,%a0@+
+	addil	&512,%d4
+	dbf	%d5,Lkroot
 
 	| --- u-area CONSISTENCY: point kuptr[0..3] at uarea040 too ---
 	| The kernel finds the u-area's physical pages via kuptr (e.g. mlsetup /
@@ -304,16 +321,24 @@ Lpepi:
 	unlk	%fp
 	rts
 	nop
+	nop
 	nop			| pad .text to a 4-byte multiple (loader copies text+data as one block)
 
 	.data
 	.even
-| Static, zero-initialized storage for the three 040 tables.  In .data so it is
-| copied (zeroed) by the loader; lives in the identity-mapped low region so its
-| kernel address == physical address (what the table descriptors / SRP need).
-| Over-allocated by 512 so a 512-aligned base can be carved at runtime.
-| Holds (carved at runtime): a 4KB-aligned 8KB u-area, then 512-aligned 040
-| root/ptr/page tables.  Generously sized for the alignment slack.  Zero-filled
-| (in .data => copied/zeroed by the loader) so unused descriptors stay invalid.
+| kptr040: the 040 pointer-table region base (root entries 32..63, the kvseg 1GB),
+| set at runtime in the MMU-enable block above.  GLOBAL so the ported kvm_init can
+| write 040 pointer descriptors into it: slot for VA = kptr040 + ((va>>18)-4096)*4.
+	.globl	kptr040
+kptr040:
+	.long	0
+
+| Static, zero-initialized storage for the 040 tables.  In .data so it is copied
+| (zeroed) by the loader; lives in the identity-mapped low region so its kernel
+| address == physical address (what the table descriptors / SRP need).  Carved at
+| runtime into: a 4KB-aligned 8KB u-area, a 512 B root040, a 16 KB kptr040 region
+| (32 pointer tables for root 32..63), and a 256 B uarea_pt leaf table.  Zero-filled
+| so every descriptor kvm_init/segkmem have not yet written stays invalid.
+| Size: 4KB align slack + 8KB uarea + 512 root + 16KB kptr + 256 uarea_pt ~= 30 KB.
 mmu040_buf:
-	.space	16384
+	.space	32768

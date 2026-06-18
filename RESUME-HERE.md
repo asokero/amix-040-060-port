@@ -56,11 +56,19 @@ by `kvm_init` (writes kvseg pointer descriptors into `st_top1`, pstart's B-table
 `segkmem_mapin` (writes leaf PTEs into `seg->s_ptbl`) — neither calls hat_pteload.
 
 **NEXT (page_init milestone), in order:**
-1. **pstart040**: give the 040 root pointer tables for root indices 32..36+ (kvseg
-   VA 0x40000000–0x48xxxxxx) so kvm_init can fill them; make `st_top1` the 040
-   pointer table it writes into.
+1. **pstart040 — DONE.**  Extended to build the 040 root with entries 32..63 ->
+   `kptr040` (a flat 16 KB region of 32 pointer tables for the kvseg 1GB), u-area
+   mapped via `kptr040[0]` -> `uarea_pt`.  `kptr040` is EXPORTED (global, in the
+   kernel now) so kvm_init writes 040 pointer descriptors at
+   `kptr040 + ((va>>18)-4096)*4`.  st_top1 left untouched (still 030, read by
+   sysseginit/p0init/bp_map/swapinub/segu_get).  Assembles/relinks/patches/
+   reloc-validates clean, text/data contiguous.  (Boot behaviour unchanged until
+   kvm_init fills kptr040 -- entries are invalid/zeroed for now.)
 2. **kvm_init** (LOCAL → globalize+weaken): B-level build → 040 4-byte pointer descs
-   (`>>17&0x1FFF→>>18&0x7F`, `asll#3→#2`, single-long `*a0=pt<<12|2`, `<<11→<<12`).
+   written into **kptr040** (not st_top1): index `(va>>18)-4096` *4, single-long
+   `*slot = leaftable<<12 | UDT(2)`; `>>17&0x1FFF→>>18`, `asll#3→#2`, `<<11→<<12`,
+   drop the 030 limit/status template.  (Build it like hat040.s: a new object,
+   globalize+weaken kvm_init.)
 3. **segkmem_mapin** (GLOBAL → weaken): leaf edits (`>>11→>>12`, `#2048→#4096`,
    `{0:21}→{0:20}`, `andiw#-2047→#-4095`); PTE low-byte format unchanged.  +sptalloc.
 Build alongside pstart040, run `patch_pflusha_040.py`/`patch_pmmu_040.py`, test → page_init.
