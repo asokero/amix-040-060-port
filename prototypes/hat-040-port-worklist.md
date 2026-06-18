@@ -332,3 +332,34 @@ OPEN before writing kvm_init: (a) sysseginit's kptbl size/layout; (b) confirm th
 `v` arg (fp@8) and the v<<11 leaf base; (c) does kvsegu use a separate kptbl region
 or continue in the same one (the 030 code continues d1/d5 from kvsegmap's end into
 kvsegu -- mirror that).
+
+### *** RESOLVED (2026-06-18) + the milestone key is sysseginit, NOT kvm_init ***
+Confirmed the 3 items and found the real milestone-critical function:
+- `mlsetup`: `v = sysseginit(); kvm_init(v)`.  **sysseginit** (48ba2, LOCAL t) sets
+  `kptbl = v<<11` and builds the **kvseg/syssegs (0x40040000, 4MB)** pointer
+  descriptors: 64-PTE (256 B) leaves, contiguous (`d0 += 256`), 32 segments
+  (128KB each, loop `d1 += 64` while <=2047).
+- **page_init's pages[]/page_hash are sptalloc'd from `sptmap`, which mlsetup inits
+  to the 4MB syssegs region** -> they live in **kvseg (segkmem direct-map), built by
+  sysseginit + filled by segkmem_mapin**, NOT in kvsegmap.
+- **kvm_init's kvsegmap/kvsegu loops are for segmap/segu (page-cache/user windows,
+  LATER)** and write to the now-INERT st_top1 (root040 -> kptr040, never st_top1).
+  Harmless for page_init.  So **kvm_init needs NO change for the milestone** (nothing
+  reloads SRP between kvm_init entry and page_init; kas@(0x14) fix can wait).
+
+=> MILESTONE = **sysseginit + segkmem_mapin** (both ported), kvm_init UNCHANGED.
+
+### sysseginit Model A port (the milestone key)
+LOCAL t -> globalize+weaken.  Build 040 pointer descriptors into **kptr040** (not
+st_top1), single long `*slot = leaf | UDT(2)`:
+- slot = `&kptr040[(syssegs>>18) - 4096]` (= kptr040+4, flat index 1; u-area is flat 0)
+- leaf base `d0 = v<<11` (=kptbl); leaf size 256 B (64 PTEs) UNCHANGED; `d0 += 256`/entry
+- Model A granularity: a pointer entry now covers 256KB (64 x 4KB), so 16 entries for
+  the 4MB region: loop `d1 += 128` (was 64) while `<= 2047` -> 16 iters (was 32).
+- DROP the 8-byte template build (48bae-48bc4); descriptor is one long.
+- tail: `kptbl = v<<11`; return `(leaf_end + 2047)>>11`.
+Consistency with segkmem_mapin (Model A, writes kptbl[(va-0x40040000)>>12]*4):
+kptr040[1+P] -> kptbl + P*256 ; PTE(va) = kptbl + P*256 + ((va>>12)&0x3F)*4 =
+kptbl + ((va-base)>>12)*4.  OK.  (kvseg s_base = syssegs = 0x40040000; s_ptbl = kptbl.)
+RISK to watch: the kptbl leaf memory (at v<<11) must be ZEROED before use (invalid
+initial PTEs) -- the 030 path relies on it; verify if the test faults oddly.

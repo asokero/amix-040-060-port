@@ -135,6 +135,56 @@ Lsm_done:
 	unlk	%fp
 	rts
 
+| ============================================================================
+| sysseginit  (orig 0xa... 0x48ba2, ~140 B) -- build the kvseg/syssegs (system
+| segment, VA 0x40040000, 4 MB) page-table mappings and set kptbl = v<<11.  THE
+| milestone-critical function: page_init's pages[]/page_hash are sptalloc'd in this
+| kvseg region, so once sysseginit (pointer descs) + segkmem_mapin (leaf PTEs) are
+| ported, page_init can write pages[].  Arg fp@8 = v (leaf-base click).  Returns
+| (in a0/d0) the click just past the leaf-table area (mlsetup passes it to kvm_init).
+|
+| Model A port: write 040 pointer descriptors into kptr040 (NOT st_top1 -- st_top1
+| stays 030 for sysseginit's many other readers and is inert on 040).  A 040 pointer
+| entry covers 256 KB (64 x 4KB), so the 4 MB region needs 16 entries (was 32 x
+| 128KB); leaf tables stay 64-PTE/256 B, contiguous.  Drop the 8-byte descriptor
+| template (single 4-byte 040 descriptor).
+| ============================================================================
+	.globl	sysseginit
+sysseginit:
+	linkw	%fp,&-8
+	moveml	%d2-%d3,%sp@-
+	movel	%fp@(8),%d2		| v = leaf-base click
+	| 040 pointer slot for syssegs: &kptr040[(syssegs>>18) - 4096]
+	movel	&syssegs,%d0
+	moveq	&18,%d3
+	lsrl	%d3,%d0
+	subil	&4096,%d0		| flat pointer index (= 1 for 0x40040000)
+	asll	&2,%d0			| *4 (4-byte descriptor)
+	moveal	%d0,%a0
+	addal	kptr040,%a0		| a0 = &kptr040[flat]
+	movel	%d2,%d0
+	moveq	&11,%d3
+	asll	%d3,%d0			| d0 = v<<11 = leaf base (kptbl)
+	clrl	%d1			| click counter
+Lss_loop:
+	movel	%d0,%d3
+	oril	&0x02,%d3		| leaf | UDT(2 resident)
+	movel	%d3,%a0@		| *kptr040_slot = ...
+	addil	&256,%d0		| next leaf table (64 PTEs)
+	addqw	&4,%a0			| next pointer slot
+	addil	&128,%d1		| Model A: 128 clicks / 256KB pointer entry (030: 64/128KB)
+	cmpil	&2047,%d1
+	ble	Lss_loop		| 16 iterations (4 MB / 256 KB)
+	moveq	&11,%d3
+	asll	%d3,%d2			| d2 = v<<11
+	movel	%d2,kptbl		| kptbl = v<<11 (leaf base = seg->s_ptbl)
+	addil	&2047,%d0
+	lsrl	%d3,%d0			| d0 = end click past the leaf area
+	moveml	%fp@(-16),%d2-%d3
+	moveal	%d0,%a0
+	unlk	%fp
+	rts
+
 	.data
 	.even
 Lsmsg0:

@@ -65,6 +65,16 @@ page_init MILESTONE PATH").  The kvseg maps the 040 MMU walks at page_init are b
 by `kvm_init` (writes kvseg pointer descriptors into `st_top1`, pstart's B-table) +
 `segkmem_mapin` (writes leaf PTEs into `seg->s_ptbl`) — neither calls hat_pteload.
 
+**BUILD READY TO TEST (2026-06-18):** `sh relink-040.sh` -> `build/unix-040` combines
+pstart040 (kvseg scaffold) + kvm040 (sysseginit + segkmem_mapin), patches PMMU, 0
+reloc complaints.  This should advance past the page_init+0x4a bus error IF the kvseg
+map is correct.  **Boot it on 040 and read the next panic pc.**  Key insight from the
+trace: the milestone needs **sysseginit** (builds kvseg pointer descs into kptr040)
++ **segkmem_mapin** (leaf PTEs) -- NOT kvm_init (its loops feed segmap/segu, used
+later, and write to the inert st_top1).  Both ported under Model A (2KB clicks paired
+into 4KB pages); consistent (kptr040[(va>>18)-4096] -> kptbl+P*256; segkmem writes
+kptbl[(va-0x40040000)>>12]).
+
 **NEXT (page_init milestone), in order:**
 1. **pstart040 — DONE.**  Extended to build the 040 root with entries 32..63 ->
    `kptr040` (a flat 16 KB region of 32 pointer tables for the kvseg 1GB), u-area
