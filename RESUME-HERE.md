@@ -65,7 +65,24 @@ page_init MILESTONE PATH").  The kvseg maps the 040 MMU walks at page_init are b
 by `kvm_init` (writes kvseg pointer descriptors into `st_top1`, pstart's B-table) +
 `segkmem_mapin` (writes leaf PTEs into `seg->s_ptbl`) — neither calls hat_pteload.
 
-**MODEL B Tier-0 BUILD READY TO TEST (2026-06-18):** `sh relink-040.sh` ->
+**MODEL B Tier-0 PASSED (2026-06-18 test):** got PAST kmem_allocspool -- the bus
+error is gone, now a CLEAN panic "No space for mapping files" at the kvsegmap/segmap
+setup (kvm_init 48ef8 `seg_alloc(kas, kvsegmap, smsegs<<17)` returns 0).  Model B
+4KB page frame WORKS for the allocator.  NEXT FRONTIER (Tier-1 segmap) -- add to
+patch_modelb.py:
+- **seg_alloc** (b2820) page-size rounding: b2832 #-2048->#-4096, b283e #2047->#4095,
+  b2844 #-2048->#-4096.
+- **kvm_init segmap size** 48ee6 `moveq #17`->`#18` (segment 128KB->256KB; smsegs is
+  halved under B so <<18 restores the 030-equiv byte size).  Same for kvsegu (48f58).
+- **seg_attach** (b28f0): check its page-size sites (seg_alloc fails via valid_va_range
+  OR seg_attach<0 -- pin down which; seg_attach actually checks the VA/seg list).
+- The kvm_init kvsegmap/kvsegu LOOPS (48d0c/48dc0) were left inert (write to st_top1);
+  once segmap actually maps kvsegmap they likely need the kptr040 + Model B treatment
+  too (like sysseginit) -- but seg_alloc/seg_attach (struct setup) fails BEFORE any
+  mapping, so fix those first.
+Then rebuild + retest.
+
+**MODEL B Tier-0 BUILD (2026-06-18):** `sh relink-040.sh` ->
 `build/unix-040`.  Model A got PAST page_init but hit its wall at the kmem allocator
 (page_get returns physically scattered 2KB clicks -> can't be paired into 4KB pages).
 Switched to **Model B (4KB page frame)**: each click IS a 4KB page, so scattered
