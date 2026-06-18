@@ -128,7 +128,11 @@ Lsm_adv:
 	addqw	&4,%a3			| next PTE (4-byte)
 	addil	&4096,%d2		| Model A: addr += 4KB (030: #2048)
 	addil	&-4096,%d3		| Model A: len -= 4KB (030: #-2048)
-	bne	Lsm_loop
+	bgt	Lsm_loop		| Model A: stop on len<=0, not ==0 (030 used #-2048
+					| so len was a 2KB multiple; with the 4KB step an
+					| odd-click len would never hit exactly 0 -> the
+					| loop ran away off the end of RAM (Gary timeout).
+					| A final partial 4KB page over-maps <=2KB (harmless).
 Lsm_done:
 	moveml	%fp@(-40),%d2-%d6/%a2-%a4
 	moveal	%d0,%a0
