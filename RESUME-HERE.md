@@ -65,25 +65,30 @@ page_init MILESTONE PATH").  The kvseg maps the 040 MMU walks at page_init are b
 by `kvm_init` (writes kvseg pointer descriptors into `st_top1`, pstart's B-table) +
 `segkmem_mapin` (writes leaf PTEs into `seg->s_ptbl`) — neither calls hat_pteload.
 
-**TIER-1 STATUS (2026-06-18): "No space for mapping files" PERSISTS after adding the
-Tier-1 sites (seg_alloc rounding + kvsegmap/kvsegu <<18).**  So those weren't the
-cause.  REFINED DIAGNOSIS: the panic is kvm_init LC%2 = `seg_alloc(kas, kvsegmap)`
-returns 0.  Static analysis CANNOT explain a real seg-list overlap (MAINSTORE/
-VSIZOFMEM set at 0x191xx, untouched by Model B; kvsegmap 0x40440000 is adjacent to
-kvseg [..0x40440000), no overlap; page_init passing proves v/kptbl/smsegs are
-consistent).  BUT seg_alloc calls `kmem_fast_alloc` for the seg struct and does NOT
-check its return -- if kmem_fast_alloc returns 0 (pool EMPTY), the struct ptr is
-null, seg_attach->as_addseg reads garbage and returns -1 -> seg_alloc returns 0 ->
-"No space".  So the LIKELY root cause is **kmem_fast_alloc returning 0 = kmem's pool
-is empty/undersized under Model B** (we passed the BUS ERROR in kmem_allocspool, but
-kmem may not be functionally initialized -- e.g. its pool size depends on a halved
-maxclick, or kmem_allocbpool/the free-list count is wrong).
-**NEXT: investigate kmem.** Check kmem_allocspool/kmem_allocbpool pool SIZING (does it
-derive from maxclick/page count?  it had no page-size *shift* sites, but the byte
-size it sptallocs may be maxclick-derived -> halved -> too small/zero).  Trace
-kmem_fast_alloc and confirm it returns 0 here (runtime: a debug cmn_err in a kvm_init
-override dumping smsegs / the kmem free-list head, OR the emulator debugger).  Then
-fix the kmem pool sizing for Model B.
+**CORRECTED DIAGNOSIS + FIX (2026-06-18 later): the kmem/seg_alloc/valid_usr_range
+theory above was WRONG -- it misidentified the panic's LC label.**  Disassembly of
+kvm_init's .data string pool (0x6700..) shows the six messages in order:
+LC%0="No space for mapping files", LC%1="...u areas", LC%2="cannot allocate segkmap",
+LC%3="segmap_create segkmap", LC%4="cannot allocate segu", LC%5="segu_create segu".
+So the reported **"No space for mapping files" = LC%0**, used at **0x48cc0 -- the
+`smsegs <= 0` check**, NOT the kvsegmap seg_alloc (that would print "cannot allocate
+segkmap").  `smsegs = maxclick>>6 - (v+63)>>6` (0x48ca4..0x48cb4).
+ROOT CAUSE: **pstart040 passed `v` (d2) to mlsetup as a 2KB-click high-water mark**
+(its 030 table build computes d2 = (st_top1+12287)>>11, i.e. `lsrl #11`).  Under Model
+B every downstream click consumer is 4KB: maxclick = memsize>>12 (halved, patched),
+mlsetup's bzero does v<<12, sysseginit does v<<12, kvm_init's smsegs uses maxclick &
+v together.  With v in 2KB clicks but maxclick in 4KB clicks, v is ~2x too big ->
+smsegs collapses to <=0 -> panic.
+**FIX APPLIED (prototypes/pstart040.s, tail before `jsr mlsetup`):** `addql &1,%d2 ;
+lsrl &1,%d2` -- convert v to 4KB clicks (round up) so it matches maxclick.  d2 is dead
+after mlsetup (Lpepi restores it from the saved-reg frame).  +4 bytes, .text stays
+4-aligned, relink clean (0 complaints).  This also makes smsegs ~= half the 030 value,
+which is exactly why the Tier-1 `<<18` kvsegmap/kvsegu window patches are correct
+(half the segments x double the per-seg bytes = same window).  Built: `sh relink-040.sh`.
+**NEXT: BOOT build/unix-040 on 040 and read the panic pc.**  Expect to pass the smsegs
+check (0x48cc0) and the susegs check (0x48d88, also v-derived -- should now pass too),
+then reach the kvsegmap/kvsegu seg_alloc + segmap_create/segu_create (LC%2..LC%5) or
+advance into the rest of mlsetup (dispinit/hrtinit/itinit/p0init/pid_init) and main.
 
 **MODEL B Tier-0 PASSED (2026-06-18 earlier test):** got PAST kmem_allocspool -- the bus
 error is gone, now a CLEAN panic "No space for mapping files" at the kvsegmap/segmap

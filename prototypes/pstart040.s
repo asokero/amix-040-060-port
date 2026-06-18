@@ -305,8 +305,17 @@ Lkroot:
 	.word	0x4e7b,0x0003		| movec %d0,%tc  (E=1, 4KB pages)
 | =========================================================================
 
-| ---- 0xfe6: tail (verbatim) ----
+| ---- 0xfe6: tail (verbatim, except the Model B v-halving below) ----
 	jsr	vstart
+	| MODEL B: d2 is the bootstrap high-water mark in 2KB clicks (the 030 table
+	| build computes it with `lsrl #11`).  Under Model B every downstream click
+	| consumer is 4KB (maxclick = memsize>>12, sysseginit does v<<12, kvm_init's
+	| smsegs = maxclick>>6 - (v+63)>>6).  Convert v to 4KB clicks (round up) so it
+	| matches maxclick; otherwise v is ~2x too big and smsegs collapses to <=0
+	| -> panic "No space for mapping files".  d2 is dead after this (Lpepi restores
+	| it from the saved-reg frame), so clobber it in place.
+	addql	&1,%d2
+	lsrl	&1,%d2
 	movel	%d2,%sp@-
 	jsr	mlsetup
 	moveq	&95,%d0
