@@ -1,75 +1,80 @@
-# Phase 3 — HAT / VM layer 68040 port: work list
+# Phase 3 — HAT / VM layer 68040 port: PLAN
 
-Status: **NEXT BLOCKER, confirmed 2026-06-18.** Draft 2 (`pstart040.s`) got the
-kernel past `pstart` through `vstart`/`mlsetup` into early init + display setup
-(the u-area bus error is gone).  It then **hangs in `k_trap` (recursive trap)** —
-the kernel's VM/HAT layer executes **68030 PMMU instructions that are illegal on
-the 68040**, so the first VM op in early init traps, and the trap handler faults
-again → infinite loop (PC stuck at `k_trap+2`, blitter left pending).
+Status: IN PROGRESS (2026-06-18).  pstart040 works (040 bootstrap paging);
+visibility achieved (clean kernel panics).  Stub-&-map confirmed the chain:
+pstart040 ✓ → ptest (stubbed) → **page_init bus-errors** because the kernel's
+HAT builds 030 2KB-format page tables that the 040 MMU (set up by pstart040)
+cannot use → kvseg unmapped.  This is the core 2KB→4KB page-table-format rework.
 
-This is the design doc's predicted "page-size ripple / HAT" blocker
-(`pstart-040-design.md` §5).  It is the **main body of the 040 port** — bigger
-than pstart, because it's not only an instruction swap but a page-table FORMAT
-change (030 3-level 2KB long-descriptors → 040 3-level 4KB 4-byte-descriptors).
+## The exact format change (from mmu-format-030-to-040.md, verified)
+| | 030 (now) | 040 (target) |
+|-|-----------|--------------|
+| Page size | 2 KB (>>11, +2047) | 4 KB (>>12, +4095) |
+| VA split | A=va>>30&3, B=va>>17&0x1FFF, C=va>>11&0x3F | A=va>>25&0x7F, B=va>>18&0x7F, C=va>>12&0x3F |
+| Table desc | 8 bytes (stride ×8) | 4 bytes (stride ×4) |
+| Leaf PTE | 4 bytes, 21-bit PFN | 4 bytes, 20-bit PFN |
+| Root | 4-entry A-table, pmove desc | 128-entry root, movec phys addr (done in pstart040) |
 
-## Inventory: every 030 PMMU instruction (18 sites, 10 functions)
-(from `m68k-linux-gnu-objdump -d -m m68k:68030 build/unix-040`; excludes the dead
-`pstart_030`.)
+## The functions to port (~26, ~15 KB, BINARY-ONLY — no source in the tar)
+Boot-critical FIRST (what kvm_init/page_init/early VM need), then process mgmt:
+| Function | size | role | priority |
+|----------|------|------|----------|
+| `hat_pteload` | 710 | **the central PTE loader** — builds one mapping | 1 (core) |
+| `hat_ptalloc` | 1126 | allocate a page table | 1 |
+| `hat_sdtalloc`/`hat_sdtfree` | 668/696 | segment-descriptor-table alloc/free | 1 |
+| `hat_growsdt` | 562 | grow the SDT | 1 |
+| `hat_init` | 64 | HAT init (builds kernel tables) | 1 |
+| `hat_pt2ptdat`, `hat_getkpfnum`, `hat_vtokp_prot` | 292/28/134 | walk/lookup helpers | 1 |
+| `hat_map` | 1316 | map a VA range (+ pmove crp) | 2 |
+| `hat_memload`/`hat_devload`/`hat_pteload` callers | | | 2 |
+| `hat_unload`/`hat_pageunload`/`hat_chgprot`/`hat_pagesync` | 820/318/478/200 | unmap/protect | 2 |
+| `hat_asload` (+pmove crp), `swtch` (+pmove crp), `hat_exec`, `hat_dup` | 64/578/1316/1974 | address-space load / context switch / fork | 3 |
+| `hat_swapin`/`hat_swapout`/`hat_alloc`/`hat_free`/`hat_unlock`/`hat_newseg` | | | 3 |
 
-| Function    | off    | 030 instruction          | role |
-|-------------|--------|--------------------------|------|
-| `_start`    | 0x38   | `pflusha` (f000 2400)    | kernel entry TLB flush |
-| `resume`    | 0xb2   | `pflusha`                | scheduler resume |
-| `ptest`     | 0x3ac  | `ptestr #1,%a0@,7`       | page-table probe |
-| `ptest`     | 0x3b0  | `pmove %psr,%sp@(4)`     | read MMU status |
-| `ptest0`    | 0x3c4  | `ptestr #1,%a0@,0`       | page-table probe |
-| `ptest0`    | 0x3c8  | `pmove %psr,%sp@(4)`     | read MMU status |
-| `nomsg`     | 0x18ed8| `pmove %a0@,%tc`         | (alt MMU enable path) |
-| `nomsg`     | 0x18ee2| `pmove %a0@,%crp`        | |
-| `nomsg`     | 0x18ee6| `pmove %a0@,%srp`        | |
-| `hat_map`   | 0xb58c6| `pmove %a1@,%crp`        | HAT: load addr-space root |
-| `hat_map`   | 0xb58ca| `pflusha`                | |
-| `hat_exec`  | 0xb70ea| `pmove %a1@,%crp`        | HAT exec |
-| `hat_exec`  | 0xb70ee| `pflusha`                | |
-| `hat_asload`| 0xb7472| `pmove %a1@,%crp`        | HAT address-space load |
-| `hat_asload`| 0xb7476| `pflusha`                | |
-| `flushmmu`  | 0xb78d0| `pflusha`                | TLB flush |
-| `swtch`     | 0xb923c| `pmove %a1@,%crp`        | context switch: load root |
-| `swtch`     | 0xb9240| `pflusha`                | |
+## KEY INSIGHT — the change splits into two kinds of edit
+**(a) Same-size byte-patches** (~171 sites total across the HAT — most of the work):
+the index/stride/page-size math is immediate-only tweaks, same instruction size:
+- `moveq #30,Dn` (A: va>>30) → `moveq #25,Dn`   (7?1e → 7?19)
+- `moveq #17,Dn` (B: va>>17) → `moveq #18,Dn`   (7?11 → 7?12)
+- `andil #8191,Dn` (B mask 0x1FFF) → `andil #0x7F,Dn`
+- `moveq #11,Dn` / `lsrl #11` / `#2047` (2KB) → `#12`/`#12`/`#4095`
+- `asll #3,Dn` (×8 table stride) → `asll #2,Dn`   (e?80 → e?80 w/ count 2)
+- leaf PFN field widths (bfextu/bfins widths 21→20, etc.)
+A context-checked patch script (like patch_pmmu_040.py) can do these in place.
+CAUTION: these immediates also occur OUTSIDE the MMU context (loop counts, etc.)
+— each site MUST be verified in its descriptor/VA-decode context, never blind-patched.
 
-## Per-instruction 040 translation
-1. **`pflusha`** 030 `f000 2400` (4 B) → 040 `f518` + `nop`(`4e71`) (4 B).
-   Clean same-size in-place swap.  (8 sites.)
-2. **`pmove %psr,<ea>`** (ptest result) `f02f 6200 ...` → 040 reads MMU status
-   differently; the 040 `ptestr`/`ptestw` set the SR CCR + write the result via
-   the 040 MMUSR/`movec`.  Needs a small rewrite (ptest/ptest0).
-3. **`ptestr #1,%a0@,N`** `f010 9e11` → 040 `ptestr (%a0)` (different encoding,
-   uses current SFC/DFC) OR a software table walk.  (2 sites.)
-4. **`pmove %a1@,%crp`** `f011 4c00` (load 8-byte CPU root) → 040 `movec Dn,%urp`
-   (+`%srp`), 4-byte root.  Requires loading the 4-byte phys root from the
-   descriptor first → NOT a same-size swap; needs extra instructions / a thunk.
-   (4 sites: hat_map/hat_exec/hat_asload/swtch.)
-5. **`pmove %a0@,%tc/%crp/%srp`** (nomsg) → same as pstart040's 040 enable.
+**(b) Structural descriptor changes** (per-function, harder): the 030 reads/writes
+table descriptors as **8 bytes** (long0 = limit/status/DT, long1 = addr at +4) e.g.
+in hat_pteload:
+```
+  b4de2: a3 = desc.addr (long1)
+  b4dea: asll #3,d0 ; a3 += Bidx*8        <- ×8 stride
+  b4dee: bfextu a3@(3),6,2 -> DT           <- DT at byte+3
+  b4e50: movew d3,a0@(4)  ; limit at +4    <- 8-byte layout
+  b4e58: moveb #1,a0@(6) ; b4e62: clrb a0@(7) ; b4e66: movel a4,a3@(4) ; addr at +4
+```
+On 040 every descriptor is **4 bytes**: `[phys/table addr (upper) | flags | UDT/PDT(2)]`.
+So the dual-long read/write collapses to a single 4-byte access, the +4/+6/+7 field
+offsets vanish, and the bitfield builds move to the 040 4-byte field layout
+(table: addr&~0xFF | UDT; page: phys&~0xFFF | CM | M | U | W | S | PDT).
+These sequences need transcription/rewrite, not just an immediate swap.
 
-## The harder half — page-table FORMAT
-The instruction swap is necessary but NOT sufficient.  The descriptors these
-instructions load/point at are **030 long-format 2KB-page tables**.  A 68040
-table walker reads **4-byte descriptors / 4KB pages / fixed 7/7/6 split**.  So
-everywhere the kernel BUILDS or WALKS page tables (the HAT layer, `ptest`, the
-PTE macros — `>>11`, `& 2047`, segment/page table strides) must move to 4KB/040
-format.  This is the "2KB→4KB ripple".  `pstart040` already builds an 040 tree
-for the bootstrap u-area; the HAT must do the same for every mapping.
+## Approach (incremental, validated by the clean-panic visibility)
+1. Port `hat_pteload` first (the core).  Relink-replace it (a `hat040.s` linked via
+   `--weaken-symbol hat_pteload`, same mechanism that finally worked for pstart).
+   Transcribe verbatim, then apply (a)+(b) to its descriptor/VA-decode sites.
+2. Port the allocators it calls (`hat_ptalloc`, `hat_sdtalloc`, `hat_growsdt`) and
+   `hat_init` → kvseg maps → `page_init` works → advance.
+3. Continue function-by-function as each surfaces as a clean panic.
 
-## Strategy options (to decide)
-- **A. Relink-replace each HAT function** (like pstart040): transcribe verbatim,
-  swap the MMU section + page-table math, relink.  Clean but ~10 functions.
-- **B. In-place byte-patch** the same-size cases (pflusha) + relink-replace the
-  format-sensitive ones (hat_map/swtch/ptest).
-- ~~**C. Source-level**~~: NOT available — checked `amix-sources.tar` (157 .c/.s
-  under sys/); it has NO hat.c / vm_machdep / mmu / locore.  The HAT/VM machdep
-  layer is binary-only (like `pstart` was).  So we must transcribe+relink (A/B).
+## HONEST SCOPE
+This is the biggest single piece of the project: ~15 KB of intricate binary MMU
+code, ~171 same-size sites + structural descriptor rewrites across ~26 functions,
+no source, each error = silent table corruption.  Multi-session.  pstart040 (one
+700 B function) is the proof the method works; the HAT is ~20× that.  NetBSD
+`pmap_motorola.c` / `pte.h` are the cleanest reference for the 030-long ↔ 040-4-byte
+split (mmu-format doc §ref).
 
-NOTE the kernel reached early init, so the FIRST offending call is likely
-`flushmmu` or a `hat_*`/`swtch` from `mlsetup`.  Patching just `pflusha` won't
-reach multiuser (the `pmove %crp` sites still trap) but may advance the hang
-point and is a cheap probe.
+Tooling ready: relink via `--weaken-symbol` (relink-pstart.sh pattern),
+`check_relink_relocs.py` (validate relocs), clean panics for per-function verify.
