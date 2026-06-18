@@ -65,7 +65,27 @@ page_init MILESTONE PATH").  The kvseg maps the 040 MMU walks at page_init are b
 by `kvm_init` (writes kvseg pointer descriptors into `st_top1`, pstart's B-table) +
 `segkmem_mapin` (writes leaf PTEs into `seg->s_ptbl`) — neither calls hat_pteload.
 
-**MODEL B Tier-0 PASSED (2026-06-18 test):** got PAST kmem_allocspool -- the bus
+**TIER-1 STATUS (2026-06-18): "No space for mapping files" PERSISTS after adding the
+Tier-1 sites (seg_alloc rounding + kvsegmap/kvsegu <<18).**  So those weren't the
+cause.  REFINED DIAGNOSIS: the panic is kvm_init LC%2 = `seg_alloc(kas, kvsegmap)`
+returns 0.  Static analysis CANNOT explain a real seg-list overlap (MAINSTORE/
+VSIZOFMEM set at 0x191xx, untouched by Model B; kvsegmap 0x40440000 is adjacent to
+kvseg [..0x40440000), no overlap; page_init passing proves v/kptbl/smsegs are
+consistent).  BUT seg_alloc calls `kmem_fast_alloc` for the seg struct and does NOT
+check its return -- if kmem_fast_alloc returns 0 (pool EMPTY), the struct ptr is
+null, seg_attach->as_addseg reads garbage and returns -1 -> seg_alloc returns 0 ->
+"No space".  So the LIKELY root cause is **kmem_fast_alloc returning 0 = kmem's pool
+is empty/undersized under Model B** (we passed the BUS ERROR in kmem_allocspool, but
+kmem may not be functionally initialized -- e.g. its pool size depends on a halved
+maxclick, or kmem_allocbpool/the free-list count is wrong).
+**NEXT: investigate kmem.** Check kmem_allocspool/kmem_allocbpool pool SIZING (does it
+derive from maxclick/page count?  it had no page-size *shift* sites, but the byte
+size it sptallocs may be maxclick-derived -> halved -> too small/zero).  Trace
+kmem_fast_alloc and confirm it returns 0 here (runtime: a debug cmn_err in a kvm_init
+override dumping smsegs / the kmem free-list head, OR the emulator debugger).  Then
+fix the kmem pool sizing for Model B.
+
+**MODEL B Tier-0 PASSED (2026-06-18 earlier test):** got PAST kmem_allocspool -- the bus
 error is gone, now a CLEAN panic "No space for mapping files" at the kvsegmap/segmap
 setup (kvm_init 48ef8 `seg_alloc(kas, kvsegmap, smsegs<<17)` returns 0).  Model B
 4KB page frame WORKS for the allocator.  NEXT FRONTIER (Tier-1 segmap) -- add to
