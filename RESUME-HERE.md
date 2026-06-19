@@ -7,7 +7,16 @@ kvm_init -> svirtophys -> **fork1/procdup (first process, HAT page tables) -> ma
 pt2ptdat byte-patches + kas@0x14=kroot040) WORKED -- procdup's child-u-area bcopy no
 longer faults.  The hard part (the whole 040 virtual-memory bring-up) is DONE.
 
-## NOW AT: root filesystem mount (DEVICE/FS domain, not MMU)
+## TWO LINES (2026-06-19):
+- **REAL-HARDWARE line: PAUSED** (dev away from the A3000 a couple days).  On real 040 the
+  VM port + 040 page-table walk are verified working; it hits ONE localized blocker -- a
+  deferred bus error in p0init's u-area-PTE loop (a real-silicon write-buffer/cache effect
+  the emulators don't model).  Full writeup + open hypotheses + how to resume:
+  **`RESUME-HERE-040-HARDWARE.md`**.  (Emulators do NOT reproduce it -- they pass p0init.)
+- **EMULATOR line: ACTIVE -- the SCSI / root-mount problem (below).**  This is what to work
+  on now (laptop, no real HW needed).
+
+## ACTIVE: root filesystem mount (DEVICE/FS domain, not MMU) -- the SCSI problem
 `s5mountroot VOP_OPEN error 6` (ENXIO) -> `nfs_mountroot` fallback -> PANIC
 `vfs_mountroot: cannot mount root: errno 89`.  The root device (`rootdev` = 0x00480016
 = major 18 / minor 22, a SCSI disk) open returned ENXIO = device not configured/found.

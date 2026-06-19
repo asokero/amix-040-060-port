@@ -293,17 +293,15 @@ Lkroot:
 	.word	0x4e7b,0x0004		| movec %d0,%itt0  (0-1GB code, WT-cacheable)
 	clrl	%d0
 	.word	0x4e7b,0x0005		| movec %d0,%itt1  (unused)
-	movel	&0x003fc040,%d0
-	.word	0x4e7b,0x0006		| movec %d0,%dtt0  (0-1GB data, cache-inhibited
-	|                                  SERIALIZED, CM=0x40).  REAL-040 FIX: 0x60
-	|                                  (nonserialized) buffers writes, so the MMU
-	|                                  hardware table walk reads STALE page tables
-	|                                  (written by segkmem/p0init) -> garbage phys ->
-	|                                  bus error (deferred, reported at a register-move
-	|                                  pc).  Emulators don't buffer so 0x60 "worked".
-	movel	&0x807fc040,%d0
-	.word	0x4e7b,0x0007		| movec %d0,%dtt1  (0x80000000+ I/O, cache-inhib
-	|                                  SERIALIZED -- I/O must be ordered anyway)
+	movel	&0x003fc060,%d0
+	.word	0x4e7b,0x0006		| movec %d0,%dtt0  (0-1GB data, cache-inhibited)
+	movel	&0x807fc060,%d0
+	.word	0x4e7b,0x0007		| movec %d0,%dtt1  (0x80000000+ I/O, cache-inhib)
+	| NOTE: serializing these (CM 0x60->0x40) was TRIED as a real-040 fix for the
+	| p0init deferred-write bus error -- it did NOT help (the faulting STORE writes
+	| proc[0] in region 1, which is page-table-mapped, so its CM comes from the leaf
+	| PTE, not DTT0).  Reverted to 0x60 (no-op on emulators).  See
+	| RESUME-HERE-040-HARDWARE.md for the open real-HW hypotheses.
 
 	| push table writes to RAM, flush ATC, enable paging (4KB)
 	.word	0xf4f8			| cpusha bc
