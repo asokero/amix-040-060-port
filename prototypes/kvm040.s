@@ -82,22 +82,6 @@ Lss_loop:
 	.globl	vatosde
 vatosde:
 	linkw	%fp,&0
-	| ---- DEBUG (real-HW localization, round 2): result of round 1 = the marker DID
-	| print on real 040 (va=40000000), so p0init's svirtophys WORKS; the bus error is
-	| LATER in p0init's u-area-PTE loop (and is cache/timing-sensitive).  p0init calls
-	| svirtophys for each u-area click (va = 0x40000000, 0x40000800, 0x40001000,
-	| 0x40001800).  Print EACH u-area call (va < 0x40002000) -- skips the proc[0] flood
-	| (va=0x400Bxxxx) -- so we see how many loop iterations reach svirtophys before the
-	| fault.  cmn_err is safe (curproc set in p0init before the loop).
-	movel	%fp@(8),%d0
-	cmpil	&0x40002000,%d0
-	bcc	Lvts_nodbg		| va >= 0x40002000 -> skip (not a u-area click)
-	movel	%fp@(8),%sp@-
-	pea	Ldbg_vts
-	pea	1
-	jsr	cmn_err
-	addaw	&12,%sp
-Lvts_nodbg:
 	movel	%fp@(8),%d0
 	moveq	&18,%d1
 	lsrl	%d1,%d0			| va>>18
@@ -133,10 +117,3 @@ vatopte:
 	rts
 	nop			| pad .text to a 4-byte multiple (loader copies text+data as one block)
 
-	.data
-	.even
-Ldbg_done:
-	.byte	0
-	.even
-Ldbg_vts:
-	.asciz	"DBG vatosde va=%x\n"
