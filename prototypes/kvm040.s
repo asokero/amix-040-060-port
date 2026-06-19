@@ -82,15 +82,20 @@ Lss_loop:
 	.globl	vatosde
 vatosde:
 	linkw	%fp,&0
-	| ---- DEBUG (real-HW localization): print va on entry.  If this prints on real
-	| 040, p0init's svirtophys stack-push WORKED and we reached vatosde -> the fault
-	| is in the 040 table walk / svirtophys.  If it does NOT print, the fault is the
-	| stack push itself (sp/stack).  cmn_err(1=CE_CONT, fmt, va).  Remove after debug.
+	| ---- DEBUG (real-HW localization): print va ONCE on the first call.  vatosde is
+	| first reached from p0init's svirtophys(u), AFTER p0init sets curproc -- so cmn_err
+	| is safe here (unlike a pre-mlsetup call).  If this prints on real 040, p0init's
+	| svirtophys stack-push WORKED -> the fault is in the 040 table walk.  If it never
+	| prints, the stack push faulted.  One-shot (Ldbg_done) so it doesn't flood.
+	tstb	Ldbg_done
+	bne	Lvts_nodbg
+	st	Ldbg_done
 	movel	%fp@(8),%sp@-
 	pea	Ldbg_vts
 	pea	1
 	jsr	cmn_err
 	addaw	&12,%sp
+Lvts_nodbg:
 	movel	%fp@(8),%d0
 	moveq	&18,%d1
 	lsrl	%d1,%d0			| va>>18
@@ -127,6 +132,9 @@ vatopte:
 	nop			| pad .text to a 4-byte multiple (loader copies text+data as one block)
 
 	.data
+	.even
+Ldbg_done:
+	.byte	0
 	.even
 Ldbg_vts:
 	.asciz	"DBG vatosde va=%x\n"

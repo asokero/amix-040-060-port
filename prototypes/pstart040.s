@@ -316,15 +316,6 @@ Lkroot:
 	| it from the saved-reg frame), so clobber it in place.
 	addql	&1,%d2
 	lsrl	&1,%d2
-	| ---- DEBUG (real-HW localization): print v just before mlsetup.  cmn_err is
-	| callee-save for d2 (the v we pass next).  Confirms we reach mlsetup + the v value
-	| on real HW.  Pair with the vatosde marker (which fires if p0init's svirtophys
-	| stack-push works).  Remove after debug.
-	movel	%d2,%sp@-
-	pea	Ldbg_mls
-	pea	1
-	jsr	cmn_err
-	addaw	&12,%sp
 	movel	%d2,%sp@-
 	jsr	mlsetup
 	| 040 kernel-hat root: kvm_init set kas@(0x14) = cpuroot+4 (the INERT 030 root).
@@ -366,9 +357,6 @@ kptr040:
 	.globl	kroot040
 kroot040:
 	.long	0
-Ldbg_mls:
-	.asciz	"DBG pre-mlsetup v=%x\n"
-	.even
 
 | Static, zero-initialized storage for the 040 tables.  In .data so it is copied
 | (zeroed) by the loader; lives in the identity-mapped low region so its kernel
