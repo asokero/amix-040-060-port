@@ -1,5 +1,14 @@
 # Project Plan — 68040 (then 68060) support for Amiga Unix
 
+## ★ CURRENT STATUS (2026-06-22) — Phase 1 DONE, Phase 2 (single-user) in progress
+The 040 kernel boots through ALL of Phase 1 (MMU-on) AND the whole VM/HAT format port:
+pstart040 → early init → segmap → svirtophys → hat_pteload/unlock/ptfree/unload → **root
+fs MOUNTS → banner → init → swapconf**.  SCSI/root-mount SOLVED.  Current blocker =
+`swapconf lookupname /dev/dsk/c6d0s2` → ENOENT (config-vs-040-namei open question).
+Remaining for Phase 2 single-user: swapconf, first user fork/exec (deferred per-proc hat
+fns), then **040 trap/exception frames** (biggest risk).  Detail: RESUME-HERE.md +
+prototypes/hat-040-port-worklist.md.  Real-HW line PAUSED (RESUME-HERE-040-HARDWARE.md).
+
 ## Goal
 Make the AMIX SVR4 kernel boot and run on 68040, then 68060, on an Amiga 3000.
 68040 first; 68060 as an increment on the proven 040 base.

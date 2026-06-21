@@ -1,5 +1,28 @@
 # Phase 3 — HAT / VM layer 68040 port: PLAN
 
+Status: **CORE PORT DONE (2026-06-22)** — kernel boots through the whole VM/HAT layer,
+mounts root, prints the banner, runs init, reaches swapconf.
+
+## DONE (working, in prototypes/hat040.s + kvm040.s + patch_modelb.py)
+- `hat_pteload` (REPLACED, hat040.s) — 040 walk + reverse-map insert (Lwleaf).
+- `hat_unlock` (REPLACED, hat040.s) — 040 walk + verbatim lock-count tail.
+- `hat_unload` (REPLACED, hat040.s) — 040 per-leaf re-walk + verbatim per-page bookkeeping;
+  bounded reverse-map findmap (skips unlink if pte not in pages[pfn] list — correct for
+  kvsegmap pages mapped by segmap setup).
+- `hat_ptalloc` / `hat_sdtalloc` / `hat_pt2ptdat` — Model B byte-patches (patch_modelb.py).
+- `hat_ptfree` — Model B byte-patch (pages[] pfn >>11->>>12 at 0xb6d00/0xb6d2c).
+- `sysseginit`, `vatosde`, `vatopte`, `svirtophys` — 040 walkers (kvm040.s + patches).
+- pstart040 sets kas@0x14 = kroot040 (kernel hat root = the live 040 root).
+
+## STILL DEFERRED (bite at first USER fork/exec + syscalls — not yet hit)
+- `hat_alloc` (4→128 child-hat root + set new root), `hat_growsdt`/`hat_sdtfree` STEAL paths,
+  `hat_dup`/`hat_exec`/`hat_asload`/`swtch` (per-proc root, pmove crp → movec urp),
+  `hat_chgprot`/`hat_pagesync`/`hat_pageunload`, uvirtophys/uvatosde/uvatopte.
+- **040 trap/exception frames** (≠030) — biggest remaining risk, bites on first syscall/fault.
+
+---
+(Historical plan below — the 2KB→4KB format analysis that drove the above.)
+
 Status: IN PROGRESS (2026-06-18).  pstart040 works (040 bootstrap paging);
 visibility achieved (clean kernel panics).  Stub-&-map confirmed the chain:
 pstart040 ✓ → ptest (stubbed) → **page_init bus-errors** because the kernel's

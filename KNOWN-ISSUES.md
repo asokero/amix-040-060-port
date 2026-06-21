@@ -76,3 +76,24 @@ path, which the 040 work replaces with `movec` (Draft 2). So:
   `unix_boot/bin/unix_boot` (works).
 - **040 development (Draft 2):** boot with **our** loader `build/unix_boot040`
   (proven to reach `pstart` and beyond on 040).
+
+---
+
+## ISSUE-2: temporary debug markers in the 040 build (cleanup TODO)
+**Status:** OPEN (2026-06-22), low priority — remove once swapconf is past.
+`prototypes/hat040.s` and the debug objects print CE_WARN console markers on every
+040 boot: `DBG ddopen …`, `DBG hat_unload va=…` (first 6 calls), `DBG hat_unload: pte
+not in revmap …` (first 4).  Plus `ddopen_dbg.s`/`sdpartition_dbg.s` (only in
+build/unix-040-dbg via relink-040-dbg.sh).  Harmless but noisy.  Strip the marker
+blocks + their `.data` strings/counters from hat040.s when stabilizing.
+
+## ISSUE-3: hat_unload reverse-map findmap is a bounded skip (verify later)
+**Status:** OPEN (2026-06-22), defensive — works, but confirm correctness under memory
+pressure.  hat_unload's `Lhl_findmap` walks pages[pfn]'s reverse-map list (head @(32),
+next @ pte+256) to unlink the pte; the 040 port BOUNDS it (256 iters) and SKIPS the
+unlink if the pte isn't found.  This is correct for kvsegmap pages mapped by segmap setup
+(no reverse-map entry — verified by a sane *pte).  BUT if it ever skips a pte that SHOULD
+be in the list (a real bug in hat_pteload's Lwleaf insert, or a corrupted list), it would
+silently leave a stale reverse-map entry → trouble during page reclamation (which needs
+the reverse-map, and only kicks in under memory pressure — not yet exercised at boot).
+If page-reclaim bugs appear later, re-audit hat_pteload's reverse-map insert + this skip.

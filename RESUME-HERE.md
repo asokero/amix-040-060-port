@@ -31,14 +31,14 @@ kvm_init -> svirtophys -> **fork1/procdup (first process, HAT page tables) -> ma
 pt2ptdat byte-patches + kas@0x14=kroot040) WORKED -- procdup's child-u-area bcopy no
 longer faults.  The hard part (the whole 040 virtual-memory bring-up) is DONE.
 
-## TWO LINES (2026-06-19):
-- **REAL-HARDWARE line: PAUSED** (dev away from the A3000 a couple days).  On real 040 the
-  VM port + 040 page-table walk are verified working; it hits ONE localized blocker -- a
-  deferred bus error in p0init's u-area-PTE loop (a real-silicon write-buffer/cache effect
-  the emulators don't model).  Full writeup + open hypotheses + how to resume:
+## TWO LINES (2026-06-19; EMULATOR line SUPERSEDED by the 06-22 top milestone):
+- **REAL-HARDWARE line: STILL PAUSED** (resume later).  On real 040 the VM port + 040
+  page-table walk are verified working; it hits ONE localized blocker -- a deferred bus
+  error in p0init's u-area-PTE loop (a real-silicon write-buffer/cache effect the emulators
+  don't model).  Full writeup + open hypotheses + how to resume:
   **`RESUME-HERE-040-HARDWARE.md`**.  (Emulators do NOT reproduce it -- they pass p0init.)
-- **EMULATOR line: ACTIVE -- the SCSI / root-mount problem (below).**  This is what to work
-  on now (laptop, no real HW needed).
+- **EMULATOR line: the SCSI / root-mount problem (below) is now SOLVED** (root mounts;
+  see the 06-22 top milestone).  Current emulator blocker = swapconf (top of file).
 
 ## >>> MILESTONE 2026-06-21: ROOT FILESYSTEM MOUNTS on 040 <<<
 The SCSI/root-mount problem is **SOLVED**.  All disk I/O works on 040 (getrdb/getpb read
@@ -172,7 +172,7 @@ python3 prototypes/check_relink_relocs.py       # MUST print "0 complaints"
 The kernel's console is hardcoded to the native Amiga display, so clean panics
 render in the emulator — read the panic `pc=` to identify each blocker.
 
-## NEXT TASK — port the HAT (Phase 3)  [hat_pteload DONE]
+## (historical / DONE) NEXT TASK — port the HAT (Phase 3)  [ALL CORE HAT FNS NOW DONE — see top]
 Full plan + inventory + the exact 030→040 format change + per-fn port spec:
 **`prototypes/hat-040-port-worklist.md`**.
 
@@ -352,6 +352,9 @@ analysis transfers directly to segkmem_mapin (same PTE low-byte format).
 - `LOCAL-BUILD-NOTES.md` — toolchains, paths, how to (re)build the loader.
 - `boot-path-map.md`, `68040-68060-support-analysis.md` — background.
 
-## Progress estimate: ~33% (high confidence now)
-Foundation (RE, toolchain, loader, pstart) done; the HAT/VM format port is the
-main remaining body, then reach single-user, then 68060, then HW stability.
+## Progress estimate (2026-06-22): VM/HAT port DONE; boots to swapconf
+Foundation + the entire HAT/VM format port are DONE (boots through init + banner to
+swapconf).  Remaining to single-user: swapconf (current blocker), then first user
+fork/exec (deferred per-proc hat fns: hat_alloc/dup/exec/asload/swtch), then **040
+trap/exception frames** (biggest risk).  Then 68060, then real-HW p0init blocker.
+(Old "~33%" estimate superseded.)
