@@ -38,6 +38,14 @@ PATCHES = [
     # ptest0: ptestr (f010 8211) + pmove psr,sp@(4) = 10 bytes -> 5x nop
     (0x3c4, b"\xf0\x10\x82\x11\xf0\x2f\x62\x00\x00\x04",
             NOP*5, "ptest0"),
+    # nomsg (0x18ece) -- halt/reboot path: pmove %a0@,%tc / %crp / %srp disable the 030
+    # MMU before the hardware reset (bset #7,0xde0002).  On 040 these are F-line -> a
+    # recursive Line-F trap loop after any PANIC.  NOP them: the MMU stays on, but the
+    # reset register 0xde0002 is identity-covered by DTT0 regardless of paging, so the
+    # reset still fires -> clean reboot/halt instead of an infinite trap loop.
+    (0x18ed8, b"\xf0\x10\x40\x00", NOP+NOP, "nomsg:pmove tc"),
+    (0x18ee2, b"\xf0\x10\x4c\x00", NOP+NOP, "nomsg:pmove crp"),
+    (0x18ee6, b"\xf0\x10\x48\x00", NOP+NOP, "nomsg:pmove srp"),
 ]
 
 def main():
