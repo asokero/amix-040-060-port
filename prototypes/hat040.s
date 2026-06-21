@@ -363,6 +363,307 @@ Lhu_done:
 	rts
 	nop				| pad .text to a 4-byte multiple
 
+| ===========================================================================
+| hat_unload (orig 0xb46d6, GLOBAL T) -- 040 port.
+| Unmaps a VA range: clears leaf PTEs, propagates M/U bits to the pp, updates
+| page mapping/hold counts, optionally frees pages, frees empty leaf page tables.
+| The 030 original walked region(2)/SDE(13)/leaf(6) of the inert 030 tree; on 040
+| that finds nothing for kptr040-mapped VAs -> never clears the live leaf -> stale
+| PTE -> hat_pteload "pfn mismatch".  This re-walks the 040 tree per leaf table
+| (A=va>>25&7f *4 -> ptr table; B=va>>18&7f *4 -> leaf table; C=va>>12&3f *4 -> PTE)
+| and runs the original per-page bookkeeping VERBATIM (only the pfn extract
+| {0:21}->{0:20}, the page step 2048->4096, the in-leaf mask 0x1f800->0x3f000, the
+| putpage size 0x800->0x1000, and the 8-byte SDE stride -> 4-byte Bdesc change).
+| The pte@(256) reverse-map ptr is UNCHANGED (Model B keeps 512B frags = 256B PTEs
+| + 256B map ptrs).  Frame offsets match the original so the verbatim block's fp@
+| refs (-4 seg, -44 ptdat, -76 flag4, -84 flag8) line up.
+| Args: arg@8 hat, arg@12 va, arg@16 size, arg@20 flags.
+	.globl	hat_unload
+hat_unload:
+	linkw	%fp,&-88
+	moveml	%d2-%d5/%a2-%a4,%sp@-
+	movel	%fp@(12),%d2		| d2 = va (loop cursor)
+| DEBUG: print the first few hat_unload calls (va, size, flags) -- remove once stable
+	movel	Lhl_dbgn,%d0
+	cmpil	&6,%d0
+	bccw	Lhl_nodbg
+	addql	&1,%d0
+	movel	%d0,Lhl_dbgn
+	movel	%fp@(20),%sp@-		| flags
+	movel	%fp@(16),%sp@-		| size
+	movel	%fp@(12),%sp@-		| va
+	pea	Lhl_dbgmsg
+	pea	2
+	jsr	cmn_err
+	addaw	&20,%sp
+	movel	%fp@(12),%d2		| reload d2 (cmn_err scratch-safe but be explicit)
+Lhl_nodbg:
+	moveal	%fp@(8),%a0
+	movel	%a0@(12),%fp@(-4)	| fp@-4 = seg
+	moveal	%fp@(8),%a0
+	moveal	%a0@(12),%a0		| seg
+	movel	%a0@(20),%fp@(-12)	| fp@-12 = root = seg@(20)
+	moveq	&4,%d5
+	andl	%fp@(20),%d5
+	movel	%d5,%fp@(-76)		| fp@-76 = flags & 4
+	moveq	&8,%d5
+	andl	%fp@(20),%d5
+	movel	%d5,%fp@(-84)		| fp@-84 = flags & 8
+	movel	%d2,%d3
+	addl	%fp@(16),%d3
+	subql	&1,%d3			| d3 = va + size - 1 (inclusive last byte)
+	braw	Lhl_chkmore
+
+Lhl_leafwalk:
+| A index = (va>>25)&0x7f ; Adesc = root[Aidx*4]
+	movel	%d2,%d0
+	moveq	&25,%d5
+	lsrl	%d5,%d0
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	moveal	%fp@(-12),%a0
+	movel	%a0@(0,%d0:l),%d0	| Adesc
+	movel	%d0,%d1
+	andil	&3,%d1			| UDT
+	bnew	Lhl_aok
+	movel	%d2,%d0			| A absent -> next 32MB (2^25) boundary
+	andil	&0xfe000000,%d0
+	addil	&0x2000000,%d0
+	movel	%d0,%d2
+	braw	Lhl_chkmore
+Lhl_aok:
+	andil	&0xfffffe00,%d0		| Btable = Adesc & ~0x1ff
+	movel	%d2,%d1
+	moveq	&18,%d5
+	lsrl	%d5,%d1
+	andil	&0x7f,%d1
+	asll	&2,%d1
+	addl	%d1,%d0			| &Bdesc
+	movel	%d0,%fp@(-20)
+	moveal	%d0,%a0
+	movel	%a0@,%d1		| Bdesc
+	movel	%d1,%d0
+	andil	&3,%d0			| UDT
+	bnew	Lhl_bok
+	movel	%d2,%d0			| B absent -> next 256KB (2^18) boundary
+	andil	&0xfffc0000,%d0
+	addil	&0x40000,%d0
+	movel	%d0,%d2
+	braw	Lhl_chkmore
+Lhl_bok:
+	andil	&0xffffff00,%d1		| leaf base = Bdesc & ~0xff
+	movel	%d1,%fp@(-36)
+	movel	%d2,%d0
+	moveq	&12,%d5
+	lsrl	%d5,%d0
+	andil	&0x3f,%d0
+	asll	&2,%d0
+	moveal	%fp@(-36),%a2
+	addal	%d0,%a2			| a2 = &leaf PTE
+	pea	%fp@(-64)
+	movel	%fp@(-36),%sp@-
+	jsr	hat_pt2ptdat
+	movel	%a0,%fp@(-44)		| fp@-44 = ptdat
+	clrl	%d4			| d4 = pages unmapped in this leaf
+	addqw	&8,%sp
+
+Lhl_pageloop:
+	tstl	%a2@
+	bnew	Lhl_unmap
+	addqw	&4,%a2			| empty PTE -> advance
+	addil	&4096,%d2
+	braw	Lhl_pageadv
+
+| ----- VERBATIM per-page bookkeeping (orig b47e2-b4978) -----
+Lhl_unmap:
+	addql	&1,%d4
+	pea	1
+	movel	%d2,%sp@-
+	jsr	flushmmu
+	bfextu	%a2@{&0:&20},%d0	| pfn (030: {0:21})
+	addqw	&8,%sp
+	cmpl	pages_base,%d0
+	bcsw	Lhl_a4zero
+	bfextu	%a2@{&0:&20},%d0
+	cmpl	pages_end,%d0
+	bccw	Lhl_a4zero
+	braw	Lhl_a4calc
+Lhl_a4zero:
+	subal	%a4,%a4
+	braw	Lhl_a4done
+Lhl_a4calc:
+	bfextu	%a2@{&0:&20},%d0
+	subl	pages_base,%d0
+	moveq	&60,%d5
+	mulsl	%d5,%d0
+	moveal	%d0,%a4
+	addal	pages,%a4
+Lhl_a4done:
+	tstl	%a4
+	beqw	Lhl_clear
+	moveal	%a4,%a0
+	bfextu	%a0@{&6:&1},%d0
+	bfextu	%a2@(3){&4:&1},%d1
+	orl	%d1,%d0
+	bfins	%d0,%a0@{&6:&1}
+	moveal	%a4,%a0
+	bfextu	%a0@{&5:&1},%d0
+	bfextu	%a2@(3){&3:&1},%d1
+	orl	%d1,%d0
+	bfins	%d0,%a0@{&5:&1}
+	lea	%a4@(32),%a3
+	movel	&256,%d1		| findmap safety counter
+Lhl_findmap:
+	cmpal	%a3@,%a2
+	beqw	Lhl_unlink
+	subql	&1,%d1
+	beqw	Lhl_findfail		| pte not in pp's reverse-map list -> bail (don't hang)
+	moveal	%a3@,%a3
+	addaw	&256,%a3
+	braw	Lhl_findmap
+Lhl_findfail:
+| DEBUG one-shot: report a missing reverse-map entry (pte value, pfn-derived pp, pte addr)
+	movel	Lhl_failn,%d0
+	cmpil	&4,%d0
+	bccw	Lhl_aftermap
+	addql	&1,%d0
+	movel	%d0,Lhl_failn
+	movel	%a2,%sp@-		| pte addr
+	movel	%a4,%sp@-		| pp (pages[pfn])
+	movel	%a2@,%sp@-		| *pte
+	pea	Lhl_failmsg
+	pea	2
+	jsr	cmn_err
+	addaw	&20,%sp
+	braw	Lhl_aftermap
+Lhl_unlink:
+	movel	%a2@(256),%a3@
+Lhl_aftermap:
+	tstl	%fp@(-84)		| flag8
+	beqw	Lhl_flag4
+	subqw	&1,%a4@(2)
+	tstw	%a4@(2)
+	bnew	Lhl_chkabort
+Lhl_wakeloop:
+	bfextu	%a4@{&1:&1},%d0
+	tstl	%d0
+	beqw	Lhl_chkabort
+	pea	1
+	movel	%a4,%sp@-
+	jsr	wakeprocs
+	andib	&-65,%a4@
+	addqw	&8,%sp
+	braw	Lhl_wakeloop
+Lhl_chkabort:
+	tstw	%a4@(2)
+	bnew	Lhl_flag4
+	bfextu	%a4@{&4:&1},%d0
+	tstl	%d0
+	bnew	Lhl_abort
+	tstl	%a4@(4)
+	beqw	Lhl_abort
+	braw	Lhl_flag4
+Lhl_abort:
+	movel	%a4,%sp@-
+	jsr	page_abort
+	addqw	&4,%sp
+Lhl_flag4:
+	tstl	%fp@(-76)		| flag4
+	beqw	Lhl_clear
+	tstw	%a4@(2)
+	bnew	Lhl_clear
+	tstl	%a4@(32)
+	bnew	Lhl_clear
+	bfextu	%a4@{&0:&1},%d0
+	tstl	%d0
+	bnew	Lhl_clear
+	bfextu	%a4@{&2:&1},%d0
+	tstl	%d0
+	bnew	Lhl_clear
+	bfextu	%a4@{&3:&1},%d0
+	tstl	%d0
+	bnew	Lhl_clear
+	tstw	%a4@(36)
+	bnew	Lhl_clear
+	tstw	%a4@(38)
+	bnew	Lhl_clear
+	bfextu	%a4@{&5:&1},%d0
+	tstl	%d0
+	beqw	Lhl_maybefree
+	tstl	%a4@(4)
+	beqw	Lhl_maybefree
+	moveal	%a4@(4),%a0
+	moveal	%a0@(8),%a0
+	clrl	%sp@-
+	movel	&2097408,%sp@-
+	pea	0x1000			| putpage size (030: 0x800 = 2KB)
+	movel	%a4@(8),%sp@-
+	movel	%a4@(4),%sp@-
+	moveal	%a0@(120),%a0
+	jsr	%a0@
+	addaw	&20,%sp
+	braw	Lhl_clear
+Lhl_maybefree:
+	bfextu	%a4@{&0:&1},%d0
+	tstl	%d0
+	beqw	Lhl_dofree
+	movel	%a4,%sp@-
+	jsr	page_cv_wait
+	addqw	&4,%sp
+	braw	Lhl_maybefree
+Lhl_dofree:
+	orib	&-128,%a4@
+	clrl	%sp@-
+	movel	%a4,%sp@-
+	jsr	page_free
+	addqw	&8,%sp
+Lhl_clear:
+	clrl	%a2@			| *pte = 0
+	addqw	&4,%a2
+	addil	&4096,%d2
+| ----- end verbatim block -----
+
+Lhl_pageadv:
+	movel	%d2,%d0
+	andil	&0x3f000,%d0		| within-leaf offset bits 17:12 (030: 0x1f800)
+	tstl	%d0
+	beqw	Lhl_leafdone		| crossed 256KB leaf boundary
+	cmpl	%d2,%d3
+	bccw	Lhl_pageloop		| d3 >= va -> more pages in this leaf
+
+Lhl_leafdone:
+	moveal	%fp@(-4),%a0
+	subl	%d4,%a0@(16)		| seg rss -= count
+	moveq	&2,%d0
+	andl	%fp@(20),%d0
+	tstl	%d0
+	beqw	Lhl_no7
+	moveal	%fp@(-44),%a0
+	movel	%d4,%d0
+	subb	%d0,%a0@(7)		| if (flags&2) ptdat@(7) -= count
+Lhl_no7:
+	moveal	%fp@(-44),%a0
+	movel	%d4,%d0
+	subb	%d0,%a0@(6)		| ptdat@(6) -= count
+	moveal	%fp@(-44),%a0
+	tstb	%a0@(6)
+	bnew	Lhl_chkmore
+	movel	%fp@(-36),%sp@-		| leaf empty -> free it
+	jsr	hat_ptfree
+	addqw	&4,%sp
+	moveal	%fp@(-20),%a0
+	bfclr	%a0@(3){&6:&2}		| invalidate Bdesc UDT (low 2 bits)
+
+Lhl_chkmore:
+	cmpl	%d2,%d3
+	bccw	Lhl_leafwalk		| d3 >= va -> more to unmap
+	moveml	%fp@(-116),%d2-%d5/%a2-%a4
+	moveal	%d0,%a0
+	unlk	%fp
+	rts
+	nop				| pad .text to a 4-byte multiple
+	nop
+
 	.data
 	.even
 Lpemsg0:
@@ -371,3 +672,15 @@ Lpemsg1:
 	.asciz	"hat_pteload: pfn mismatch on existing leaf"
 Lhu_msg:
 	.asciz	"hat_unlock: invalid sde (040 walk)"
+	.even
+Lhl_dbgmsg:
+	.asciz	"DBG hat_unload va=%x size=%x flags=%x"
+	.even
+Lhl_dbgn:
+	.long	0
+	.even
+Lhl_failmsg:
+	.asciz	"DBG hat_unload: pte not in revmap *pte=%x pp=%x pte@=%x"
+	.even
+Lhl_failn:
+	.long	0
