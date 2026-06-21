@@ -88,6 +88,13 @@ P = [
  (0xb6484, b"\x7a\x0b", b"\x7a\x0c", "hat_sdtalloc:page_get size d3<<11"),
  (0xb6524, b"\x7a\x0b", b"\x7a\x0c", "hat_sdtalloc:pfn<<11 (new node base)"),
  (0xb5e1c, b"\x78\x0b", b"\x78\x0c", "hat_pt2ptdat:pt>>11 (page-frame index)"),
+ # hat_ptfree: pages[] index is the 4KB pfn (>>12, matching hat_pt2ptdat) -- the 030
+ # >>11 gave pages[2*pfn] -> garbage page struct -> garbage a2@(32) -> bad free-list
+ # pointer -> bus error in the unlink (0xb6ecc).  ONLY the two pfn shifts change; the
+ # fragment layout (b6d48 #11 / b6d56 #9 = 4 frags @ 512B in a 2KB region) is UNCHANGED
+ # and matches hat_ptalloc (which Model B left at #11/#9, page table = 256B via bzero).
+ (0xb6d00, b"\x72\x0b", b"\x72\x0c", "hat_ptfree:pfn>>11 (pages bounds chk)"),
+ (0xb6d2c, b"\x72\x0b", b"\x72\x0c", "hat_ptfree:pfn>>11 (pages[] index)"),
 ]
 
 def main():
