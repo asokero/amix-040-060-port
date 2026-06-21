@@ -33,6 +33,8 @@ m68k-linux-gnu-objcopy \
 	--globalize-symbol hat_pteload \
 	--globalize-symbol hat_ptalloc \
 	--globalize-symbol hat_pt2ptdat \
+	--globalize-symbol free_pts \
+	--globalize-symbol pt_waiting \
 	"$HERE/build/unix-stage1"
 m68k-linux-gnu-objcopy \
 	--weaken-symbol pstart \
@@ -40,6 +42,7 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol vatosde \
 	--weaken-symbol vatopte \
 	--weaken-symbol hat_pteload \
+	--weaken-symbol hat_unlock \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -49,7 +52,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte hat_pteload; do
+for s in pstart sysseginit vatosde vatopte hat_pteload hat_unlock; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"

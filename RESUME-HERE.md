@@ -16,23 +16,89 @@ longer faults.  The hard part (the whole 040 virtual-memory bring-up) is DONE.
 - **EMULATOR line: ACTIVE -- the SCSI / root-mount problem (below).**  This is what to work
   on now (laptop, no real HW needed).
 
-## ACTIVE: root filesystem mount (DEVICE/FS domain, not MMU) -- the SCSI problem
+## >>> MILESTONE 2026-06-21: ROOT FILESYSTEM MOUNTS on 040 <<<
+The SCSI/root-mount problem is **SOLVED**.  All disk I/O works on 040 (getrdb/getpb read
+RDSK/PART correctly; stock sdpartition returns 0 with dev=0x480016 ctrl=0 slice=1 ->
+partab filled -> VOP_OPEN succeeds -> root mounts).  Test-1's transient "error 6" was
+first-access SCSI nondeterminism; it read clean on every retry.  **The boot now sails PAST
+vfs_mountroot into the post-mount VM path.**
+
+### NEW BLOCKER -> FIXED (needs boot test): hat_unlock: invalid sde
+After mount, s5mountroot -> fbrelsei (s5 buffer release) -> **hat_unlock** (0xb5d1e)
+PANIC "invalid sde".  Same inert-030-tree problem as vatosde: hat_unlock walked the 030
+segment tree (root[region*8+4] -> 8-byte SDE) but the live root is kroot040 (040 4-byte
+descriptors) -> garbage SDE -> DT==0 -> panic.  **PORTED**: prototypes/hat040.s now has a
+hat_unlock 040 replacement (standard 040 walk A=va>>25&7f, B=va>>18&7f, leaf=Bdesc&
+0xffffff00+(va>>12&3f)*4 -- same as vatopte; hat_pt2ptdat + lock-count + free_pts/wakeprocs
+tail kept verbatim).  relink-040.sh: --weaken-symbol hat_unlock, --globalize-symbol
+free_pts/pt_waiting.  Built clean (0 reloc complaints).  **NEXT: boot unix-040-dbg, expect
+past hat_unlock -> next post-mount blocker (likely sibling HAT fns hat_unload/hat_chgprot/
+hat_pagesync per the worklist, or 040 syscall/trap frames as init starts).**
+
+## (historical) ACTIVE: root filesystem mount (DEVICE/FS domain, not MMU) -- the SCSI problem
 `s5mountroot VOP_OPEN error 6` (ENXIO) -> `nfs_mountroot` fallback -> PANIC
-`vfs_mountroot: cannot mount root: errno 89`.  The root device (`rootdev` = 0x00480016
-= major 18 / minor 22, a SCSI disk) open returned ENXIO = device not configured/found.
-FACTS: disk IS attached in the emulator (user confirmed).  The kernel does NOT set
-rootdev from bootinfo (only s5/ufs_mountroot write it) -> it uses the COMPILED default
-0x00480016.  SCSI drivers present: a3091 (A2091/A3091 WD33C93 host), sd* (disk class).
-SUSPECTS (in order): (1) the SCSI host controller didn't autoconfigure on 040 -- check
-the device-config console messages (need a full boot scrollback: did "SCSI"/"sd0"
-appear?); (2) **040 DMA cache-coherency** -- the WD33C93/DMAC does DMA to main RAM; 040
-copyback cache needs push-before-DMA-out / invalidate-after-DMA-in, a KNOWN 040 concern
-(a3091.c); a stale INQUIRY during the bus scan -> no slave -> ENXIO; (3) the disk's SCSI
-unit in the emulator doesn't match rootdev's major/minor.  NEXT: get the full kernel
-console (scroll up before the panic) to see if the SCSI controller + disk were detected,
-then disassemble the SCSI host autoconfig / DMA path for 040 cache ops.
-This is a NEW phase (device drivers on 040); the VM port that this file mostly documents
-is finished.
+`vfs_mountroot: cannot mount root: errno 89`.  `rootdev` = 0x00480016 = major 18 / minor 22.
+
+### FULL OPEN-PATH TRACE (2026-06-21, disassembled from vanilla/stand/unix)
+- bdevsw[18].d_open = **ddopen** (0xbcb8).  major 18 = the **dd** SCSI-disk driver.
+- `ddopen(devp)`: ctrl = (*devp>>3)&1 = (22>>3)&1 = **0**.  Calls, in order:
+    1. **`sdopen(ctrl)`** (0xd6ba): calls SCSI `init()` then returns ENXIO(6) unless
+       `queue[ctrl][0] != 0` -- i.e. the host adapter for ctrl 0 is REGISTERED.
+    2. **`sdpartition(*devp, ddstrategy)`** (0xd848): slice = (22>>4)&7 = **1** (nonzero)
+       -> calls **`getrdb()`** = physically **READS the RigidDiskBlock off the disk via
+       SCSI DMA**, parses partitions.  Returns ENXIO(6) on read/parse failure.
+  Error 6 can come from EITHER call.  (If slice were 0 it'd skip getrdb -- but it's 1.)
+- **SCSI host registration** (`init` 0xd736 -> `autocon` 0x19222 -> `insert` -> queue[]):
+  the A3000 ONBOARD SCSI is NOT a Zorro autoconfig board; `autocon` has a hardcoded
+  **special case**: if scsicard[0].field0==0x0202f003 && ctrl==0 && `0x07000000 < end`,
+  it returns DMAC address **0xDD0000** and queue[0] gets set.  `end` = loader-resolved
+  top-of-kernel (base+size, e.g. 0x07100000) so the gate `0x07000000<end` holds -> queue[0]
+  SHOULD be set.  (Confirmed in fs-uae.log: "Initializing A3000 mainboard SCSI / Adding ...
+  HD unit 6" / "00DD0000 64K A3000 DMAC" -- the emulator presents exactly this.)
+- **DMA address translation**: SCSI uses `vtop`(0xb7568); for KERNEL buffers (arg2==0)
+  it delegates to **`svirtophys`** (which we PORTED).  svirtophys returns `va` unchanged
+  for region!=1 (identity: regions 0/2/3) and walks the 040 tree (vatosde/vatopte) for
+  region 1.  So kernel-buffer phys is correct on 040 in BOTH regions.  => statically,
+  BOTH sdopen and sdpartition should succeed; need RUNTIME data to see which fails.
+
+### TEST RESULTS (2026-06-21, WinUAE 040, kernel @ 0x08000000)
+1. ddopen probe -> **"sdpartition FAILED (getrdb RDB disk read / DMA)"**.  So sdopen
+   (host registration) is FINE; the failure is in sdpartition.
+2. sdpartition probe (calls real getrdb, prints block[0]) -> **"getrdb returned 0,
+   block[0]=5244534B"** (== "RDSK") and "ddopen: both sub-calls OK".  **=> THE SCSI DMA
+   READ WORKS on 040.  getrdb reads the RigidDiskBlock CORRECTLY.**  Not a DMA/cache bug!
+   (With getpb/partab skipped, VOP_OPEN now succeeds but the mount still errno-89's
+   because partab is left empty -- expected for the debug shortcut.)
+**CONCLUSION:** the original "error 6" is NOT disk I/O -- it's in sdpartition's
+**partition-block walk** (getpb 0xda22 / the rdb_PartitionList traversal / partab fill,
+0xd876-0xd8ee), which the stock code runs AFTER getrdb.  getpb uses the SAME working
+read()/block, so suspect: rdb_PartitionList (block@0x1c) value, or a PARTIAL block DMA
+(block[0] ok but later longs stale), or the partab geometry math.  NEXT probe (built):
+prints rdb_PartitionList + getpb result -> boot unix-040-dbg, read the two new DBG lines.
+
+### DECISIVE DEBUG BUILD (ready): build/unix-040-dbg
+`sh relink-040-dbg.sh` layers an instrumented **ddopen** (prototypes/ddopen_dbg.s,
+GLOBAL-weaken override) onto the patched build/unix-040.  It prints (CE_WARN) exactly
+which sub-call fails:
+- `DBG ddopen: sdopen FAILED ...`      -> host registration (queue[0]==0): autocon/end/onboard
+- `DBG ddopen: sdpartition FAILED ...` -> getrdb RDB read / **040 DMA** (the user's suspicion)
+- `DBG ddopen: both sub-calls OK`      -> open succeeded; failure is upstream (rootdev/vfs)
+**Boot it: `unix_boot040 unix-040-dbg`** and report which line prints -- that bifurcates
+all further work (detection vs DMA).
+
+### Emulator facts (fs-uae a3000ux config + log, this laptop)
+- Working 030 config: `~/Asiakirjat/FS-UAE/Configurations/a3000ux.fs-uae` (cpu=68030,
+  hard_drive_0=amix_hardfileX11R5.hdf, hard_drive_0_controller=**scsi6** = A3000 onboard
+  SCSI unit 6).  Kernel files exposed to Amiga via hard_drive_2 = the kernelsupport dir.
+- For 040 testing: switch cpu to 68040 (the WinUAE screenshots are the 040 runs).
+- Aside (likely unrelated): fs-uae.log shows a `bzero` loop (PC=0x...032c) hitting "Gary
+  timeout" writes to unmapped Zorro-III 0x2006xxxx -- some board-struct init, not SCSI.
+
+SUSPECTS if it's **sdpartition** (DMA): (1) 040 copyback cache coherency on DMA-in (real
+HW only -- emulator wouldn't show it); (2) the A3091 startdma (0xd40a) writes only a
+24-bit DMA addr from iopb@12..14 -- verify the high byte / region is set for a buffer
+above 16MB.  SUSPECTS if **sdopen**: autocon `end` gate or scsicard[0].field0 mismatch.
+This is a NEW phase (device drivers on 040); the VM port this file documents is finished.
 
 ---
 # (historical) RESUME HERE — AMIX 68040 port status (2026-06-18)

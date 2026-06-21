@@ -277,9 +277,97 @@ Lepi:
 	unlk	%fp
 	rts
 
+| ===========================================================================
+| hat_unlock (orig 0xb5d1e, GLOBAL T) -- 040 port.
+| Decrements the lock count on the page-table page holding va's leaf PTE, and
+| frees it (waking waiters) when the count reaches 0.  The 030 original walked
+| the inert 030 segment tree (root[region*8+4] -> 8-byte SDE -> leaf) which on
+| 040 reads kroot040 (040 4-byte descriptors) as garbage -> "invalid sde" PANIC.
+| This replaces ONLY the walk with the standard 040 walk (same as hat_pteload /
+| vatopte: A=va>>25&7f *4, B=va>>18&7f *4, leaf=Bdesc&0xffffff00 + (va>>12&3f)*4);
+| the hat_pt2ptdat + lock-count + free_pts/wakeprocs tail is verbatim 030 logic.
+| Args: arg@8 = hat, arg@12 = va.  Returns void.  Saved regs match the original
+| (d2-d4/a2-a3) so the frame/restore offsets are identical.
+	.globl	hat_unlock
+hat_unlock:
+	linkw	%fp,&-24
+	moveml	%d2-%d4/%a2-%a3,%sp@-
+	movel	%fp@(12),%d2		| d2 = va
+
+| --- 040 walk: root = hat@(12)@(20) ---
+	moveal	%fp@(8),%a3		| hat
+	moveal	%a3@(12),%a3		| seg
+	moveal	%a3@(20),%a3		| root (kroot040 for kernel)
+
+| A (root) index = (va>>25)&0x7f ; Btable = root[Aidx*4] & 0xfffffe00
+	movel	%d2,%d0
+	moveq	&25,%d1
+	lsrl	%d1,%d0
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	movel	%a3@(0,%d0:l),%d0	| Adesc
+	andil	&0xfffffe00,%d0		| pointer-table base (512-aligned)
+	moveal	%d0,%a2
+
+| B (pointer) index = (va>>18)&0x7f ; a2 = &Bdesc
+	movel	%d2,%d0
+	moveq	&18,%d1
+	lsrl	%d1,%d0
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	addal	%d0,%a2			| a2 = &Bdesc (040 pointer descriptor)
+	bfextu	%a2@(3){&6:&2},%d0	| UDT of Bdesc (low 2 bits of byte 3)
+	tstl	%d0
+	beqw	Lhu_invalid		| invalid -> PANIC (mirrors 030 "invalid sde")
+
+| leaf PTE address = (Bdesc & 0xffffff00) + ((va>>12)&0x3f)*4
+	movel	%a2@,%d0
+	andil	&0xffffff00,%d0		| leaf-table base (256-aligned)
+	movel	%d0,%d3
+	movel	%d2,%d0
+	moveq	&12,%d1
+	lsrl	%d1,%d0
+	andil	&0x3f,%d0
+	asll	&2,%d0
+	addl	%d0,%d3			| d3 = &leaf PTE
+
+| --- tail (verbatim 030 logic): ptdat lock-count-- ; free if 0 & waiting ---
+	pea	%fp@(-24)
+	movel	%d3,%sp@-
+	jsr	hat_pt2ptdat
+	movel	%a0,%d4
+	moveal	%d4,%a0
+	subqb	&1,%a0@(7)
+	addqw	&8,%sp
+	tstb	%a0@(7)
+	bnew	Lhu_done
+	tstl	pt_waiting
+	beqw	Lhu_done
+	pea	1
+	pea	free_pts
+	jsr	wakeprocs
+	clrl	pt_waiting
+	addqw	&8,%sp
+	braw	Lhu_done
+
+Lhu_invalid:
+	pea	Lhu_msg
+	pea	3
+	jsr	cmn_err
+	addqw	&8,%sp
+
+Lhu_done:
+	moveml	%fp@(-44),%d2-%d4/%a2-%a3
+	moveal	%d0,%a0
+	unlk	%fp
+	rts
+	nop				| pad .text to a 4-byte multiple
+
 	.data
 	.even
 Lpemsg0:
 	.asciz	"hat_pteload: root descriptor not resident"
 Lpemsg1:
 	.asciz	"hat_pteload: pfn mismatch on existing leaf"
+Lhu_msg:
+	.asciz	"hat_unlock: invalid sde (040 walk)"

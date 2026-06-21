@@ -1,0 +1,53 @@
+#!/bin/sh
+# relink-040-dbg.sh -- layer the instrumented ddopen (prototypes/ddopen_dbg.s) on top
+# of the fully-patched build/unix-040, producing build/unix-040-dbg.
+#
+# Purpose: localize "s5mountroot VOP_OPEN error 6".  The debug ddopen prints (CE_WARN)
+# which sub-call fails:
+#   "DBG ddopen: sdopen FAILED ..."       -> SCSI host registration (queue[ctrl]==0)
+#   "DBG ddopen: sdpartition FAILED ..."  -> getrdb RDB disk read / 040 DMA
+#   "DBG ddopen: both sub-calls OK"       -> open succeeded (failure is elsewhere)
+#
+# ddopen is GLOBAL T -> --weaken-symbol so our strong def wins and bdevsw re-resolves.
+# Input is the ALREADY-patched build/unix-040 (all Model B / PMMU patches baked in), so
+# we do NOT re-run the byte patchers here.
+set -e
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+IN="$HERE/build/unix-040"
+ENV="/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
+. "$ENV"
+
+[ -f "$IN" ] || { echo "ERROR: $IN missing -- run sh relink-040.sh first"; exit 1; }
+
+echo "[*] assembling ddopen_dbg.s (stock sdpartition retained)"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ddopen_dbg.s" -o "$HERE/build/ddopen_dbg.o"
+
+echo "[*] weaken ddopen (our strong def wins); sdpartition stays STOCK"
+cp "$IN" "$HERE/build/unix-040-dbg-stage1"
+m68k-linux-gnu-objcopy --weaken-symbol ddopen "$HERE/build/unix-040-dbg-stage1"
+
+OUT="$HERE/build/unix-040-dbg"
+echo "[*] relinking -> $OUT"
+m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-dbg-stage1" "$HERE/build/ddopen_dbg.o"
+
+echo "[*] overridden def (single strong def at our object):"
+m68k-linux-gnu-nm "$OUT" | grep -E " ddopen\$" | sed "s/^/      ddopen: /"
+
+# text/data contiguity (loader copies them as one block)
+CONTIG=$(m68k-linux-gnu-readelf -SW "$OUT" 2>/dev/null | awk '
+	{gsub(/[][]/,"")}
+	$2==".text" {to=strtonum("0x"$5); ts=strtonum("0x"$6)}
+	$2==".data" {do_=strtonum("0x"$5)}
+	END{printf("%d %d", to+ts, do_)}')
+set -- $CONTIG
+if [ "$1" = "$2" ]; then echo "[OK] text/data contiguous."
+else echo "[FAIL] text/data NOT contiguous: text_end=0x$(printf %x $1) data_off=0x$(printf %x $2)"; exit 1; fi
+
+echo "[*] new UND refs introduced by ddopen_dbg (should be NONE -- all bound):"
+m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'sdopen|sdpartition|ddstrategy|cmn_err' \
+	| sed 's/^/      LEAK: /' || true
+echo "      (a LEAK line above = an unbound ref; none = good)"
+
+echo
+echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-dbg"
