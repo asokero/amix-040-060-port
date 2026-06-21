@@ -1,5 +1,29 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-19)
 
+## >>> MILESTONE 2026-06-22: 040 VM/HAT PORT FUNCTIONALLY COMPLETE — boots to swap config <<<
+The 040 kernel now boots through EVERY VM/MMU/HAT layer and runs init + prints the banner:
+pstart040 -> mlsetup -> kvm_init -> page_init -> kmem -> segmap -> svirtophys/vatosde/
+vatopte -> **hat_pteload / hat_unlock / hat_ptfree / hat_unload** -> root fs MOUNTS ->
+"UNIX(R) System V Release 4.0 ... 2.1c" banner -> init -> **swapconf**.
+This session cleared, in order: hat_unlock, hat_ptfree (pfn>>12), hat_unload (the core
+unmap), each an inert-030-tree-walker re-ported to the live kptr040 tree.  hat_unload also
+got a bounded reverse-map unlink (findmap skips if the pte isn't in pages[pfn]'s list --
+correct for kvsegmap pages mapped by segmap setup, verified by a sane *pte).
+
+### CURRENT BLOCKER (NEXT): swapconf can't resolve /dev/dsk/c6d0s2
+`PANIC: swapconf lookupname /dev/dsk/c6d0s2 failed - error 2` (ENOENT, CE_PANIC at
+swapconf 0xb401e -> lookupname 0x5c290).  The swap path is a HARDCODED kernel string;
+swapconf is the SAME code the stock 030 kernel runs, so on the 030 disk the node resolves.
+This is likely the FIRST path lookup (namei) of the boot (root mounts by device, not path),
+so it exercises namei -> s5lookup -> fbread/segmap -> hat (the buffer-cache path) for the
+first time.  TWO hypotheses: (1) CONFIG -- the WinUAE 040 disk lacks /dev/dsk/c6d0s2; or
+(2) a 040 namei/buffer-read bug returning wrong directory data.  OPEN QUESTION to the user:
+is the WinUAE-040 disk the same amix_hardfileX11R5.hdf that reaches login on fs-uae-030?
+If same+030-logs-in => real namei/buffer bug to chase; else => config.
+NOTE: debug markers still in hat040.s (DBG ddopen, DBG hat_unload, revmap-miss) -- remove
+once swapconf is past.  Build: sh relink-040.sh (+ relink-040-dbg.sh for the probes).
+
+
 ## ★ MAJOR MILESTONE (2026-06-19): 040 CPU/MMU/VM/fork port COMPLETE.
 The kernel now boots all the way through MMU-enable -> paging -> kmem -> mlsetup/
 kvm_init -> svirtophys -> **fork1/procdup (first process, HAT page tables) -> main()
