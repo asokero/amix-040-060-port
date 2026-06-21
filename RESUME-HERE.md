@@ -10,18 +10,39 @@ unmap), each an inert-030-tree-walker re-ported to the live kptr040 tree.  hat_u
 got a bounded reverse-map unlink (findmap skips if the pte isn't in pages[pfn]'s list --
 correct for kvsegmap pages mapped by segmap setup, verified by a sane *pte).
 
-### CURRENT BLOCKER (NEXT): swapconf can't resolve /dev/dsk/c6d0s2
-`PANIC: swapconf lookupname /dev/dsk/c6d0s2 failed - error 2` (ENOENT, CE_PANIC at
-swapconf 0xb401e -> lookupname 0x5c290).  The swap path is a HARDCODED kernel string;
-swapconf is the SAME code the stock 030 kernel runs, so on the 030 disk the node resolves.
-This is likely the FIRST path lookup (namei) of the boot (root mounts by device, not path),
-so it exercises namei -> s5lookup -> fbread/segmap -> hat (the buffer-cache path) for the
-first time.  TWO hypotheses: (1) CONFIG -- the WinUAE 040 disk lacks /dev/dsk/c6d0s2; or
-(2) a 040 namei/buffer-read bug returning wrong directory data.  OPEN QUESTION to the user:
-is the WinUAE-040 disk the same amix_hardfileX11R5.hdf that reaches login on fs-uae-030?
-If same+030-logs-in => real namei/buffer bug to chase; else => config.
-NOTE: debug markers still in hat040.s (DBG ddopen, DBG hat_unload, revmap-miss) -- remove
-once swapconf is past.  Build: sh relink-040.sh (+ relink-040-dbg.sh for the probes).
+### TWO REMAINING BLOCKERS to single-user (2026-06-22 — user CONFIRMED same disk boots
+### to login on 030, so both are real 040 bugs, not config):
+
+**(A) newproc "fork failed" — the FIRST user-process fork (CLOSER to single-user; do first).**
+Boot now reaches this AFTER swapconf is skipped (see swapconf_dbg.s).  `PANIC: newproc -
+fork failed` (newproc 0x41306).  Chain: main -> newproc -> the proc's procdup vector
+(`jsr %a0@` at 0x41526, a0 = parent@(236)@(12)) -> **procdup (0x41840)** -> one of these
+returns failure -> newproc does crfree/pid_exit/return -1:
+  - `as_dup` (0x41866) -- duplicate the parent address space -> **hat_alloc (0xb4188)** =
+    the child hat ROOT.  On 040 the child needs a 128-entry 040 root (like kroot040); the
+    030 hat_alloc builds a 4-entry root -> child AS broken / as_dup fails.  ALSO must SET
+    the new proc's hat root so swtch/context-switch uses it (movec urp, not pmove crp).
+  - `segu_get` (0x418a4) -- child u-area from kvsegu.
+  - `save` (0x418f4) -- context save (0=parent path, normal).
+  NEXT: pinpoint which (instrument procdup, or read as_dup 0xadfdc + hat_alloc 0xb4188),
+  then port hat_alloc (4->128 root + set child root) + as_dup as needed.  This is THE
+  deferred "per-proc hat / first user fork" chunk (worklist STILL DEFERRED list).
+
+**(B) swapconf namei ENOENT — `lookupname /dev/dsk/c6d0s2` -> error 2 (CE_PANIC, swapconf
+0xb401e -> lookupname 0x5c290).**  HARDCODED swap path; same code the 030 kernel runs.
+This is likely the FIRST path lookup of the boot (root mounts by DEVICE, not path) ->
+exercises namei -> s5/ufs lookup -> fbread/segmap -> hat (buffer-cache path) first time.
+A 040 namei/buffer-read bug returning wrong directory data (or a deeper segmap/page-cache
+mapping issue).  Currently SKIPPED by swapconf_dbg.s (warn+return) to expose blocker (A).
+
+### Other fixes this session
+- **nomsg halt-path pmoves NOPed** (patch_pmmu_040.py, 0x18ed8/ee2/ee6) -> panics now halt/
+  reboot CLEANLY (no more recursive Line-F trap loop on enter-after-panic).  The
+  context-switch pmoves (hat_map/exec/asload/swtch `pmove crp`) are STILL unpatched ->
+  needed with blocker (A)'s per-proc hat (movec urp).
+- Debug markers still in hat040.s (DBG ddopen/hat_unload/revmap-miss) + swapconf_dbg.s --
+  remove once past these blockers.  Build: `sh relink-040.sh` (+ `relink-040-dbg.sh` for
+  the ddopen/swapconf-skip probes -> build/unix-040-dbg).
 
 
 ## ★ MAJOR MILESTONE (2026-06-19): 040 CPU/MMU/VM/fork port COMPLETE.

@@ -14,11 +14,17 @@ mounts root, prints the banner, runs init, reaches swapconf.
 - `sysseginit`, `vatosde`, `vatopte`, `svirtophys` — 040 walkers (kvm040.s + patches).
 - pstart040 sets kas@0x14 = kroot040 (kernel hat root = the live 040 root).
 
-## STILL DEFERRED (bite at first USER fork/exec + syscalls — not yet hit)
-- `hat_alloc` (4→128 child-hat root + set new root), `hat_growsdt`/`hat_sdtfree` STEAL paths,
-  `hat_dup`/`hat_exec`/`hat_asload`/`swtch` (per-proc root, pmove crp → movec urp),
-  `hat_chgprot`/`hat_pagesync`/`hat_pageunload`, uvirtophys/uvatosde/uvatopte.
+## NEXT ACTIVE (2026-06-22) — newproc "fork failed" = the first USER fork is now HIT
+- `hat_alloc` (0xb4188): 4→128 child-hat root + SET the new proc's root.  main -> newproc
+  (0x41306) -> procdup (0x41840) -> as_dup (0x41866)/segu_get/save; one fails -> "fork
+  failed".  Pinpoint which, then port hat_alloc (+ as_dup if needed).  THIS unblocks fork.
+- Then `hat_dup`/`hat_exec`/`hat_asload`/`swtch` (per-proc root, pmove crp → movec urp —
+  the context-switch path; its pmoves are still unpatched), `hat_growsdt`/`hat_sdtfree`
+  STEAL paths, `hat_chgprot`/`hat_pagesync`/`hat_pageunload`, uvirtophys/uvatosde/uvatopte.
 - **040 trap/exception frames** (≠030) — biggest remaining risk, bites on first syscall/fault.
+
+## SEPARATE BLOCKER — swapconf namei ENOENT (/dev/dsk/c6d0s2), skipped for now
+- First path lookup of boot -> 040 namei/buffer-cache bug.  See RESUME-HERE.md blocker (B).
 
 ---
 (Historical plan below — the 2KB→4KB format analysis that drove the above.)
