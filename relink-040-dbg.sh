@@ -31,7 +31,7 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/mainmarks.s"    -o "$HERE/build/
 
 echo "[*] weaken ddopen + hat_dup + anon_resv + schedpaging; globalize+weaken blkatoff (LOCAL)"
 cp "$IN" "$HERE/build/unix-040-dbg-stage1"
-m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol hat_dup --weaken-symbol anon_resv --weaken-symbol schedpaging --weaken-symbol resume --globalize-symbol blkatoff --weaken-symbol blkatoff "$HERE/build/unix-040-dbg-stage1"
+m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol hat_dup --weaken-symbol anon_resv --weaken-symbol schedpaging --weaken-symbol resume --weaken-symbol sched --globalize-symbol blkatoff --weaken-symbol blkatoff "$HERE/build/unix-040-dbg-stage1"
 
 OUT="$HERE/build/unix-040-dbg"
 echo "[*] relinking -> $OUT"
@@ -59,8 +59,8 @@ m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'sdopen|sdpartition|ddstrategy|
 	| sed 's/^/      LEAK: /' || true
 echo "      (a LEAK line above = an unbound ref; none = good)"
 
-echo "[*] installing sched(0x46e94) detour -> sched_hook (diagnostic)"
-python3 "$HERE/prototypes/patch_sched_hook.py" "$OUT"
+echo "[*] sched is now a --weaken-symbol OVERRIDE (no detour patch -- detour-jmp entry"
+echo "    into relinked code Line-F-crashes on this 040; jsr-override entry works)."
 
 echo
 echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-dbg"

@@ -10,40 +10,32 @@
 
 	.text
 | ---------------------------------------------------------------------------
-| sched_hook -- a detour for sched(0x46e94), the swapper loop entry (proc 0, called once
-| by main() AFTER all 4 daemons are created).  Same low-IPL main context as schedpaging
-| below, so cmn_err is safe (the sys_forkret/setbackdq probes crashed because their first
-| call is deep in newproc / an early disk-I/O wakeup, where a cmn_err-triggered exception
-| hit the unported 040 trap frame).  This RESOLVES the core contradiction: newproc gives
-| every child SLOAD(0x10) (proven statically: child p_flag = (parent & 0x300000) | 0x10),
-| and setbackdq makes a SLOAD proc visible by setting maxrunpri -- yet swtch idles, which
-| happens ONLY when maxrunpri == -1.  Print maxrunpri (and srunprocs) at sched entry:
+| sched OVERRIDE -- replaces the swapper loop entry (proc 0, called once by main() AFTER
+| all 4 daemons are created).  CRITICAL MECHANISM NOTE (2026-06-22): every DETOUR (byte-
+| patch a kernel function's prologue with `jmp <hook>`) into this mainmarks.o code
+| reproducibly double-panicked with a bogus "Line-F vector 0xB" AT THE HOOK'S FIRST
+| INSTRUCTION (a harmless linkw) -- setbackdq, sys_forkret, AND sched detours all failed
+| identically, while the --weaken-symbol OVERRIDE schedpaging (entered by the kernel's own
+| relink-resolved `jsr schedpaging`) WORKS.  So: detour-jmp entry into relinked code is
+| broken on this 040 setup; the jsr-override entry is fine.  This converts the sched probe
+| to an OVERRIDE: --weaken-symbol sched makes main's `jsr sched` resolve here.
+| It prints maxrunpri ONCE and then spins (measurement only -- we just need the value):
 |   maxrunpri >= 0  -> children ARE enqueued+visible -> bug is in swtch/resume (040 ctx).
 |   maxrunpri == -1 -> the CL_FORKRET->sys_forkret->setbackdq enqueue did NOT run on 040.
-| patch_sched_hook.py overwrites sched's first 8 bytes (linkw %fp,&-32 ; moveml
-| %d2-%d5/%a2-%a3,%sp@-) with `jmp sched_hook` + nop; the hook prints once, re-executes
-| the displaced insns, and jmps to sched+8 (0x46e9c).
-	.globl	sched_hook
-sched_hook:
-	linkw	%fp,&0			| establish a frame FIRST (mirror schedpaging)
-	movel	Lsch_n,%d0
-	bnew	Lsch_done		| one-shot print
-	moveq	&1,%d0
-	movel	%d0,Lsch_n
+| newproc gives every child SLOAD (proven: child p_flag = (parent & 0x300000) | 0x10) and
+| setbackdq makes a SLOAD proc visible by setting maxrunpri, yet swtch idles only when
+| maxrunpri == -1 -- this measurement resolves that contradiction.
+	.globl	sched
+sched:
+	linkw	%fp,&0
 	movel	maxrunpri,%sp@-		| THE value (-1 == nothing visible to swtch)
 	pea	Lsch_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(12),%sp		| pop 3 longs (srunprocs dropped -- it is file-local, RELA guru)
-Lsch_done:
-	unlk	%fp			| undo our frame
-	linkw	%fp,&-32		| displaced sched insn 1 (linkw %fp,#-32)
-	moveml	%d2-%d5/%a2-%a3,%sp@-	| displaced sched insn 2
-	.word	0x4ef9,0x0004,0x6e9c	| jmp 0x00046e9c (sched+8, absolute)
+	lea	%sp@(12),%sp		| pop 3 longs
+Lsch_spin:
+	bra.w	Lsch_spin		| halt here -- measurement only
 	nop				| pad .text to a 4-byte multiple
-	nop
-	nop
-	nop
 
 | ---------------------------------------------------------------------------
 | schedpaging (GLOBAL T) -- FIRST call after swapconf returns.  Override to print a
