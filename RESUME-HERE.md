@@ -1,69 +1,78 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-22)
 
-## >>> ROOT CAUSE FOUND 2026-06-22: the "swapconf namei bug" is the UNPATCHED MODEL B PAGER <<<
-The 040 kernel boots through every VM/MMU/HAT layer, mounts root, prints the banner, runs
-init, reaches **swapconf**, where `lookupname("/dev/dsk/c6d0s2")` returns ENOENT.  This
-session proved that is NOT a namei bug -- it is the next batch of Model B (2KB->4KB) page-
-size patches that patch_modelb.py never applied to the pager/fs page-I/O subsystem.
+## >>> READ-ZERO BUG FIXED + SWAP CONFIGURES + U-AREA FIXED.  NOW AT: per-proc hat + swtch <<<
+The whole VM / page-cache / disk-I/O / swap-config / u-area path now WORKS on 040.  Boots
+through swapconf, configures swap, creates proc 1, and goes IDLE at 0% CPU (a wait, NOT a
+crash) in proc 1's setup because the per-proc hat + context switch are unported.  Three
+root causes were found and fixed this session; the next blocker is the deferred fork/hat
+layer (well-scoped below).
 
-DIAGNOSIS (swapconf_dbg.s = namei prefix-probe, blkatoff_dbg.s = transcribed blkatoff +
-dumps): root fs = UFS.  `/dev` lookup -> ufs_dirlook -> blkatoff -> fbread (segmap/page-
-cache).  blkatoff ENTERs (root inode read FINE via bread, isize=0x200), fbread SUCCEEDS,
-but the directory page is **all zeros**.  A page_find(vp,off) probe that reads the page's
-PHYSICAL RAM directly via the DTT0 identity map (pfn=(pp-*pages)/60+*pages_base, phys=
-pfn<<12) showed `PAGE phys=9D8B000 ram=[0 0 0 0]` -- segmap maps the SAME page page_find
-returns and its RAM is genuinely zero.  So **hat_memload/hat_pteload map file pages
-CORRECTLY; it is a READ bug, not a map bug.**  The disk read IS issued (ufs_getapage
-reaches bdevsw[].strategy) but data never lands in the page, because ufs_getapage/pvn/
-segmap/bp_map all still treat the now-4KB page frame as 2KB (page_get/pagezero/offset/
-btopr/ptob mismatched) -> data and mapping disagree.
+### FIX 1 — the read-zero / "swapconf namei" bug = gen_strategy PFN<<11 (DONE)
+The "namei ENOENT" was NOT namei: directory page-reads returned an all-zero page
+(blkatoff probe `PAGE phys=9D8B000 ram=[0 0 0 0]`).  ROOT CAUSE: **gen_strategy (0x3d988)**
+converts a B_PAGEIO buf's page to a DMA-target PHYS = `PFN<<11` (0x3d9c0 single-page,
+0x3dae6 breakup) and the device DMAs there; under Model B the page is at `PFN<<12`, so disk
+data landed at HALF the address and the 4KB page stayed zero.  Found via a new whole-kernel
+AUTO-DETECTOR `prototypes/detect_pagesize.py` (scans objdump for the 2KB idioms, attributes
+to functions, excludes false-positives; reports **719** page-size sites kernel-wide, NOT
+~150 -- the constant pervades the whole VM/FS/exec ABI; re-finds 85/94 known sites).  Fixed
+with the targeted I/O-path groups in patch_modelb_pager.py: **genst** (gen_strategy 7),
+**bufbk** (buf_breakup 3), **dmapio** (dma_pageio 7 -- its 512-byte sector >>9 logic left).
+RESULT: dir reads return real data, ALL namei lookups resolve (`/dev/dsk/c6d0s2 -> r=0`).
 
-### >>> THE FIX IS ALL-OR-NOTHING: comprehensive Model B pager patch (~150 sites) <<<
-Chased the read through FIVE layers, each exposing the next unpatched 2KB layer:
-`ufs_getapage(23) -> pvn_getpages(4)/pvn_kluster(13) -> segmap(5) -> bp_mapin/bp_mapout(12)
--> SCSI/DMA strategy`.  The page cache + buf + I/O is ONE global system: a subset either
-still reads zeros (read path incomplete) or HANGS (mixed 2KB/4KB granularity).
-- `prototypes/patch_modelb_pager.py` (wired into relink-040.sh after patch_modelb.py) holds
-  59 sites in groups {ufs,pvngp,pvnk,segmap,buf}, env-selectable via MODELB_PAGER_GROUPS.
-  DEFAULT = ufs,pvngp,segmap,buf (BOOTS).  **pvnk EXCLUDED: pvn_kluster HANGS pre-banner**
-  (CPU idle = page-lock/IO wait) in the putpage/sync path -- a deeper 4KB issue.
-- HARD-WON method rules baked into the patcher: page-round byte masks #2047/#2048/#-2048
-  (f800) AND pea/lea/addaw ±2048 DISPLACEMENTS flip to 4KB; `moveq #11` is PAGESHIFT only
-  when FOLLOWED BY a shift (lsr/asl = btopr/ptob) -- LEAVE it when followed by cmpl (NDADDR
-  12-direct-blocks); the page_HASH `>>11` (page_find @af636 / page_enter / page_lookup /
-  page_exists / segmap_unlock @a901e) MUST stay >>11 (uniform hash, unpatched everywhere --
-  patching it alone was the first hang); leave sector >>9, MAXBSIZE >>13, B_ flag bits.
+### FIX 2 — swap now really configures (DONE)
+relink-040-dbg.sh DROPPED the swapconf skip-stub (namei works now), so stock swapconf runs:
+it opens `/dev/dsk/c6d0s2` (ddopen slice=2, r=0) and populates `swapinfo`.  This cleared the
+`swap_xlate+0x26` NULL-swapinfo bus error (which was only ever a side effect of no-swap).
 
-**NEXT (recommended, do with FRESH context):**
-1. Write an AUTO-DETECTOR that scans the whole-kernel disasm for the PAGESIZE idioms above
-   and EXCLUDES the listed false-positives, to generate the comprehensive ~150-site table
-   (s5getapage/writei/segvn/anon/swap/exec/spec/nfs all touch pages -- see the per-fn 2KB
-   counts in the memory file).  Patch + test as ONE pass (no subsets -> avoid mixed
-   granularity).
-2. Find + fix the sd/dmac strategy's page->DMA-phys site (likely pfn<<11 -> needs <<12) --
-   the 5th layer that bp_map did not cover (dma_pageio itself is a bounce+bcopy path, not
-   page-size).
-3. Re-test with blkatoff_dbg's PAGE probe: success = `ram=[00000002 000C0001 2E000000 ...]`
-   and `/dev -> r=0`.  Then remove the swapconf/blkatoff/forkdbg diagnostics.
+### FIX 3 — u-area maps as 2x4KB, not 4x2KB = segu_get/segu_softload (DONE)
+First-fork u-area mapping hit `hat_pteload: pfn mismatch va=4844x800 *pte=...X newpfn=...X+1`
+(a stock-030 FATAL check too, 0xb4eba -- NOT our over-strict assertion).  ROOT CAUSE:
+**segu_get** allocates an 8KB u-area (anon_resv/page_get 0x2000) and maps it as a hardcoded
+4 x 2KB pages (moveq #3 bound @0xaa6a2, #2048 va step @0xaa69c); under Model B page_get(8192)
+returns 2 x 4KB pages -> consecutive pfns X,X+1 mapped 2KB apart -> same 4KB leaf -> mismatch.
+Fixed with group **segu** (segu_get loop -> 2 iters/4KB step; segu_softload swap-in -> 4KB
+step + >>11->>>12 index).  segu_get's SECOND loop (st_top1, the INERT 030 u-area page table)
+is LEFT -- dead on 040 until uvirtophys is ported.  hat040.s's pfn-mismatch check is
+temporarily WARN (prints va/*pte/newpfn) -- RESTORE to panic(3) once the u-area path is clean.
+
+### >>> NEXT BLOCKER: the per-proc hat + context switch (the deferred fork/hat layer) <<<
+After swap configures, main() does: schedpaging -> newproc(proc 1) -> as_alloc -> hat_alloc
+-> segvn_create -> as_map -> copyout(icode).  The boot goes IDLE at 0-5% CPU here.
+CONFIRMED (mainmarks.s schedpaging marker PRINTS -> swapconf returned; so the idle is in
+proc-1 setup, not swapconf).  CONFIRMED in disasm (no boot needed) -- TWO unported pieces:
+1. **swtch @0xb923c executes 030 `pmove %a1@,%crp`** (+ `pflusha` @0xb9240) to load the
+   per-proc root -- an F-line on 040 (which uses `movec %dn,%urp`).  The scheduler therefore
+   cannot switch to proc 1 -> proc 1 never runs -> proc 0 idles (idle, not crash = 0% CPU).
+2. **hat_alloc @0xb4188** builds the per-proc root via `mem_align` -- the 4-entry 030 root;
+   needs the 128-entry 040 root port (and to set the root so swtch's movec urp loads it).
+Related unported (memory file): hat_growsdt/hat_dup (currently STUBBED in forkdbg.s),
+uvirtophys/uvatosde (the per-proc 030 software walkers), and the **040 trap/exception
+frames** (≠030 -- bites on proc 1's first fault/syscall; the memory's biggest-risk item).
+
+**NEXT (recommended): port the per-proc hat + context switch as one coherent chunk:**
+1. **hat_alloc** (0xb4188): build a 128-entry 040 root (like kroot040 but per-proc); zero it;
+   store it where swtch reads the root from (hatp@? the as->hat).  Mirror the kroot040/
+   sysseginit pointer-descriptor format.  hat_growsdt/hat_dup follow.
+2. **swtch** (0xb923c): replace `pmove %a1@,%crp ; pflusha` with the 040 `movec %dn,%urp`
+   (+ `pflusha` 040 form / cinv) -- a relink override (transcribe swtch tail) OR a byte
+   patch (the pmove `f011 4c00` -> movec + the pflusha is already an F-line; patch_pmmu_040
+   handles pflusha).  This is the same pmove-crp->movec-urp change needed in hat_map/exec/
+   asload.
+3. Build, boot: expect proc 1 to run the icode -> exec /sbin/init -> getty/login on console.
+   The 040 trap-frame port likely bites here (proc 1's first user fault).
+
 Build: `sh relink-040.sh` (-> build/unix-040) then `sh relink-040-dbg.sh` (-> build/
-unix-040-dbg with the swapconf namei-probe + blkatoff read-vs-map dump).  See the memory
-file amix-040-vm-port-complete.md for the full layer map.
+unix-040-dbg; ddopen + blkatoff + schedpaging-marker probes, hat_dup/anon_resv stubs).
+Detector: `python3 prototypes/detect_pagesize.py` (719-site whole-kernel report; the full
+Model B sweep is deferred -- patch path-by-path as each new code path is exercised).
 
---- (historical: the deferred fork/hat layer, AFTER swap configures) ---
-procdup SKIPS as_dup for proc 0 (no p_as; main sets proc 1's as via as_alloc + segvn_create
-AFTER newproc), so the per-proc hat (hat_alloc 0xb4188, 4->128-entry 040 root + set child
-root for swtch movec urp) is the layer that comes AFTER swap works -- not a current blocker.
-The "newproc fork failed" / swap_xlate faults seen earlier were all downstream of skipping
-swap (no swap -> anon_resv fails), now understood as side effects of the pager root cause.
-
-### Other fixes this session
-- **nomsg halt-path pmoves NOPed** (patch_pmmu_040.py, 0x18ed8/ee2/ee6) -> panics now halt/
-  reboot CLEANLY (no more recursive Line-F trap loop on enter-after-panic).  The
-  context-switch pmoves (hat_map/exec/asload/swtch `pmove crp`) are STILL unpatched ->
-  needed with blocker (A)'s per-proc hat (movec urp).
-- Debug markers still in hat040.s (DBG ddopen/hat_unload/revmap-miss) + swapconf_dbg.s --
-  remove once past these blockers.  Build: `sh relink-040.sh` (+ `relink-040-dbg.sh` for
-  the ddopen/swapconf-skip probes -> build/unix-040-dbg).
+### Diagnostics still in the tree (remove once past the fork/hat layer)
+- hat040.s: DBG hat_unload/revmap-miss markers; pfn-mismatch lowered to WARN (restore to
+  panic(3)).  ddopen_dbg.s, blkatoff_dbg.s, forkdbg.s (hat_dup/anon_resv stubs), mainmarks.s
+  (schedpaging marker).  All layered ONLY in build/unix-040-dbg, not build/unix-040.
+- **nomsg halt-path pmoves NOPed** (patch_pmmu_040.py 0x18ed8/ee2/ee6) -> clean panics.
+  Context-switch pmoves (hat_map/exec/asload/swtch `pmove crp`) STILL unpatched -> item 2 above.
 
 
 ## ★ MAJOR MILESTONE (2026-06-19): 040 CPU/MMU/VM/fork port COMPLETE.
