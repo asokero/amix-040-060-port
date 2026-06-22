@@ -1,6 +1,42 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-22)
 
-## >>> LATEST (2026-06-22 eve): hat_alloc + swtch DONE.  NOW AT: children not RUNNABLE <<<
+## >>> LATEST (2026-06-22 night): REAL enqueue path found (setrun was WRONG target) <<<
+**Methodology fix (user-flagged):** the kernel CORE (newproc/sched/swtch/ts_*/sys_* etc.)
+ships ONLY as binary objects (`amix-src/sys/{disp,os,ml,vm}/exp` = ELF .o, NO C source) ->
+function disasm is unavoidable.  BUT struct layouts/offsets/flags DO have C source:
+`vanillarw/usr/include/sys/{proc.h,class.h,disp.h,var.h,ts.h}`.  STOP reverse-engineering
+offsets -- read them.  Already corrected: p_stat@0 (SRUN=2), p_flag@4 (SSYS=0x1, SLOAD=0x10,
+SPROCIO=0x400, SULOAD=0x2000), p_pri@24, p_cid@228, p_clproc@232, p_clfuncs@236.
+classfuncs_t (class.h): cl_admin@0, cl_enterclass@4, cl_exitclass@8, cl_fork@12,
+**cl_forkret@16**, cl_getclinfo@20, ... cl_setrun@52, ... cl_swapin@64, cl_swapout@68.
+
+**Corrected diagnosis:** the earlier "setrun never called" hunt was a RED HERRING -- setrun
+(0x489c2) is NOT on the fork path.  The real new-proc ENQUEUE is:
+  newproc -> CL_FORKRET (cl_funcs@16 @0x41812) -> sys_forkret(0xba936) -> setbackdq(child).
+(SYS class because main's 4 daemons are kernel procs; sys_fork sets clproc=the proc itself,
+so sys_forkret(clproc)=setbackdq(proc).)  newproc's CL_ENTERCLASS error branch only LOGS,
+it still falls through to CL_FORKRET, so the enqueue should happen.
+
+**THE mechanism (read from setbackdq 0xb926e disasm + disp.h):** setbackdq always links pp
+into dispq[p_pri], but only updates maxrunpri/dqactmap/dq_sruncnt -- i.e. makes pp VISIBLE
+to the swtch dispatcher -- when `(p_flag & (SLOAD|SPROCIO)) == SLOAD`  OR  `SSYS(0x1)` set
+(b92c0: andil #0x410 vs 16; b92d2: btst #0,@(7)=SSYS).  So if the children are enqueued with
+BOTH SLOAD(0x10) and SSYS(0x1) CLEAR, they sit on the dispq INVISIBLE -> maxrunpri stays -1
+-> swtch idles.  Exactly the observed symptom.  (On 030 the daemons must therefore have SSYS
+and/or SLOAD set; if 040 fails to set the flag, that's the bug.)
+
+**PROBE INSTALLED (boot build/unix-040-dbg):** setrun detour REMOVED; new setbackdq detour
+(prototypes/patch_setbackdq_hook.py + mainmarks.s setbackdq_hook @0xd8128) prints
+"DBG setbackdq pp=%x flag=%x pri=%x" for the first 6 calls.  Verdict table:
+  - NO "DBG setbackdq" at all -> newproc->CL_FORKRET->sys_forkret->setbackdq broken on 040
+    (next: detour sys_forkret 0xba936 + check the cl_funcs@16 indirect dispatch).
+  - "DBG setbackdq" fires with flag having NEITHER 0x1 nor 0x10 -> THE BUG: child flag wrong
+    on 040 (trace where SSYS/SLOAD is set for a new proc: newproc/procdup p_flag init).
+  - fires with 0x1 or 0x10 set but resume STILL never fires -> bug is downstream in
+    swtch/dispatcher maxrunpri scan (the 040 swtch port).
+NEXT: boot unix-040-dbg, read the DBG setbackdq flag values.
+
+## >>> (prior) hat_alloc + swtch DONE.  children not RUNNABLE <<<
 The kernel now boots through swap config AND creates all 4 standard processes (proc 1
 init + pageout + fsflush + aio -- confirmed via a kvsegu-VA ptload trace).  proc 0 then
 runs sched() -> sleep(&runin) -> swtch, but **swtch idles** (jsr idle @0xb90fc, the

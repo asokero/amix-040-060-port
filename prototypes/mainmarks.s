@@ -68,33 +68,42 @@ Lrs_go:
 	jmp	%a1@
 
 | ---------------------------------------------------------------------------
-| setrun_hook -- a detour for setrun(0x489c2): does CL_FORK/ts_fork make the children
-| RUNNABLE?  patch_setrun_hook.py overwrites setrun's first 8 bytes (linkw + moveml)
-| with `jmp setrun_hook` + nop.  The hook prints a one-shot marker (the proc being made
-| runnable), re-executes the displaced linkw/moveml, then jmps back to setrun+8 (0x489ca).
-| If "DBG setrun proc=%x" prints, setrun IS reached (so dispq/maxrunpri update via
-| CL_SETRUN is the bug); if not, the CL_FORK path never reaches setrun.
-	.globl	setrun_hook
-setrun_hook:
-	movel	Lsrn_n,%d0
-	bnew	Lsrn_skip		| one-shot
-	moveq	&1,%d0
-	movel	%d0,Lsrn_n
-	movel	%sp@(4),%sp@-		| the proc arg (sp@(4) at entry = setrun's arg)
-	pea	Lsrn_msg
+| setbackdq_hook -- a detour for setbackdq(0xb926e): the universal run-queue ENQUEUE.
+| (Per sys/class.h + sys/disp.h, the real fork-enqueue path is newproc -> CL_FORKRET
+| (cl_funcs@16) -> sys_forkret -> setbackdq; the earlier setrun hunt was the WRONG
+| target -- setrun is not on the fork path at all.)  patch_setbackdq_hook.py overwrites
+| setbackdq's first 8 bytes (linkw %fp,&-8 ; moveml %d2-%d5/%a2-%a3,%sp@-) with
+| `jmp setbackdq_hook` + nop.  The hook prints pp / p_flag(@4) / p_pri(@24) for the
+| first 6 calls, then re-executes the displaced insns and jmps to setbackdq+8 (0xb9276).
+| KEY: setbackdq only updates maxrunpri/dqactmap (makes pp visible to the dispatcher)
+| when (p_flag & (SLOAD|SPROCIO)) == SLOAD  OR  SSYS(0x1) is set.  So if the children
+| are enqueued with BOTH SLOAD(0x10) and SSYS(0x1) clear, maxrunpri stays -1 and swtch
+| idles -- exactly the observed symptom.  The printed p_flag tells us which.
+	.globl	setbackdq_hook
+setbackdq_hook:
+	movel	Lsbq_n,%d0
+	cmpil	&6,%d0
+	bccw	Lsbq_skip		| printed enough
+	addql	&1,%d0
+	movel	%d0,Lsbq_n
+	moveal	%sp@(4),%a0		| a0 = pp (entry sp@(4) = setbackdq's arg)
+	movel	%a0@(24),%sp@-		| p_pri
+	movel	%a0@(4),%sp@-		| p_flag
+	movel	%a0,%sp@-		| pp
+	pea	Lsbq_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(12),%sp
-Lsrn_skip:
-	linkw	%fp,&0			| displaced setrun insn 1
-	moveml	%d2/%a2,%sp@-		| displaced setrun insn 2
-	.word	0x4ef9,0x0004,0x89ca	| jmp 0x000489ca  (setrun+8, absolute)
+	lea	%sp@(20),%sp		| pop 5 longs (d0/a0 are scratch in setbackdq)
+Lsbq_skip:
+	linkw	%fp,&-8			| displaced setbackdq insn 1
+	moveml	%d2-%d5/%a2-%a3,%sp@-	| displaced setbackdq insn 2
+	.word	0x4ef9,0x000b,0x9276	| jmp 0x000b9276 (setbackdq+8, absolute)
 
 	.data
-Lsrn_msg:
-	.asciz	"DBG setrun proc=%x (made runnable)"
+Lsbq_msg:
+	.asciz	"DBG setbackdq pp=%x flag=%x pri=%x"
 	.even
-Lsrn_n:
+Lsbq_n:
 	.long	0
 Lsp_msg:
 	.asciz	"DBG MARK: schedpaging (swapconf returned) -- entering proc-1 setup"
