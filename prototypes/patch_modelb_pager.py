@@ -27,12 +27,13 @@ KERNEL = sys.argv[1] if len(sys.argv) > 1 else "build/unix-040"
 # zeros -> the fix needs either a CORRECT pvn_kluster patch (find the bad site) or it is a
 # deeper hat_memload file-page mapping issue.  Bisection: set MODELB_PAGER_GROUPS to a
 # comma list of {ufs,pvngp,pvnk,segmap}.
-GROUPS = set((os.environ.get("MODELB_PAGER_GROUPS") or "ufs,pvngp,segmap").split(","))
+GROUPS = set((os.environ.get("MODELB_PAGER_GROUPS") or "ufs,pvngp,segmap,buf").split(","))
 def group_of(name):
     if name.startswith("ufs_get"):      return "ufs"
     if name.startswith("pvn_getpages"): return "pvngp"
     if name.startswith("pvn_kluster"):  return "pvnk"
     if name.startswith("segmap"):       return "segmap"
+    if name.startswith("bp_map"):       return "buf"
     return "ufs"
 
 def u16(b,o): return struct.unpack(">H", b[o:o+2])[0]
@@ -110,6 +111,22 @@ P = [
  # are real page-size byte rounds and DO change.)
  (0xa90f4, b"\x06\x82"+A48, b"\x06\x82"+A96, "segmap_unlock:addil #2048 d2"),
  (0xa90fa, b"\x06\x83"+A48, b"\x06\x83"+A96, "segmap_unlock:addil #2048 d3"),
+ # ===== bp_mapin / bp_mapout: map a paged (B_PAGEIO) buf into kernel VA for the I/O.
+ # The disk read IS issued (ufs_getapage reaches bdevsw strategy) but the page stays
+ # zero -> the buf->VA mapping here is 2KB while the page is 4KB.  All moveq #11 are
+ # PAGESHIFT (followed by lsrl/asll = btop/ptob), not NDADDR. =====
+ (0x59388, b"\x02\x82"+A47, b"\x02\x82"+A95, "bp_mapin:andil #2047 d2"),
+ (0x5939a, b"\x06\x80"+A47, b"\x06\x80"+A95, "bp_mapin:addil #2047 d0"),
+ (0x593a2, b"\x74\x0b", b"\x74\x0c", "bp_mapin:PAGESHIFT >>11 d2 (lsrl)"),
+ (0x59402, b"\x74\x0b", b"\x74\x0c", "bp_mapin:PAGESHIFT <<11 d2 (asll)"),
+ (0x59478, b"\x02\x80"+A47, b"\x02\x80"+A95, "bp_mapout:andil #2047 d0"),
+ (0x59484, b"\x06\x82"+A47, b"\x06\x82"+A95, "bp_mapout:addil #2047 d2"),
+ (0x5948a, b"\x72\x0b", b"\x72\x0c", "bp_mapout:PAGESHIFT >>11 d1 (lsrl)"),
+ (0x59494, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "bp_mapout:andiw #-2048 d0"),
+ (0x594c8, b"\x72\x0b", b"\x72\x0c", "bp_mapout:PAGESHIFT >>11 d1 (lsrl b)"),
+ (0x594e8, b"\x06\xae"+A48, b"\x06\xae"+A96, "bp_mapout:addil #2048 fp@(-4)"),
+ (0x594fe, b"\x72\x0b", b"\x72\x0c", "bp_mapout:PAGESHIFT >>11 d1 (lsrl c)"),
+ (0x59518, b"\x02\xaa"+A47, b"\x02\xaa"+A95, "bp_mapout:andil #2047 a2@(36)"),
 ]
 
 def main():
