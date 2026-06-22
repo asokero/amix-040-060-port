@@ -10,9 +10,23 @@ unmap), each an inert-030-tree-walker re-ported to the live kptr040 tree.  hat_u
 got a bounded reverse-map unlink (findmap skips if the pte isn't in pages[pfn]'s list --
 correct for kvsegmap pages mapped by segmap setup, verified by a sane *pte).
 
-### TWO REMAINING BLOCKERS to single-user (2026-06-22 — user CONFIRMED same disk boots
-### to login on 030, so both are real 040 bugs, not config):
+### >>> CONSOLIDATED (2026-06-22): there is really ONE root blocker = swapconf namei. <<<
+Confirmed by diagnostics (forkdbg.s): the "newproc fork failed" is a SIDE EFFECT of
+skipping swapconf, NOT a separate bug:
+```
+swapconf namei ENOENT (/dev/dsk/c6d0s2)        <- THE root bug (040 namei/buffer)
+  └ skip swapconf -> no swap -> anon_resv fails (it checks availsmem) -> "fork failed"
+      └ stub anon_resv -> segu_get proceeds -> swap_xlate (0xb2aea) BUS ERRORs (needs swap too)
+```
+procdup SKIPS as_dup (proc 0 has no p_as; main sets proc 1's as itself via as_alloc +
+segvn_create AFTER newproc), so the per-proc hat (hat_alloc 128-entry root) is NOT the
+fork blocker -- it's the NEXT layer, needed when proc 1's USER as is set up + first runs.
+**NEXT: fix the swapconf namei bug (configure swap) -- then fork + anon/swap follow.**
+rootfstype + the directory-read path (lookupname 0x5c290 -> namei -> s5/ufs lookup ->
+bread or fbread/segmap -> hat) is the place to dig.  Remove the forkdbg/swapconf-skip
+diagnostics once swap is real.
 
+--- (historical sub-analysis of the fork side, now understood as downstream) ---
 **(A) newproc "fork failed" — the FIRST user-process fork (CLOSER to single-user; do first).**
 Boot now reaches this AFTER swapconf is skipped (see swapconf_dbg.s).  `PANIC: newproc -
 fork failed` (newproc 0x41306).  Chain: main -> newproc -> the proc's procdup vector
