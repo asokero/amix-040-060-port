@@ -35,9 +35,46 @@ Lsp_ret:
 	nop				| pad .text to a 4-byte multiple
 	nop
 
+| ---------------------------------------------------------------------------
+| resume (0x9c, GLOBAL T) -- the context-switch core (restores a proc's saved
+| registers + SP and jmps to its resume PC).  Verbatim transcription + a one-shot
+| ENTRY marker: if "DBG resume ctx=%x" prints, swtch/sleep DO dispatch a proc (so the
+| children run and the idle is a FAULT on resume / in the child path); if it never
+| prints, proc 0 never yields (sched spins) and the issue is the swapper/run-queue.
+| The 030 pflusha (0xb2) is the 040 form here (.word 0xf518) since this override is a
+| separate copy.  resume GLOBAL T -> --weaken-symbol.  ublksde = global D.
+	.globl	resume
+resume:
+	movel	Lrs_n,%d0
+	bnew	Lrs_go			| one-shot
+	moveq	&1,%d0
+	movel	%d0,Lrs_n
+	movel	%sp@(8),%sp@-		| the resume context ptr (a1)
+	pea	Lrs_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(12),%sp
+Lrs_go:
+	moveal	%sp@(4),%a0
+	moveal	%sp@(8),%a1
+	moveal	ublksde,%a2
+	movew	%sr,%d0
+	movew	&0x2700,%sr
+	movel	%a1,%a2@
+	.word	0xf518			| pflusha (68040)
+	moveml	%a0@,%d2-%d7/%a1-%sp
+	movew	%d0,%sr
+	moveq	&1,%d0
+	jmp	%a1@
+
 	.data
 Lsp_msg:
 	.asciz	"DBG MARK: schedpaging (swapconf returned) -- entering proc-1 setup"
 	.even
 Lsp_n:
+	.long	0
+Lrs_msg:
+	.asciz	"DBG resume ctx=%x (dispatching a proc)"
+	.even
+Lrs_n:
 	.long	0

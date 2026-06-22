@@ -31,7 +31,7 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/mainmarks.s"    -o "$HERE/build/
 
 echo "[*] weaken ddopen + hat_dup + anon_resv + schedpaging; globalize+weaken blkatoff (LOCAL)"
 cp "$IN" "$HERE/build/unix-040-dbg-stage1"
-m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol hat_dup --weaken-symbol anon_resv --weaken-symbol schedpaging --globalize-symbol blkatoff --weaken-symbol blkatoff "$HERE/build/unix-040-dbg-stage1"
+m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol hat_dup --weaken-symbol anon_resv --weaken-symbol schedpaging --weaken-symbol resume --globalize-symbol blkatoff --weaken-symbol blkatoff "$HERE/build/unix-040-dbg-stage1"
 
 OUT="$HERE/build/unix-040-dbg"
 echo "[*] relinking -> $OUT"
