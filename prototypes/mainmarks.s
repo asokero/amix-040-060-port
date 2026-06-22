@@ -10,39 +10,39 @@
 
 	.text
 | ---------------------------------------------------------------------------
-| sys_forkret_hook -- a detour for sys_forkret(0xba936), the SYS-class CL_FORKRET op.
-| Per sys/class.h, newproc enqueues a child via CL_FORKRET (cl_funcs@16) -> sys_forkret
-| (clproc) -> setbackdq(clproc); for the SYS class sys_fork sets clproc = the proc, so
-| sys_forkret's arg @(8) IS the child proc.  Runs ONLY from newproc in main() (low IPL,
-| single-threaded init) so cmn_err is safe (same context as schedpaging below).
-| patch_sys_forkret_hook.py overwrites sys_forkret's first 8 bytes (linkw %fp,&0 ;
-| movel %fp@(8),%sp@-) with `jmp sys_forkret_hook` + nop.  The hook prints the child proc
-| / p_flag(@4) / p_pri(@24) ONCE, re-executes the displaced insns, jmps to sys_forkret+8.
-| KEY: setbackdq makes a proc visible to the dispatcher (updates maxrunpri/dqactmap) only
-| when (p_flag & (SLOAD|SPROCIO)) == SLOAD  OR  SSYS(0x1) is set.  If the child reaches
-| sys_forkret with BOTH SLOAD(0x10) and SSYS(0x1) clear, it enqueues invisibly ->
-| maxrunpri stays -1 -> swtch idles == the observed symptom.  The printed p_flag tells us.
-	.globl	sys_forkret_hook
-sys_forkret_hook:
+| sched_hook -- a detour for sched(0x46e94), the swapper loop entry (proc 0, called once
+| by main() AFTER all 4 daemons are created).  Same low-IPL main context as schedpaging
+| below, so cmn_err is safe (the sys_forkret/setbackdq probes crashed because their first
+| call is deep in newproc / an early disk-I/O wakeup, where a cmn_err-triggered exception
+| hit the unported 040 trap frame).  This RESOLVES the core contradiction: newproc gives
+| every child SLOAD(0x10) (proven statically: child p_flag = (parent & 0x300000) | 0x10),
+| and setbackdq makes a SLOAD proc visible by setting maxrunpri -- yet swtch idles, which
+| happens ONLY when maxrunpri == -1.  Print maxrunpri (and srunprocs) at sched entry:
+|   maxrunpri >= 0  -> children ARE enqueued+visible -> bug is in swtch/resume (040 ctx).
+|   maxrunpri == -1 -> the CL_FORKRET->sys_forkret->setbackdq enqueue did NOT run on 040.
+| patch_sched_hook.py overwrites sched's first 8 bytes (linkw %fp,&-32 ; moveml
+| %d2-%d5/%a2-%a3,%sp@-) with `jmp sched_hook` + nop; the hook prints once, re-executes
+| the displaced insns, and jmps to sched+8 (0x46e9c).
+	.globl	sched_hook
+sched_hook:
 	linkw	%fp,&0			| establish a frame FIRST (mirror schedpaging)
-	movel	Lsfr_n,%d0
-	bnew	Lsfr_done		| one-shot print
+	movel	Lsch_n,%d0
+	bnew	Lsch_done		| one-shot print
 	moveq	&1,%d0
-	movel	%d0,Lsfr_n
-	moveal	%fp@(8),%a0		| a0 = child proc (sys_forkret arg, at fp@(8) after linkw)
-	movel	%a0@(24),%sp@-		| p_pri
-	movel	%a0@(4),%sp@-		| p_flag
-	movel	%a0,%sp@-		| child proc
-	pea	Lsfr_msg
+	movel	%d0,Lsch_n
+	movel	srunprocs,%sp@-		| total runnable procs
+	movel	maxrunpri,%sp@-		| THE value (-1 == nothing visible)
+	pea	Lsch_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(20),%sp		| pop 5 longs
-Lsfr_done:
+	lea	%sp@(16),%sp		| pop 4 longs
+Lsch_done:
 	unlk	%fp			| undo our frame
-	linkw	%fp,&0			| displaced sys_forkret insn 1
-	movel	%fp@(8),%sp@-		| displaced sys_forkret insn 2
-	.word	0x4ef9,0x000b,0xa93e	| jmp 0x000ba93e (sys_forkret+8, absolute)
+	linkw	%fp,&-32		| displaced sched insn 1 (linkw %fp,#-32)
+	moveml	%d2-%d5/%a2-%a3,%sp@-	| displaced sched insn 2
+	.word	0x4ef9,0x0004,0x6e9c	| jmp 0x00046e9c (sched+8, absolute)
 	nop				| pad .text to a 4-byte multiple
+	nop
 	nop
 
 | ---------------------------------------------------------------------------
@@ -98,10 +98,10 @@ Lrs_go:
 	jmp	%a1@
 
 	.data
-Lsfr_msg:
-	.asciz	"DBG sys_forkret child=%x flag=%x pri=%x"
+Lsch_msg:
+	.asciz	"DBG sched ENTRY maxrunpri=%x srunprocs=%x"
 	.even
-Lsfr_n:
+Lsch_n:
 	.long	0
 Lsp_msg:
 	.asciz	"DBG MARK: schedpaging (swapconf returned) -- entering proc-1 setup"

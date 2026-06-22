@@ -59,8 +59,8 @@ m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'sdopen|sdpartition|ddstrategy|
 	| sed 's/^/      LEAK: /' || true
 echo "      (a LEAK line above = an unbound ref; none = good)"
 
-echo "[*] installing sys_forkret(0xba936) detour -> sys_forkret_hook (diagnostic)"
-python3 "$HERE/prototypes/patch_sys_forkret_hook.py" "$OUT"
+echo "[*] installing sched(0x46e94) detour -> sched_hook (diagnostic)"
+python3 "$HERE/prototypes/patch_sched_hook.py" "$OUT"
 
 echo
 echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-dbg"
