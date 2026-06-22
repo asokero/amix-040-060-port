@@ -20,21 +20,22 @@ ENV="/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
 
 [ -f "$IN" ] || { echo "ERROR: $IN missing -- run sh relink-040.sh first"; exit 1; }
 
-echo "[*] assembling ddopen_dbg.s + swapconf_dbg.s (stock sdpartition retained)"
+echo "[*] assembling ddopen_dbg.s + swapconf_dbg.s + forkdbg.s (stock sdpartition retained)"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ddopen_dbg.s"   -o "$HERE/build/ddopen_dbg.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/swapconf_dbg.s" -o "$HERE/build/swapconf_dbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/forkdbg.s"      -o "$HERE/build/forkdbg.o"
 
-echo "[*] weaken ddopen + swapconf (our strong defs win); sdpartition stays STOCK"
+echo "[*] weaken ddopen + swapconf + hat_dup (our strong defs win); sdpartition stays STOCK"
 cp "$IN" "$HERE/build/unix-040-dbg-stage1"
-m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol swapconf "$HERE/build/unix-040-dbg-stage1"
+m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol swapconf --weaken-symbol hat_dup --weaken-symbol anon_resv "$HERE/build/unix-040-dbg-stage1"
 
 OUT="$HERE/build/unix-040-dbg"
 echo "[*] relinking -> $OUT"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-dbg-stage1" \
-	"$HERE/build/ddopen_dbg.o" "$HERE/build/swapconf_dbg.o"
+	"$HERE/build/ddopen_dbg.o" "$HERE/build/swapconf_dbg.o" "$HERE/build/forkdbg.o"
 
 echo "[*] overridden defs (single strong def each):"
-for s in ddopen swapconf; do
+for s in ddopen swapconf hat_dup; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 
