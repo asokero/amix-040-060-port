@@ -1,6 +1,37 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-22)
 
-## >>> LATEST (2026-06-22 night): REAL enqueue path found (setrun was WRONG target) <<<
+## >>> RESOLVED (2026-06-22 night): enqueue WORKS (maxrunpri=0x4F); bug = 040 ctx switch <<<
+**MEASURED: `DBG sched ENTRY maxrunpri=4F` (=79, POSITIVE).**  Via a `--weaken-symbol sched`
+override (mainmarks.s) that prints maxrunpri and spins, reached cleanly after all 4 daemon
+u-areas map (8 ptload lines) and proc 0 ("sched") enters the swapper.  So the run queue is
+NON-empty -- the children ARE enqueued and visible to the dispatcher.  This DEFINITIVELY kills
+the "children invisible / maxrunpri==-1" theory (which was inferred, never measured) AND the
+earlier "setrun never called" hunt (setrun is not on the fork path; the real enqueue is
+newproc -> CL_FORKRET(cl_funcs@16) -> sys_forkret -> setbackdq, and newproc gives every child
+SLOAD: child p_flag = (parent & 0x300000) | 0x10).
+
+**=> The bug is the 040 CONTEXT SWITCH, not the enqueue.**  swtch idles only when
+maxrunpri==-1; at sched entry it is 79.  So either (a) maxrunpri drops to -1 when proc 0
+sleeps (if the pri-79 entry was proc 0 itself and the children sit at a level the scan
+mishandles), or (b) swtch reaches the dispatch scan, picks the proc, calls resume -- and
+resume/save (the 040 context switch) fails to transfer control (the "DBG resume" marker never
+fired; hat_alloc ENTER never fired => no child ever runs its body).  The ml/ locore is the
+suspect: save@0x84 (still 030 `pflusha f0002400`, tolerated only by the emulator), resume@0x9c,
+idle@0x19c, + the child context set by setuctxt (procdup 0x418e8) + the 040 trap/exception
+frames (memory's flagged biggest risk).
+
+**NEXT: port/verify the 040 context switch.**  Concretely: (1) confirm whether swtch reaches
+resume (override swtch or sleep, NOT a detour) or idles -- i.e. is maxrunpri still >=0 inside
+swtch after proc 0 sleeps; (2) port save/resume/swtch dispatch + setuctxt child context for the
+040 frame format; (3) the 040 trap/exception frames.
+
+**INSTRUMENTATION RULE (learned this session, see memory [[040-detour-jmp-crashes]]):** byte-
+patch jmp-DETOURS into relinked code Line-F-crash at the hook's first instruction on this 040
+(setbackdq/sys_forkret/sched detours all failed identically); use `--weaken-symbol` OVERRIDES
+(schedpaging/sched work).  Also use the C headers for struct offsets ([[kernel-source-vs-binary]]),
+don't reverse-engineer them (that caused the setrun mis-diagnosis).
+
+## >>> (prior) REAL enqueue path found (setrun was WRONG target) <<<
 **Methodology fix (user-flagged):** the kernel CORE (newproc/sched/swtch/ts_*/sys_* etc.)
 ships ONLY as binary objects (`amix-src/sys/{disp,os,ml,vm}/exp` = ELF .o, NO C source) ->
 function disasm is unavoidable.  BUT struct layouts/offsets/flags DO have C source:
