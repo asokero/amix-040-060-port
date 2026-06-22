@@ -31,6 +31,36 @@ patch jmp-DETOURS into relinked code Line-F-crash at the hook's first instructio
 (schedpaging/sched work).  Also use the C headers for struct offsets ([[kernel-source-vs-binary]]),
 don't reverse-engineer them (that caused the setrun mis-diagnosis).
 
+## >>> SOURCE MAP + BATCH PLAN (canonical; check source BEFORE reverse-engineering) <<<
+Full map in memory `kernel-source-vs-binary.md`.  Summary:
+- **HAS SOURCE (read/edit, don't RE):** trap/exception/vectors = `amix-src/sys/amiga/ml/
+  ttrap.s`+`vec.s`+`syms.s` (ttrap.s `stkrestore:` = the 68020/030 frame-format/`framesz`
+  handling = the 040 trap-frame edit point); all Amiga drivers/boot/console/SCSI under
+  `amiga/`; ALL struct/flag/constant layouts in `include/sys/*.h` + `include/vm/*.h`
+  (proc/class/disp/var/pcb/reg/trap/param/immu/vmparam/user/sysmacros, vm/pte, vm/seg).
+- **BINARY-ONLY (RE/transcribe via --weaken override, see [[040-detour-jmp-crashes]]):**
+  `os/exp` (newproc/sched/fork/procdup/main/p0init), `disp/exp` (swtch/setbackdq/ts_*/sys_*),
+  `ml/exp` (save@0x84/resume@0x9c/idle@0x19c), `vm/exp` (hat_*/segu_*/seg*/as_*/page_*).
+
+### Remaining 040 work as BATCHES (do related sites together):
+1. **CONTEXT SWITCH (current blocker, BINARY/RE)** -- save@0x84, swtch dispatch@0xb902c,
+   idle@0x19c.  resume@0x9c already transcribed (mainmarks.s, .word 0xf518 040 pflusha).
+   save still has 030 `pflusha f0002400` (emulator-tolerated).  Verify swtch reaches resume
+   (override probe) then transcribe save/swtch for the 040 register/frame save-restore.
+2. **TRAP/EXCEPTION FRAMES (SOURCE)** -- edit ttrap.s `stkrestore`/`framesz` + vec.s for 040
+   frame formats; use trap.h/reg.h/pcb.h.  Bites on first syscall/fault from init.
+3. **child context (setuctxt, procdup 0x418e8, BINARY/RE)** -- sets the child's first-resume
+   frame; must be 040-format for resume to transfer.  Pairs with #1/#2.
+4. **per-proc HAT (BINARY/RE)** -- hat_alloc DONE; pending hat_growsdt@0xb6058 /
+   hat_dup@0xb51xx (currently stubbed) = first user fork/exec.
+5. **user SW page-table walkers (BINARY/RE)** -- uvirtophys/uvatosde/uvatopte (per-proc root);
+   needed when the inert 030 st_top1 path is exercised for user procs.
+6. **Model B 4KB sweep (byte-patch, 696 NEW sites kernel-wide; detect_pagesize.py)** --
+   DONE groups (patch_modelb_pager.py): ufs,pvngp,segmap,buf,genst,bufbk,dmapio,segu.
+   Needed-soon: **hat_chgprot** (×6, COW/protection on fork-exec).  DEAD on 040 (inert 030
+   st_top1 builders, ignore): p0init/swapinub/segu_get-2nd-loop.  Rest: patch as each path
+   is first exercised (the dispatch primitives setbackdq/dq_sruninc/swtch are already CLEAN).
+
 ## >>> (prior) REAL enqueue path found (setrun was WRONG target) <<<
 **Methodology fix (user-flagged):** the kernel CORE (newproc/sched/swtch/ts_*/sys_* etc.)
 ships ONLY as binary objects (`amix-src/sys/{disp,os,ml,vm}/exp` = ELF .o, NO C source) ->

@@ -14,17 +14,19 @@ mounts root, prints the banner, runs init, reaches swapconf.
 - `sysseginit`, `vatosde`, `vatopte`, `svirtophys` — 040 walkers (kvm040.s + patches).
 - pstart040 sets kas@0x14 = kroot040 (kernel hat root = the live 040 root).
 
-## NEXT ACTIVE (2026-06-22) — newproc "fork failed" = the first USER fork is now HIT
-- `hat_alloc` (0xb4188): 4→128 child-hat root + SET the new proc's root.  main -> newproc
-  (0x41306) -> procdup (0x41840) -> as_dup (0x41866)/segu_get/save; one fails -> "fork
-  failed".  Pinpoint which, then port hat_alloc (+ as_dup if needed).  THIS unblocks fork.
-- Then `hat_dup`/`hat_exec`/`hat_asload`/`swtch` (per-proc root, pmove crp → movec urp —
-  the context-switch path; its pmoves are still unpatched), `hat_growsdt`/`hat_sdtfree`
-  STEAL paths, `hat_chgprot`/`hat_pagesync`/`hat_pageunload`, uvirtophys/uvatosde/uvatopte.
-- **040 trap/exception frames** (≠030) — biggest remaining risk, bites on first syscall/fault.
-
-## SEPARATE BLOCKER — swapconf namei ENOENT (/dev/dsk/c6d0s2), skipped for now
-- First path lookup of boot -> 040 namei/buffer-cache bug.  See RESUME-HERE.md blocker (B).
+## SUPERSEDED (2026-06-22 night) — see RESUME-HERE.md "SOURCE MAP + BATCH PLAN" (canonical)
+This section's premises are now resolved/disproven — current state:
+- `hat_alloc` (0xb4188): **DONE** (hat040.s: 040 root + as->hat_root).  swtch `pmove crp →
+  movec urp`: **DONE** (mainmarks.s resume override + patch).
+- "newproc fork failed" / "swapconf namei ENOENT": **SOLVED** (gen_strategy PFN<<11→<<12).
+  The fork/enqueue path WORKS — MEASURED `maxrunpri=0x4F` at sched entry (run queue non-empty,
+  children visible).  The earlier "setrun / children invisible" theories were WRONG.
+- **Current blocker = the 040 CONTEXT SWITCH** (swtch dispatch + resume/save + setuctxt child
+  context + 040 trap/exception frames) — proc 0 never transfers to a child.
+- Still pending (RE/binary): `hat_dup`/`hat_growsdt` (first user fork/exec), uvirtophys/
+  uvatosde/uvatopte; Model B: `hat_chgprot` ×6 (COW).  Trap frames = SOURCE (amiga/ml/
+  ttrap.s `stkrestore`/`framesz` + vec.s) — edit, don't RE.  Instrument via --weaken
+  overrides, NOT jmp-detours (they Line-F-crash on 040).
 
 ---
 (Historical plan below — the 2KB→4KB format analysis that drove the above.)

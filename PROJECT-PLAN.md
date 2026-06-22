@@ -1,13 +1,17 @@
 # Project Plan — 68040 (then 68060) support for Amiga Unix
 
-## ★ CURRENT STATUS (2026-06-22) — Phase 1 DONE, Phase 2 (single-user) in progress
-The 040 kernel boots through ALL of Phase 1 (MMU-on) AND the whole VM/HAT format port:
-pstart040 → early init → segmap → svirtophys → hat_pteload/unlock/ptfree/unload → **root
-fs MOUNTS → banner → init → swapconf**.  SCSI/root-mount SOLVED.  Current blocker =
-`swapconf lookupname /dev/dsk/c6d0s2` → ENOENT (config-vs-040-namei open question).
-Remaining for Phase 2 single-user: swapconf, first user fork/exec (deferred per-proc hat
-fns), then **040 trap/exception frames** (biggest risk).  Detail: RESUME-HERE.md +
-prototypes/hat-040-port-worklist.md.  Real-HW line PAUSED (RESUME-HERE-040-HARDWARE.md).
+## ★ CURRENT STATUS (2026-06-22 night) — Phase 1 DONE, Phase 2 (single-user) in progress
+The 040 kernel boots through ALL of Phase 1 (MMU-on) AND the whole VM/HAT format port AND
+swap config: pstart040 → early init → segmap → svirtophys → hat_* → **root fs MOUNTS →
+banner → init → swapconf configures → main creates all 4 daemons → proc 0 enters sched()**.
+swapconf/namei (the old blocker) is SOLVED (gen_strategy PFN<<11→<<12).  **MEASURED
+`maxrunpri=0x4F` at sched entry → the fork/enqueue path WORKS; the run queue is non-empty.**
+**Current blocker = the 040 CONTEXT SWITCH** (swtch dispatch + resume@0x9c/save@0x84 + the
+child context from setuctxt + the 040 trap/exception frames) — proc 0 never transfers to a
+child.  Remaining for Phase 2: that context-switch chunk, then first user fork/exec (hat_dup/
+hat_growsdt), then 040 trap frames.  **Canonical detail: RESUME-HERE.md (SOURCE MAP + BATCH
+PLAN).**  Source map in memory kernel-source-vs-binary.md (traps = SOURCE ttrap.s/vec.s;
+save/resume/swtch = binary RE).  Real-HW line PAUSED (RESUME-HERE-040-HARDWARE.md).
 
 ## Goal
 Make the AMIX SVR4 kernel boot and run on 68040, then 68060, on an Amiga 3000.
