@@ -36,6 +36,24 @@ hat_pteload:
 	movel	%fp@(12),%d2		| d2 = va
 	moveal	%fp@(16),%a2		| a2 = pp
 
+| --- DBG: trace the first 8 kvsegu (>=0x48000000) maps = proc-1 u-area mapping in
+|     segu_get; shows whether/how far the u-area map loop runs.  Gated, CE_WARN. ---
+	cmpil	&0x48000000,%d2
+	bcsw	Lpt_nodbg
+	movel	Lpt_dbgn,%d0
+	cmpil	&8,%d0
+	bccw	Lpt_nodbg
+	addql	&1,%d0
+	movel	%d0,Lpt_dbgn
+	movel	%d2,%sp@-		| va
+	pea	Lpt_dbgmsg
+	pea	2
+	jsr	cmn_err
+	addqw	&8,%sp
+	movel	%fp@(12),%d2		| reload d2 (cmn_err clobbers? d2 is callee-saved, but be safe)
+	moveal	%fp@(16),%a2
+Lpt_nodbg:
+
 | --- A (root) index = (va>>25) & 0x7F   [030: >>30 & 3] ---
 	movel	%d2,%d0
 	moveq	&25,%d3
@@ -696,18 +714,59 @@ hat_alloc:
 	linkw	%fp,&0
 	movel	%a2,%sp@-
 	moveal	%fp@(8),%a2		| a2 = as
+	| --- one-shot ENTRY marker: proves hat_alloc is reached (proc 1's child path runs).
+	|     If this prints but Lha_msg (post-kmem) does NOT, kmem_zalloc(0x1000) hangs. ---
+	movel	Lhae_n,%d0
+	bnew	Lhae_done
+	moveq	&1,%d0
+	movel	%d0,Lhae_n
+	movel	%a2,%sp@-		| as
+	pea	Lhae_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(12),%sp
+	moveal	%fp@(8),%a2		| reload a2 (callee-saved, but be safe)
+Lhae_done:
 	clrl	%sp@-			| kmem_zalloc flag = 0
 	pea	0x1000			| size 4KB (page-aligned, zeroed)
 	jsr	kmem_zalloc
 	addqw	&8,%sp			| a0 = root VA (page-aligned)
 	movel	%a0,%a2@(20)		| as->hat_root = 040 root VA (a0 = return value too)
+	| --- one-shot DBG marker: proves as_alloc/hat_alloc is reached (newproc returned) ---
+	movel	Lha_n,%d0
+	bnew	Lha_done
+	moveq	&1,%d0
+	movel	%d0,Lha_n
+	movel	%a2@(20),%sp@-		| root VA
+	movel	%a2,%sp@-		| as
+	pea	Lha_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
+Lha_done:
 	moveal	%sp@+,%a2
 	unlk	%fp
 	rts
 	nop				| pad .text to a 4-byte multiple (adjust per build)
+	nop				| +1: hat_pteload kvsegu-trace block shifted parity
 
 	.data
 	.even
+Lhae_msg:
+	.asciz	"DBG hat_alloc ENTER as=%x (proc-1 child path running)"
+	.even
+Lhae_n:
+	.long	0
+Lha_msg:
+	.asciz	"DBG hat_alloc: as=%x root=%x (kmem_zalloc done)"
+	.even
+Lha_n:
+	.long	0
+Lpt_dbgmsg:
+	.asciz	"DBG ptload uarea va=%x"
+	.even
+Lpt_dbgn:
+	.long	0
 Lpemsg0:
 	.asciz	"hat_pteload: root descriptor not resident"
 Lpemsg1:
