@@ -1,6 +1,24 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-22)
 
-## >>> READ-ZERO BUG FIXED + SWAP CONFIGURES + U-AREA FIXED.  NOW AT: per-proc hat + swtch <<<
+## >>> LATEST (2026-06-22 eve): hat_alloc + swtch DONE.  NOW AT: children not RUNNABLE <<<
+The kernel now boots through swap config AND creates all 4 standard processes (proc 1
+init + pageout + fsflush + aio -- confirmed via a kvsegu-VA ptload trace).  proc 0 then
+runs sched() -> sleep(&runin) -> swtch, but **swtch idles** (jsr idle @0xb90fc, the
+25-32% CPU spin) because **maxrunpri == -1 -- NO runnable procs**.  A verbatim resume()
+override with a one-shot marker proved `DBG resume` NEVER prints (swtch never dispatches),
+and the hat_alloc ENTER marker never prints (the children's child paths -- as_alloc ->
+hat_alloc -> icode -- never run).  So: **the children are created but never put on the
+run queue.**  newproc makes a child runnable via an INDIRECT scheduling-class op
+(curproc@(228) -> class[cid] -> @(4) = CL_FORK/ts_fork @0x417b8) that should reach
+setrun(0x489c2) (sets SRUN + dispq + maxrunpri).  That path is not completing on 040.
+**NEXT: mark setrun(0x489c2) -- if it fires for the children, the dispatcher/dispq/
+maxrunpri update is the bug; if not, the CL_FORK/ts_fork/class-ops-table path is.  Then
+trace ts_fork + the class ops table (curproc@228) + dispq/maxrunpri init.**  (Also still
+pending in this layer: setuctxt's child stack copy + the 040 trap/exception frames, which
+bite when a child actually resumes to user mode.)  Commits: f081e6d (hat_alloc+swtch),
+f2bad8c/eed4bdf (diagnostics).  hat_alloc=040 root @as@(20); swtch pmove crp->movec urp.
+
+## >>> (prior) READ-ZERO BUG FIXED + SWAP CONFIGURES + U-AREA FIXED <<<
 The whole VM / page-cache / disk-I/O / swap-config / u-area path now WORKS on 040.  Boots
 through swapconf, configures swap, creates proc 1, and goes IDLE at 0% CPU (a wait, NOT a
 crash) in proc 1's setup because the per-proc hat + context switch are unported.  Three
