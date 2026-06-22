@@ -30,18 +30,18 @@ sched_hook:
 	bnew	Lsch_done		| one-shot print
 	moveq	&1,%d0
 	movel	%d0,Lsch_n
-	movel	srunprocs,%sp@-		| total runnable procs
-	movel	maxrunpri,%sp@-		| THE value (-1 == nothing visible)
+	movel	maxrunpri,%sp@-		| THE value (-1 == nothing visible to swtch)
 	pea	Lsch_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(16),%sp		| pop 4 longs
+	lea	%sp@(12),%sp		| pop 3 longs (srunprocs dropped -- it is file-local, RELA guru)
 Lsch_done:
 	unlk	%fp			| undo our frame
 	linkw	%fp,&-32		| displaced sched insn 1 (linkw %fp,#-32)
 	moveml	%d2-%d5/%a2-%a3,%sp@-	| displaced sched insn 2
 	.word	0x4ef9,0x0004,0x6e9c	| jmp 0x00046e9c (sched+8, absolute)
 	nop				| pad .text to a 4-byte multiple
+	nop
 	nop
 	nop
 
@@ -99,7 +99,7 @@ Lrs_go:
 
 	.data
 Lsch_msg:
-	.asciz	"DBG sched ENTRY maxrunpri=%x srunprocs=%x"
+	.asciz	"DBG sched ENTRY maxrunpri=%x"
 	.even
 Lsch_n:
 	.long	0
