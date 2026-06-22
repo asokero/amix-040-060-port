@@ -1,53 +1,60 @@
-# RESUME HERE — AMIX 68040 port status (2026-06-19)
+# RESUME HERE — AMIX 68040 port status (2026-06-22)
 
-## >>> MILESTONE 2026-06-22: 040 VM/HAT PORT FUNCTIONALLY COMPLETE — boots to swap config <<<
-The 040 kernel now boots through EVERY VM/MMU/HAT layer and runs init + prints the banner:
-pstart040 -> mlsetup -> kvm_init -> page_init -> kmem -> segmap -> svirtophys/vatosde/
-vatopte -> **hat_pteload / hat_unlock / hat_ptfree / hat_unload** -> root fs MOUNTS ->
-"UNIX(R) System V Release 4.0 ... 2.1c" banner -> init -> **swapconf**.
-This session cleared, in order: hat_unlock, hat_ptfree (pfn>>12), hat_unload (the core
-unmap), each an inert-030-tree-walker re-ported to the live kptr040 tree.  hat_unload also
-got a bounded reverse-map unlink (findmap skips if the pte isn't in pages[pfn]'s list --
-correct for kvsegmap pages mapped by segmap setup, verified by a sane *pte).
+## >>> ROOT CAUSE FOUND 2026-06-22: the "swapconf namei bug" is the UNPATCHED MODEL B PAGER <<<
+The 040 kernel boots through every VM/MMU/HAT layer, mounts root, prints the banner, runs
+init, reaches **swapconf**, where `lookupname("/dev/dsk/c6d0s2")` returns ENOENT.  This
+session proved that is NOT a namei bug -- it is the next batch of Model B (2KB->4KB) page-
+size patches that patch_modelb.py never applied to the pager/fs page-I/O subsystem.
 
-### >>> CONSOLIDATED (2026-06-22): there is really ONE root blocker = swapconf namei. <<<
-Confirmed by diagnostics (forkdbg.s): the "newproc fork failed" is a SIDE EFFECT of
-skipping swapconf, NOT a separate bug:
-```
-swapconf namei ENOENT (/dev/dsk/c6d0s2)        <- THE root bug (040 namei/buffer)
-  └ skip swapconf -> no swap -> anon_resv fails (it checks availsmem) -> "fork failed"
-      └ stub anon_resv -> segu_get proceeds -> swap_xlate (0xb2aea) BUS ERRORs (needs swap too)
-```
-procdup SKIPS as_dup (proc 0 has no p_as; main sets proc 1's as itself via as_alloc +
-segvn_create AFTER newproc), so the per-proc hat (hat_alloc 128-entry root) is NOT the
-fork blocker -- it's the NEXT layer, needed when proc 1's USER as is set up + first runs.
-**NEXT: fix the swapconf namei bug (configure swap) -- then fork + anon/swap follow.**
-rootfstype + the directory-read path (lookupname 0x5c290 -> namei -> s5/ufs lookup ->
-bread or fbread/segmap -> hat) is the place to dig.  Remove the forkdbg/swapconf-skip
-diagnostics once swap is real.
+DIAGNOSIS (swapconf_dbg.s = namei prefix-probe, blkatoff_dbg.s = transcribed blkatoff +
+dumps): root fs = UFS.  `/dev` lookup -> ufs_dirlook -> blkatoff -> fbread (segmap/page-
+cache).  blkatoff ENTERs (root inode read FINE via bread, isize=0x200), fbread SUCCEEDS,
+but the directory page is **all zeros**.  A page_find(vp,off) probe that reads the page's
+PHYSICAL RAM directly via the DTT0 identity map (pfn=(pp-*pages)/60+*pages_base, phys=
+pfn<<12) showed `PAGE phys=9D8B000 ram=[0 0 0 0]` -- segmap maps the SAME page page_find
+returns and its RAM is genuinely zero.  So **hat_memload/hat_pteload map file pages
+CORRECTLY; it is a READ bug, not a map bug.**  The disk read IS issued (ufs_getapage
+reaches bdevsw[].strategy) but data never lands in the page, because ufs_getapage/pvn/
+segmap/bp_map all still treat the now-4KB page frame as 2KB (page_get/pagezero/offset/
+btopr/ptob mismatched) -> data and mapping disagree.
 
---- (historical sub-analysis of the fork side, now understood as downstream) ---
-**(A) newproc "fork failed" — the FIRST user-process fork (CLOSER to single-user; do first).**
-Boot now reaches this AFTER swapconf is skipped (see swapconf_dbg.s).  `PANIC: newproc -
-fork failed` (newproc 0x41306).  Chain: main -> newproc -> the proc's procdup vector
-(`jsr %a0@` at 0x41526, a0 = parent@(236)@(12)) -> **procdup (0x41840)** -> one of these
-returns failure -> newproc does crfree/pid_exit/return -1:
-  - `as_dup` (0x41866) -- duplicate the parent address space -> **hat_alloc (0xb4188)** =
-    the child hat ROOT.  On 040 the child needs a 128-entry 040 root (like kroot040); the
-    030 hat_alloc builds a 4-entry root -> child AS broken / as_dup fails.  ALSO must SET
-    the new proc's hat root so swtch/context-switch uses it (movec urp, not pmove crp).
-  - `segu_get` (0x418a4) -- child u-area from kvsegu.
-  - `save` (0x418f4) -- context save (0=parent path, normal).
-  NEXT: pinpoint which (instrument procdup, or read as_dup 0xadfdc + hat_alloc 0xb4188),
-  then port hat_alloc (4->128 root + set child root) + as_dup as needed.  This is THE
-  deferred "per-proc hat / first user fork" chunk (worklist STILL DEFERRED list).
+### >>> THE FIX IS ALL-OR-NOTHING: comprehensive Model B pager patch (~150 sites) <<<
+Chased the read through FIVE layers, each exposing the next unpatched 2KB layer:
+`ufs_getapage(23) -> pvn_getpages(4)/pvn_kluster(13) -> segmap(5) -> bp_mapin/bp_mapout(12)
+-> SCSI/DMA strategy`.  The page cache + buf + I/O is ONE global system: a subset either
+still reads zeros (read path incomplete) or HANGS (mixed 2KB/4KB granularity).
+- `prototypes/patch_modelb_pager.py` (wired into relink-040.sh after patch_modelb.py) holds
+  59 sites in groups {ufs,pvngp,pvnk,segmap,buf}, env-selectable via MODELB_PAGER_GROUPS.
+  DEFAULT = ufs,pvngp,segmap,buf (BOOTS).  **pvnk EXCLUDED: pvn_kluster HANGS pre-banner**
+  (CPU idle = page-lock/IO wait) in the putpage/sync path -- a deeper 4KB issue.
+- HARD-WON method rules baked into the patcher: page-round byte masks #2047/#2048/#-2048
+  (f800) AND pea/lea/addaw ±2048 DISPLACEMENTS flip to 4KB; `moveq #11` is PAGESHIFT only
+  when FOLLOWED BY a shift (lsr/asl = btopr/ptob) -- LEAVE it when followed by cmpl (NDADDR
+  12-direct-blocks); the page_HASH `>>11` (page_find @af636 / page_enter / page_lookup /
+  page_exists / segmap_unlock @a901e) MUST stay >>11 (uniform hash, unpatched everywhere --
+  patching it alone was the first hang); leave sector >>9, MAXBSIZE >>13, B_ flag bits.
 
-**(B) swapconf namei ENOENT — `lookupname /dev/dsk/c6d0s2` -> error 2 (CE_PANIC, swapconf
-0xb401e -> lookupname 0x5c290).**  HARDCODED swap path; same code the 030 kernel runs.
-This is likely the FIRST path lookup of the boot (root mounts by DEVICE, not path) ->
-exercises namei -> s5/ufs lookup -> fbread/segmap -> hat (buffer-cache path) first time.
-A 040 namei/buffer-read bug returning wrong directory data (or a deeper segmap/page-cache
-mapping issue).  Currently SKIPPED by swapconf_dbg.s (warn+return) to expose blocker (A).
+**NEXT (recommended, do with FRESH context):**
+1. Write an AUTO-DETECTOR that scans the whole-kernel disasm for the PAGESIZE idioms above
+   and EXCLUDES the listed false-positives, to generate the comprehensive ~150-site table
+   (s5getapage/writei/segvn/anon/swap/exec/spec/nfs all touch pages -- see the per-fn 2KB
+   counts in the memory file).  Patch + test as ONE pass (no subsets -> avoid mixed
+   granularity).
+2. Find + fix the sd/dmac strategy's page->DMA-phys site (likely pfn<<11 -> needs <<12) --
+   the 5th layer that bp_map did not cover (dma_pageio itself is a bounce+bcopy path, not
+   page-size).
+3. Re-test with blkatoff_dbg's PAGE probe: success = `ram=[00000002 000C0001 2E000000 ...]`
+   and `/dev -> r=0`.  Then remove the swapconf/blkatoff/forkdbg diagnostics.
+Build: `sh relink-040.sh` (-> build/unix-040) then `sh relink-040-dbg.sh` (-> build/
+unix-040-dbg with the swapconf namei-probe + blkatoff read-vs-map dump).  See the memory
+file amix-040-vm-port-complete.md for the full layer map.
+
+--- (historical: the deferred fork/hat layer, AFTER swap configures) ---
+procdup SKIPS as_dup for proc 0 (no p_as; main sets proc 1's as via as_alloc + segvn_create
+AFTER newproc), so the per-proc hat (hat_alloc 0xb4188, 4->128-entry 040 root + set child
+root for swtch movec urp) is the layer that comes AFTER swap works -- not a current blocker.
+The "newproc fork failed" / swap_xlate faults seen earlier were all downstream of skipping
+swap (no swap -> anon_resv fails), now understood as side effects of the pager root cause.
 
 ### Other fixes this session
 - **nomsg halt-path pmoves NOPed** (patch_pmmu_040.py, 0x18ed8/ee2/ee6) -> panics now halt/
