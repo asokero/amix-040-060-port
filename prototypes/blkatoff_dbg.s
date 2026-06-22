@@ -124,6 +124,41 @@ Lba_ok:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(28),%sp
+	| --- READ-vs-MAP: find the canonical page-cache page for (vp, off) and read its
+	| PHYSICAL RAM directly via the DTT0 identity map (phys<0x40000000, cache-inhibited).
+	| If this shows real .'/'.. entries while the segmap window (dataCI) is zero -> the
+	| read worked but segmap MAPPED THE WRONG PAGE.  If this is also zero -> READ never
+	| happened.  vp=ip+8, off=d2 (d2 callee-saved, preserved).  pfn=(pp-*pages)/60+
+	| *pages_base ; phys=pfn<<12  (matches hat_memload/hat_pteload). ---
+	moveal	%fp@(8),%a0		| ip
+	movel	%d2,%sp@-		| off
+	pea	%a0@(8)			| vp = &ip->i_vnode
+	jsr	page_find
+	addqw	&8,%sp			| d0 = pp (page-cache page) or 0
+	tstl	%d0
+	beqw	Lba_nopage
+	subl	pages,%d0		| pp - *pages
+	moveq	&60,%d1
+	divsll	%d1,%d0,%d0		| / 60 = page index
+	addl	pages_base,%d0		| + *pages_base = pfn
+	moveq	&12,%d1
+	lsll	%d1,%d0			| phys = pfn << 12
+	moveal	%d0,%a0			| a0 = phys (identity-mapped, cache-inhibited)
+	movel	%a0@(12),%sp@-
+	movel	%a0@(8),%sp@-
+	movel	%a0@(4),%sp@-
+	movel	%a0@,%sp@-
+	movel	%d0,%sp@-		| phys
+	pea	Lba_pfmt
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(28),%sp
+	braw	Lba_afterdump
+Lba_nopage:
+	pea	Lba_npmsg
+	pea	2
+	jsr	cmn_err
+	addqw	&8,%sp
 Lba_afterdump:
 	tstl	%a3
 	beqw	Lba_setfbp
@@ -144,6 +179,7 @@ Lba_done:
 	nop				| pad .text to a 4-byte multiple
 	nop
 	nop
+	nop
 
 	.data
 Lba_efmt:
@@ -157,6 +193,12 @@ Lba_dfmt:
 	.even
 Lba_cfmt:
 	.asciz	"DBG blkatoff off=%x dataCI=[%x %x %x %x] (post-cinva=RAM)"
+	.even
+Lba_pfmt:
+	.asciz	"DBG blkatoff PAGE phys=%x ram=[%x %x %x %x] (page_find via DTT0)"
+	.even
+Lba_npmsg:
+	.asciz	"DBG blkatoff PAGE page_find -> NULL (no page-cache page)"
 	.even
 Lba_en:
 	.long	0
