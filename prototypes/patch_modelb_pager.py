@@ -27,13 +27,17 @@ KERNEL = sys.argv[1] if len(sys.argv) > 1 else "build/unix-040"
 # zeros -> the fix needs either a CORRECT pvn_kluster patch (find the bad site) or it is a
 # deeper hat_memload file-page mapping issue.  Bisection: set MODELB_PAGER_GROUPS to a
 # comma list of {ufs,pvngp,pvnk,segmap}.
-GROUPS = set((os.environ.get("MODELB_PAGER_GROUPS") or "ufs,pvngp,segmap,buf").split(","))
+GROUPS = set((os.environ.get("MODELB_PAGER_GROUPS")
+              or "ufs,pvngp,segmap,buf,genst,bufbk,dmapio").split(","))
 def group_of(name):
     if name.startswith("ufs_get"):      return "ufs"
     if name.startswith("pvn_getpages"): return "pvngp"
     if name.startswith("pvn_kluster"):  return "pvnk"
     if name.startswith("segmap"):       return "segmap"
     if name.startswith("bp_map"):       return "buf"
+    if name.startswith("gen_strategy"): return "genst"
+    if name.startswith("buf_breakup"):  return "bufbk"
+    if name.startswith("dma_pageio"):   return "dmapio"
     return "ufs"
 
 def u16(b,o): return struct.unpack(">H", b[o:o+2])[0]
@@ -127,6 +131,36 @@ P = [
  (0x594e8, b"\x06\xae"+A48, b"\x06\xae"+A96, "bp_mapout:addil #2048 fp@(-4)"),
  (0x594fe, b"\x72\x0b", b"\x72\x0c", "bp_mapout:PAGESHIFT >>11 d1 (lsrl c)"),
  (0x59518, b"\x02\xaa"+A47, b"\x02\xaa"+A95, "bp_mapout:andil #2047 a2@(36)"),
+ # ===== gen_strategy (group genst): THE disk-read DEPOSIT bug.  For a B_PAGEIO buf it
+ # converts the page (b_pages @60) to a PHYSICAL DMA target = PFN<<11 and stores it in
+ # b_addr (a2@(36)); the device strategy then DMAs to that phys.  Under Model B the page
+ # is at PFN<<12, so PFN<<11 writes the data to HALF the address -> the 4KB page stays
+ # zero (exactly the blkatoff "PAGE phys=9D8B000 ram=[0 0 0 0]").  Two <<11 phys sites
+ # (single-page @3d9c0, breakup-setup @3dae6) + the page-count/round/threshold consts. =====
+ (0x3d994, b"\x0c\xaa"+A48, b"\x0c\xaa"+A96, "gen_strategy:cmpil #2048 a2@(32) single-page thresh"),
+ (0x3d9c0, b"\x7a\x0b", b"\x7a\x0c", "gen_strategy:PFN<<11 phys (single-page) [THE BUG]"),
+ (0x3d9ec, b"\x7a\x0b", b"\x7a\x0c", "gen_strategy:bcount>>11 npages"),
+ (0x3d9f4, b"\x02\x80"+A47, b"\x02\x80"+A95, "gen_strategy:andil #2047 bcount remainder"),
+ (0x3da30, b"\x02\x80"+A47, b"\x02\x80"+A95, "gen_strategy:andil #2047 last-chunk"),
+ (0x3da40, b"\x22\x3c"+A48, b"\x22\x3c"+A96, "gen_strategy:movel #2048 chunk = full page"),
+ (0x3dae6, b"\x7a\x0b", b"\x7a\x0c", "gen_strategy:PFN<<11 phys (breakup) [THE BUG]"),
+ # ===== buf_breakup (group bufbk): splits a >1-page transfer into per-page sub-bufs,
+ # chunking at the 2KB page boundary; calls gen_strategy per sub-buf (which then hits the
+ # single-page phys path above).  All page-boundary chunk math. =====
+ (0x3d1b8, b"\x02\x80"+A47, b"\x02\x80"+A95, "buf_breakup:andil #2047 addr page-offset"),
+ (0x3d1be, b"\x22\x3c"+A48, b"\x22\x3c"+A96, "buf_breakup:movel #2048 (bytes to page bound)"),
+ (0x3d1da, b"\x0c\x82"+A47, b"\x0c\x82"+A95, "buf_breakup:cmpil #2047 chunk full-page?"),
+ # ===== dma_pageio (group dmapio): DMA alignment/bounce wrapper; its ALIGNED path splits
+ # the transfer at 2KB page boundaries before calling the real strategy.  The sector (512)
+ # / >>9 logic at 20c48/20dee/20ef6 is NOT page-size and is left.  Only the 2KB page-chunk
+ # math is flipped.  (Lower confidence than genst -- if a regression appears, drop dmapio.) =====
+ (0x20e1c, b"\x02\x80"+A47, b"\x02\x80"+A95, "dma_pageio:andil #2047 addr page-offset (a)"),
+ (0x20e22, b"\x04\x80"+A48, b"\x04\x80"+A96, "dma_pageio:subil #2048 (bytes to page bound a)"),
+ (0x20e3c, b"\x02\x80"+A47, b"\x02\x80"+A95, "dma_pageio:andil #2047 addr page-offset (b)"),
+ (0x20e42, b"\x04\x80"+A48, b"\x04\x80"+A96, "dma_pageio:subil #2048 (bytes to page bound b)"),
+ (0x20e4e, b"\x0c\x80"+A47, b"\x0c\x80"+A95, "dma_pageio:cmpil #2047 chunk full-page? (a)"),
+ (0x20e92, b"\x0c\x82"+A47, b"\x0c\x82"+A95, "dma_pageio:cmpil #2047 remaining vs page"),
+ (0x20ea2, b"\x20\x3c"+A48, b"\x20\x3c"+A96, "dma_pageio:movel #2048 chunk = full page"),
 ]
 
 def main():
