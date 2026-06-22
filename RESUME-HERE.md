@@ -11,12 +11,25 @@ hat_alloc -> icode -- never run).  So: **the children are created but never put 
 run queue.**  newproc makes a child runnable via an INDIRECT scheduling-class op
 (curproc@(228) -> class[cid] -> @(4) = CL_FORK/ts_fork @0x417b8) that should reach
 setrun(0x489c2) (sets SRUN + dispq + maxrunpri).  That path is not completing on 040.
-**NEXT: mark setrun(0x489c2) -- if it fires for the children, the dispatcher/dispq/
-maxrunpri update is the bug; if not, the CL_FORK/ts_fork/class-ops-table path is.  Then
-trace ts_fork + the class ops table (curproc@228) + dispq/maxrunpri init.**  (Also still
-pending in this layer: setuctxt's child stack copy + the 040 trap/exception frames, which
-bite when a child actually resumes to user mode.)  Commits: f081e6d (hat_alloc+swtch),
-f2bad8c/eed4bdf (diagnostics).  hat_alloc=040 root @as@(20); swtch pmove crp->movec urp.
+PROBED setrun with a detour (patch_setrun_hook.py + mainmarks.s setrun_hook overwrite
+setrun's first 8 bytes with `jmp setrun_hook`): **`DBG setrun` NEVER fires -> setrun is
+NEVER CALLED for any of the 4 children.**  So the bug is the fork->dispatch path, NOT
+the dispq/maxrunpri update inside setrun.  newproc DOES mark the child SRUN directly
+(`moveb #2,%a2@` @0x41742) and calls the scheduling-class ops (cl_funcs@(4) @0x417b8,
+cl_funcs@(16) @0x41812, cl_funcs = class[cid] @a2@(236)), but the ts-class ops
+(ts_fork @0xbaec2, ts_enterclass @0xbac36) do NOT call setrun.  setrun's real callers are
+swapinub(0x4756c) + sched(0x47614) [swap-IN makes a proc dispatchable], the fork callers
+(0x4fd4a/0x4fdf4/0x5fd48), wakeprocs(0x489ae), and 0x3dfaa.  So the child is SRUN but never
+placed on the dispq (setrun) -> swtch dispatcher sees maxrunpri==-1 -> idle.
+**NEXT: find WHO is supposed to call setrun(child) after newproc and why it doesn't on
+040.  Two leads: (1) the children may be created !SLOAD (swapped-out) so sched->swapinub
+(0x4756c) is meant to swap them in AND setrun them -- check if swapinub short-circuits/fails
+on 040 (the u-areas ARE in core via segu_get, so the SLOAD flag may be the mismatch); (2)
+the fork callers (cfork/fork1 @0x4fd4a etc.) call setrun after newproc -- check if main's
+daemon-creation path reaches a setrun.  Mark swapinub / the 0x4fd4a-region setrun callers.**
+(Also pending in this layer once children run: setuctxt's child stack copy + the 040 trap/
+exception frames.)  Commits: f081e6d (hat_alloc+swtch), f2bad8c/eed4bdf/f55d48d (diag).
+hat_alloc=040 root @as@(20); swtch pmove crp->movec urp (both correct, not the gate here).
 
 ## >>> (prior) READ-ZERO BUG FIXED + SWAP CONFIGURES + U-AREA FIXED <<<
 The whole VM / page-cache / disk-I/O / swap-config / u-area path now WORKS on 040.  Boots
