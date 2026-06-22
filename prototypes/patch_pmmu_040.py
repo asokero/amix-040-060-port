@@ -46,6 +46,15 @@ PATCHES = [
     (0x18ed8, b"\xf0\x10\x40\x00", NOP+NOP, "nomsg:pmove tc"),
     (0x18ee2, b"\xf0\x10\x4c\x00", NOP+NOP, "nomsg:pmove crp"),
     (0x18ee6, b"\xf0\x10\x48\x00", NOP+NOP, "nomsg:pmove srp"),
+    # swtch (0xb923c) -- the CONTEXT-SWITCH per-proc root load.  swtch computes
+    # d0 = svirtophys(newproc->p_as->hat_root) (the per-proc 040 root phys, built by
+    # the ported hat_alloc in hat040.s), stashes it to userroot+4, then loads it with
+    # the 030 `pmove %a1@,%crp` (a1=&userroot).  On 040 that is an F-line; replace it
+    # with `movec %d0,%urp` (4e7b 0806) -- d0 still holds the phys root at this point
+    # (the userroot store left it intact), and 040 user-mode accesses use URP while the
+    # kernel keeps SRP=kroot040.  The following pflusha (0xb9240) is already converted
+    # to the 040 form by patch_pflusha_040.py.  NOT a NOP: a real 030->040 instr swap.
+    (0xb923c, b"\xf0\x11\x4c\x00", b"\x4e\x7b\x08\x06", "swtch:pmove crp -> movec d0,urp"),
 ]
 
 def main():

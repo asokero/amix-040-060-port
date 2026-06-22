@@ -679,6 +679,33 @@ Lhl_chkmore:
 	nop
 	nop				| +1 nop: diagnostic pfn-mismatch block added +34 bytes
 
+| ===========================================================================
+| hat_alloc (orig 0xb4188, GLOBAL T) -- 040 port.
+| The 030 original embedded a 4-entry (4 x 8B = 32B) root INSIDE the hat struct
+| (mem_align(hat+24,16) just rounds an address; it does not allocate) and cleared
+| the 4 SDE UDTs.  The 040 needs a 128-entry root (128 x 4 = 512B), and the URP
+| control register needs its PHYSICAL base 512-aligned, so allocate a zeroed 4KB
+| page (one Model B page => page-aligned VA => page-aligned, contiguous, >=512-
+| aligned phys) and store its VA at as@(20) -- the SAME slot hat_pteload reads
+| (seg@(12)=as -> as@(20)=root) and swtch reads (svirtophys(as@20) -> URP).
+| Zeroed = an EMPTY USER root; segvn page-faults fill entries 0..31 (VA 0-0x3FFFFFFF)
+| on demand (hat_growsdt -- still to port; the first user fault will surface it).
+| The kernel keeps SRP=kroot040, so NO kernel entries are copied here.  Arg: arg@8=as.
+	.globl	hat_alloc
+hat_alloc:
+	linkw	%fp,&0
+	movel	%a2,%sp@-
+	moveal	%fp@(8),%a2		| a2 = as
+	clrl	%sp@-			| kmem_zalloc flag = 0
+	pea	0x1000			| size 4KB (page-aligned, zeroed)
+	jsr	kmem_zalloc
+	addqw	&8,%sp			| a0 = root VA (page-aligned)
+	movel	%a0,%a2@(20)		| as->hat_root = 040 root VA (a0 = return value too)
+	moveal	%sp@+,%a2
+	unlk	%fp
+	rts
+	nop				| pad .text to a 4-byte multiple (adjust per build)
+
 	.data
 	.even
 Lpemsg0:
