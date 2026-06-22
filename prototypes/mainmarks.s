@@ -68,42 +68,45 @@ Lrs_go:
 	jmp	%a1@
 
 | ---------------------------------------------------------------------------
-| setbackdq_hook -- a detour for setbackdq(0xb926e): the universal run-queue ENQUEUE.
-| (Per sys/class.h + sys/disp.h, the real fork-enqueue path is newproc -> CL_FORKRET
-| (cl_funcs@16) -> sys_forkret -> setbackdq; the earlier setrun hunt was the WRONG
-| target -- setrun is not on the fork path at all.)  patch_setbackdq_hook.py overwrites
-| setbackdq's first 8 bytes (linkw %fp,&-8 ; moveml %d2-%d5/%a2-%a3,%sp@-) with
-| `jmp setbackdq_hook` + nop.  The hook prints pp / p_flag(@4) / p_pri(@24) for the
-| first 6 calls, then re-executes the displaced insns and jmps to setbackdq+8 (0xb9276).
-| KEY: setbackdq only updates maxrunpri/dqactmap (makes pp visible to the dispatcher)
-| when (p_flag & (SLOAD|SPROCIO)) == SLOAD  OR  SSYS(0x1) is set.  So if the children
-| are enqueued with BOTH SLOAD(0x10) and SSYS(0x1) clear, maxrunpri stays -1 and swtch
-| idles -- exactly the observed symptom.  The printed p_flag tells us which.
-	.globl	setbackdq_hook
-setbackdq_hook:
-	movel	Lsbq_n,%d0
+| sys_forkret_hook -- a detour for sys_forkret(0xba936), the SYS-class CL_FORKRET op.
+| (Per sys/class.h, newproc enqueues a child via CL_FORKRET (cl_funcs@16) -> sys_forkret
+| (clproc) -> setbackdq(clproc); for the SYS class sys_fork sets clproc = the proc, so
+| sys_forkret's arg @(8) IS the child proc.)  This runs ONLY from newproc in main() --
+| low IPL, single-threaded init -- so cmn_err is safe here (unlike setbackdq, whose first
+| call is in an early high-IPL disk-I/O wakeup path where a cmn_err-triggered exception hit
+| the unported 040 trap frame -> bogus Line-F double panic).  patch_sys_forkret_hook.py
+| overwrites sys_forkret's first 8 bytes (linkw %fp,&0 ; movel %fp@(8),%sp@-) with
+| `jmp sys_forkret_hook` + nop.  The hook prints the child proc / p_flag(@4) / p_pri(@24)
+| for the first 6 calls, re-executes the displaced insns, jmps to sys_forkret+8 (0xba93e).
+| KEY: setbackdq makes a proc visible to the dispatcher (updates maxrunpri/dqactmap) only
+| when (p_flag & (SLOAD|SPROCIO)) == SLOAD  OR  SSYS(0x1) is set.  So if the children reach
+| sys_forkret with BOTH SLOAD(0x10) and SSYS(0x1) clear, they enqueue invisibly ->
+| maxrunpri stays -1 -> swtch idles == the observed symptom.  The printed p_flag tells us.
+	.globl	sys_forkret_hook
+sys_forkret_hook:
+	movel	Lsfr_n,%d0
 	cmpil	&6,%d0
-	bccw	Lsbq_skip		| printed enough
+	bccw	Lsfr_skip		| printed enough
 	addql	&1,%d0
-	movel	%d0,Lsbq_n
-	moveal	%sp@(4),%a0		| a0 = pp (entry sp@(4) = setbackdq's arg)
+	movel	%d0,Lsfr_n
+	moveal	%sp@(4),%a0		| a0 = cclprocp = child proc (sys_forkret arg @ entry sp@(4))
 	movel	%a0@(24),%sp@-		| p_pri
 	movel	%a0@(4),%sp@-		| p_flag
-	movel	%a0,%sp@-		| pp
-	pea	Lsbq_msg
+	movel	%a0,%sp@-		| proc
+	pea	Lsfr_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(20),%sp		| pop 5 longs (d0/a0 are scratch in setbackdq)
-Lsbq_skip:
-	linkw	%fp,&-8			| displaced setbackdq insn 1
-	moveml	%d2-%d5/%a2-%a3,%sp@-	| displaced setbackdq insn 2
-	.word	0x4ef9,0x000b,0x9276	| jmp 0x000b9276 (setbackdq+8, absolute)
+	lea	%sp@(20),%sp		| pop 5 longs (d0/a0 scratch)
+Lsfr_skip:
+	linkw	%fp,&0			| displaced sys_forkret insn 1
+	movel	%fp@(8),%sp@-		| displaced sys_forkret insn 2
+	.word	0x4ef9,0x000b,0xa93e	| jmp 0x000ba93e (sys_forkret+8, absolute)
 
 	.data
-Lsbq_msg:
-	.asciz	"DBG setbackdq pp=%x flag=%x pri=%x"
+Lsfr_msg:
+	.asciz	"DBG sys_forkret child=%x flag=%x pri=%x"
 	.even
-Lsbq_n:
+Lsfr_n:
 	.long	0
 Lsp_msg:
 	.asciz	"DBG MARK: schedpaging (swapconf returned) -- entering proc-1 setup"
