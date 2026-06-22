@@ -81,6 +81,9 @@ python3 "$HERE/prototypes/patch_pmmu_040.py" "$OUT" | tail -2
 echo "[*] Model B (4KB page frame) Tier-0 byte patches"
 python3 "$HERE/prototypes/patch_modelb.py" "$OUT" | tail -3
 
+echo "[*] Model B Tier-2 pager/fs page-I/O (dir-read chain) byte patches"
+python3 "$HERE/prototypes/patch_modelb_pager.py" "$OUT" | tail -3
+
 echo
 echo "[*] reloc validation:"
 ( cd "$HERE" && python3 prototypes/check_relink_relocs.py | tail -1 )
