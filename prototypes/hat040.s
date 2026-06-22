@@ -144,14 +144,28 @@ Lbhave:
 	tstl	%a4@
 	beq	Lfreshleaf		| leaf empty -> fill it
 
-| leaf present: verify the pfn matches
+| leaf present: verify the pfn matches.  Stock 030 hat_pteload (0xb4eba) ALSO panics
+| here (LC%1, level 3) -- a mismatch = a stale leaf PTE (a missed unload) or a VA->leaf
+| collision, which a correct kernel never produces.  DIAGNOSTIC: print va, existing *pte
+| and the new pfn (gated to first 8, CE_WARN) and CONTINUE -- the code overwrites the
+| leaf below (Lp_nolock) regardless, so we see the offending VA/pfns and how far boot
+| gets.  Restore to panic(3) once the stale-leaf source is fixed.  a4=&leaf, d2=va,
+| both preserved across cmn_err (clobbers only d0/d1/a0/a1).
 	bfextu	%a4@{&0:&20},%d0		| existing PFN (20 bits)  [030: 21]
 	cmpl	%fp@(20),%d0
 	beq	Lpfnok
+	movel	Lhp_dbgn,%d0
+	cmpil	&8,%d0
+	bccw	Lpfnok			| after 8 prints, stop (still overwrites)
+	addql	&1,%d0
+	movel	%d0,Lhp_dbgn
+	movel	%fp@(20),%sp@-		| new pfn
+	movel	%a4@,%sp@-		| existing *pte
+	movel	%d2,%sp@-		| va
 	pea	Lpemsg1
-	pea	3
+	pea	2			| CE_WARN (was 3=PANIC) -- diagnostic
 	jsr	cmn_err
-	addqw	&8,%sp
+	lea	%sp@(20),%sp
 Lpfnok:
 	moveq	&7,%d3
 	andl	%d3,%fp@(24)		| prot &= 7
@@ -663,13 +677,17 @@ Lhl_chkmore:
 	rts
 	nop				| pad .text to a 4-byte multiple
 	nop
+	nop				| +1 nop: diagnostic pfn-mismatch block added +34 bytes
 
 	.data
 	.even
 Lpemsg0:
 	.asciz	"hat_pteload: root descriptor not resident"
 Lpemsg1:
-	.asciz	"hat_pteload: pfn mismatch on existing leaf"
+	.asciz	"DBG hat_pteload pfn mismatch va=%x *pte=%x newpfn=%x (overwriting)"
+	.even
+Lhp_dbgn:
+	.long	0
 Lhu_msg:
 	.asciz	"hat_unlock: invalid sde (040 walk)"
 	.even

@@ -28,7 +28,7 @@ KERNEL = sys.argv[1] if len(sys.argv) > 1 else "build/unix-040"
 # deeper hat_memload file-page mapping issue.  Bisection: set MODELB_PAGER_GROUPS to a
 # comma list of {ufs,pvngp,pvnk,segmap}.
 GROUPS = set((os.environ.get("MODELB_PAGER_GROUPS")
-              or "ufs,pvngp,segmap,buf,genst,bufbk,dmapio").split(","))
+              or "ufs,pvngp,segmap,buf,genst,bufbk,dmapio,segu").split(","))
 def group_of(name):
     if name.startswith("ufs_get"):      return "ufs"
     if name.startswith("pvn_getpages"): return "pvngp"
@@ -38,6 +38,7 @@ def group_of(name):
     if name.startswith("gen_strategy"): return "genst"
     if name.startswith("buf_breakup"):  return "bufbk"
     if name.startswith("dma_pageio"):   return "dmapio"
+    if name.startswith("segu_"):        return "segu"
     return "ufs"
 
 def u16(b,o): return struct.unpack(">H", b[o:o+2])[0]
@@ -161,6 +162,24 @@ P = [
  (0x20e4e, b"\x0c\x80"+A47, b"\x0c\x80"+A95, "dma_pageio:cmpil #2047 chunk full-page? (a)"),
  (0x20e92, b"\x0c\x82"+A47, b"\x0c\x82"+A95, "dma_pageio:cmpil #2047 remaining vs page"),
  (0x20ea2, b"\x20\x3c"+A48, b"\x20\x3c"+A96, "dma_pageio:movel #2048 chunk = full page"),
+ # ===== segu (group segu): the per-proc U-AREA mapping.  segu_get allocates an 8KB
+ # u-area (anon_resv/page_get 0x2000) and maps it as a hardcoded 4 x 2KB pages; under
+ # Model B page_get(8192) returns 2 x 4KB pages, so the loop maps consecutive 4KB pfns
+ # (X, X+1) at 2KB-spaced VAs -> both index the SAME 4KB leaf -> hat_pteload "pfn
+ # mismatch va=4844x800 *pte=...X newpfn=...X+1".  Fix the MAP loops to step 4KB / 2
+ # iterations (the per-page page_get/anon_alloc/page_enter/hat_memload/swap_xlate calls
+ # are page-size-agnostic -- only the loop step + count + array index change).  segu_get's
+ # SECOND loop (st_top1, the INERT 030 u-area page table) is LEFT -- dead on 040 until
+ # uvirtophys/uvatosde is ported.  segu_softunload (the unmap) is added once the map side
+ # is confirmed. =====
+ (0xaa69c, b"\x06\x83"+A48, b"\x06\x83"+A96, "segu_get:va step #2048 (map loop)"),
+ (0xaa6a2, b"\x7a\x03", b"\x7a\x01", "segu_get:loop bound moveq #3->#1 (4->2 pages)"),
+ (0xaaa12, b"\x02\x42\xf8\x00", b"\x02\x42\xf0\x00", "segu_softload:va align &-2048"),
+ (0xaaa1c, b"\x06\x80"+A47, b"\x06\x80"+A95, "segu_softload:len round +2047"),
+ (0xaaa22, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "segu_softload:len round &-2048"),
+ (0xaaa3e, b"\x06\x84"+A47, b"\x06\x84"+A95, "segu_softload:index round +2047"),
+ (0xaaa44, b"\x72\x0b", b"\x72\x0c", "segu_softload:array index >>11 (page idx)"),
+ (0xaab80, b"\x06\x82"+A48, b"\x06\x82"+A96, "segu_softload:va step #2048 (map loop)"),
 ]
 
 def main():
