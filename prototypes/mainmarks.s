@@ -67,7 +67,35 @@ Lrs_go:
 	moveq	&1,%d0
 	jmp	%a1@
 
+| ---------------------------------------------------------------------------
+| setrun_hook -- a detour for setrun(0x489c2): does CL_FORK/ts_fork make the children
+| RUNNABLE?  patch_setrun_hook.py overwrites setrun's first 8 bytes (linkw + moveml)
+| with `jmp setrun_hook` + nop.  The hook prints a one-shot marker (the proc being made
+| runnable), re-executes the displaced linkw/moveml, then jmps back to setrun+8 (0x489ca).
+| If "DBG setrun proc=%x" prints, setrun IS reached (so dispq/maxrunpri update via
+| CL_SETRUN is the bug); if not, the CL_FORK path never reaches setrun.
+	.globl	setrun_hook
+setrun_hook:
+	movel	Lsrn_n,%d0
+	bnew	Lsrn_skip		| one-shot
+	moveq	&1,%d0
+	movel	%d0,Lsrn_n
+	movel	%sp@(4),%sp@-		| the proc arg (sp@(4) at entry = setrun's arg)
+	pea	Lsrn_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(12),%sp
+Lsrn_skip:
+	linkw	%fp,&0			| displaced setrun insn 1
+	moveml	%d2/%a2,%sp@-		| displaced setrun insn 2
+	.word	0x4ef9,0x0004,0x89ca	| jmp 0x000489ca  (setrun+8, absolute)
+
 	.data
+Lsrn_msg:
+	.asciz	"DBG setrun proc=%x (made runnable)"
+	.even
+Lsrn_n:
+	.long	0
 Lsp_msg:
 	.asciz	"DBG MARK: schedpaging (swapconf returned) -- entering proc-1 setup"
 	.even

@@ -59,5 +59,8 @@ m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'sdopen|sdpartition|ddstrategy|
 	| sed 's/^/      LEAK: /' || true
 echo "      (a LEAK line above = an unbound ref; none = good)"
 
+echo "[*] installing setrun(0x489c2) detour -> setrun_hook (diagnostic)"
+python3 "$HERE/prototypes/patch_setrun_hook.py" "$OUT"
+
 echo
 echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-dbg"
