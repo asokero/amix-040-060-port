@@ -192,87 +192,86 @@ resume:
 	addqw	&4,%sp
 	moveal	curproc,%a1
 	movel	%a1@(252),%d1		| d1 = u_va (new proc's u-area kvsegu VA; 0 for proc 0)
-	movel	%d1,%sp@-		| DUMP u_va (hex) -- tells us if/why remap is taken
-	jsr	serdbg_hex
-	addqw	&4,%sp
 	moveal	%sp@(4),%a0		| a0 = arg1 = u+0x318 (fixed VA) -- default read source
 	movew	%sr,%d0			| d0 = sr (preserved to the end; serdbg_mark keeps d0)
 	movew	&0x2700,%sr		| mask interrupts for the remap
 	tstl	%d1
 	beqw	Lr_rest			| u_va==0 -> no remap, read from fixed VA (stock behaviour)
-|	--- remap: copy the u-area page PTEs from curproc->p_ubptbl (proc+80) into uarea_pt[0..1] ---
-|	p_ubptbl (proc offset 80 = (proc+95)&~15) is the embedded u-area page table -- a KERNEL-VA
-|	(kvseg) structure, READABLE here (unlike the kvsegu u-area DATA, which bus-errors).  It is
-|	exactly the table swtch hands the stock resume: arg2 = svirtophys((proc+95)&~15) -> *ublksde.
-|	curproc was already set to the NEW proc by swtch before the resume call.
-	moveal	curproc,%a3
-	movel	%a3,%d3
-	addil	&95,%d3
-	andil	&0xfffffff0,%d3		| d3 = (proc+95)&~15 = &p_ubptbl (16-aligned)
-	moveal	%d3,%a3			| a3 = &p_ubptbl
-|	p_ubptbl is 2KB-granular 030-style PTEs (measured: [0]=0x070E9001 phys 0x070E9000,
-|	[1]=0x070E9801 phys 0x070E9800 -- 2KB apart).  040 uses 4KB pages, so each 040 u-area page
-|	= TWO 2KB clicks: 040 page k <- p_ubptbl[2k].  Build the 040 leaf PTE = (p_ubptbl[2k] phys &
-|	~0xFFF) | (live uarea_pt status), preserving the WORKING 040 flags (cache mode/S/U/M) instead
-|	of copying the 030 low byte.  The prior bug: uarea_pt[1]=p_ubptbl[1] frame=0x070E9000 aliased
-|	page 1 (the kernel stack at 0x40001xxx) onto page 0 -> corruption.
+|	--- remap: make the FIXED-VA u-area (uarea_pt[0..1]) point at the NEW proc's u-area pages ---
+|	DUAL SOURCE -- on this 040 port a proc's u-area lives in ONE of two places:
+|	  path U: curproc->p_ubptbl (proc+80) = the embedded 2KB-granular page table; FILLED for proc 0
+|	          (the static u-area).  040 page k <- p_ubptbl[2k] (2KB->4KB), keep the live 040 flags.
+|	  path V: if p_ubptbl[0]==0 (a FORKED proc whose u-area was hat_pteload'd into kvsegu, not into
+|	          p_ubptbl): walk kptr040 for u_va -> the 040 leaf PTEs directly (already 4KB).
 	moveal	kptr040,%a2
 	movel	%a2@,%d2
 	andil	&0xffffff00,%d2		| d2 = uarea_pt base = kptr040[0] & ~0xFF
 	moveal	%d2,%a2			| a2 = uarea_pt
-|	--- DUMP everything (pre-pflusha, stack-safe): childphys, p_ubptbl[0..3], live uarea_pt[0..1],
-|	    pre-remap saved PC (a0@24) + saved sp (a0@48) from the CURRENT fixed-VA context ---
-	movel	%sp@(8),%sp@-		| childphys (arg2)
-	jsr	serdbg_hex
+	moveal	curproc,%a3
+	movel	%a3,%d3
+	addil	&95,%d3
+	andil	&0xfffffff0,%d3
+	moveal	%d3,%a3			| a3 = &p_ubptbl = (proc+95)&~15
+	tstl	%a3@
+	beqw	Lr_kvsegu		| p_ubptbl[0]==0 -> forked proc, walk kvsegu
+|	--- path U: p_ubptbl (proc 0 / static u-area); 2KB click -> 4KB 040 PTE, keep live flags ---
+	pea	0x55			| 'U'
+	jsr	serdbg_mark
 	addqw	&4,%sp
-	movel	%a3@,%sp@-		| p_ubptbl[0]
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a3@(4),%sp@-		| p_ubptbl[1]
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a3@(8),%sp@-		| p_ubptbl[2] (3rd 2KB click = 040 page 1)
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a3@(12),%sp@-		| p_ubptbl[3]
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a2@,%sp@-		| live uarea_pt[0]
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a2@(4),%sp@-		| live uarea_pt[1]
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a0@(24),%sp@-		| pre-remap saved PC (a1 slot) -- current fixed-VA context
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a0@(48),%sp@-		| pre-remap saved sp
-	jsr	serdbg_hex
-	addqw	&4,%sp
-|	--- build the 040 leaf PTEs: keep WORKING flags, swap in the new proc's 4KB phys pages ---
 	movel	%a2@,%d3
-	andil	&0x00000fff,%d3		| d3 = 040 leaf status flags (e.g. 0x0F9) from the live PTE
+	andil	&0x00000fff,%d3		| d3 = live 040 leaf status flags (e.g. 0x0F9)
 	movel	%a3@,%d4		| uarea_pt[0] = (p_ubptbl[0] phys & ~0xFFF) | flags
 	andil	&0xfffff000,%d4
 	orl	%d3,%d4
 	movel	%d4,%a2@
-	pea	0x61			| 'a'
-	jsr	serdbg_mark
-	addqw	&4,%sp
-	movel	%a3@(8),%d4		| uarea_pt[1] = (p_ubptbl[2] phys & ~0xFFF) | flags (4KB stride!)
+	movel	%a3@(8),%d4		| uarea_pt[1] = (p_ubptbl[2] phys & ~0xFFF) | flags (4KB stride)
 	andil	&0xfffff000,%d4
 	orl	%d3,%d4
 	movel	%d4,%a2@(4)
-	pea	0x62			| 'b'
+	braw	Lr_flush
+Lr_kvsegu:
+|	--- path V: forked proc -- walk kptr040 for u_va & u_va+0x1000 (already 040 4KB leaf PTEs) ---
+	pea	0x56			| 'V'
 	jsr	serdbg_mark
 	addqw	&4,%sp
-	pea	0x63			| 'c' -- about to cpusha (stack still valid: ATC unchanged)
-	jsr	serdbg_mark
-	addqw	&4,%sp
-	.word	0xf4f8			| cpusha bc -- push uarea_pt writes to RAM for the HW tablewalk
-	pea	0x64			| 'd' -- cpusha done (stack still valid: pflusha not yet run)
-	jsr	serdbg_mark
-	addqw	&4,%sp
+	movel	%d1,%d4			| page 0: index kptr040 for u_va
+	moveq	&18,%d5
+	lsrl	%d5,%d4
+	subil	&4096,%d4
+	asll	&2,%d4
+	addl	kptr040,%d4
+	moveal	%d4,%a3
+	movel	%a3@,%d4
+	andil	&0xffffff00,%d4		| leaf table base
+	movel	%d1,%d5
+	lsrl	&8,%d5
+	lsrl	&4,%d5
+	andil	&0x3f,%d5
+	asll	&2,%d5
+	addl	%d5,%d4
+	moveal	%d4,%a3
+	movel	%a3@,%a2@		| uarea_pt[0] = kvsegu leaf PTE for u_va
+	movel	%d1,%d3			| page 1: u_va + 0x1000
+	addil	&0x1000,%d3
+	movel	%d3,%d4
+	moveq	&18,%d5
+	lsrl	%d5,%d4
+	subil	&4096,%d4
+	asll	&2,%d4
+	addl	kptr040,%d4
+	moveal	%d4,%a3
+	movel	%a3@,%d4
+	andil	&0xffffff00,%d4
+	movel	%d3,%d5
+	lsrl	&8,%d5
+	lsrl	&4,%d5
+	andil	&0x3f,%d5
+	asll	&2,%d5
+	addl	%d5,%d4
+	moveal	%d4,%a3
+	movel	%a3@,%a2@(4)		| uarea_pt[1] = kvsegu leaf PTE for u_va+0x1000
+Lr_flush:
+	.word	0xf4f8			| cpusha bc -- push the uarea_pt writes to RAM for the HW tablewalk
 	.word	0xf518			| pflusha -- invalidate the ATC (fixed-VA stack now remaps away!)
 |	a0 = arg1 = u+0x318 = FIXED VA 0x40000318 (loaded at entry, NOT overridden).  After the
 |	remap+pflusha the fixed VA maps to the NEW proc's u-area, so reading 0x40000318 yields the
