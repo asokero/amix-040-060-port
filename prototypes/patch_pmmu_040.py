@@ -55,6 +55,14 @@ PATCHES = [
     # kernel keeps SRP=kroot040.  The following pflusha (0xb9240) is already converted
     # to the 040 form by patch_pflusha_040.py.  NOT a NOP: a real 030->040 instr swap.
     (0xb923c, b"\xf0\x11\x4c\x00", b"\x4e\x7b\x08\x06", "swtch:pmove crp -> movec d0,urp"),
+    # hat_map (0xb58c6) -- the child-fork address-space root load, reached for the FIRST time
+    # now that the 040 context switch works and proc 1 actually runs its procdup/hat path.
+    # hat_map computes a0 = svirtophys(as->root) (the new proc's 040 root phys), stores it to
+    # userroot+4, then loads it with the 030 `pmove %a1@,%crp` (a1=&userroot) -> F-line on 040.
+    # Here d0 does NOT hold the phys (it was reloaded with fp-152), but a0 DOES, so replace with
+    # `movec %a0,%urp` (4e7b 8806) -- 040 user-mode root.  The following pflusha (0xb58ca) is
+    # already converted by patch_pflusha_040.py.  Same real 030->040 swap as the swtch site.
+    (0xb58c6, b"\xf0\x11\x4c\x00", b"\x4e\x7b\x88\x06", "hat_map:pmove crp -> movec a0,urp"),
 ]
 
 def main():
