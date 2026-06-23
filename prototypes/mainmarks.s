@@ -200,51 +200,41 @@ resume:
 	movew	&0x2700,%sr		| mask interrupts for the remap
 	tstl	%d1
 	beqw	Lr_rest			| u_va==0 -> no remap, read from fixed VA (stock behaviour)
-|	--- remap uarea_pt[0],[1] = the child's 2 u-area leaf PTEs (for the child's stack) ---
+|	--- remap: copy the u-area page PTEs from curproc->p_ubptbl (proc+80) into uarea_pt[0..1] ---
+|	p_ubptbl (proc offset 80 = (proc+95)&~15) is the embedded u-area page table -- a KERNEL-VA
+|	(kvseg) structure, READABLE here (unlike the kvsegu u-area DATA, which bus-errors).  It is
+|	exactly the table swtch hands the stock resume: arg2 = svirtophys((proc+95)&~15) -> *ublksde.
+|	curproc was already set to the NEW proc by swtch before the resume call.
+	moveal	curproc,%a3
+	movel	%a3,%d3
+	addil	&95,%d3
+	andil	&0xfffffff0,%d3		| d3 = (proc+95)&~15 = &p_ubptbl (16-aligned)
+	moveal	%d3,%a3			| a3 = &p_ubptbl
+|	--- DUMP childphys(arg2), p_ubptbl[0], p_ubptbl[1], live uarea_pt[0] (pre-pflusha, safe) ---
+|	reveals the PTE format: are p_ubptbl entries valid 040 leaf PTEs (page frame in bits 31:12)?
+	movel	%sp@(8),%sp@-		| arg2 = childphys = svirtophys(&p_ubptbl)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%a3@,%sp@-		| p_ubptbl[0]
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%a3@(4),%sp@-		| p_ubptbl[1]
+	jsr	serdbg_hex
+	addqw	&4,%sp
 	moveal	kptr040,%a2
 	movel	%a2@,%d2
 	andil	&0xffffff00,%d2		| d2 = uarea_pt base = kptr040[0] & ~0xFF
 	moveal	%d2,%a2			| a2 = uarea_pt
-	movel	%d1,%d4			| page 0: walk kptr040 for u_va
-	moveq	&18,%d5
-	lsrl	%d5,%d4
-	subil	&4096,%d4
-	asll	&2,%d4
-	addl	kptr040,%d4
-	moveal	%d4,%a3
-	movel	%a3@,%d4
-	andil	&0xffffff00,%d4
-	movel	%d1,%d5
-	lsrl	&8,%d5
-	lsrl	&4,%d5
-	andil	&0x3f,%d5
-	asll	&2,%d5
-	addl	%d5,%d4
-	moveal	%d4,%a3
-	movel	%a3@,%a2@		| uarea_pt[0] = child page-0 PTE
-	pea	0x61			| 'a' -- uarea_pt[0] written OK
+	movel	%a2@,%sp@-		| live uarea_pt[0] = the working 040 PTE template (proc 0's u-area)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+|	--- copy p_ubptbl PTEs into uarea_pt (hypothesis: they are 040 leaf PTEs) ---
+	movel	%a3@,%a2@		| uarea_pt[0] = p_ubptbl[0]
+	pea	0x61			| 'a'
 	jsr	serdbg_mark
 	addqw	&4,%sp
-	movel	%d1,%d3			| page 1: walk kptr040 for u_va+0x1000
-	addil	&0x1000,%d3
-	movel	%d3,%d4
-	moveq	&18,%d5
-	lsrl	%d5,%d4
-	subil	&4096,%d4
-	asll	&2,%d4
-	addl	kptr040,%d4
-	moveal	%d4,%a3
-	movel	%a3@,%d4
-	andil	&0xffffff00,%d4
-	movel	%d3,%d5
-	lsrl	&8,%d5
-	lsrl	&4,%d5
-	andil	&0x3f,%d5
-	asll	&2,%d5
-	addl	%d5,%d4
-	moveal	%d4,%a3
-	movel	%a3@,%a2@(4)		| uarea_pt[1] = child page-1 PTE
-	pea	0x62			| 'b' -- uarea_pt[1] written OK
+	movel	%a3@(4),%a2@(4)		| uarea_pt[1] = p_ubptbl[1]
+	pea	0x62			| 'b'
 	jsr	serdbg_mark
 	addqw	&4,%sp
 	pea	0x63			| 'c' -- about to cpusha (stack still valid: ATC unchanged)
@@ -258,7 +248,6 @@ resume:
 |	a0 = arg1 = u+0x318 = FIXED VA 0x40000318 (loaded at entry, NOT overridden).  After the
 |	remap+pflusha the fixed VA maps to the NEW proc's u-area, so reading 0x40000318 yields the
 |	new proc's saved context -- exactly the stock design (which also reads from the fixed VA).
-|	The previous kvsegu (u_va+0x318) read was the bug: kvsegu is unmapped here -> bus error.
 Lr_rest:
 |	STACKLESS 'J' marker -- after the remap+pflusha the fixed-VA (0x40000000) kernel stack
 |	points at the NEW proc's physical u-area, so we must NOT touch the stack here (no jsr/push;
@@ -275,12 +264,12 @@ LrJ_wait:
 	subql	&1,%d1
 	bnew	LrJ_wait
 LrJ_done:
-|	TEST read of the kvsegu context source (a0 = u_va+0x318 = 0x48440318) AFTER pflusha.
-|	If kvsegu is NOT walkable by the HW tablewalk post-ATC-flush, THIS read faults -> freeze
-|	with no 'K'.  If 'K' prints, the read works and any freeze is at the jmp (bad target/ctx).
+|	TEST read of the FIXED-VA context source (a0 = arg1 = 0x40000318) AFTER pflusha.  If the
+|	remap built a valid mapping, this reads the new proc's context; if the copied p_ubptbl PTE
+|	is bad, THIS read faults -> freeze with no 'K'.  'K' present = the fixed-VA read works.
 	movel	%a0@,%d1		| faulting candidate
 	movel	&0x00dff000,%a1
-	movew	&0x014b,%a1@(0x30)	| 'K' -- post-pflusha kvsegu read SUCCEEDED
+	movew	&0x014b,%a1@(0x30)	| 'K' -- post-pflusha fixed-VA read SUCCEEDED
 	movel	&0x00004000,%d1
 LrK_wait:
 	movew	%a1@(0x18),%d2
