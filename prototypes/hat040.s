@@ -80,10 +80,20 @@ Lpt_nodbg:
 	bfextu	%fp@(-53){&6:&2},%d0	| UDT = Adesc & 3
 	btst	&1,%d0			| resident? (UDT == 2 or 3 -> bit1 set)
 	bne	Lrootok
+| DIAGNOSTIC: dump the root-table state -- is there an 030 8-byte SDT desc here (hat_growsdt
+| wrote 8-byte/030, our 040 walk reads 4-byte -> stride mismatch) or is the slot truly empty?
+| a0 = root table base, d2 = va.  Args: va, rootbase, Aidx, Adesc(4-byte@*4), desc8(@*8).
+	movel	%fp@(-28),%d0
+	asll	&3,%d0			| Aidx*8 (030 8-byte stride)
+	movel	%a0@(0,%d0:l),%sp@-	| desc8 = value at root + Aidx*8
+	movel	%fp@(-56),%sp@-		| Adesc = our 4-byte read at root + Aidx*4
+	movel	%fp@(-28),%sp@-		| Aidx
+	movel	%a0,%sp@-		| root table base
+	movel	%d2,%sp@-		| va
 	pea	Lpemsg0
 	pea	3
 	jsr	cmn_err
-	addqw	&8,%sp
+	lea	%sp@(28),%sp
 Lrootok:
 	movel	%fp@(-56),%d0
 	andil	&0xfffffe00,%d0		| Btable base (ptr table, 512-aligned)
@@ -768,7 +778,7 @@ Lpt_dbgmsg:
 Lpt_dbgn:
 	.long	0
 Lpemsg0:
-	.asciz	"hat_pteload: root descriptor not resident"
+	.asciz	"hat_pteload: root NOT resident va=%x rootbase=%x Aidx=%x Adesc4=%x desc8=%x"
 Lpemsg1:
 	.asciz	"DBG hat_pteload pfn mismatch va=%x *pte=%x newpfn=%x (overwriting)"
 	.even
