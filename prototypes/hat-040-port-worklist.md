@@ -19,14 +19,16 @@ This section's premises are now resolved/disproven — current state:
 - `hat_alloc` (0xb4188): **DONE** (hat040.s: 040 root + as->hat_root).  swtch `pmove crp →
   movec urp`: **DONE** (mainmarks.s resume override + patch).
 - "newproc fork failed" / "swapconf namei ENOENT": **SOLVED** (gen_strategy PFN<<11→<<12).
-  The fork/enqueue path WORKS — MEASURED `maxrunpri=0x4F` at sched entry (run queue non-empty,
-  children visible).  The earlier "setrun / children invisible" theories were WRONG.
-- **Current blocker = the 040 CONTEXT SWITCH** (swtch dispatch + resume/save + setuctxt child
-  context + 040 trap/exception frames) — proc 0 never transfers to a child.
-- Still pending (RE/binary): `hat_dup`/`hat_growsdt` (first user fork/exec), uvirtophys/
-  uvatosde/uvatopte; Model B: `hat_chgprot` ×6 (COW).  Trap frames = SOURCE (amiga/ml/
-  ttrap.s `stkrestore`/`framesz` + vec.s) — edit, don't RE.  Instrument via --weaken
-  overrides, NOT jmp-detours (they Line-F-crash on 040).
+- **040 CONTEXT SWITCH = DONE (2026-06-23)** — resume040 dual-path remap; init now runs in USER
+  mode + execs.  get_fault 040 format-7 frame = DONE (getfault040.s).  See RESUME-HERE.md top +
+  memory [[amix-040-ctx-switch-working]].
+- **CURRENT BLOCKER = user-VM hat family still 030 (8-byte descriptors).** init's exec teardown
+  `hat_free@0xb41e0` walks the tree with `asll #3` (8-byte stride) over our 4-byte 040 tables →
+  `hat_ptfree@0xb6cf4` crashes.  PORT (binary RE like hat_pteload): **hat_free/hat_ptfree/
+  hat_sdtfree** (teardown, do FIRST), **hat_growsdt@0xb6058** (build; root left empty → lazy-
+  patched in hat_pteload), hat_dup (fork), **hat_chgprot ×6** (COW), hat_swapout/swapin,
+  uvirtophys/uvatosde/uvatopte.  Descriptor layout is SOURCE: immu.h sde_t/pte_t, vm_hat.h hat_t.
+  Instrument via --weaken overrides, NOT jmp-detours (they Line-F-crash on 040).
 
 ---
 (Historical plan below — the 2KB→4KB format analysis that drove the above.)

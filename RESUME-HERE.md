@@ -1,29 +1,39 @@
-# RESUME HERE — AMIX 68040 port status (2026-06-22)
+# RESUME HERE — AMIX 68040 port status (2026-06-23)
 
-## >>> RESOLVED (2026-06-22 night): enqueue WORKS (maxrunpri=0x4F); bug = 040 ctx switch <<<
-**MEASURED: `DBG sched ENTRY maxrunpri=4F` (=79, POSITIVE).**  Via a `--weaken-symbol sched`
-override (mainmarks.s) that prints maxrunpri and spins, reached cleanly after all 4 daemon
-u-areas map (8 ptload lines) and proc 0 ("sched") enters the swapper.  So the run queue is
-NON-empty -- the children ARE enqueued and visible to the dispatcher.  This DEFINITIVELY kills
-the "children invisible / maxrunpri==-1" theory (which was inferred, never measured) AND the
-earlier "setrun never called" hunt (setrun is not on the fork path; the real enqueue is
-newproc -> CL_FORKRET(cl_funcs@16) -> sys_forkret -> setbackdq, and newproc gives every child
-SLOAD: child p_flag = (parent & 0x300000) | 0x10).
+## >>> DONE (2026-06-23): 040 ctx switch WORKS; init runs in USER MODE + EXECs <<<
+Verified in the SERIAL log (branch `040-switch-trace`, see memory [[amix-040-ctx-switch-working]]
++ [[amix-serial-debug-capture]]).  The whole chain now runs:
+- **040 context switch** (resume040 in `prototypes/mainmarks.s`, --weaken resume/sched/idle):
+  swtch calls `resume(arg1=u+0x318 FIXED VA 0x40000318, arg2=childphys)`; the 040 remap writes
+  the new proc's 2 u-area leaf PTEs into `uarea_pt` (kptr040[0]&~0xFF), `cpusha bc`+`pflusha`,
+  then restores context from the FIXED VA.  **DUAL SOURCE**: path U = proc 0 / static u-area via
+  `p_ubptbl` (proc+80, 2KB-click→4KB PTE, keep live flags); path V = forked procs via a kptr040
+  walk of u_va (kvsegu, already 040 4KB PTEs).  Earlier bugs fixed: read context from FIXED VA
+  not kvsegu (kvsegu DATA bus-errors early); 2KB→4KB stride (uarea_pt[k]=p_ubptbl[2k]).
+- All 4 daemons + proc 1 run; banner, swapconf, sched (maxrunpri=0x4F) all pass.
+- **Last 030 `pmove %a1@,%crp` sites patched** → `movec %a0,%urp` (hat_map/hat_exec/hat_asload,
+  patch_pmmu_040.py).  A full kernel PMMU scan (`objdump|grep pmove/pflush/ptest`) = COMPLETE
+  for every reachable site (only the DEAD original-pstart tail remains).
+- **get_fault override** (`prototypes/getfault040.s`, --weaken): decodes the 040 format-7
+  access-error frame (Fault Address at frame+84).  Stock only knew 030 formats 0xA/0xB → it
+  returned -1 → "User BUS ERROR" on init's first user fault.  With this, init runs in USER mode,
+  demand-pages its text (0x80800000), and **execs** the init binary.
+- **hat_pteload lazy pointer-table alloc** (`prototypes/hat040.s`): a fresh user as has an EMPTY
+  040 root slot (measured Adesc4=0 AND desc8=0) because the 030 hat_growsdt writes the root with
+  the 030 VA split + 8-byte descs that our 040 walk never reads.  Worked around by allocating the
+  pointer table on the fault path (hat_sdtalloc count=8 = 512B = 128×4, root[Aidx]=ptable|UDT2).
 
-**=> The bug is the 040 CONTEXT SWITCH, not the enqueue.**  swtch idles only when
-maxrunpri==-1; at sched entry it is 79.  So either (a) maxrunpri drops to -1 when proc 0
-sleeps (if the pri-79 entry was proc 0 itself and the children sit at a level the scan
-mishandles), or (b) swtch reaches the dispatch scan, picks the proc, calls resume -- and
-resume/save (the 040 context switch) fails to transfer control (the "DBG resume" marker never
-fired; hat_alloc ENTER never fired => no child ever runs its body).  The ml/ locore is the
-suspect: save@0x84 (still 030 `pflusha f0002400`, tolerated only by the emulator), resume@0x9c,
-idle@0x19c, + the child context set by setuctxt (procdup 0x418e8) + the 040 trap/exception
-frames (memory's flagged biggest risk).
-
-**NEXT: port/verify the 040 context switch.**  Concretely: (1) confirm whether swtch reaches
-resume (override swtch or sleep, NOT a detour) or idles -- i.e. is maxrunpri still >=0 inside
-swtch after proc 0 sleeps; (2) port save/resume/swtch dispatch + setuctxt child context for the
-040 frame format; (3) the 040 trap/exception frames.
+## >>> NEXT BLOCKER (2026-06-23): user-VM hat family is still 030 (8-byte descriptors) <<<
+init execs → teardown `relvm → as_free → hat_free → hat_ptfree` BUS-ERRORs: **hat_free walks the
+page-table tree with `asll #3` (030 8-byte stride)** over our 4-byte 040 tables → garbage ptdat
+list pointers → crash.  So the REMAINING CHUNK = the **user-VM hat family 040 port**: hat_growsdt
+(build, 0xb6058), **hat_free (0xb41e0) / hat_ptfree (0xb6cf4) / hat_sdtfree** (teardown),
+hat_chgprot ×6 (COW), hat_swapout/swapin.  All 030 8-byte-desc, NO source (triple-confirmed) →
+binary RE/override like hat_pteload.  **Recommended order: hat_free + hat_ptfree first** (the
+teardown that crashes now) → init's exec-teardown passes → see if init reaches a shell; then
+hat_growsdt (then the lazy hat_pteload hack can be removed).  Descriptor formats ARE source:
+`include/sys/immu.h` sde_t/pte_t, `include/vm/vm_hat.h` hat_t — read them for the port.
+~80% to single-user 040.
 
 **INSTRUMENTATION RULE (learned this session, see memory [[040-detour-jmp-crashes]]):** byte-
 patch jmp-DETOURS into relinked code Line-F-crash at the hook's first instruction on this 040
@@ -43,16 +53,19 @@ Full map in memory `kernel-source-vs-binary.md`.  Summary:
   `ml/exp` (save@0x84/resume@0x9c/idle@0x19c), `vm/exp` (hat_*/segu_*/seg*/as_*/page_*).
 
 ### Remaining 040 work as BATCHES (do related sites together):
-1. **CONTEXT SWITCH (current blocker, BINARY/RE)** -- save@0x84, swtch dispatch@0xb902c,
-   idle@0x19c.  resume@0x9c already transcribed (mainmarks.s, .word 0xf518 040 pflusha).
-   save still has 030 `pflusha f0002400` (emulator-tolerated).  Verify swtch reaches resume
-   (override probe) then transcribe save/swtch for the 040 register/frame save-restore.
-2. **TRAP/EXCEPTION FRAMES (SOURCE)** -- edit ttrap.s `stkrestore`/`framesz` + vec.s for 040
-   frame formats; use trap.h/reg.h/pcb.h.  Bites on first syscall/fault from init.
-3. **child context (setuctxt, procdup 0x418e8, BINARY/RE)** -- sets the child's first-resume
-   frame; must be 040-format for resume to transfer.  Pairs with #1/#2.
-4. **per-proc HAT (BINARY/RE)** -- hat_alloc DONE; pending hat_growsdt@0xb6058 /
-   hat_dup@0xb51xx (currently stubbed) = first user fork/exec.
+1. **CONTEXT SWITCH -- DONE (2026-06-23).** resume040 (mainmarks.s) dual-path remap; swtch
+   pmove→movec patched; save@0x84 unchanged (works).  See the top section.
+2. **TRAP/EXCEPTION FRAMES -- PARTLY DONE.** get_fault 040 format-7 access-error frame =
+   DONE (getfault040.s).  Still SOURCE-editable if more frame issues surface: ttrap.s
+   `stkrestore`/`framesz` + vec.s (signal return / sigreturn frame sizes), use trap.h/reg.h/pcb.h.
+3. **child context (setuctxt/procdup) -- DONE in effect** (children resume + run; resume040
+   transfers correctly).  Revisit only if a child's first-resume frame misbehaves.
+4. **>>> CURRENT BLOCKER: user-VM hat family 040 port (BINARY/RE) <<<** -- hat_pteload (fault-
+   fill) + hat_alloc DONE.  Pending, all 030 8-byte-desc: **hat_free@0xb41e0 / hat_ptfree@0xb6cf4
+   / hat_sdtfree** (teardown -- crashes NOW), **hat_growsdt@0xb6058** (build -- root left empty,
+   lazy-patched in hat_pteload for now), **hat_dup** (fork), **hat_chgprot ×6** (COW),
+   hat_swapout/swapin.  Port like hat_pteload: 4-byte descs, va>>25/>>18/>>12 indices, immu.h
+   sde_t/pte_t + vm_hat.h hat_t for the layout.  Start with hat_free+hat_ptfree.
 5. **user SW page-table walkers (BINARY/RE)** -- uvirtophys/uvatosde/uvatopte (per-proc root);
    needed when the inert 030 st_top1 path is exercised for user procs.
 6. **Model B 4KB sweep (byte-patch, 696 NEW sites kernel-wide; detect_pagesize.py)** --
