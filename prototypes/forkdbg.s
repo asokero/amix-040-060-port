@@ -30,17 +30,12 @@ Lhd_ret:
 	nop				| pad .text to a 4-byte multiple
 	nop
 
-| anon_resv (0xad69e, GLOBAL T) -- reserves anon/SWAP memory (checks availsmem).
-| With swapconf skipped there is no swap -> anon_resv fails -> segu_get -> procdup -1
-| -> "fork failed".  Stub it to succeed (return 1) to CONFIRM the no-swap cause and
-| expose the NEXT real blocker (proc 1's user as setup -> hat_alloc 128-entry root).
-| Diagnostic only -- real fix is to make swapconf configure swap (the namei bug).
-	.globl	anon_resv
-anon_resv:
-	moveq	&1,%d0			| return 1 = reserved OK
-	moveal	%d0,%a0
-	rts
-	nop				| pad .text to a 4-byte multiple
+| NOTE 2026-06-23: the anon_resv stub was REMOVED.  Its premise (swapconf skipped ->
+| no swap -> anon_resv fails) no longer holds -- swapconf now configures swap (the
+| namei/gen_strategy fix), so the REAL anon_resv runs and reserves/releases properly.
+| The stub (return 1 without incrementing availsmem) corrupted anon accounting ->
+| "anon: reservations below zero???" on every teardown unresv.  Using the real one
+| balances the books.  hat_dup stays stubbed (the real fork-COW port is still TODO).
 
 	.data
 Lhd_msg:

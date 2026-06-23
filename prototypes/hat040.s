@@ -36,12 +36,13 @@ hat_pteload:
 	movel	%fp@(12),%d2		| d2 = va
 	moveal	%fp@(16),%a2		| a2 = pp
 
-| --- DBG: trace the first 8 kvsegu (>=0x48000000) maps = proc-1 u-area mapping in
-|     segu_get; shows whether/how far the u-area map loop runs.  Gated, CE_WARN. ---
+| --- DBG: trace the first 40 maps >=0x48000000 (u-area in segu_get AND, after the
+|     8 u-area maps, any exec-REBUILD faults at init text 0x80800000 / stack 0xC07FF000
+|     -- shows whether the boot PROGRESSES past the teardown).  Gated, CE_WARN. ---
 	cmpil	&0x48000000,%d2
 	bcsw	Lpt_nodbg
 	movel	Lpt_dbgn,%d0
-	cmpil	&8,%d0
+	cmpil	&40,%d0
 	bccw	Lpt_nodbg
 	addql	&1,%d0
 	movel	%d0,Lpt_dbgn

@@ -31,9 +31,10 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/mainmarks.s"    -o "$HERE/build/
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/serdbg.s"       -o "$HERE/build/serdbg.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/getfault040.s"  -o "$HERE/build/getfault040.o"
 
-echo "[*] weaken ddopen + hat_dup + anon_resv + schedpaging + idle + resume + sched + CONPUTC (serial hook); globalize+weaken blkatoff"
+echo "[*] weaken ddopen + hat_dup + schedpaging + idle + resume + sched + CONPUTC (serial hook); globalize+weaken blkatoff"
+echo "    (anon_resv stub DROPPED 2026-06-23 -- swapconf configures swap now, real anon_resv balances)"
 cp "$IN" "$HERE/build/unix-040-dbg-stage1"
-m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol hat_dup --weaken-symbol anon_resv --weaken-symbol schedpaging --weaken-symbol idle --weaken-symbol resume --weaken-symbol sched --weaken-symbol get_fault --weaken-symbol conputc --globalize-symbol blkatoff --weaken-symbol blkatoff "$HERE/build/unix-040-dbg-stage1"
+m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol hat_dup --weaken-symbol schedpaging --weaken-symbol idle --weaken-symbol resume --weaken-symbol sched --weaken-symbol get_fault --weaken-symbol conputc --globalize-symbol blkatoff --weaken-symbol blkatoff "$HERE/build/unix-040-dbg-stage1"
 
 OUT="$HERE/build/unix-040-dbg"
 echo "[*] relinking -> $OUT"
@@ -43,7 +44,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-dbg-stage1" \
 	"$HERE/build/getfault040.o"
 
 echo "[*] overridden defs (single strong def each):"
-for s in ddopen hat_dup anon_resv; do
+for s in ddopen hat_dup; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 
