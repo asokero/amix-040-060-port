@@ -62,6 +62,35 @@ Lgf_sub2:
 	movel	%d1,%d0
 	subql	&2,%d0
 Lgf_ret:
+| --- DBG: trace user-space fault VAs (>=0x80000000 = init text/stack/data).  The LAST
+|     VA printed before init's SIGSEGV exit (hat_free ENTER) is the unresolvable fault
+|     that kills init -- tells us which user mapping the half-built user-VM hat misses.
+|     Gated to 24 prints, CE_WARN.  d0 = fault VA; saved across cmn_err via Lgf_save. ---
+	cmpil	&0x80000000,%d0
+	bcsw	Lgf_nodbg
+	movel	Lgf_n,%d1
+	cmpil	&24,%d1
+	bccw	Lgf_nodbg
+	addql	&1,%d1
+	movel	%d1,Lgf_n
+	movel	%d0,Lgf_save
+	movel	%d0,%sp@-		| fault VA
+	pea	Lgf_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(12),%sp
+	movel	Lgf_save,%d0		| restore VA (cmn_err clobbers d0/d1/a0/a1)
+Lgf_nodbg:
 	moveal	%d0,%a0			| stock returns the address in both d0 and a0
 	unlk	%fp
 	rts
+
+	.data
+	.even
+Lgf_msg:
+	.asciz	"DBG ufault VA=%x"
+	.even
+Lgf_n:
+	.long	0
+Lgf_save:
+	.long	0
