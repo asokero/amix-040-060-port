@@ -43,17 +43,19 @@ as_segat:
 	movel	%a2@(4),%sp@-		| seg base
 	movel	%a2,%sp@-		| seg
 	movel	%fp@(12),%sp@-		| addr
+	movel	%fp@(8),%sp@-		| as (which address space is searched)
 	pea	Lsg_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(24),%sp
+	lea	%sp@(28),%sp
 	braw	Lsg_done
 Lsg_null:
 	movel	%fp@(12),%sp@-		| addr
+	movel	%fp@(8),%sp@-		| as
 	pea	Lsg_nullmsg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(12),%sp
+	lea	%sp@(16),%sp
 Lsg_done:
 	moveal	%a2,%a0			| restore return value (seg) in a0 and d0
 	movel	%a2,%d0
@@ -118,23 +120,23 @@ copyout:
 	jsr	copyout_orig
 	lea	%sp@(12),%sp
 	movel	%d0,%d3			| save retval
+| --- capture the URP active during copyout; compare to proc 1's runtime URP (ptload
+|     prints urp=7A6C000).  If they DIFFER, copyout wrote into a DIFFERENT address space
+|     than proc 1 runs in -> the icode lands in the wrong context (a 040 newproc/context
+|     bug), NOT a write-back-replay problem (no supervisor fault fired -- kt7 silent). ---
+	.word	0x4e7a			| movec %urp,%d0  (68040 URP = ctrl reg 0x806)
+	.word	0x0806
+	movel	%d0,Lco_urp
 	movel	%fp@(12),%d2		| dst
 	cmpil	&0x80000000,%d2
 	bcsw	Lco_done
-| --- 68040 cache coherency: the kernel wrote (via copyback D-cache) executable user
-|     content (e.g. main()'s icode at 0x80800000); push D-cache to RAM + invalidate
-|     caches so the user instruction fetch sees it (the 030 D-cache is write-through
-|     and needs none).  cpusha bc = push+invalidate both caches. ---
-	.word	0xf4f8			| cpusha bc
-| --- read back *dst from USER space (moves SFC=user) to see if the icode actually
-|     landed in this context's page right after copyout (before proc 1 runs) ---
-	moveq	&1,%d0
-	.word	0x4e7b			| movec %d0,%sfc  (SFC = user data space)
-	.word	0x0000
-	moveal	%fp@(12),%a0		| dst (user 0x80800000)
-	.word	0x0e90			| movesl %a0@,%d1  (d1 = *(user dst))
-	.word	0x1000
-	movel	%d1,Lco_rb
+| --- NOTE: the old cpusha + user-space readback `moves` probe was REMOVED.  After the
+|     DTT1 fix (S=supervisor-only) user VA 0x80800000 is no longer transparently
+|     translated, so an UNPROTECTED supervisor `moves` to it now faults (the page is
+|     demand-zero, unmapped at copyout time, and this probe has no onfault recovery) ->
+|     kernel bus-error PANIC at copyout+0x44.  The real question (did copyout's own
+|     `moves` land the icode?) is answered downstream: whether proc 1 execs init or
+|     SIGSEGVs, plus the kt7 hook dumping copyout_orig's (recoverable) fault frame. ---
 | --- read copyout's path selector: a0 = *(u+0x730); flag = a0@(140).  Nonzero ->
 |     copyout took rcopyout (RFS remote), not lcopyout (local moves) -> misroute. ---
 	moveal	u+0x730,%a0
@@ -146,8 +148,8 @@ copyout:
 	bccw	Lco_done
 	addql	&1,%d0
 	movel	%d0,Lco_n
+	movel	Lco_urp,%sp@-		| URP active during copyout (vs proc 1's 70EB000)
 	movel	Lco_flag,%sp@-		| rcopyout selector ((u+0x730)@140)
-	movel	Lco_rb,%sp@-		| readback (*dst, should be 0x4ffb0170 icode if landed)
 	movel	%d3,%sp@-		| retval
 	movel	%fp@(12),%sp@-		| dst
 	pea	Lco_msg
@@ -159,16 +161,52 @@ Lco_done:
 	moveml	%fp@(-8),%d2-%d3
 	unlk	%fp
 	rts
+
+| ===========================================================================
+| as_map WRAPPER (orig 0xae4f8, GLOBAL T) -- main() does
+|   as_map(as=proc->p_as, 0x80800000, szicode, segvn_create, zfod_argsp)
+| to install the icode segment, then copyout()s into it -- but NEVER checks as_map's
+| return.  If as_map FAILED (segvn_create error / anon), the segment is absent and the
+| copyout `moves` faults with as_segat -> NULL (what we now see).  This prints as_map's
+| `as`, addr and RETURN for the icode mapping, to tell a silent as_map failure (ret!=0)
+| apart from a context/URP mismatch (ret==0 but copyout still faults a different `as`).
+	.globl	as_map
+as_map:
+	linkw	%fp,&0
+	moveml	%d2-%d3,%sp@-
+	movel	%fp@(24),%sp@-		| argsp
+	movel	%fp@(20),%sp@-		| crfp (segvn_create)
+	movel	%fp@(16),%sp@-		| size
+	movel	%fp@(12),%sp@-		| addr
+	movel	%fp@(8),%sp@-		| as
+	jsr	as_map_orig
+	lea	%sp@(20),%sp
+	movel	%d0,%d3			| ret
+	movel	%fp@(12),%d2		| addr
+	cmpil	&0x80800000,%d2
+	bnew	Lam_done
+	movel	%d3,%sp@-		| ret (0 = success)
+	movel	%fp@(16),%sp@-		| size
+	movel	%fp@(12),%sp@-		| addr
+	movel	%fp@(8),%sp@-		| as (== proc->p_as the segment goes into)
+	pea	Lam_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
+Lam_done:
+	movel	%d3,%d0			| restore as_map's return
+	moveml	%fp@(-8),%d2-%d3
+	unlk	%fp
+	rts
 	nop				| pad appended .text to keep text/data contiguous
-	nop
 
 	.data
 	.even
 Lsg_msg:
-	.asciz	"DBG as_segat addr=%x -> seg=%x base=%x size=%x"
+	.asciz	"DBG as_segat as=%x addr=%x -> seg=%x base=%x size=%x"
 	.even
 Lsg_nullmsg:
-	.asciz	"DBG as_segat addr=%x -> seg=NULL (FC_NOMAP)"
+	.asciz	"DBG as_segat as=%x addr=%x -> seg=NULL (FC_NOMAP)"
 	.even
 Lsg_n:
 	.long	0
@@ -180,7 +218,7 @@ Lem_n:
 	.long	0
 	.even
 Lco_msg:
-	.asciz	"DBG copyout dst=%x ret=%x rb=%x rcflag=%x"
+	.asciz	"DBG copyout dst=%x ret=%x rcflag=%x urp=%x"
 	.even
 Lco_n:
 	.long	0
@@ -188,3 +226,8 @@ Lco_rb:
 	.long	0
 Lco_flag:
 	.long	0
+Lco_urp:
+	.long	0
+	.even
+Lam_msg:
+	.asciz	"DBG as_map as=%x addr=%x size=%x ret=%x"

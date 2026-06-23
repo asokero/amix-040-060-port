@@ -295,8 +295,17 @@ Lkroot:
 	.word	0x4e7b,0x0005		| movec %d0,%itt1  (unused)
 	movel	&0x003fc060,%d0
 	.word	0x4e7b,0x0006		| movec %d0,%dtt0  (0-1GB data, cache-inhibited)
-	movel	&0x807fc060,%d0
-	.word	0x4e7b,0x0007		| movec %d0,%dtt1  (0x80000000+ I/O, cache-inhib)
+	movel	&0x807fa060,%d0
+	.word	0x4e7b,0x0007		| movec %d0,%dtt1  (0x80000000+ I/O, cache-inhib,
+					|   S=01 SUPERVISOR-ONLY: user VAs >=0x80000000 are
+					|   legitimate user space (init's text/data/stack live at
+					|   0x80800000) and MUST translate via the URP page tables,
+					|   not be swallowed by this identity TTR.  With the old
+					|   S=10 (both) value 0x807fc060, copyout's user-FC `moves`
+					|   to 0x80800000 was transparently mapped to NONEXISTENT
+					|   phys 0x80800000 -> icode write lost, no fault, page stays
+					|   zero -> proc 1 SIGSEGVs.  S=01 makes user accesses fault
+					|   + demand-page properly.)
 	| NOTE: serializing these (CM 0x60->0x40) was TRIED as a real-040 fix for the
 	| p0init deferred-write bus error -- it did NOT help (the faulting STORE writes
 	| proc[0] in region 1, which is page-table-mapped, so its CM comes from the leaf
