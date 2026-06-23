@@ -1,52 +1,103 @@
-| mainmarks.s -- progress markers for the post-swapconf phase of main().
-|
-| ORDER NOTE (2026-06-22): sys_forkret_hook is placed FIRST and structured to MIRROR the
-| proven-working schedpaging marker (linkw first, one-shot via movel/bnew).  The previous
-| layout had the hook LAST in this file (link addr 0xd8128, the very tail of .text) and
-| entered it with a `movel <.data>,%d0` as its first instruction (no frame); it reproducibly
-| double-panicked with a bogus "Line-F vector 0xB @ pc=0xd812c" -- SAME pc for two different
-| hook bodies -> the tail address / no-frame entry was the trigger, not the hook logic.
-| Mirroring schedpaging (which lives early in .text and works) de-risks both variables.
+| mainmarks.s -- DBG-layer overrides for the 040 bring-up.
+|   * resume  -- the 040 context-switch u-area remap FIX (see resume040.s / RESUME-HERE for the
+|                root-cause writeup).  Kept in the DBG layer (NOT the base) because adding it to
+|                the base relink made the AmigaOS loader GURU (8000 0006) before kernel start;
+|                in the dbg layer (as in the milestone build) it loads & runs fine.
+|   * schedpaging -- one-shot milestone marker (swapconf returned -> proc-1 setup).
+| Pairs with forkdbg.o (hat_dup/anon_resv stubs).  --weaken-symbol resume schedpaging.
 
 	.text
 | ---------------------------------------------------------------------------
-| sched OVERRIDE -- replaces the swapper loop entry (proc 0, called once by main() AFTER
-| all 4 daemons are created).  CRITICAL MECHANISM NOTE (2026-06-22): every DETOUR (byte-
-| patch a kernel function's prologue with `jmp <hook>`) into this mainmarks.o code
-| reproducibly double-panicked with a bogus "Line-F vector 0xB" AT THE HOOK'S FIRST
-| INSTRUCTION (a harmless linkw) -- setbackdq, sys_forkret, AND sched detours all failed
-| identically, while the --weaken-symbol OVERRIDE schedpaging (entered by the kernel's own
-| relink-resolved `jsr schedpaging`) WORKS.  So: detour-jmp entry into relinked code is
-| broken on this 040 setup; the jsr-override entry is fine.  This converts the sched probe
-| to an OVERRIDE: --weaken-symbol sched makes main's `jsr sched` resolve here.
-| It prints maxrunpri ONCE and then spins (measurement only -- we just need the value):
-|   maxrunpri >= 0  -> children ARE enqueued+visible -> bug is in swtch/resume (040 ctx).
-|   maxrunpri == -1 -> the CL_FORKRET->sys_forkret->setbackdq enqueue did NOT run on 040.
-| newproc gives every child SLOAD (proven: child p_flag = (parent & 0x300000) | 0x10) and
-| setbackdq makes a SLOAD proc visible by setting maxrunpri, yet swtch idles only when
-| maxrunpri == -1 -- this measurement resolves that contradiction.
-	.globl	sched
-sched:
-	linkw	%fp,&0
-	movel	maxrunpri,%sp@-		| THE value (-1 == nothing visible to swtch)
-	pea	Lsch_msg
+| resume (0x9c, GLOBAL T) -- 040 context-switch core with the u-area remap fix.
+| The 030 resume writes *ublksde (= &st_top1[0].word2) to repoint the u-area at the new proc's
+| page table -- a no-op on 040 (st_top1 inert).  FIX: the u-area's 040 ptr descriptor is
+| kptr040[0] -> a FIXED 256-aligned leaf `uarea_pt`.  Read u_va=curproc@(252) (segu_get's
+| u-area VA; curproc set by swtch@b91fa before jsr resume), walk kptr040 for u_va & u_va+0x1000
+| (vatosde/vatopte INLINE), copy the 2 leaf PTEs into uarea_pt[0],[1], pflusha, restore.
+| u_va==0 -> skip (proc 0/early).  globals: curproc (C), kptr040 (D, pstart040 export).
+	.globl	resume
+resume:
+	moveal	%sp@(4),%a0		| a0 = arg1 = u+0x318 restore buffer -- KEEP for the moveml
+	movew	%sr,%d0			| d0 = sr (preserved to the end)
+	movew	&0x2700,%sr		| mask interrupts during the remap
+	moveal	curproc,%a1
+	movel	%a1@(252),%d1		| d1 = u_va = the new proc's u-area kvsegu VA
+	beqw	Lr_rest			| u_va==0 -> skip remap (proc 0 / early boot)
+	moveal	kptr040,%a1
+	movel	%a1@,%d2
+	andil	&0xffffff00,%d2		| d2 = uarea_pt base = kptr040[0] & ~0xFF
+	moveal	%d2,%a2			| a2 = uarea_pt (the fixed 256-aligned u-area leaf table)
+|	--- page 0: walk kptr040 for u_va -> leaf PTE -> uarea_pt[0] ---
+	movel	%d1,%d4
+	moveq	&18,%d5
+	lsrl	%d5,%d4			| u_va>>18
+	subil	&4096,%d4
+	asll	&2,%d4
+	addl	kptr040,%d4		| &kptr040 pointer descriptor (vatosde)
+	moveal	%d4,%a3
+	movel	%a3@,%d4		| *sde = leaf | UDT
+	andil	&0xffffff00,%d4		| leaf table base
+	movel	%d1,%d5
+	lsrl	&8,%d5
+	lsrl	&4,%d5			| u_va>>12
+	andil	&0x3f,%d5
+	asll	&2,%d5			| (u_va>>12 & 0x3f)*4
+	addl	%d5,%d4			| &leaf PTE (vatopte)
+	moveal	%d4,%a3
+	movel	%a3@,%a2@		| uarea_pt[0] = *PTE
+|	--- page 1: walk kptr040 for u_va+0x1000 -> uarea_pt[1] ---
+	movel	%d1,%d3
+	addil	&0x1000,%d3
+	movel	%d3,%d4
+	moveq	&18,%d5
+	lsrl	%d5,%d4
+	subil	&4096,%d4
+	asll	&2,%d4
+	addl	kptr040,%d4
+	moveal	%d4,%a3
+	movel	%a3@,%d4
+	andil	&0xffffff00,%d4
+	movel	%d3,%d5
+	lsrl	&8,%d5
+	lsrl	&4,%d5
+	andil	&0x3f,%d5
+	asll	&2,%d5
+	addl	%d5,%d4
+	moveal	%d4,%a3
+	movel	%a3@,%a2@(4)		| uarea_pt[1] = *PTE
+Lr_rest:
+	.word	0xf4f8			| cpusha bc (68040) -- push uarea_pt descriptor writes to RAM
+	.word	0xf518			| pflusha (68040) -- invalidate the ATC
+|	DIAGNOSTIC (2026-06-23): print the TRANSFER TARGET, then HALT (no scroll/wrap -- the screen
+|	freezes with this line visible).  a0 = u+0x318 (remapped to the new proc), still the caller's
+|	(proc 0) stack here (no moveml yet) so cmn_err is safe.  The saved a1 (a0@(24)) is the address
+|	`jmp %a1@` will jump to = the proc's resume PC.  SANE values prove the switch is REAL:
+|	  a1 = 0x070B904C  -> swtch+0x20 (a proc saved by swtch resumes here)  -> REAL transfer.
+|	  a1 = 0x070418F8  -> procdup post-save (a freshly created proc's first dispatch) -> REAL.
+|	  a1 = garbage / 0x48xxxxxx / high-RAM -> the context is WRONG -> the "breakthrough" was a
+|	       misread (the user's hypothesis), the switch does NOT really transfer.
+|	d1 = u_va (from the walk; 0 if proc 0 / skipped).  sp(a0@(48)) = the proc's saved kernel sp.
+	movel	%a0@(48),%sp@-		| arg3 = saved sp
+	movel	%a0@(24),%sp@-		| arg2 = saved a1 = the jmp target (resume PC)
+	movel	%d1,%sp@-		| arg1 = u_va
+	pea	Lrt_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(12),%sp		| pop 3 longs
-Lsch_spin:
-	bra.w	Lsch_spin		| halt here -- measurement only
-	nop				| pad .text to a 4-byte multiple
+	lea	%sp@(20),%sp
+Lr_halt:
+	bra.w	Lr_halt			| FREEZE here -- read the transfer target off the screen
+	moveml	%a0@,%d2-%d7/%a1-%sp	| (unreached) restore the new proc's context
+	movew	%d0,%sr
+	moveq	&1,%d0
+	jmp	%a1@
 
 | ---------------------------------------------------------------------------
-| schedpaging (GLOBAL T) -- FIRST call after swapconf returns.  Override to print a
-| one-shot marker and RETURN (skip the paging-daemon tuning -- harmless with free memory).
-| If "MARK: schedpaging" prints, swapconf completed and we are in proc-1 setup.
-| schedpaging GLOBAL T -> --weaken-symbol.
+| schedpaging (GLOBAL T) -- one-shot milestone marker: swapconf returned -> proc-1 setup.
 	.globl	schedpaging
 schedpaging:
 	linkw	%fp,&0
 	movel	Lsp_n,%d0
-	bnew	Lsp_ret			| one-shot print
+	bnew	Lsp_ret
 	moveq	&1,%d0
 	movel	%d0,Lsp_n
 	pea	Lsp_msg
@@ -56,52 +107,14 @@ schedpaging:
 Lsp_ret:
 	unlk	%fp
 	rts
-	nop				| pad .text to a 4-byte multiple
 	nop
 
-| ---------------------------------------------------------------------------
-| resume (0x9c, GLOBAL T) -- the context-switch core (restores a proc's saved
-| registers + SP and jmps to its resume PC).  Verbatim transcription + a one-shot
-| ENTRY marker: if "DBG resume ctx=%x" prints, swtch/sleep DO dispatch a proc.
-| The 030 pflusha (0xb2) is the 040 form here (.word 0xf518) since this override is a
-| separate copy.  resume GLOBAL T -> --weaken-symbol.  ublksde = global D.
-	.globl	resume
-resume:
-	movel	Lrs_n,%d0
-	bnew	Lrs_go			| one-shot
-	moveq	&1,%d0
-	movel	%d0,Lrs_n
-	movel	%sp@(8),%sp@-		| the resume context ptr (a1)
-	pea	Lrs_msg
-	pea	2
-	jsr	cmn_err
-	lea	%sp@(12),%sp
-Lrs_go:
-	moveal	%sp@(4),%a0
-	moveal	%sp@(8),%a1
-	moveal	ublksde,%a2
-	movew	%sr,%d0
-	movew	&0x2700,%sr
-	movel	%a1,%a2@
-	.word	0xf518			| pflusha (68040)
-	moveml	%a0@,%d2-%d7/%a1-%sp
-	movew	%d0,%sr
-	moveq	&1,%d0
-	jmp	%a1@
-
 	.data
-Lsch_msg:
-	.asciz	"DBG sched ENTRY maxrunpri=%x"
-	.even
-Lsch_n:
-	.long	0
 Lsp_msg:
 	.asciz	"DBG MARK: schedpaging (swapconf returned) -- entering proc-1 setup"
 	.even
-Lsp_n:
-	.long	0
-Lrs_msg:
-	.asciz	"DBG resume ctx=%x (dispatching a proc)"
+Lrt_msg:
+	.asciz	"DBG resume XFER uva=%x a1=%x sp=%x (HALT -- this is the jmp target)"
 	.even
-Lrs_n:
+Lsp_n:
 	.long	0

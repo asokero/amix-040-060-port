@@ -25,19 +25,21 @@ echo "    NOTE: swapconf override DROPPED 2026-06-22 -- the dir-read/namei path 
 echo "    (gen_strategy PFN<<11->12 fix), so the REAL swapconf runs and configures swap"
 echo "    (populates swapinfo) -- this clears the swap_xlate+0x26 NULL-swapinfo bus error."
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ddopen_dbg.s"   -o "$HERE/build/ddopen_dbg.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/forkdbg.s"      -o "$HERE/build/forkdbg.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/blkatoff_dbg.s" -o "$HERE/build/blkatoff_dbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/forkdbg.s"      -o "$HERE/build/forkdbg.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/mainmarks.s"    -o "$HERE/build/mainmarks.o"
 
-echo "[*] weaken ddopen + hat_dup + anon_resv + schedpaging; globalize+weaken blkatoff (LOCAL)"
+echo "[*] ISOLATION build: RESTORE the exact milestone .o set (ddopen_dbg + blkatoff_dbg +"
+echo "    forkdbg stubs + mainmarks resume-fix) to confirm it LOADS again.  The only diff vs the"
+echo "    working milestone was dropping ddopen_dbg/blkatoff_dbg -> re-added here to isolate."
 cp "$IN" "$HERE/build/unix-040-dbg-stage1"
-m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol hat_dup --weaken-symbol anon_resv --weaken-symbol schedpaging --weaken-symbol resume --weaken-symbol sched --globalize-symbol blkatoff --weaken-symbol blkatoff "$HERE/build/unix-040-dbg-stage1"
+m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol resume --weaken-symbol schedpaging --weaken-symbol hat_dup --weaken-symbol anon_resv --globalize-symbol blkatoff --weaken-symbol blkatoff "$HERE/build/unix-040-dbg-stage1"
 
 OUT="$HERE/build/unix-040-dbg"
 echo "[*] relinking -> $OUT"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-dbg-stage1" \
-	"$HERE/build/ddopen_dbg.o" "$HERE/build/forkdbg.o" \
-	"$HERE/build/blkatoff_dbg.o" "$HERE/build/mainmarks.o"
+	"$HERE/build/ddopen_dbg.o" "$HERE/build/blkatoff_dbg.o" \
+	"$HERE/build/forkdbg.o" "$HERE/build/mainmarks.o"
 
 echo "[*] overridden defs (single strong def each):"
 for s in ddopen hat_dup anon_resv; do

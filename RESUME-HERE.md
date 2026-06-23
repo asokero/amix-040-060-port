@@ -1,6 +1,88 @@
-# RESUME HERE — AMIX 68040 port status (2026-06-22)
+# RESUME HERE — AMIX 68040 port status (2026-06-23)
 
-## >>> RESOLVED (2026-06-22 night): enqueue WORKS (maxrunpri=0x4F); bug = 040 ctx switch <<<
+## >>> ★★★ 040 CONTEXT SWITCH WORKS (2026-06-23) -- system boots to idle ★★★ <<<
+**The resume u-area-remap fix WORKED.**  Boot now: sched -> swtch -> resume TRANSFERS to a
+child ("DBG resume uva=48440000 (040 u-area remap + transfer)"), children RUN, scheduling
+cycles, a running proc does another `ddopen dev=480016` (disk access = real work), and the
+system reaches a clean IDLE ("DBG idle maxrunpri=FFFFFFFF" + WinUAE HALT1) instead of the old
+100%-CPU hang at sched ENTRY.  The whole boot scrolled off-screen (lots ran post-switch).
+
+**THE FIX (mainmarks.s resume override, the ONLY change needed):** on 040 the u-area's pointer
+descriptor is kptr040[0] -> a FIXED 256-aligned leaf table `uarea_pt`.  The 030 mechanism
+(repoint the u-area SDE.word2 at the per-proc PTE copy proc+0x50) can't be used (proc+0x50 not
+256-aligned).  So resume reads u_va=curproc@(252) (segu_get's u-area VA, stored by procdup),
+walks kptr040 for u_va and u_va+0x1000 (vatosde/vatopte inline), and COPIES the 2 leaf PTEs
+into uarea_pt[0],[1], then pflusha.  curproc is set by swtch (b91fa) BEFORE jsr resume, so NO
+swtch/segu_get/ublksde change was needed.  u_va==0 -> skip (proc 0 / early boot).  See the
+resume body in prototypes/mainmarks.s -- to be promoted to a clean (non-debug) 040 resume port.
+
+**BASE BUILD IS NOT STANDALONE-BOOTABLE YET (2026-06-23):** the milestone was reached with the
+DBG build, which STUBS `hat_dup` (no-op) + `anon_resv` (forkdbg.s).  The base `build/unix-040`
+(resume040 fix, real hat_dup) GURUs early (AmigaOS "Software Failure 8000 0006") because
+procdup -> as_dup -> the REAL **hat_dup (0xb502a) is UNPORTED on 040** (builds 030 tables) ->
+crash during daemon/proc creation.  So: TEST with **build/unix-040-dbg** (= base + resume040 +
+hat_dup/anon_resv stubs + markers); the bare base needs the ports below first.
+
+**NEXT (to progress past idle to init/login), two batches:**
+1. **hat_dup port (Batch 4, BINARY RE @0xb502a)** -- duplicate a proc's address space (the
+   per-proc HAT page tables) in 040 format.  Currently stubbed no-op -> init/proc-1's AS is not
+   set up -> nothing real runs -> system idles.  Pairs with hat_growsdt@0xb6058.  Re-check if
+   `anon_resv` still needs its stub now that swapconf CONFIGURES swap (it may work unstubbed).
+2. **040 trap/exception frames (Batch 2, SOURCE: amiga/ml/ttrap.s `stkrestore`/`framesz` +
+   vec.s)** -- bites at init's first user-mode entry (rte to icode) + first syscall + the clock
+   ISR.  Needed for init to run user code and for preemption/timers (so idle wakes).
+VISIBILITY: the boot scrolls off; the hat040.s/dbg markers spam.  For a readable boot, reduce
+markers (don't silence hat040's working code carelessly) or set up serial-console capture (the
+deferred fs-uae/WinUAE automation) to read the full log.  NOTE: `build/unix-040` is written on
+the live-mounted dir -> torn-file gotcha [[fs-uae-test-setup]] can also cause spurious gurus.
+
+## >>> (prior) ROOT CAUSE FOUND (2026-06-22 late): 040 ctx switch = resume's u-area remap is a NO-OP <<<
+**The 040 context-switch bug is precisely localized.**  Boot reaches sched (maxrunpri=0x4F,
+dispq[0x4F] HEALTHY: 3 SYS daemons flag=0x2031=SSYS|SLOAD|SULOAD, NULL-terminated), swtch's
+scan selects dq_first correctly, fpu_save + both svirtophys calls succeed (ublk@p+124=0 so the
+user-root movec-urp branch is skipped for kernel daemons).  swtch then `jsr resume` -- and
+resume FAILS TO TRANSFER: it RETURNS into proc 0's swtch (measured: "DBG swtch RETURNED (no
+transfer)").  PROOF chain: swtch only returns via the d0!=0 path (b9054), which requires resume
+to have restored a context that lands back at proc 0's save point (b904c) -- i.e. resume
+restored PROC 0's OWN just-saved context, not the child's.
+
+**WHY:** resume does `*ublksde = childphys` (+pflusha) to repoint the u-area (fixed VA `u`=
+0x40000000) at the child's u-area page table, THEN `moveml (u+0x318),regs` to restore.  But
+**ublksde points into the INERT 030 `st_top1`**: pstart's tail (0xf8a..0xfc8) sets
+`ublksde = &st_top1[(u>>17)&0x1FFF] + 4` (the u-area SDE's page-table-pointer half).  On 040
+st_top1 is dead (the live tree is kptr040), so `*ublksde` writes garbage nobody walks -> `u`
+does NOT remap -> u+0x318 still reads proc 0's context -> resume restores proc 0 -> swtch
+returns -> no child ever runs.  (Early-boot resume calls "worked" only because they were proc0
+->proc0, where the remap is a no-op anyway; the sched dispatch is the FIRST real cross-proc
+switch.)
+
+**THE FIX (3 parts, next work):**
+  1. **ublksde (040) = &kptr040[0]** -- the u-area's 040 pointer descriptor.  (u=0x40000000:
+     u>>25=32=root idx, (u>>18)-4096=0 -> kptr040[0], which pstart040 already builds as
+     `uarea_pt | UDT(2)`; uarea_pt[0/1] = u_phys|0xE1.)  Set this in pstart040's tail
+     (replace/augment the `movel d1,ublksde` that currently stores the st_top1 SDE addr).
+  2. **resume writes an 040 pointer descriptor**, `childphys | UDT(0x02)`, not raw phys -- so
+     kptr040[0] repoints to the child's u-area leaf page table.  (resume is a --weaken override
+     already in mainmarks.s; bake the `| 2` there, OR keep raw phys if childphys already has it.)
+  3. **the per-proc u-area PTE copy (proc+0x50) must be sourced from the 040 tree.**  MEASURED
+     (FS-UAE + WinUAE): the selected daemon's proc+0x50 = [0]=[1]=[2]=[3]=**0** (all zero).
+     ROOT: **segu_get's loop 2 (0xaa6aa..0xaa706)** does `dest=(proc+95)&~15=proc+0x50`, then for
+     d2=0..3 / VA d1+=2048: `a0 = st_top1[VA>>17].word2 + (VA>>11 & 63)*4; *(proc+0x50+d2*4) =
+     *a0` -- i.e. it COPIES the 4 u-area PTEs from the live PT (found via **st_top1**) into
+     proc+0x50, so resume can later point u's SDE.word2 at proc+0x50.  On 040 st_top1 is INERT
+     (loop 1 hat-maps the u-area into kptr040, not st_top1) -> `st_top1[seg].word2`=0 -> copies
+     zeros.  **FIX: port segu_get loop 2 to read the u-area leaf PTEs from the LIVE kptr040 tree**
+     (vatosde/vatopte-style walk of the child's u-area VA d1), + Model B (u-area = 2x4KB, so 2
+     iters / 4KB stride, proc+0x50 holds 2 040 leaf PTEs = childpage|0xE1).  Then proc+0x50 is a
+     valid 040 leaf page table and (1)+(2) make kptr040[0] point at it on switch.
+     (procdup: as_dup(@124) -> segu_get(child)@252 -> setuctxt -> save(seguser+0x318).)
+
+**INSTRUMENTATION used (mainmarks.s, --weaken sched/idle/resume + --globalize dispq):** sched
+override walks dispq[maxrunpri] + replicates swtch's dispatch tail with markers + forces jsr
+swtch; resume prints (cap 12); a "swtch RETURNED" marker after jsr swtch.  All confirmed the
+above.  These are diagnostic -- revert to a clean resume/ublksde 040 port once the fix lands.
+
+## >>> (prior) RESOLVED (2026-06-22 night): enqueue WORKS (maxrunpri=0x4F); bug = 040 ctx switch <<<
 **MEASURED: `DBG sched ENTRY maxrunpri=4F` (=79, POSITIVE).**  Via a `--weaken-symbol sched`
 override (mainmarks.s) that prints maxrunpri and spins, reached cleanly after all 4 daemon
 u-areas map (8 ptload lines) and proc 0 ("sched") enters the swapper.  So the run queue is
