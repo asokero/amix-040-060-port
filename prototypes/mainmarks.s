@@ -200,6 +200,17 @@ resume:
 	movew	&0x2700,%sr		| mask interrupts for the remap
 	tstl	%d1
 	beqw	Lr_rest			| u_va==0 -> no remap, read from fixed VA (stock behaviour)
+|	--- DUMP the proc's saved context (kvsegu, ATC-mapped, pre-pflusha = stack-safe) ---
+|	saved a1 = u_va+0x318+24 (the jmp target / resume PC); saved sp = u_va+0x318+48.
+|	Valid procdup context measured earlier: a1=0x070418F8, sp=0x40001F40.  Garbage here = the
+|	procdup/setuctxt 040 child context is wrong (then the freeze is the jmp, not the kvsegu read).
+	moveal	%d1,%a2
+	movel	%a2@(0x330),%sp@-	| saved a1 (jmp target)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%a2@(0x348),%sp@-	| saved sp
+	jsr	serdbg_hex
+	addqw	&4,%sp
 |	--- remap uarea_pt[0],[1] = the child's 2 u-area leaf PTEs (for the child's stack) ---
 	moveal	kptr040,%a2
 	movel	%a2@,%d2
@@ -273,6 +284,20 @@ LrJ_wait:
 	subql	&1,%d1
 	bnew	LrJ_wait
 LrJ_done:
+|	TEST read of the kvsegu context source (a0 = u_va+0x318 = 0x48440318) AFTER pflusha.
+|	If kvsegu is NOT walkable by the HW tablewalk post-ATC-flush, THIS read faults -> freeze
+|	with no 'K'.  If 'K' prints, the read works and any freeze is at the jmp (bad target/ctx).
+	movel	%a0@,%d1		| faulting candidate
+	movel	&0x00dff000,%a1
+	movew	&0x014b,%a1@(0x30)	| 'K' -- post-pflusha kvsegu read SUCCEEDED
+	movel	&0x00004000,%d1
+LrK_wait:
+	movew	%a1@(0x18),%d2
+	andiw	&0x2000,%d2
+	bnew	LrK_done
+	subql	&1,%d1
+	bnew	LrK_wait
+LrK_done:
 	moveml	%a0@,%d2-%d7/%a1-%sp	| restore the new proc's context (reliable: stable VA)
 	movew	%d0,%sr
 	moveq	&1,%d0
