@@ -62,15 +62,15 @@ sched:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(20),%sp		| pop 5 longs
-	jsr	swtch			| now do the REAL switch (resume is reliability-fixed).
-					| If it transfers, resume jmps to the child -> never returns here.
-	movel	maxrunpri,%sp@-		| only reached if swtch did NOT transfer
-	pea	Lret_msg
-	pea	2
-	jsr	cmn_err
-	lea	%sp@(12),%sp
+|	A/B TEST (2026-06-23): sched SPINS here (NO jsr swtch) -- this reproduces the BANNER-VISIBLE
+|	baseline behaviour (reach sched ENTRY, then halt; the context switch never runs).  Combined
+|	with the serdbg conputc serial hook, ONE boot answers: does the banner appear (a) on SCREEN
+|	(baseline confirm) and (b) in the SERIAL log?  If banner is on screen but NOT serial -> serial
+|	does not capture the normal (STREAMS-logged) console path, so the serial-only-idle result is a
+|	capture artifact, NOT proof the boot skips the banner.  If banner is in serial too -> serial
+|	works, and the switch build's missing banner is a real boot difference.
 Lsch_spin:
-	bra.w	Lsch_spin		| halt here
+	bra.w	Lsch_spin		| halt here -- no context switch (baseline behaviour)
 	nop				| pad .text to a 4-byte multiple
 
 | ---------------------------------------------------------------------------
@@ -109,12 +109,9 @@ idle:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(12),%sp
-Lidle_freeze:
-	bra.w	Lidle_freeze		| FREEZE at the FIRST idle -- the screen stops here so the
-					| full post-switch sequence stays visible (no scroll/wrap/loop).
 Lidle_stop:
-	stop	&0x2000			| (subsequent idles, unreached while frozen)
-	rts
+	stop	&0x2000			| stock idle behaviour -- let the boot run naturally so the
+	rts				| serial log captures the full sequence (no freeze).
 	nop
 
 | ---------------------------------------------------------------------------

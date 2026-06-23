@@ -26,17 +26,19 @@ echo "    (gen_strategy PFN<<11->12 fix), so the REAL swapconf runs and configur
 echo "    (populates swapinfo) -- this clears the swap_xlate+0x26 NULL-swapinfo bus error."
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/forkdbg.s"      -o "$HERE/build/forkdbg.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/mainmarks.s"    -o "$HERE/build/mainmarks.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/serdbg.s"       -o "$HERE/build/serdbg.o"
 
-echo "[*] VISIBILITY build: blkatoff_dbg + ddopen_dbg DROPPED (no dir-read / device-open spam);"
-echo "    idle FREEZES at the first call so the full post-switch sequence stays on screen.  weaken"
-echo "    hat_dup/anon_resv/schedpaging/resume/sched/idle; globalize dispq (sched diag reads dispq)."
+echo "[*] SERIAL-CAPTURE build: conputc override (serdbg_putc) mirrors ALL console output (banner +"
+echo "    buffered markers, via the conputc pointer that putchar AND the message-buffer drain use)"
+echo "    to the Amiga serial port -> fs-uae serial_port captures the FULL boot log to a file."
+echo "    weaken hat_dup/anon_resv/schedpaging/resume/sched/idle/conputc; globalize dispq."
 cp "$IN" "$HERE/build/unix-040-dbg-stage1"
-m68k-linux-gnu-objcopy --weaken-symbol hat_dup --weaken-symbol anon_resv --weaken-symbol schedpaging --weaken-symbol resume --weaken-symbol sched --weaken-symbol idle --globalize-symbol dispq "$HERE/build/unix-040-dbg-stage1"
+m68k-linux-gnu-objcopy --weaken-symbol hat_dup --weaken-symbol anon_resv --weaken-symbol schedpaging --weaken-symbol resume --weaken-symbol sched --weaken-symbol idle --weaken-symbol conputc --globalize-symbol dispq "$HERE/build/unix-040-dbg-stage1"
 
 OUT="$HERE/build/unix-040-dbg"
 echo "[*] relinking -> $OUT"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-dbg-stage1" \
-	"$HERE/build/forkdbg.o" "$HERE/build/mainmarks.o"
+	"$HERE/build/forkdbg.o" "$HERE/build/mainmarks.o" "$HERE/build/serdbg.o"
 
 echo "[*] overridden defs (single strong def each):"
 for s in ddopen hat_dup anon_resv; do
