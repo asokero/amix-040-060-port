@@ -1,6 +1,49 @@
-# RESUME HERE — AMIX 68040 port status (2026-06-23)
+# RESUME HERE — AMIX 68040 port status (2026-06-24)
 
-## >>> DONE (2026-06-23): 040 ctx switch WORKS; init runs in USER MODE + EXECs <<<
+## >>> LATEST (2026-06-24): init/copyout blocker SOLVED; now blocked on SCSI-DMA root-mount <<<
+Branch `040-switch-trace`. See memory [[amix-040-ctx-switch-working]] (updated) + commits
+`ae5f942` (init/copyout fixes), `fc01890` (SCSI localization).
+
+**init/copyout blocker SOLVED (2 fixes).** The "icode page @0x80800000 is ZEROS → init SIGSEGV"
+blocker was NOT a write-back-replay issue (that earlier guess was wrong). Two real causes, fixed:
+1. **DTT1 user-leak** — `prototypes/pstart040.s` DTT1 `0x807fc060 → 0x807fa060` (S=10 both →
+   S=01 supervisor-only). The old DTT1 transparently translated USER accesses to 0x80000000+ to
+   nonexistent phys, so copyout's user-FC `moves` to the icode VA wrote to the VOID (no fault,
+   readback 0). With S=supervisor-only, user VAs ≥0x80000000 (init lives at 0x80800000) fault +
+   demand-page via the URP page tables. (BASE build / relink-040.sh.)
+2. **userspace() 040 port** — `prototypes/userspace040.s` (--weaken userspace @0x5b5f0). Stock
+   userspace() decides user-vs-kernel faults from the 030 SSW and knows only 030 formats 0xA/0xB;
+   a 040 format-7 access-error frame fell through to "non-bus error exception" → returned 0
+   (kernel) → k_trap routed copyout's fault to **krnxmemflt(&kas)** instead of
+   **usrxmemflt(curproc->p_as)** → as_segat(&kas, 0x80800000)=NULL → copyout EFAULT → PANIC
+   "main: copyout of icode failed". Fix: format 7 reads FC = (SSW & 7), 040 **SSW @ frame+76**.
+   EMPIRICAL 040 access-error frame (ktrap_dbg.s raw dump): SR@+64 PC@+66 fmt/vec@+70 (0x7008)
+   **SSW@+76** (0x0401 = ATC,write,TM=user) **FA@+84** (= get_fault). +4 shift from textbook.
+
+**NEW BLOCKER — SCSI root-mount r=6 (the current frontier).** userspace040 shifts BSS, which
+re-triggers a pre-existing **layout-sensitive SCSI DMA** bug → sdpartition ENXIO (r=6) →
+"s5mountroot VOP_OPEN error 6" → nfs → PANIC. **NOT cache** (the static `block` buffer in
+alien/sdpart.c is DTT0 cache-inhibited; sdprobe040.s cinva probe: block[0] pre==post; 0→0 when it
+fails, RDSK→RDSK when it works). Root: `alien/dd.c:240  dp->com.addr = vtop(b_un.b_addr, b_proc)`;
+sdpart read() leaves b_proc=0 → `vtop(&block,0)` → **svirtophys(&block)**. `block` is in low
+kernel BSS = the **DTT0 identity region** (phys<0x40000000, va==phys, cache-inhibited — same
+region blkatoff reads directly) but svirtophys WALKS kptr040 page tables that may not cover the
+DTT0-transparent kernel region → wrong/0 phys for some block addresses → DMA misses block.
+NO source for vtop(0xb7568)/svirtophys(0xb7730) (binary-only, checked).
+**PROPOSED FIX (unverified): vtop040 override returning va directly for va<0x40000000 (DTT0
+identity), else stock.** VERIFY FIRST: probe svirtophys(&block) vs &block.
+**SOURCE FOUND** (was RE-ing blindly): `vanillarw/usr/sys/amiga/alien/{sdpart,dd,scsi,a2090,
+a2091,a3091}.c` + rdb.h/sd.h + Makefile (`-I../.. -I../inc`).
+Addrs: vtop=0xb7568 svirtophys=0xb7730 sdpartition=0xd848 getrdb=0xd9b8 getpb=0xda22 read=0xda72
+checksum=0xdb6e block=bss+0x3df8.
+Build state: relink-040-dbg.sh has userspace040 + sdprobe040 (probe returns ENXIO by design).
+git checkpoint to return to if SCSI work goes wrong: `ae5f942`.
+
+---
+
+## >>> SUPERSEDED (2026-06-23): 040 ctx switch WORKS; init runs in USER MODE + EXECs <<<
+(The hat_free / write-back-replay theory below is SUPERSEDED by the 2026-06-24 section above —
+the real init blocker was DTT1 + userspace(), not write-back replay.)
 Verified in the SERIAL log (branch `040-switch-trace`, see memory [[amix-040-ctx-switch-working]]
 + [[amix-serial-debug-capture]]).  The whole chain now runs:
 - **040 context switch** (resume040 in `prototypes/mainmarks.s`, --weaken resume/sched/idle):
