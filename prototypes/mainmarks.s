@@ -187,9 +187,6 @@ Lidle_stop:
 | --weaken-symbol resume.  globals: curproc (C), kptr040 (D).
 	.globl	resume
 resume:
-	pea	0x52			| 'R' -- resume entered (direct serial, safe caller stack)
-	jsr	serdbg_mark
-	addqw	&4,%sp
 	moveal	curproc,%a1
 	movel	%a1@(252),%d1		| d1 = u_va (new proc's u-area kvsegu VA; 0 for proc 0)
 	moveal	%sp@(4),%a0		| a0 = arg1 = u+0x318 (fixed VA) -- default read source
@@ -215,9 +212,6 @@ resume:
 	tstl	%a3@
 	beqw	Lr_kvsegu		| p_ubptbl[0]==0 -> forked proc, walk kvsegu
 |	--- path U: p_ubptbl (proc 0 / static u-area); 2KB click -> 4KB 040 PTE, keep live flags ---
-	pea	0x55			| 'U'
-	jsr	serdbg_mark
-	addqw	&4,%sp
 	movel	%a2@,%d3
 	andil	&0x00000fff,%d3		| d3 = live 040 leaf status flags (e.g. 0x0F9)
 	movel	%a3@,%d4		| uarea_pt[0] = (p_ubptbl[0] phys & ~0xFFF) | flags
@@ -231,9 +225,6 @@ resume:
 	braw	Lr_flush
 Lr_kvsegu:
 |	--- path V: forked proc -- walk kptr040 for u_va & u_va+0x1000 (already 040 4KB leaf PTEs) ---
-	pea	0x56			| 'V'
-	jsr	serdbg_mark
-	addqw	&4,%sp
 	movel	%d1,%d4			| page 0: index kptr040 for u_va
 	moveq	&18,%d5
 	lsrl	%d5,%d4
@@ -277,36 +268,10 @@ Lr_flush:
 |	remap+pflusha the fixed VA maps to the NEW proc's u-area, so reading 0x40000318 yields the
 |	new proc's saved context -- exactly the stock design (which also reads from the fixed VA).
 Lr_rest:
-|	STACKLESS 'J' marker -- after the remap+pflusha the fixed-VA (0x40000000) kernel stack
-|	points at the NEW proc's physical u-area, so we must NOT touch the stack here (no jsr/push;
-|	that is exactly why the stock resume goes straight to moveml/jmp).  Emit using registers
-|	only: a1 = custom base (reloaded by the moveml below); d1/d2 = scratch (d1 not part of the
-|	restored context d2-d7/a1-sp; d2 IS reloaded by the moveml).  d0 (sr) and a0 (src) untouched.
-	movel	&0x00dff000,%a1
-	movew	&0x014a,%a1@(0x30)	| serdat <- STOPBIT | 'J' (0x4a)
-	movel	&0x00004000,%d1		| bounded TBE pacing
-LrJ_wait:
-	movew	%a1@(0x18),%d2
-	andiw	&0x2000,%d2
-	bnew	LrJ_done
-	subql	&1,%d1
-	bnew	LrJ_wait
-LrJ_done:
-|	TEST read of the FIXED-VA context source (a0 = arg1 = 0x40000318) AFTER pflusha.  If the
-|	remap built a valid mapping, this reads the new proc's context; if the copied p_ubptbl PTE
-|	is bad, THIS read faults -> freeze with no 'K'.  'K' present = the fixed-VA read works.
-	movel	%a0@,%d1		| faulting candidate
-	movel	&0x00dff000,%a1
-	movew	&0x014b,%a1@(0x30)	| 'K' -- post-pflusha fixed-VA read SUCCEEDED
-	movel	&0x00004000,%d1
-LrK_wait:
-	movew	%a1@(0x18),%d2
-	andiw	&0x2000,%d2
-	bnew	LrK_done
-	subql	&1,%d1
-	bnew	LrK_wait
-LrK_done:
-	moveml	%a0@,%d2-%d7/%a1-%sp	| restore the new proc's context (reliable: stable VA)
+|	Restore the new proc's context from a0 = arg1 = FIXED VA u+0x318 (after the remap the fixed
+|	VA maps to the new proc's u-area).  No stack use between pflusha and the jmp -- exactly the
+|	stock resume tail -- because the fixed-VA stack now points at the new proc's u-area.
+	moveml	%a0@,%d2-%d7/%a1-%sp
 	movew	%d0,%sr
 	moveq	&1,%d0
 	jmp	%a1@

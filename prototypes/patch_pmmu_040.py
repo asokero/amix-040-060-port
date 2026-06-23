@@ -63,6 +63,14 @@ PATCHES = [
     # `movec %a0,%urp` (4e7b 8806) -- 040 user-mode root.  The following pflusha (0xb58ca) is
     # already converted by patch_pflusha_040.py.  Same real 030->040 swap as the swtch site.
     (0xb58c6, b"\xf0\x11\x4c\x00", b"\x4e\x7b\x88\x06", "hat_map:pmove crp -> movec a0,urp"),
+    # hat_exec (0xb70ea) and hat_asload (0xb7472) -- the exec/address-space-load root loads on
+    # the user-fork path (reached as proc 1 runs).  IDENTICAL pattern to hat_map: a0 =
+    # svirtophys(as->root) (phys), stored to userroot+4; d0 reloaded with an fp offset.  Both
+    # -> `movec %a0,%urp` (4e7b 8806).  Their trailing pflusha (b70ee/b7476) already 040 form.
+    # Found proactively via a full kernel PMMU scan (objdump | grep pmove); the only remaining
+    # 030 pmove sites are the DEAD original-pstart tail (0xfd6/0xfde, replaced by pstart040).
+    (0xb70ea, b"\xf0\x11\x4c\x00", b"\x4e\x7b\x88\x06", "hat_exec:pmove crp -> movec a0,urp"),
+    (0xb7472, b"\xf0\x11\x4c\x00", b"\x4e\x7b\x88\x06", "hat_asload:pmove crp -> movec a0,urp"),
 ]
 
 def main():
