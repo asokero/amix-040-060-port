@@ -247,20 +247,32 @@ resume:
 	pea	0x62			| 'b' -- uarea_pt[1] written OK
 	jsr	serdbg_mark
 	addqw	&4,%sp
-	pea	0x63			| 'c' -- about to cpusha/pflusha
+	pea	0x63			| 'c' -- about to cpusha (stack still valid: ATC unchanged)
 	jsr	serdbg_mark
 	addqw	&4,%sp
 	.word	0xf4f8			| cpusha bc -- push uarea_pt writes to RAM for the HW tablewalk
-	.word	0xf518			| pflusha -- invalidate the ATC
-	pea	0x66			| 'f' -- cpusha/pflusha completed
+	pea	0x64			| 'd' -- cpusha done (stack still valid: pflusha not yet run)
 	jsr	serdbg_mark
 	addqw	&4,%sp
+	.word	0xf518			| pflusha -- invalidate the ATC (fixed-VA stack now remaps away!)
 	moveal	%d1,%a0			| a0 = u_va + 0x318 = the STABLE kvsegu read source
 	addal	&0x318,%a0
 Lr_rest:
-	pea	0x4a			| 'J' -- about to restore ctx + jmp (still on safe stack)
-	jsr	serdbg_mark
-	addqw	&4,%sp
+|	STACKLESS 'J' marker -- after the remap+pflusha the fixed-VA (0x40000000) kernel stack
+|	points at the NEW proc's physical u-area, so we must NOT touch the stack here (no jsr/push;
+|	that is exactly why the stock resume goes straight to moveml/jmp).  Emit using registers
+|	only: a1 = custom base (reloaded by the moveml below); d1/d2 = scratch (d1 not part of the
+|	restored context d2-d7/a1-sp; d2 IS reloaded by the moveml).  d0 (sr) and a0 (src) untouched.
+	movel	&0x00dff000,%a1
+	movew	&0x014a,%a1@(0x30)	| serdat <- STOPBIT | 'J' (0x4a)
+	movel	&0x00004000,%d1		| bounded TBE pacing
+LrJ_wait:
+	movew	%a1@(0x18),%d2
+	andiw	&0x2000,%d2
+	bnew	LrJ_done
+	subql	&1,%d1
+	bnew	LrJ_wait
+LrJ_done:
 	moveml	%a0@,%d2-%d7/%a1-%sp	| restore the new proc's context (reliable: stable VA)
 	movew	%d0,%sr
 	moveq	&1,%d0
