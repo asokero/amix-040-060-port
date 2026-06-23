@@ -60,6 +60,49 @@ Lmk_done:
 	rts
 
 | ---------------------------------------------------------------------------
+| serdbg_hex(val) -- emit val as 8 hex digits (MSB first) DIRECTLY on serial, bypassing the
+| STREAMS drain.  Fully register-preserving.  Used to dump curproc@252 (u_va) at resume entry
+| so we can see WHY the remap path was (or wasn't) taken.
+	.globl	serdbg_hex
+serdbg_hex:
+	linkw	%fp,&0
+	moveml	%d0-%d3/%a0-%a1,%sp@-
+	movel	%fp@(8),%d2		| d2 = val
+	movel	&0x00dff000,%a1		| custom-chip base
+	tstw	Lmk_init
+	bnew	Lhx_start
+	movew	&1,Lmk_init
+	movew	&0x0174,%a1@(0x32)	| serper = 9600
+Lhx_start:
+	moveq	&7,%d3			| 8 nibbles
+Lhx_next:
+	roll	&4,%d2			| rotate MSB nibble into the low 4 bits
+	movel	%d2,%d0
+	andiw	&0x000f,%d0
+	cmpiw	&9,%d0
+	bhiw	Lhx_alpha
+	addiw	&0x30,%d0		| '0'..'9'
+	braw	Lhx_emit
+Lhx_alpha:
+	addiw	&0x37,%d0		| 'A'..'F'
+Lhx_emit:
+	andiw	&0x00ff,%d0
+	oriw	&0x0100,%d0		| STOPBIT | digit
+	movew	%d0,%a1@(0x30)		| serdat <- digit
+	movel	&0x00008000,%d1		| bounded TBE wait
+Lhx_wait:
+	movew	%a1@(0x18),%d0
+	andiw	&0x2000,%d0
+	bnew	Lhx_after
+	subql	&1,%d1
+	bnew	Lhx_wait
+Lhx_after:
+	dbra	%d3,Lhx_next
+	moveml	%sp@+,%d0-%d3/%a0-%a1
+	unlk	%fp
+	rts
+
+| ---------------------------------------------------------------------------
 | sched OVERRIDE -- the swapper loop entry (proc 0, called once by main() AFTER all 4
 | daemons are created).  THIS BUILD performs the real first context switch.
 | Mechanism: --weaken-symbol sched makes main's `jsr sched` resolve here (detour-jmp entry
@@ -149,6 +192,9 @@ resume:
 	addqw	&4,%sp
 	moveal	curproc,%a1
 	movel	%a1@(252),%d1		| d1 = u_va (new proc's u-area kvsegu VA; 0 for proc 0)
+	movel	%d1,%sp@-		| DUMP u_va (hex) -- tells us if/why remap is taken
+	jsr	serdbg_hex
+	addqw	&4,%sp
 	moveal	%sp@(4),%a0		| a0 = arg1 = u+0x318 (fixed VA) -- default read source
 	movew	%sr,%d0			| d0 = sr (preserved to the end; serdbg_mark keeps d0)
 	movew	&0x2700,%sr		| mask interrupts for the remap
@@ -176,6 +222,9 @@ resume:
 	addl	%d5,%d4
 	moveal	%d4,%a3
 	movel	%a3@,%a2@		| uarea_pt[0] = child page-0 PTE
+	pea	0x61			| 'a' -- uarea_pt[0] written OK
+	jsr	serdbg_mark
+	addqw	&4,%sp
 	movel	%d1,%d3			| page 1: walk kptr040 for u_va+0x1000
 	addil	&0x1000,%d3
 	movel	%d3,%d4
@@ -195,8 +244,17 @@ resume:
 	addl	%d5,%d4
 	moveal	%d4,%a3
 	movel	%a3@,%a2@(4)		| uarea_pt[1] = child page-1 PTE
+	pea	0x62			| 'b' -- uarea_pt[1] written OK
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	pea	0x63			| 'c' -- about to cpusha/pflusha
+	jsr	serdbg_mark
+	addqw	&4,%sp
 	.word	0xf4f8			| cpusha bc -- push uarea_pt writes to RAM for the HW tablewalk
 	.word	0xf518			| pflusha -- invalidate the ATC
+	pea	0x66			| 'f' -- cpusha/pflusha completed
+	jsr	serdbg_mark
+	addqw	&4,%sp
 	moveal	%d1,%a0			| a0 = u_va + 0x318 = the STABLE kvsegu read source
 	addal	&0x318,%a0
 Lr_rest:
