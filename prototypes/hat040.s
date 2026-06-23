@@ -769,6 +769,178 @@ Lha_done:
 	nop				| pad .text to a 4-byte multiple (adjust per build)
 	nop				| +1: hat_pteload kvsegu-trace block shifted parity
 
+| ===========================================================================
+| hat_free (orig 0xb41e0, GLOBAL T) -- 040 port.
+| Destroys an address space's page tables (called from as_free during exec/exit
+| teardown via relvm).  The 030 original walked a 4-region (2-bit) root of 8-byte
+| descriptors, scanning each region's variable-length pointer table (limit field
+| in the SDE) then 64-PTE leaves, doing per-page bookkeeping (M/U writeback to the
+| pp + reverse-map unlink), freeing each leaf via hat_ptfree and each region's
+| pointer table via hat_growsdt(root,region,0).
+|
+| 030->040 changes:
+|   * root is now 128 entries (va>>25), 4-byte descriptors -> loop A=0..127, A*4
+|     stride, UDT = adesc & 3, ptr-table base = adesc & 0xFFFFFE00
+|   * pointer table is a full 128-entry 040 table (no 030 SDE limit field) ->
+|     loop B=0..127, B*4 stride, UDT = bdesc & 3, leaf base = bdesc & 0xFFFFFF00
+|   * leaf loop UNCHANGED (64 x 4-byte PTEs, leaf..leaf+256); pfn extract {0:21}->{0:20}
+|   * the per-page bookkeeping (as@(16)--, M/U writeback, revmap unlink) is VERBATIM
+|     030 logic -- only the pfn width changed.  A 256-iteration safety counter is
+|     added to the revmap unlink (learned from hat_unload's Lhl_findmap) so an
+|     inconsistent reverse-map list bails instead of hanging.
+|   * region tail: V1 LEAKS the pointer table (just clears root[A]) -- the proper
+|     free is hat_sdtfree(ptrtable,8) but hat_sdtfree's pages[] pfn lookup is still
+|     030 (>>11, unpatched) and never yet exercised; leaking unblocks teardown and
+|     isolates the walk port.  TODO v2: patch hat_sdtfree pfn shifts + free here.
+| Frame is identical to the 030 original (linkw -32, d2-d4/a2-a5) so restore offsets
+| match.  Arg: arg@8 = as (as@(20) = 040 root).
+	.globl	hat_free
+hat_free:
+	linkw	%fp,&-32
+	moveml	%d2-%d4/%a2-%a5,%sp@-
+	moveal	%fp@(8),%a0
+	moveal	%a0@(20),%a5		| a5 = 040 root base (preserved across hat_ptfree)
+| --- one-shot ENTER marker: proves hat_free runs (exec/exit teardown reached) ---
+	movel	Lhf_n,%d0
+	bnew	Lhf_nodbg
+	moveq	&1,%d0
+	movel	%d0,Lhf_n
+	movel	%a5,%sp@-		| root
+	movel	%fp@(8),%sp@-		| as
+	pea	Lhf_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
+	moveal	%fp@(8),%a0		| reload a5 (callee-saved, but be safe)
+	moveal	%a0@(20),%a5
+Lhf_nodbg:
+	clrl	%fp@(-20)		| A = 0
+Lf_A:
+	movel	%fp@(-20),%d0
+	cmpil	&127,%d0
+	bgtw	Lf_done			| A > 127 -> all regions done
+	movel	%fp@(-20),%d0
+	asll	&2,%d0			| A*4
+	movel	%a5@(0,%d0:l),%d4	| Adesc (4-byte root descriptor)
+	movel	%d4,%d0
+	andil	&3,%d0			| UDT (low 2 bits)
+	beqw	Lf_nextA		| empty -> next region
+	movel	%d4,%d0
+	andil	&0xfffffe00,%d0		| pointer-table base = Adesc & ~0x1ff
+	movel	%d0,%fp@(-32)		| stash (reloaded each B iteration; a2 clobbered by hat_ptfree)
+	clrl	%fp@(-24)		| B = 0
+Lf_B:
+	movel	%fp@(-24),%d0
+	cmpil	&127,%d0
+	bgtw	Lf_freeA		| B > 127 -> region done
+	moveal	%fp@(-32),%a2		| pointer-table base
+	movel	%fp@(-24),%d0
+	asll	&2,%d0			| B*4
+	addal	%d0,%a2			| a2 = &Bdesc
+	movel	%a2@,%d1		| Bdesc (4-byte pointer descriptor)
+	movel	%d1,%d0
+	andil	&3,%d0			| UDT
+	beqw	Lf_nextB		| empty -> next pointer entry
+	andil	&0xffffff00,%d1		| leaf-table base = Bdesc & ~0xff
+	movel	%d1,%fp@(-4)		| fp@-4 = leaf base (for hat_ptfree)
+	addil	&256,%d1
+	movel	%d1,%d3			| d3 = leaf end bound (leaf + 64*4)
+	moveal	%fp@(-4),%a3		| a3 = leaf PTE cursor
+Lf_PTE:
+	tstl	%a3@
+	beqw	Lf_nextPTE		| empty PTE -> skip
+| --- per-page bookkeeping (VERBATIM 030, only pfn width {0:21}->{0:20}) ---
+	movel	%fp@(8),%d0
+	addil	&16,%d0
+	moveal	%d0,%a0
+	subql	&1,%a0@			| (*(as+16))-- mapping count
+	bfextu	%a3@{&0:&20},%d0	| pfn
+	cmpl	pages_base,%d0
+	bcsw	Lf_ppzero
+	bfextu	%a3@{&0:&20},%d0
+	cmpl	pages_end,%d0
+	bccw	Lf_ppzero
+	bfextu	%a3@{&0:&20},%d0
+	subl	pages_base,%d0
+	moveq	&60,%d4
+	mulsl	%d4,%d0
+	movel	pages,%d4
+	addl	%d0,%d4
+	movel	%d4,%fp@(-12)		| pp = pages + (pfn-pages_base)*60
+	braw	Lf_ppdone
+Lf_ppzero:
+	clrl	%fp@(-12)
+Lf_ppdone:
+	tstl	%fp@(-12)
+	beqw	Lf_nextPTE
+| M/U writeback: leaf U/M (byte3 {4:1}/{3:1}) -> pp {6:1}/{5:1}  (positions unchanged)
+	movel	%fp@(-12),%d0
+	moveal	%d0,%a0
+	bfextu	%a0@{&6:&1},%d0
+	bfextu	%a3@(3){&4:&1},%d1
+	orl	%d1,%d0
+	bfins	%d0,%a0@{&6:&1}
+	movel	%fp@(-12),%d0
+	moveal	%d0,%a0
+	bfextu	%a0@{&5:&1},%d0
+	bfextu	%a3@(3){&3:&1},%d1
+	orl	%d1,%d0
+	bfins	%d0,%a0@{&5:&1}
+| reverse-map unlink: walk pp@(32) chain (next ptr @ pte+256) for a3; with safety counter
+	movel	%fp@(-12),%d4
+	addil	&32,%d4
+	moveal	%d4,%a4			| a4 = &pp->revmap_head
+	movel	&256,%d1		| safety counter
+Lf_find:
+	cmpal	%a4@,%a3
+	beqw	Lf_unlink
+	subql	&1,%d1
+	beqw	Lf_findfail		| not found -> bail (don't hang on a bad list)
+	moveal	%a4@,%a4
+	addaw	&256,%a4
+	braw	Lf_find
+Lf_findfail:
+	movel	Lhf_failn,%d0
+	cmpil	&4,%d0
+	bccw	Lf_nextPTE
+	addql	&1,%d0
+	movel	%d0,Lhf_failn
+	movel	%a3,%sp@-		| pte addr
+	movel	%a3@,%sp@-		| *pte
+	pea	Lhf_failmsg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
+	braw	Lf_nextPTE
+Lf_unlink:
+	movel	%a3@(256),%a4@		| *a4 = pte->revmap_next
+Lf_nextPTE:
+	addqw	&4,%a3
+	cmpl	%a3,%d3			| d3 - a3
+	bhiw	Lf_PTE			| d3 > a3 -> more PTEs in this leaf
+| leaf table fully scanned -> free it (hat_ptfree preserves d4/a4/a5)
+	movel	%fp@(-4),%sp@-
+	jsr	hat_ptfree
+	addqw	&4,%sp
+Lf_nextB:
+	addql	&1,%fp@(-24)
+	braw	Lf_B
+Lf_freeA:
+| V1: LEAK the pointer table (no hat_sdtfree yet); clear root[A] so the as is clean.
+	movel	%fp@(-20),%d0
+	asll	&2,%d0
+	clrl	%a5@(0,%d0:l)		| root[A] = 0 (UDT invalid)
+Lf_nextA:
+	addql	&1,%fp@(-20)
+	braw	Lf_A
+Lf_done:
+	moveml	%fp@(-60),%d2-%d4/%a2-%a5
+	moveal	%d0,%a0
+	unlk	%fp
+	rts
+	nop				| pad .text to a 4-byte multiple
+	nop				| +1: align total .text to 16 (text/data contiguity)
+
 	.data
 	.even
 Lhae_msg:
@@ -806,4 +978,15 @@ Lhl_failmsg:
 	.asciz	"DBG hat_unload: pte not in revmap *pte=%x pp=%x pte@=%x"
 	.even
 Lhl_failn:
+	.long	0
+	.even
+Lhf_msg:
+	.asciz	"DBG hat_free ENTER as=%x root=%x"
+	.even
+Lhf_n:
+	.long	0
+Lhf_failmsg:
+	.asciz	"DBG hat_free: pte not in revmap *pte=%x pte@=%x"
+	.even
+Lhf_failn:
 	.long	0
