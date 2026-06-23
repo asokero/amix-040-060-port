@@ -80,20 +80,29 @@ Lpt_nodbg:
 	bfextu	%fp@(-53){&6:&2},%d0	| UDT = Adesc & 3
 	btst	&1,%d0			| resident? (UDT == 2 or 3 -> bit1 set)
 	bne	Lrootok
-| DIAGNOSTIC: dump the root-table state -- is there an 030 8-byte SDT desc here (hat_growsdt
-| wrote 8-byte/030, our 040 walk reads 4-byte -> stride mismatch) or is the slot truly empty?
-| a0 = root table base, d2 = va.  Args: va, rootbase, Aidx, Adesc(4-byte@*4), desc8(@*8).
+| --- root descriptor empty: LAZILY allocate a 040 pointer table and install it ---
+| MEASURED (2026-06-23): for a fresh user as the slot is TRULY empty (Adesc4=0 AND desc8=0) --
+| the 030 hat_growsdt indexes/writes the root differently (8-byte descs, 030 VA split) than our
+| 040 hat_pteload reads (va>>25 Aidx, 4-byte), so it never populates this slot.  Rather than port
+| hat_growsdt, allocate the pointer table here -- symmetric with the leaf alloc below.
+| hat_sdtalloc(&out, count): count<<6 bytes, bzero'd, from the identity-mapped SDT pool (the
+| region the HW tablewalk reads); count=8 -> 512 bytes = 128 entries x 4 = one 040 pointer table.
+| hat_sdtalloc preserves d2(va)/a2(pp); install root[Aidx] = ptable | UDT(2 resident).
+	pea	8
+	movel	%fp,%d0
+	subil	&48,%d0
+	movel	%d0,%sp@-		| &out = fp@(-48)
+	jsr	hat_sdtalloc
+	addqw	&8,%sp
+	moveal	%fp@(8),%a0		| re-derive root base (a0/d0 clobbered by the call)
+	moveal	%a0@(12),%a0
+	moveal	%a0@(20),%a0		| a0 = root table base
 	movel	%fp@(-28),%d0
-	asll	&3,%d0			| Aidx*8 (030 8-byte stride)
-	movel	%a0@(0,%d0:l),%sp@-	| desc8 = value at root + Aidx*8
-	movel	%fp@(-56),%sp@-		| Adesc = our 4-byte read at root + Aidx*4
-	movel	%fp@(-28),%sp@-		| Aidx
-	movel	%a0,%sp@-		| root table base
-	movel	%d2,%sp@-		| va
-	pea	Lpemsg0
-	pea	3
-	jsr	cmn_err
-	lea	%sp@(28),%sp
+	asll	&2,%d0			| Aidx*4
+	movel	%fp@(-48),%d1		| ptable (from hat_sdtalloc)
+	oril	&2,%d1			| UDT = 2 (resident pointer descriptor)
+	movel	%d1,%a0@(0,%d0:l)	| root[Aidx] = ptable | 2
+	movel	%d1,%fp@(-56)		| Adesc = the new descriptor (Lrootok reads fp@(-56))
 Lrootok:
 	movel	%fp@(-56),%d0
 	andil	&0xfffffe00,%d0		| Btable base (ptr table, 512-aligned)

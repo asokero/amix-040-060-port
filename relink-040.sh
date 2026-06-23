@@ -32,6 +32,7 @@ m68k-linux-gnu-objcopy \
 	--globalize-symbol sysseginit \
 	--globalize-symbol hat_pteload \
 	--globalize-symbol hat_ptalloc \
+	--globalize-symbol hat_sdtalloc \
 	--globalize-symbol hat_pt2ptdat \
 	--globalize-symbol hat_ptfree \
 	--globalize-symbol free_pts \
