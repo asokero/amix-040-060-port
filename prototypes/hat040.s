@@ -46,11 +46,14 @@ hat_pteload:
 	bccw	Lpt_nodbg
 	addql	&1,%d0
 	movel	%d0,Lpt_dbgn
+	.word	0x4e7a			| movec %urp,%d0 (active user root PHYS at fault time)
+	.word	0x0806
+	movel	%d0,%sp@-		| urp
 	movel	%d2,%sp@-		| va
 	pea	Lpt_dbgmsg
 	pea	2
 	jsr	cmn_err
-	addqw	&8,%sp
+	lea	%sp@(16),%sp
 	movel	%fp@(12),%d2		| reload d2 (cmn_err clobbers? d2 is callee-saved, but be safe)
 	moveal	%fp@(16),%a2
 Lpt_nodbg:
@@ -955,7 +958,7 @@ Lha_msg:
 Lha_n:
 	.long	0
 Lpt_dbgmsg:
-	.asciz	"DBG ptload uarea va=%x"
+	.asciz	"DBG ptload va=%x urp=%x"
 	.even
 Lpt_dbgn:
 	.long	0

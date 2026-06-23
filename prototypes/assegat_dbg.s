@@ -121,15 +121,35 @@ copyout:
 	movel	%fp@(12),%d2		| dst
 	cmpil	&0x80000000,%d2
 	bcsw	Lco_done
+| --- 68040 cache coherency: the kernel wrote (via copyback D-cache) executable user
+|     content (e.g. main()'s icode at 0x80800000); push D-cache to RAM + invalidate
+|     caches so the user instruction fetch sees it (the 030 D-cache is write-through
+|     and needs none).  cpusha bc = push+invalidate both caches. ---
+	.word	0xf4f8			| cpusha bc
+| --- read back *dst from USER space (moves SFC=user) to see if the icode actually
+|     landed in this context's page right after copyout (before proc 1 runs) ---
+	moveq	&1,%d0
+	.word	0x4e7b			| movec %d0,%sfc  (SFC = user data space)
+	.word	0x0000
+	moveal	%fp@(12),%a0		| dst (user 0x80800000)
+	.word	0x0e90			| movesl %a0@,%d1  (d1 = *(user dst))
+	.word	0x1000
+	movel	%d1,Lco_rb
+| --- read copyout's path selector: a0 = *(u+0x730); flag = a0@(140).  Nonzero ->
+|     copyout took rcopyout (RFS remote), not lcopyout (local moves) -> misroute. ---
+	moveal	u+0x730,%a0
+	clrl	%d1
+	movew	%a0@(140),%d1
+	movel	%d1,Lco_flag
 	movel	Lco_n,%d0
 	cmpil	&10,%d0
 	bccw	Lco_done
 	addql	&1,%d0
 	movel	%d0,Lco_n
+	movel	Lco_flag,%sp@-		| rcopyout selector ((u+0x730)@140)
+	movel	Lco_rb,%sp@-		| readback (*dst, should be 0x4ffb0170 icode if landed)
 	movel	%d3,%sp@-		| retval
-	movel	%fp@(16),%sp@-		| len
 	movel	%fp@(12),%sp@-		| dst
-	movel	%fp@(8),%sp@-		| src
 	pea	Lco_msg
 	pea	2
 	jsr	cmn_err
@@ -160,7 +180,11 @@ Lem_n:
 	.long	0
 	.even
 Lco_msg:
-	.asciz	"DBG copyout src=%x dst=%x len=%x -> ret=%x"
+	.asciz	"DBG copyout dst=%x ret=%x rb=%x rcflag=%x"
 	.even
 Lco_n:
+	.long	0
+Lco_rb:
+	.long	0
+Lco_flag:
 	.long	0
