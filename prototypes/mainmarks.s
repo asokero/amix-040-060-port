@@ -200,17 +200,6 @@ resume:
 	movew	&0x2700,%sr		| mask interrupts for the remap
 	tstl	%d1
 	beqw	Lr_rest			| u_va==0 -> no remap, read from fixed VA (stock behaviour)
-|	--- DUMP the proc's saved context (kvsegu, ATC-mapped, pre-pflusha = stack-safe) ---
-|	saved a1 = u_va+0x318+24 (the jmp target / resume PC); saved sp = u_va+0x318+48.
-|	Valid procdup context measured earlier: a1=0x070418F8, sp=0x40001F40.  Garbage here = the
-|	procdup/setuctxt 040 child context is wrong (then the freeze is the jmp, not the kvsegu read).
-	moveal	%d1,%a2
-	movel	%a2@(0x330),%sp@-	| saved a1 (jmp target)
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a2@(0x348),%sp@-	| saved sp
-	jsr	serdbg_hex
-	addqw	&4,%sp
 |	--- remap uarea_pt[0],[1] = the child's 2 u-area leaf PTEs (for the child's stack) ---
 	moveal	kptr040,%a2
 	movel	%a2@,%d2
@@ -266,8 +255,10 @@ resume:
 	jsr	serdbg_mark
 	addqw	&4,%sp
 	.word	0xf518			| pflusha -- invalidate the ATC (fixed-VA stack now remaps away!)
-	moveal	%d1,%a0			| a0 = u_va + 0x318 = the STABLE kvsegu read source
-	addal	&0x318,%a0
+|	a0 = arg1 = u+0x318 = FIXED VA 0x40000318 (loaded at entry, NOT overridden).  After the
+|	remap+pflusha the fixed VA maps to the NEW proc's u-area, so reading 0x40000318 yields the
+|	new proc's saved context -- exactly the stock design (which also reads from the fixed VA).
+|	The previous kvsegu (u_va+0x318) read was the bug: kvsegu is unmapped here -> bus error.
 Lr_rest:
 |	STACKLESS 'J' marker -- after the remap+pflusha the fixed-VA (0x40000000) kernel stack
 |	points at the NEW proc's physical u-area, so we must NOT touch the stack here (no jsr/push;
