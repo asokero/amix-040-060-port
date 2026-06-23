@@ -210,9 +210,19 @@ resume:
 	addil	&95,%d3
 	andil	&0xfffffff0,%d3		| d3 = (proc+95)&~15 = &p_ubptbl (16-aligned)
 	moveal	%d3,%a3			| a3 = &p_ubptbl
-|	--- DUMP childphys(arg2), p_ubptbl[0], p_ubptbl[1], live uarea_pt[0] (pre-pflusha, safe) ---
-|	reveals the PTE format: are p_ubptbl entries valid 040 leaf PTEs (page frame in bits 31:12)?
-	movel	%sp@(8),%sp@-		| arg2 = childphys = svirtophys(&p_ubptbl)
+|	p_ubptbl is 2KB-granular 030-style PTEs (measured: [0]=0x070E9001 phys 0x070E9000,
+|	[1]=0x070E9801 phys 0x070E9800 -- 2KB apart).  040 uses 4KB pages, so each 040 u-area page
+|	= TWO 2KB clicks: 040 page k <- p_ubptbl[2k].  Build the 040 leaf PTE = (p_ubptbl[2k] phys &
+|	~0xFFF) | (live uarea_pt status), preserving the WORKING 040 flags (cache mode/S/U/M) instead
+|	of copying the 030 low byte.  The prior bug: uarea_pt[1]=p_ubptbl[1] frame=0x070E9000 aliased
+|	page 1 (the kernel stack at 0x40001xxx) onto page 0 -> corruption.
+	moveal	kptr040,%a2
+	movel	%a2@,%d2
+	andil	&0xffffff00,%d2		| d2 = uarea_pt base = kptr040[0] & ~0xFF
+	moveal	%d2,%a2			| a2 = uarea_pt
+|	--- DUMP everything (pre-pflusha, stack-safe): childphys, p_ubptbl[0..3], live uarea_pt[0..1],
+|	    pre-remap saved PC (a0@24) + saved sp (a0@48) from the CURRENT fixed-VA context ---
+	movel	%sp@(8),%sp@-		| childphys (arg2)
 	jsr	serdbg_hex
 	addqw	&4,%sp
 	movel	%a3@,%sp@-		| p_ubptbl[0]
@@ -221,19 +231,38 @@ resume:
 	movel	%a3@(4),%sp@-		| p_ubptbl[1]
 	jsr	serdbg_hex
 	addqw	&4,%sp
-	moveal	kptr040,%a2
-	movel	%a2@,%d2
-	andil	&0xffffff00,%d2		| d2 = uarea_pt base = kptr040[0] & ~0xFF
-	moveal	%d2,%a2			| a2 = uarea_pt
-	movel	%a2@,%sp@-		| live uarea_pt[0] = the working 040 PTE template (proc 0's u-area)
+	movel	%a3@(8),%sp@-		| p_ubptbl[2] (3rd 2KB click = 040 page 1)
 	jsr	serdbg_hex
 	addqw	&4,%sp
-|	--- copy p_ubptbl PTEs into uarea_pt (hypothesis: they are 040 leaf PTEs) ---
-	movel	%a3@,%a2@		| uarea_pt[0] = p_ubptbl[0]
+	movel	%a3@(12),%sp@-		| p_ubptbl[3]
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%a2@,%sp@-		| live uarea_pt[0]
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%a2@(4),%sp@-		| live uarea_pt[1]
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%a0@(24),%sp@-		| pre-remap saved PC (a1 slot) -- current fixed-VA context
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%a0@(48),%sp@-		| pre-remap saved sp
+	jsr	serdbg_hex
+	addqw	&4,%sp
+|	--- build the 040 leaf PTEs: keep WORKING flags, swap in the new proc's 4KB phys pages ---
+	movel	%a2@,%d3
+	andil	&0x00000fff,%d3		| d3 = 040 leaf status flags (e.g. 0x0F9) from the live PTE
+	movel	%a3@,%d4		| uarea_pt[0] = (p_ubptbl[0] phys & ~0xFFF) | flags
+	andil	&0xfffff000,%d4
+	orl	%d3,%d4
+	movel	%d4,%a2@
 	pea	0x61			| 'a'
 	jsr	serdbg_mark
 	addqw	&4,%sp
-	movel	%a3@(4),%a2@(4)		| uarea_pt[1] = p_ubptbl[1]
+	movel	%a3@(8),%d4		| uarea_pt[1] = (p_ubptbl[2] phys & ~0xFFF) | flags (4KB stride!)
+	andil	&0xfffff000,%d4
+	orl	%d3,%d4
+	movel	%d4,%a2@(4)
 	pea	0x62			| 'b'
 	jsr	serdbg_mark
 	addqw	&4,%sp
