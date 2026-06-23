@@ -24,20 +24,19 @@ echo "[*] assembling ddopen_dbg.s + forkdbg.s + blkatoff_dbg.s (stock sdpartitio
 echo "    NOTE: swapconf override DROPPED 2026-06-22 -- the dir-read/namei path now works"
 echo "    (gen_strategy PFN<<11->12 fix), so the REAL swapconf runs and configures swap"
 echo "    (populates swapinfo) -- this clears the swap_xlate+0x26 NULL-swapinfo bus error."
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ddopen_dbg.s"   -o "$HERE/build/ddopen_dbg.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/forkdbg.s"      -o "$HERE/build/forkdbg.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/blkatoff_dbg.s" -o "$HERE/build/blkatoff_dbg.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/mainmarks.s"    -o "$HERE/build/mainmarks.o"
 
-echo "[*] weaken ddopen + hat_dup + anon_resv + schedpaging; globalize+weaken blkatoff (LOCAL)"
+echo "[*] VISIBILITY build: blkatoff_dbg + ddopen_dbg DROPPED (no dir-read / device-open spam);"
+echo "    idle FREEZES at the first call so the full post-switch sequence stays on screen.  weaken"
+echo "    hat_dup/anon_resv/schedpaging/resume/sched/idle; globalize dispq (sched diag reads dispq)."
 cp "$IN" "$HERE/build/unix-040-dbg-stage1"
-m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol hat_dup --weaken-symbol anon_resv --weaken-symbol schedpaging --weaken-symbol resume --weaken-symbol sched --globalize-symbol blkatoff --weaken-symbol blkatoff "$HERE/build/unix-040-dbg-stage1"
+m68k-linux-gnu-objcopy --weaken-symbol hat_dup --weaken-symbol anon_resv --weaken-symbol schedpaging --weaken-symbol resume --weaken-symbol sched --weaken-symbol idle --globalize-symbol dispq "$HERE/build/unix-040-dbg-stage1"
 
 OUT="$HERE/build/unix-040-dbg"
 echo "[*] relinking -> $OUT"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-dbg-stage1" \
-	"$HERE/build/ddopen_dbg.o" "$HERE/build/forkdbg.o" \
-	"$HERE/build/blkatoff_dbg.o" "$HERE/build/mainmarks.o"
+	"$HERE/build/forkdbg.o" "$HERE/build/mainmarks.o"
 
 echo "[*] overridden defs (single strong def each):"
 for s in ddopen hat_dup anon_resv; do

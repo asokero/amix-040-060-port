@@ -1,6 +1,39 @@
-# RESUME HERE — AMIX 68040 port status (2026-06-22)
+# RESUME HERE — AMIX 68040 port status (2026-06-23)
 
-## >>> RESOLVED (2026-06-22 night): enqueue WORKS (maxrunpri=0x4F); bug = 040 ctx switch <<<
+## >>> CURRENT (2026-06-23): 040 ctx switch RELIABLE (guru gone) but POST-SWITCH HEALTH UNVERIFIED <<<
+**ONE thing is measured: the intermittent wild-jmp guru is GONE (deterministic now).**
+Root cause of the instability: the 040 resume read the saved context from the FIXED u-area VA
+(0x40000318) AFTER the remap -- a 040 cache/timing-fragile access that intermittently read stale
+memory -> garbage a1 -> wild jmp -> AmigaOS guru 8000 0006.  FIX (mainmarks.s resume override):
+read the saved context from the STABLE kvsegu VA (curproc@252 + 0x318, always live in kptr040) +
+`cpusha bc` before `pflusha` (push the uarea_pt descriptor writes to RAM for the HW tablewalk).
+Verified: the child's saved context IS valid (measured: a1=0x070418F8 = procdup post-save,
+sp=0x40001F40 = u-area stack -- read safely in the sched diagnostic).  After the fix, fs-uae
+boots 6/6 with NO guru.
+
+**BUT -- DO NOT over-claim progress (a repeated mistake this session).**  In every build where
+the switch actually runs, the **AMIX boot banner DISAPPEARS** and the screen goes straight to a
+post-switch idle marker.  The user (who has seen many AMIX boots) flags this as ANOMALOUS -- the
+banner normally ALWAYS shows.  This suggests the post-switch child execution is NOT clean
+(possible memory/display corruption), so "child ran + clean idle = progress" is UNVERIFIED.
+A known gap that could corrupt: resume does NOT restore proc 0's u-area mapping for u_va==0
+(switching back to proc 0 leaves the child's uarea_pt -> proc 0 runs on the child's u-area).
+Compare against tag `banner-visible-baseline` (the sched-spin build where the banner shows).
+
+**NEXT (agreed): build SERIAL DEBUG CAPTURE before any more kernel changes.**  The screen wraps
+at ~40 lines and boot-to-idle exceeds it, so screenshots can't show the post-switch sequence ->
+all "progress" reads are guesses.  Plan: hook the global `conputc` (amiga/driver/bb.c -- every
+console char goes through it; banner included) to ALSO emit each char on the Amiga serial port
+(serdatr&TBE(0x2000) wait, then serdat=STOPBIT|ch -- pattern in amiga/driver/sl.c:1143; set SERPER
+baud at install).  fs-uae `serial_port` captures it to a file -> the FULL boot log.  Then we KNOW
+(banner present? what the child does? corruption?) instead of guessing.  Only after that, fix the
+real post-switch bug (likely the proc-0 u-area-restore + verify the child's mappings).
+
+Branches: `master` = banner-visible baseline (tag `banner-visible-baseline`).  This branch
+`wip/040-ctx-switch-reliable` = the reliable-switch + safe sched diagnostic.  `wip/040-ctx-resume`
+= an earlier (superseded) resume040.s attempt (fixed-VA read, was unreliable).
+
+## >>> (prior) RESOLVED (2026-06-22 night): enqueue WORKS (maxrunpri=0x4F); bug = 040 ctx switch <<<
 **MEASURED: `DBG sched ENTRY maxrunpri=4F` (=79, POSITIVE).**  Via a `--weaken-symbol sched`
 override (mainmarks.s) that prints maxrunpri and spins, reached cleanly after all 4 daemon
 u-areas map (8 ptload lines) and proc 0 ("sched") enters the swapper.  So the run queue is
