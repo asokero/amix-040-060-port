@@ -127,6 +127,38 @@ copyout:
 	.word	0x4e7a			| movec %urp,%d0  (68040 URP = ctrl reg 0x806)
 	.word	0x0806
 	movel	%d0,Lco_urp
+| --- POST-COPYOUT PTE walk for dst=0x80800000: dump URP + leaf PTE RIGHT AFTER copyout wrote the
+|     icode.  Compare to the exece-time leaf PTE (0x07A5D019 -> zero page).  SAME -> copyout wrote
+|     to a phys that the PTE never named (stale-ATC / pfn mismatch at fault time); DIFFERENT ->
+|     the PTE was remapped (P1 -> fresh zero page) between copyout and exec.  Marker 'p'. ---
+	movel	%fp@(12),%d2
+	cmpil	&0x80800000,%d2
+	bnew	Lco_nopte
+	pea	0x70			| 'p' -- post-copyout PTE walk follows
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	.word	0x4e7a,0x1806		| movec %urp,%d1
+	movel	%d1,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	moveal	%d1,%a0
+	movel	%a0@(0x100),%d2		| root[Aidx 0x40]
+	movel	%d2,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	andil	&0xffffff00,%d2
+	moveal	%d2,%a0
+	movel	%a0@(0x80),%d2		| ptr[Bidx 0x20]
+	movel	%d2,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	andil	&0xffffff00,%d2
+	moveal	%d2,%a0
+	movel	%a0@,%d2		| leaf PTE (Cidx 0)
+	movel	%d2,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+Lco_nopte:
 	movel	%fp@(12),%d2		| dst
 	cmpil	&0x80000000,%d2
 	bcsw	Lco_done
