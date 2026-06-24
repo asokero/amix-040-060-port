@@ -123,6 +123,37 @@ P = [
  # with 2KB granularity and dereferenced a wrongly-relocated pointer (0x66000030) -> USER BUS
  # ERROR PC=C101100E in /sbin/init's interpreter, the first time init runs.  Report 4096.
  (0xb842c, b"\x24\xfc\x00\x00\x08\x00", b"\x24\xfc\x00\x00\x10\x00", "elfexec:AT_PAGESZ 2048->4096"),
+ # USER DEMAND-FAULT PATH (as_fault / as_faulta / as_setprot / segvn_fault): the 030 code rounds
+ # the fault VA to a 2KB page and strides 2KB.  On Model B (4KB MMU pages) a fault in the UPPER
+ # 2KB of a page (e.g. libc.so.1's GOT at C102FE68) rounds to C102F800; segvn_fault maps it, but
+ # hat_pteload's leaf index (va>>12)&0x3F is identical for C102F800 and C102F000 -> the 2nd 2KB
+ # fault OVERWRITES the 4KB leaf PTE of the 1st -> the page is corrupted (GOT slot reads garbage
+ # 0x66000030) -> /sbin/init's runtime linker (libc.so.1 do_reloc) USER BUS ERRORs.  Convert the
+ # whole coupled set to 4KB (as_fault rounds + calls segvn_fault, which loops pages internally).
+ # Each site verified as a page-size constant (round/stride/click-shift), not an unrelated count.
+ # --- as_fault (round fault range to page) ---
+ (0xae156, b"\x02\x43\xf8\x00", b"\x02\x43\xf0\x00", "as_fault:round start -2048->-4096"),
+ (0xae15e, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_fault:round end +2047->+4095"),
+ (0xae164, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_fault:round end -2048->-4096"),
+ # --- as_faulta (round + per-page stride loop) ---
+ (0xae26a, b"\x02\x42\xf8\x00", b"\x02\x42\xf0\x00", "as_faulta:round start -2048->-4096"),
+ (0xae272, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_faulta:round end +2047->+4095"),
+ (0xae278, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_faulta:round end -2048->-4096"),
+ (0xae2cc, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "as_faulta:stride +2048->+4096"),
+ (0xae2d2, b"\x06\x83\xff\xff\xf8\x00", b"\x06\x83\xff\xff\xf0\x00", "as_faulta:size -2048->-4096"),
+ # --- as_setprot (round range to page; called by execmap) ---
+ (0xae2fc, b"\x02\x43\xf8\x00", b"\x02\x43\xf0\x00", "as_setprot:round start -2048->-4096"),
+ (0xae304, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_setprot:round end +2047->+4095"),
+ (0xae30a, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_setprot:round end -2048->-4096"),
+ # --- segvn_fault (internal page math: size->clicks, offset>>page, single-page test, stride) ---
+ (0xac4fe, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segvn_fault:size +2047->+4095"),
+ (0xac504, b"\x76\x0b", b"\x76\x0c", "segvn_fault:size>>11 shift (#11->#12)"),
+ (0xac52e, b"\x76\x0b", b"\x76\x0c", "segvn_fault:offset>>11 shift (#11->#12)"),
+ (0xac59a, b"\x76\x0b", b"\x76\x0c", "segvn_fault:>>11 shift (#11->#12)"),
+ (0xac5d4, b"\x0c\xae\x00\x00\x08\x00", b"\x0c\xae\x00\x00\x10\x00", "segvn_fault:single-page test #2048->#4096"),
+ (0xac726, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "segvn_fault:va stride +2048->+4096"),
+ (0xac72c, b"\x06\x85\x00\x00\x08\x00", b"\x06\x85\x00\x00\x10\x00", "segvn_fault:off stride +2048->+4096"),
+ (0xac778, b"\x76\x0b", b"\x76\x0c", "segvn_fault:va>>11 page index (#11->#12)"),
  # hat_ptalloc: FORCE the page_get path; never reuse a pooled PT page.  The free_pts
  # reuse path (0xb68a6..0xb6918) sub-allocates 512B fragments inside a page using 030
  # 2KB-page math (b68ec #11 / b68f6 #9) and bzero's the stored fragment address -- on
