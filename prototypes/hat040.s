@@ -327,6 +327,17 @@ Lw_nopp:
 	moveal	%d3,%a0
 	addql	&1,%a0@			| (*(seg+16))++
 Lepi:
+| 68040 PAGE-TABLE COHERENCY (2026-06-24): the leaf PTE was written with a normal `movel` into a
+| copyback-cacheable page-table page, so it sits in the D-cache, NOT RAM.  The 68040 hardware
+| table walker reads descriptors from memory; if the cached PTE line is later invalidated without
+| write-back, the walker reads the STALE (zero/invalid) RAM descriptor -> the just-faulted user
+| page maps to a ZERO phys for subsequent accesses (proven: proc 1's icode page at 0x80800000
+| reads 0x4FFB0170 via the I-fetch ATC but 0x00000000 via a fresh data walk, even after cpusha+
+| pflusha at use time).  pstart040 and resume040 already cpusha+pflusha after their table writes;
+| hat_pteload (the per-fault user/kernel PTE installer) did NOT.  Push the write to RAM + flush
+| the ATC so the walker reloads the fresh descriptor.
+	.word	0xf4f8			| cpusha bc -- push the new leaf PTE (and ptable/root writes) to RAM
+	.word	0xf518			| pflusha   -- flush the ATC so the next walk reloads the fresh PTE
 	moveml	%fp@(-76),%d2-%d3/%a2-%a4
 	moveal	%d0,%a0
 	unlk	%fp
