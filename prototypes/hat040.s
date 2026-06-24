@@ -36,6 +36,37 @@ hat_pteload:
 	movel	%fp@(12),%d2		| d2 = va
 	moveal	%fp@(16),%a2		| a2 = pp
 
+| --- DBG (exec-header segmap collision, 2026-06-24): trace every map into the 8KB exec-
+|     header slot [0x40448000,0x4044a000) with the page's p_offset (pp@(8)) and pfn (arg@20).
+|     Confirms the 2KB p_offset stride: if the header page (pfn 7A50) maps at va 40448000 with
+|     poff=0 and the collider (7A51) at va 40448800 with poff=0x800, the page cache produces a
+|     distinct 2KB page per 2KB of file -> they share the 4KB MMU leaf -> collision.  Gated 16,
+|     CE_WARN, a2/d2 preserved.  Remove once the page-granularity fix lands. ---
+	cmpil	&0x40448000,%d2
+	bcsw	Lpo_no
+	cmpil	&0x4044a000,%d2
+	bccw	Lpo_no
+	movel	Lpo_n,%d0
+	cmpil	&16,%d0
+	bccw	Lpo_no
+	addql	&1,%d0
+	movel	%d0,Lpo_n
+	movel	%fp@(20),%sp@-		| pfn
+	moveq	&0,%d0
+	tstl	%a2
+	beq	Lpo_nooff
+	movel	%a2@(8),%d0		| pp->p_offset
+Lpo_nooff:
+	movel	%d0,%sp@-		| p_offset
+	movel	%d2,%sp@-		| va
+	pea	Lpo_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(20),%sp
+	movel	%fp@(12),%d2		| reload (cmn_err scratch)
+	moveal	%fp@(16),%a2
+Lpo_no:
+
 | --- DBG: trace the first 40 maps >=0x48000000 (u-area in segu_get AND, after the
 |     8 u-area maps, any exec-REBUILD faults at init text 0x80800000 / stack 0xC07FF000
 |     -- shows whether the boot PROGRESSES past the teardown).  Gated, CE_WARN. ---
@@ -972,6 +1003,11 @@ Lpt_dbgmsg:
 	.asciz	"DBG ptload va=%x urp=%x"
 	.even
 Lpt_dbgn:
+	.long	0
+Lpo_msg:
+	.asciz	"DBG segmap-map va=%x poff=%x pfn=%x"
+	.even
+Lpo_n:
 	.long	0
 Lpemsg0:
 	.asciz	"hat_pteload: root NOT resident va=%x rootbase=%x Aidx=%x Adesc4=%x desc8=%x"
