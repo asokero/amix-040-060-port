@@ -27,23 +27,35 @@ KERNEL = sys.argv[1] if len(sys.argv) > 1 else "build/unix-040"
 # zeros -> the fix needs either a CORRECT pvn_kluster patch (find the bad site) or it is a
 # deeper hat_memload file-page mapping issue.  Bisection: set MODELB_PAGER_GROUPS to a
 # comma list of {ufs,pvngp,pvnk,segmap}.
-# NOTE (2026-06-24): 'pvnk' (pvn_kluster read-ahead) is DELIBERATELY excluded from the
-# default groups.  The exec-header read exposed why the page cache still produces 2KB pages:
-# pvn_kluster builds a read-ahead page at file offset 0x800, which segmap maps at a 2KB VA
-# stride (40448000+0x800) into the SAME 4KB MMU leaf as the offset-0 page -> the 2nd clobbers
-# the 1st -> gexec reads the wrong page (ELF magic 0) -> ENOEXEC -> init never execs.  BUT
-# enabling pvnk alone BREAKS the early mount dir-read: pvn_kluster's final loop does
-# page_get(size) then page_enter's the returned LIST advancing the offset by a page each time,
-# and page_get's OWN size->count math is still 2KB (affc0 lsrl #11, UNPATCHED) -- so a 4KB
-# size arg makes page_get return 2 pages while the loop/offset math expects 1, corrupting the
-# cluster.  pvn_kluster, page_get's internal #2047/>>11 (0xaffb8/0xaffc0), segmap's per-page
-# advance, and page_find/page_enter offset granularity are a COUPLED set: the page cache must
-# be converted to 4KB atomically, not group-by-group.  That is the (documented) Model B heavy
-# path and a separate sub-project; until then file pages stay 2KB and the exec-header collision
-# stands.  Re-enable pvnk only as part of the full coupled 4KB page-cache conversion.
+# THE COUPLED 4KB PAGE-CACHE CONVERSION (2026-06-24, enabled): groups 'pgget' + 'pvnk'.
+# The exec-header read exposed why the page cache produced 2KB pages: pvn_kluster builds a
+# read-ahead page at file offset 0x800, which segmap maps at a 2KB VA stride (40448000+0x800)
+# into the SAME 4KB MMU leaf as the offset-0 page -> the 2nd clobbers the 1st -> gexec reads
+# the wrong page (ELF magic 0) -> ENOEXEC -> init never execs.
+#
+# WHY pvnk alone broke the early mount dir-read (commit 334b3ae/96834ee), and why it is now
+# SAFE *together with* pgget: pvn_kluster's final loop (0xb1976-0xb19bc) does page_get(size),
+# then walks the returned circular page LIST calling page_enter, advancing the file offset by
+# one page (a3) each iteration.  The loop count == the number of frames page_get returns; the
+# offset stride must match the frame size.  page_get's OWN size->count math
+# (`(size+2047)>>11`, 0xaffb8/0xaffbe) was still 2KB, UNPATCHED -- so with a 4KB-rounded size
+# and 4KB offset stride, page_get returned 2x the frames the loop/offset expected -> the loop
+# walked past the cluster -> corruption.  Patching page_get-internal to 4KB (group 'pgget':
+# (size+4095)>>12) makes page_get(4KB-rounded size) return exactly size/4096 frames, matching
+# pvn_kluster's 4KB offset stride.  The two are a COUPLED set and are enabled together.
+#
+# pgget is also CONSISTENT with the already-Model-B variable-size callers: segkmem_alloc
+# (0xa86fc) walks the whole list writing one PTE/frame at a 4KB vaddr stride (index >>12 @
+# 0xa8716, vaddr step #4096 @0xa8764 -- both pre-patched by patch_modelb.py), and hat_sdtalloc
+# (0xb6488) requests size = npages<<12 (0xb6484 pre-patched).  Both currently OVER-allocate 2x
+# (page_get >>11) harmlessly; pgget removes that waste and maps exactly `size` bytes.  The
+# constant 0x800 callers still get 1 frame ((0x800+4095)>>12 == 1), and segu's 0x2000 request
+# now yields exactly 2 frames (its map loop was already patched to expect 2).  page_find/
+# page_enter use offset>>11 only as a uniform hash bucket (unchanged, stays consistent).
 GROUPS = set((os.environ.get("MODELB_PAGER_GROUPS")
-              or "ufs,pvngp,segmap,buf,genst,bufbk,dmapio,segu").split(","))
+              or "ufs,pvngp,pvnk,pgget,segmap,buf,genst,bufbk,dmapio,segu").split(","))
 def group_of(name):
+    if name.startswith("page_get"):     return "pgget"
     if name.startswith("ufs_get"):      return "ufs"
     if name.startswith("pvn_getpages"): return "pvngp"
     if name.startswith("pvn_kluster"):  return "pvnk"
@@ -103,6 +115,13 @@ P = [
  (0xb260e, b"\x06\x80"+A48, b"\x06\x80"+A96, "pvn_getpages:addil #2048 d0"),
  (0xb26c6, b"\x06\x82"+A48, b"\x06\x82"+A96, "pvn_getpages:addil #2048 d2"),
  (0xb26cc, b"\x06\x83"+A48, b"\x06\x83"+A96, "pvn_getpages:addil #2048 d3"),
+ # ===== page_get internal size->frame-count (group pgget): THE coupling keystone =====
+ # page_get(size,flags): frames = (size+2047)>>11 (2KB).  Convert to (size+4095)>>12 (4KB) so
+ # a 4KB-rounded size yields exactly size/4096 frames, matching pvn_kluster's 4KB offset stride
+ # and the pre-patched segkmem_alloc/hat_sdtalloc/segu callers.  Shift count is the moveq #11
+ # into d1 at 0xaffbe (the lsrl at 0xaffc0 reads d1), NOT a baked shift -- patch the moveq.
+ (0xaffb8, b"\x06\x82"+A47, b"\x06\x82"+A95, "page_get:size round +2047->+4095"),
+ (0xaffbe, b"\x72\x0b", b"\x72\x0c", "page_get:size>>11 shift count (moveq #11->#12 d1)"),
  # ===== pvn_kluster =====
  (0xb1822, b"\x72\x0b", b"\x72\x0c", "pvn_kluster:PAGESHIFT <<11 (asll)"),
  (0xb183a, b"\x20\x3c"+A48, b"\x20\x3c"+A96, "pvn_kluster:movel #2048 d0 (a)"),
