@@ -183,8 +183,17 @@ as_map:
 	lea	%sp@(20),%sp
 	movel	%d0,%d3			| ret
 	movel	%fp@(12),%d2		| addr
-	cmpil	&0x80800000,%d2
+	cmpil	&0x80800000,%d2		| icode segment?
+	beqw	Lam_print
+	cmpil	&0xc07ff800,%d2		| proc-1 USER STACK segment (main's 2nd as_map)?
 	bnew	Lam_done
+| --- stack as_map RETURNED: proc 1 is past the icode copyout and about to return-to-user.
+|     Drop a DIRECT 'M' marker (survives even if STREAMS never drains) BEFORE the cmn_err so
+|     we can tell "hang in as_map(stack)/return-to-user" (M absent) from "hang in exec" (M+E). ---
+	pea	0x4d			| 'M' -- proc-1 stack mapped; about to rte to user (icode)
+	jsr	serdbg_mark
+	addqw	&4,%sp
+Lam_print:
 	movel	%d3,%sp@-		| ret (0 = success)
 	movel	%fp@(16),%sp@-		| size
 	movel	%fp@(12),%sp@-		| addr

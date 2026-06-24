@@ -120,15 +120,25 @@ sched:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(12),%sp
-	pea	0x57			| 'W' -- about to jsr swtch (first real 040 switch)
+	pea	0x57			| 'W' -- about to enter the swtch loop (first real 040 switch)
 	jsr	serdbg_mark
 	addqw	&4,%sp
-	jsr	swtch			| REAL 040 context switch (was: spin in the baseline)
-	pea	0x72			| 'r' -- swtch RETURNED (no transfer, or switched back)
+| --- proc-0 swapper LOOP (2026-06-24): keep dispatching instead of halting after one switch.
+|     The old one-shot `jsr swtch; spin` DEADLOCKED init: the moment proc 1 yields (lookuppn
+|     calls preempt(); or any sleep), swtch resumes proc 0 -- which was spinning, so proc 1 was
+|     never re-dispatched -> boot hangs exactly at 'L'.  A real proc-0 loop lets swtch hand the
+|     CPU back to proc 1 (or idle) each time.  'r' prints only the first 8 returns (no spam). ---
+Lsch_loop:
+	jsr	swtch			| dispatch the highest-priority runnable proc (or idle)
+	movel	Lr_n,%d0
+	cmpil	&8,%d0
+	bccw	Lsch_loop
+	addql	&1,%d0
+	movel	%d0,Lr_n
+	pea	0x72			| 'r' -- swtch returned to proc 0 (first 8 only)
 	jsr	serdbg_mark
 	addqw	&4,%sp
-Lsch_spin:
-	bra.w	Lsch_spin		| halt -- one switch is enough to localize the divergence
+	braw	Lsch_loop
 	nop
 
 | ---------------------------------------------------------------------------
@@ -286,6 +296,8 @@ Lsp_msg:
 Lsp_n:
 	.long	0
 Lidle_n:
+	.long	0
+Lr_n:
 	.long	0
 Lmk_init:
 	.word	0
