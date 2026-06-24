@@ -7,31 +7,42 @@ init-bootstrap blocker (copyout's first store lost) is FIXED by the 68040 write-
 (wb040.s); init reaches USER mode, gets the right "/sbin/init" path, and runs exec into gexec.
 All genuine 040 runtime ports (getfault040/userspace040/vtop040/wb040 + a krnxmemflt wrapper) now
 live in the BASE build (relink-040.sh, commits 0ffdac8/88e4339); the dbg overlay layers only
-diagnostics.  Caches are OFF on 040 (CACR=0).  **CURRENT FRONTIER = the exec-header read fails:**
-gexec maps the ELF header via exhd_getmap/segmap and reads magic = 0x00000000 (not 7F454C46) ->
-no execsw match -> ENOEXEC -> elfexec never runs -> init spins in icode's `bra .`.  ROOT CAUSE
-(data-confirmed): the file page cache still uses 2KB pages, so two file pages (poff 0 and 0x800)
-get separate 4KB frames but segmap maps them at a 2KB VA stride into ONE 4KB MMU leaf -> the 2nd
-clobbers the 1st -> gexec reads the wrong frame.  The proper fix is the COUPLED 4KB page-cache
-conversion (page_get-internal #2047/>>11 @0xaffb8/0xaffc0 + pvn_kluster/'pvnk' group + segmap
-per-page advance + page_find/enter offset granularity, all atomic) -- the documented Model B
-"heavy path".  Enabling just the pvnk group breaks early boot (proven).  See EXEC FRONTIER below.
+diagnostics.  Caches are OFF on 040 (CACR=0).  The exec-header read frontier is now SOLVED (the
+coupled 4KB page-cache conversion, commits c8be89f/4b18053, boot-verified: ELF magic = 7F454C46,
+gexec -> elfexec -> relvm -> init's ELF program headers mapped).  **CURRENT FRONTIER = USER
+PAGE-TABLE HAT:** exec demand-faults a user page (va=80009000) and PANICs `hat_pt2ptdat: invalid
+pte ptr` -- hat_pteload(040) walks the pointer-table to a leaf whose `*pte = 0xFFFFFFFF` (garbage),
+so hat_pt2ptdat sees a bogus pfn.  Root: hat_ptalloc/hat_growsdt/hat_sdtalloc/hat_dup are all
+STOCK 030 (only hat_pteload is 040-replaced) so the USER address space's page tables are built with
+030 descriptors.  See USER-PT FRONTIER below.
 
-## >>> ★ EXEC FRONTIER (2026-06-24): exec-header read corrupt -> needs the 4KB page-cache conversion <<<
-gexec(G) runs but elfexec(F) never does -> exec fails before the execsw format dispatch.  Wrapped
-exhd_getmap (execmark.s, dumps 'H' ret hdrVA magic): `H 0 40448000 00000000 ...` -- magic is 0.
-Traced the colliding segmap maps (hat040.s Lpo_msg trace): `segmap-map va=40448000 poff=0 pfn=7A50`
-+ `va=40448800 poff=0x800 pfn=7A51` -> two 4KB frames at a 2KB VA stride collide in the 4KB MMU
-leaf 40448000; the poff=0x800 page is a pvn_kluster READ-AHEAD page (its 2KB step is unpatched).
-Enabling the 'pvnk' patch group makes pvn_kluster step 4KB BUT breaks the early mount dir-read
-(boot dies after the first ddopen): pvn_kluster's final loop page_get(size)+page_enter's the
-returned LIST, but page_get's own size->count math is still 2KB (0xaffc0 `lsrl #11` unpatched), so a
-4KB size makes page_get return 2 pages while the loop expects 1.  => page_get-internal, pvn_kluster,
-segmap advance, and page_find/enter granularity are a COUPLED set; convert the page cache to 4KB
-ATOMICALLY.  Reverted to the working collision-but-boots state (commit 96834ee).  Diagnostics left
-in: hat040.s `DBG segmap-map` (gated 16) + execmark.s exhd_getmap 'H' dump.  page_get(size,flags):
-size@fp+8, internal `(size+2047)>>11` -> #page count; ALL ~10 page_get callers pass `pea 0x800`.
-Memory [[amix-040-init-userpage-pfn]].
+## >>> ★ USER-PT FRONTIER (2026-06-24): hat_pt2ptdat invalid pte ptr -> port the user page-table builder <<<
+exec maps init's ELF segments (`execmap vaddr=80000034 filesz=66D4` / `vaddr=80008708 prot=F`),
+then demand-faults va=80009000: segvn_faultpage -> hat_memload -> hat_pteload(040, 0xd7604) ->
+hat_pt2ptdat -> PANIC "invalid pte ptr".  hat_pteload Lbhave reads the pointer-table slot Bdesc
+(a3@), takes leaf `a4 = (Bdesc & 0xffffff00) + ((va>>12)&0x3F)*4`, but `*a4 = 0xFFFFFFFF`;
+hat_pt2ptdat(a4) does a4>>12 = a pfn outside [pages_base,pages_end) -> panic.  hat_pt2ptdat's pfn
+shift is ALREADY >>12 (patch_modelb.py 0xb5e1c) -- the problem is a4 itself points to garbage, i.e.
+the Bdesc base for this user VA is wrong.  ROOT: hat_ptalloc (0xb688e), hat_growsdt (0xb6058),
+hat_sdtalloc, hat_dup are STOCK 030 (relink only --globalize's them); they build the user PTs with
+030 descriptors / wrong bases.  hat_pteload's OWN Lballoc path already builds a correct 040 pointer
+desc (`*a3 = ptable | UDT(2)`) -- the user-PT builder must do the same.  NEXT: diagnostic to dump
+va=80009000's Bdesc slot addr + value + leaf a4 (localize hat_dup vs hat_growsdt vs hat_ptalloc),
+then port the offending builder to 040.  Memory [[amix-040-init-userpage-pfn]].
+
+## >>> ★★ EXEC-HEADER FRONTIER SOLVED (2026-06-24, commits c8be89f/4b18053, boot-verified) <<<
+The coupled 4KB page-cache conversion (patch_modelb_pager.py, groups pgget+pvnk + pvn_done): (1)
+**pgget** page_get-internal `(size+2047)>>11 -> (size+4095)>>12` (0xaffb8 #2047->#4095; 0xaffbe
+moveq #11->#12 = shift count in d1, NOT the lsrl at 0xaffc0) -- the missing keystone (patch_modelb.py
+had already converted the variable-size callers segkmem_alloc/hat_sdtalloc/segu to expect size/4096
+frames, leaving page_get at 2x).  (2) **pvnk** pvn_kluster rounds the cluster to 4KB + steps the
+file offset 4KB/page (0xb19b2 #2048->#4096 + rounding consts) -- pvnk ALONE broke mount because
+page_get returned 2x the frames the 4KB loop expected; pgget fixes that.  (3) **pvn_done** page-walk
+step `addil #2048,d4 -> #4096` (0xb1d60): pvn_done loops `while d4 < b_bcount` pulling one page/iter
+off b_pages -> a 2KB step over 4KB pages overran the list -> `pp >= pages && pp < epages` PANIC
+(vm_page.c:1192).  VERIFIED: banner survives (mount dir-read OK), `segmap-map va=40448000 poff=0
+pfn=7D24` + `va=40449000 poff=1000 pfn=7D25` (4KB VA AND poff stride, no collision), exhd_getmap 'H'
+magic=7F454C46.  Diagnostics still in: hat040.s `DBG segmap-map` (gated 16) + execmark.s 'H' dump.
 
 
 ## >>> ★★★ FIXED (2026-06-24 night): 68040 access-error WRITE-BACK replay -> init now reaches exec ELF-load <<<
