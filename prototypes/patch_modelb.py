@@ -95,6 +95,16 @@ P = [
  # and matches hat_ptalloc (which Model B left at #11/#9, page table = 256B via bzero).
  (0xb6d00, b"\x72\x0b", b"\x72\x0c", "hat_ptfree:pfn>>11 (pages bounds chk)"),
  (0xb6d2c, b"\x72\x0b", b"\x72\x0c", "hat_ptfree:pfn>>11 (pages[] index)"),
+ # anon_resv / anon_unresv: byte-size -> swap-click conversion (round up, then shift).
+ # availsmem/anoninfo are maintained in Model B 4KB clicks, but these two converted the
+ # request with the 2KB round/shift (+2047 >>11) -> reserved/released 2x the clicks ->
+ # anon_resv saw the request as twice as large and returned ENOMEM (errno 12) the first
+ # time exec mapped init's writable (zfod) data/bss segment, AFTER the HAT page-table layer
+ # finally let exec reach the anon reservation.  Convert both to 4KB (+4095 >>12).
+ (0xad6a8, b"\x06\x81\x00\x00\x07\xff", b"\x06\x81\x00\x00\x0f\xff", "anon_resv:size round +2047->+4095"),
+ (0xad6ae, b"\x74\x0b", b"\x74\x0c", "anon_resv:size>>11 shift count (#11->#12)"),
+ (0xad736, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "anon_unresv:size round +2047->+4095"),
+ (0xad73c, b"\x72\x0b", b"\x72\x0c", "anon_unresv:size>>11 shift count (#11->#12)"),
  # hat_ptalloc: FORCE the page_get path; never reuse a pooled PT page.  The free_pts
  # reuse path (0xb68a6..0xb6918) sub-allocates 512B fragments inside a page using 030
  # 2KB-page math (b68ec #11 / b68f6 #9) and bzero's the stored fragment address -- on
