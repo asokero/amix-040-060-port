@@ -27,15 +27,22 @@ KERNEL = sys.argv[1] if len(sys.argv) > 1 else "build/unix-040"
 # zeros -> the fix needs either a CORRECT pvn_kluster patch (find the bad site) or it is a
 # deeper hat_memload file-page mapping issue.  Bisection: set MODELB_PAGER_GROUPS to a
 # comma list of {ufs,pvngp,pvnk,segmap}.
-# NOTE (2026-06-24): 'pvnk' (pvn_kluster read-ahead) was historically left out of the
-# default groups -- it wasn't exercised by the early dir-read bisection.  But the exec-header
-# read DOES exercise it: pvn_kluster's UNPATCHED 2KB step builds a read-ahead page at file
-# offset 0x800, which segmap then maps at a 2KB VA stride (40448000 + 0x800) into the SAME 4KB
-# MMU leaf as the offset-0 page -> the 2nd clobbers the 1st -> gexec reads the wrong page
-# (ELF magic 0 instead of 7F454C46) -> ENOEXEC -> init never execs.  Enabling pvnk makes the
-# read-ahead step 4KB like every other Model B path, so no colliding 2KB page is created.
+# NOTE (2026-06-24): 'pvnk' (pvn_kluster read-ahead) is DELIBERATELY excluded from the
+# default groups.  The exec-header read exposed why the page cache still produces 2KB pages:
+# pvn_kluster builds a read-ahead page at file offset 0x800, which segmap maps at a 2KB VA
+# stride (40448000+0x800) into the SAME 4KB MMU leaf as the offset-0 page -> the 2nd clobbers
+# the 1st -> gexec reads the wrong page (ELF magic 0) -> ENOEXEC -> init never execs.  BUT
+# enabling pvnk alone BREAKS the early mount dir-read: pvn_kluster's final loop does
+# page_get(size) then page_enter's the returned LIST advancing the offset by a page each time,
+# and page_get's OWN size->count math is still 2KB (affc0 lsrl #11, UNPATCHED) -- so a 4KB
+# size arg makes page_get return 2 pages while the loop/offset math expects 1, corrupting the
+# cluster.  pvn_kluster, page_get's internal #2047/>>11 (0xaffb8/0xaffc0), segmap's per-page
+# advance, and page_find/page_enter offset granularity are a COUPLED set: the page cache must
+# be converted to 4KB atomically, not group-by-group.  That is the (documented) Model B heavy
+# path and a separate sub-project; until then file pages stay 2KB and the exec-header collision
+# stands.  Re-enable pvnk only as part of the full coupled 4KB page-cache conversion.
 GROUPS = set((os.environ.get("MODELB_PAGER_GROUPS")
-              or "ufs,pvngp,pvnk,segmap,buf,genst,bufbk,dmapio,segu").split(","))
+              or "ufs,pvngp,segmap,buf,genst,bufbk,dmapio,segu").split(","))
 def group_of(name):
     if name.startswith("ufs_get"):      return "ufs"
     if name.startswith("pvn_getpages"): return "pvngp"
