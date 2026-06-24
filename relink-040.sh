@@ -61,6 +61,7 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol hat_unload \
 	--weaken-symbol hat_alloc \
 	--weaken-symbol hat_free \
+	--weaken-symbol hat_ptfree \
 	"$HERE/build/unix-stage1"
 
 # Genuine 040 trap/fault runtime overrides (getfault040/userspace040/vtop040/wb040).
@@ -87,7 +88,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte hat_pteload hat_unlock hat_unload hat_alloc hat_free get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig; do
+for s in pstart sysseginit vatosde vatopte hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"

@@ -1081,8 +1081,44 @@ Lf_done:
 	nop				| pad .text to a 4-byte multiple
 	nop				| +1: align total .text to 16 (text/data contiguity)
 
+| ===========================================================================
+| hat_ptfree (orig 0xb6cf4, file-local -> globalize+weaken) -- 040 NO-OP (leak) stub.
+| The 030 original returns a freed leaf page-table page to a 2KB FRAGMENT POOL
+| (free_pts, 4 x 512B frags per 2KB page) so hat_ptalloc can reuse it.  Model B uses
+| 4KB pages and we already FORCED hat_ptalloc down the page_get path (patch_modelb
+| beqw->braw @0xb68a2), so every leaf it returns is a whole, page-aligned 4KB page and
+| the fragment pool is never drained.  The stock teardown (0xb6e10: walk a2@(32)+k*16
+| frag nodes, unlink via node->prev@(12)) then reads garbage prev pointers -> BUS ERROR
+| (pc=0xb6e30), hit when init's exec ran hat_unload on its old image.  All 5 callers
+| (hat_unload/hat_free/hat_exec/hat_pageunload/hat_swapout) reach it, so fix hat_ptfree
+| itself: LEAK the leaf (same V1 philosophy as hat_free's pointer-table leak) -- just
+| return.  Bounded (a handful of leaves churn on the path to single-user).  TODO: a
+| proper Model B hat_ptfree = page_free(pages[leaf>>12]) (leaf is always page-aligned).
+| One-shot gated marker (first 8) confirms it is reached + gauges the leak rate.
+	.globl	hat_ptfree
+hat_ptfree:
+	movel	Lpf_n,%d0
+	cmpil	&8,%d0
+	bccs	Lpf_ret			| after 8 prints, silent leak
+	addql	&1,%d0
+	movel	%d0,Lpf_n
+	movel	%sp@(4),%d1		| leaf arg (sp@0=retaddr, sp@4=arg0)
+	movel	%d1,%sp@-
+	pea	Lpf_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(12),%sp
+Lpf_ret:
+	rts
+	nop				| pad .text to a 4-byte multiple
+
 	.data
 	.even
+Lpf_msg:
+	.asciz	"DBG hat_ptfree LEAK leaf=%x (no-op, Model B)"
+	.even
+Lpf_n:
+	.long	0
 Lhae_msg:
 	.asciz	"DBG hat_alloc ENTER as=%x (proc-1 child path running)"
 	.even
