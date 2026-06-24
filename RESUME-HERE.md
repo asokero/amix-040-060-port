@@ -19,16 +19,22 @@ STOCK 030 (only hat_pteload is 040-replaced) so the USER address space's page ta
 ## >>> ★ USER-PT FRONTIER (2026-06-24): hat_pt2ptdat invalid pte ptr -> port the user page-table builder <<<
 exec maps init's ELF segments (`execmap vaddr=80000034 filesz=66D4` / `vaddr=80008708 prot=F`),
 then demand-faults va=80009000: segvn_faultpage -> hat_memload -> hat_pteload(040, 0xd7604) ->
-hat_pt2ptdat -> PANIC "invalid pte ptr".  hat_pteload Lbhave reads the pointer-table slot Bdesc
-(a3@), takes leaf `a4 = (Bdesc & 0xffffff00) + ((va>>12)&0x3F)*4`, but `*a4 = 0xFFFFFFFF`;
-hat_pt2ptdat(a4) does a4>>12 = a pfn outside [pages_base,pages_end) -> panic.  hat_pt2ptdat's pfn
-shift is ALREADY >>12 (patch_modelb.py 0xb5e1c) -- the problem is a4 itself points to garbage, i.e.
-the Bdesc base for this user VA is wrong.  ROOT: hat_ptalloc (0xb688e), hat_growsdt (0xb6058),
-hat_sdtalloc, hat_dup are STOCK 030 (relink only --globalize's them); they build the user PTs with
-030 descriptors / wrong bases.  hat_pteload's OWN Lballoc path already builds a correct 040 pointer
-desc (`*a3 = ptable | UDT(2)`) -- the user-PT builder must do the same.  NEXT: diagnostic to dump
-va=80009000's Bdesc slot addr + value + leaf a4 (localize hat_dup vs hat_growsdt vs hat_ptalloc),
-then port the offending builder to 040.  Memory [[amix-040-init-userpage-pfn]].
+hat_pt2ptdat -> PANIC "invalid pte ptr".  hat_pteload Lbhave reads the pointer-table slot
+(`slot=7D20200`), `Bdesc=0x003F0002` -> leaf base 0x3F0000 = an UNBACKED memory hole (RAM is at
+phys 0x07000000+, chip RAM ends at 2MB), so `*a4=0xFFFFFFFF` and hat_pt2ptdat(a4>>12) sees a bogus
+pfn -> panic.  **NARROWED to the exec VM teardown/rebuild (diagnostics, two boots):** hat_ptalloc
+is FINE -- the Lballoc print showed `Lballoc leaf va=8001F800 leafpt=7D3A400` (a valid RAM
+0x07D3A400), and hat_sdtalloc's PFN<<11 sites are already <<12.  The CRUCIAL log sequence: the
+first user faults (va=8001F800, same Bidx=0 -> same slot[0]) get a GOOD leaf 0x07D3A402; THEN exec
+runs `V`(relvm) -> `hat_free ENTER as=401AA400` (tears down the old AS) -> `execmap` (new binary)
+-> the va=80009000 fault reads slot[0] = 0x003F0002 (CHANGED).  So the bad descriptor appears ONLY
+AFTER teardown+rebuild.  ROOT: stock 030 `hat_free`/hat_dup/hat_growsdt walk the INERT 030 st_top
+tree, NOT the live 040 pointer tables hat_pteload built, so they free the underlying pages but
+leave a stale/garbage 040 pointer-table slot.  NEXT: trace ptr-table 7D20200 slot[0] across
+hat_free (what writes 0x3F0002 -- hat_free's leaf-free, or a fresh-but-unzeroed pointer table on
+rebuild); port hat_free + the user-VM HAT family to maintain the 040 tables.  Diagnostics in
+place: hat040.s Lpemsg1 (leaf/slot/Bdesc dump) + Lbamsg (Lballoc result).  Memory
+[[amix-040-init-userpage-pfn]].
 
 ## >>> ★★ EXEC-HEADER FRONTIER SOLVED (2026-06-24, commits c8be89f/4b18053, boot-verified) <<<
 The coupled 4KB page-cache conversion (patch_modelb_pager.py, groups pgget+pvnk + pvn_done): (1)
