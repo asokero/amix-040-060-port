@@ -20,24 +20,32 @@ blocker was NOT a write-back-replay issue (that earlier guess was wrong). Two re
    EMPIRICAL 040 access-error frame (ktrap_dbg.s raw dump): SR@+64 PC@+66 fmt/vec@+70 (0x7008)
    **SSW@+76** (0x0401 = ATC,write,TM=user) **FA@+84** (= get_fault). +4 shift from textbook.
 
-**NEW BLOCKER — SCSI root-mount r=6 (the current frontier).** userspace040 shifts BSS, which
-re-triggers a pre-existing **layout-sensitive SCSI DMA** bug → sdpartition ENXIO (r=6) →
-"s5mountroot VOP_OPEN error 6" → nfs → PANIC. **NOT cache** (the static `block` buffer in
-alien/sdpart.c is DTT0 cache-inhibited; sdprobe040.s cinva probe: block[0] pre==post; 0→0 when it
-fails, RDSK→RDSK when it works). Root: `alien/dd.c:240  dp->com.addr = vtop(b_un.b_addr, b_proc)`;
-sdpart read() leaves b_proc=0 → `vtop(&block,0)` → **svirtophys(&block)**. `block` is in low
-kernel BSS = the **DTT0 identity region** (phys<0x40000000, va==phys, cache-inhibited — same
-region blkatoff reads directly) but svirtophys WALKS kptr040 page tables that may not cover the
-DTT0-transparent kernel region → wrong/0 phys for some block addresses → DMA misses block.
-NO source for vtop(0xb7568)/svirtophys(0xb7730) (binary-only, checked).
-**PROPOSED FIX (unverified): vtop040 override returning va directly for va<0x40000000 (DTT0
-identity), else stock.** VERIFY FIRST: probe svirtophys(&block) vs &block.
-**SOURCE FOUND** (was RE-ing blindly): `vanillarw/usr/sys/amiga/alien/{sdpart,dd,scsi,a2090,
-a2091,a3091}.c` + rdb.h/sd.h + Makefile (`-I../.. -I../inc`).
-Addrs: vtop=0xb7568 svirtophys=0xb7730 sdpartition=0xd848 getrdb=0xd9b8 getpb=0xda22 read=0xda72
-checksum=0xdb6e block=bss+0x3df8.
-Build state: relink-040-dbg.sh has userspace040 + sdprobe040 (probe returns ENXIO by design).
-git checkpoint to return to if SCSI work goes wrong: `ae5f942`.
+**SCSI root-mount FIXED (vtop040, commit 5b6f68b).** The r=6 was NOT cache — it was the disk
+DMA physical address. `alien/dd.c:240  dp->com.addr = vtop(b_un.b_addr, b_proc)`; sdpart read()
+leaves b_proc=0 → `vtop(&block,0)` → svirtophys(&block), which WALKS kptr040 page tables that may
+not cover the DTT0-transparent kernel region → wrong/0 phys for some `block` addresses (layout-
+sensitive) → disk DMA misses block. **A3000 uses a3091 (32-bit direct DMA, device@0xDD0000); NOT
+the a2091 24-bit+chip-bounce path.** FIX: `prototypes/vtop040.s` (--weaken vtop + --add-symbol
+vtop_orig=0xb7568): for va<0x40000000 (DTT0 identity region, phys==va by construction) return va
+directly, else stock vtop. Benefits ALL disk DMA (dd/scsi/ram/hd/flop). **CONFIRMED** (serial,
+deterministic): the build that failed root-mount 4× now mounts (sdpartition r=0 ×3). NO source
+for vtop/svirtophys (binary-only). SCSI source: `alien/{sdpart,dd,scsi,a2090,a2091,a3091}.c`.
+
+**WHOLE CHAIN VERIFIED**: DTT1 + userspace040 + vtop040 → root mounts → banner → swapconf → sched
+→ proc-1 setup → **copyout(icode,0x80800000) ret=0** (was EFAULT). The copyout's own `moves`
+write demand-faults the icode page (ufault 80800000), resolves in proc1's p_as=401AA400 (was
+&kas), ptloads it, writes icode. NO SIGSEGV, NO "ufault 80801000", NO panic. healthy.
+
+**>>> NEW BLOCKER (2026-06-24): init startup HANGS after the icode copyout. <<<**
+After main's `copyout(icode) ret=0 caller=0x59994`, the boot HANGS deterministically (no crash,
+no login). main continues: `as_map(stack@0xC07FF800)` → branch `0x59c18` (return-to-user / launch
+proc 1 to run icode → trap#0 → exec /sbin/init). LAYOUT-SENSITIVE: one build reached a 2nd copyout
+(proc-1 exec running); the current build hangs earlier. NEXT: add a marker after main's icode
+copyout (disasm `0x59c18`+ = the proc-1 launch / return-to-user path) to localize the hang —
+likely the context-switch to proc 1 to RUN init, or exec of /sbin/init. Reaching exec needs more
+user-VM hat (hat_dup/fork, COW), uvirtophys/uvatosde, and 040 signal frames may follow.
+Addrs: main=0x597ac (icode copyout @0x5998e, ret addr 0x59994; stack as_map @0x599cc; branch
+@0x599d8 → 0x59c18). git checkpoints: `5b6f68b` (root+copyout work), `ae5f942` (pre-SCSI).
 
 ---
 

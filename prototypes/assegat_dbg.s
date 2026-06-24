@@ -148,8 +148,8 @@ copyout:
 	bccw	Lco_done
 	addql	&1,%d0
 	movel	%d0,Lco_n
+	movel	%fp@(4),%sp@-		| caller return addr (which code calls this copyout)
 	movel	Lco_urp,%sp@-		| URP active during copyout (vs proc 1's 70EB000)
-	movel	Lco_flag,%sp@-		| rcopyout selector ((u+0x730)@140)
 	movel	%d3,%sp@-		| retval
 	movel	%fp@(12),%sp@-		| dst
 	pea	Lco_msg
@@ -218,7 +218,7 @@ Lem_n:
 	.long	0
 	.even
 Lco_msg:
-	.asciz	"DBG copyout dst=%x ret=%x rcflag=%x urp=%x"
+	.asciz	"DBG copyout dst=%x ret=%x urp=%x caller=%x"
 	.even
 Lco_n:
 	.long	0
