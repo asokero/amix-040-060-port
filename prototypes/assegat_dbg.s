@@ -212,6 +212,21 @@ Lsc_none:
 	jsr	serdbg_hex
 	addqw	&4,%sp
 Lsc_sdone:
+| --- BACKED-RAM test: write 0xDEADBEEF to phys 0x07A5D000 (the PTE's phys) via DTT0 identity, read
+|     back.  'b' + readback.  == DEADBEEF -> phys IS backed RAM (so the bug is ATC/translation:
+|     copyout wrote a DIFFERENT phys than the PTE names).  != DEADBEEF -> phys is UNBACKED (the page
+|     allocator handed out a phys not covered by RAM = a 040 physical-memory-map / maxclick bug, the
+|     same root as the 8MB-vs-16MB halving). ---
+	pea	0x62			| 'b' -- backed-RAM readback follows
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	moveal	&0x07a5d000,%a0
+	movel	&0xdeadbeef,%a0@	| write marker to phys 0x07A5D000 (DTT0 identity)
+	.word	0xf4f8			| cpusha bc -- ensure it reaches RAM
+	moveal	&0x07a5d000,%a0
+	movel	%a0@,%sp@-		| read it back
+	jsr	serdbg_hex
+	addqw	&4,%sp
 Lco_nopte:
 	movel	%fp@(12),%d2		| dst
 	cmpil	&0x80000000,%d2
