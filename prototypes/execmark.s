@@ -108,11 +108,28 @@ exece:
 |     hit a stale line) -> a 68040 I/D cache-coherency bug (exec/copyout must cpush the user page).
 |     If still 0x00000000 -> the PTE for 0x80800000 maps to a zero phys page (a hat/mapping bug:
 |     the page faulted to a different phys than copyout wrote). ---
+| --- 040-ONLY from here (cpusha/pflusha).  The 030 baseline is DONE (golden reference captured)
+|     and must NOT be booted with this build.  cpusha bc (push+invalidate caches) then pflusha
+|     (invalidate the ATC = VA->phys cache) then RE-READ user[0x80800000].
+|     'C' value = post-cpusha (cache only); 'A' value = post-pflusha (cache + ATC).
+|     A == 0x4FFB0170 -> the PTE was correct (icode page); a stale data-ATC entry hid it -> fix is
+|       an ATC flush after copyout.  A == 0 -> the PTE itself maps 0x80800000 to a ZERO page (the
+|       icode page was remapped to a fresh phys after copyout) -> a hat/anon VM remap bug. ---
 	pea	0x43			| 'C' -- post-cpusha re-read follows
 	jsr	serdbg_mark
 	addqw	&4,%sp
 	.word	0xf4f8			| cpusha bc -- push+invalidate both caches
-	movel	&0x80800000,%sp@-	| re-read user[0x80800000] after cpusha
+	movel	&0x80800000,%sp@-	| re-read user[0x80800000] after cpusha (cache only)
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x41			| 'A' -- post-pflusha re-read follows
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	.word	0xf518			| pflusha -- invalidate the ATC (VA->phys)
+	movel	&0x80800000,%sp@-	| re-read user[0x80800000] after pflusha (cache + ATC)
 	jsr	lfuword
 	addqw	&4,%sp
 	movel	%d0,%sp@-
@@ -396,6 +413,7 @@ setregs:
 Lx_go:
 	jmp	setregs_orig
 	nop				| pad .text to keep text/data contiguous (loader copies as one block)
+	nop
 	nop
 
 	.data
