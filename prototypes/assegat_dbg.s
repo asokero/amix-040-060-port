@@ -96,7 +96,35 @@ Lem_call:
 	movel	%fp@(12),%sp@-
 	movel	%fp@(8),%sp@-
 	jsr	execmap_orig
-	lea	%sp@(24),%sp		| d0/a0 = execmap_orig's return (untouched below)
+	lea	%sp@(24),%sp		| d0/a0 = execmap_orig's return
+| --- DBG (do_reloc 0x66000030 frontier): after loading libc.so.1's DATA segment (vaddr
+|     C102E000), dump the GOT slots the runtime linker derefs: C102FE68 (a5+0xdc) and C102FE6C.
+|     File values are 0x0002e050 / 0x0002e580 (R_68K_RELATIVE).  The linker hasn't run yet, so a
+|     correct COW load reads those file values; if it reads 0x66000030 (the faulting addr) the DATA
+|     segment is MISLOADED (page-cache/COW Model B bug) -- otherwise the runtime linker corrupts it
+|     (bias/reloc).  Marker 'G' then the two values.  lfuword reads curproc (proc 1) user space.
+|     d0/a0 = execmap's return value, saved across the dump (lfuword/serdbg clobber d0/d1/a0/a1). ---
+	moveml	%d0/%a0,%sp@-		| save execmap_orig return (errno + seg)
+	movel	%fp@(12),%d2
+	cmpil	&0xc102e000,%d2
+	bnew	Lem_nogot
+	pea	0x47			| 'G'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0xc102fe68,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	&0xc102fe6c,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+Lem_nogot:
+	moveml	%sp@+,%d0/%a0		| restore execmap_orig return
 	movel	%sp@+,%d2
 	unlk	%fp
 	rts
