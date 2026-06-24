@@ -178,22 +178,34 @@ copyout:
 	pea	0x73			| 's' -- icode-phys scan result follows
 	jsr	serdbg_mark
 	addqw	&4,%sp
-	movel	&0x07000000,%d2		| scan ptr
-Lsc_loop:
+| scan CHIP RAM first (0x00000000..0x00200000), then FAST RAM (0x07000000..0x08000000), for the
+| icode first long; check every long (step 4) to catch any alignment, report the first match phys.
+	movel	&0x00000000,%d2		| chip RAM start
+Lsc_c:
+	cmpil	&0x00200000,%d2
+	bccw	Lsc_fast
+	moveal	%d2,%a0
+	cmpil	&0x4ffb0170,%a0@
+	beqw	Lsc_found
+	addil	&0x1000,%d2
+	braw	Lsc_c
+Lsc_fast:
+	movel	&0x07000000,%d2		| fast RAM start
+Lsc_f:
 	cmpil	&0x08000000,%d2
 	bccw	Lsc_none
 	moveal	%d2,%a0
-	cmpil	&0x4ffb0170,%a0@	| icode first long (lea %pc@(L%stack),%sp)
+	cmpil	&0x4ffb0170,%a0@
 	beqw	Lsc_found
 	addil	&0x1000,%d2
-	braw	Lsc_loop
+	braw	Lsc_f
 Lsc_found:
 	movel	%d2,%sp@-		| phys where the icode was found
 	jsr	serdbg_hex
 	addqw	&4,%sp
 	braw	Lsc_sdone
 Lsc_none:
-	movel	&0xffffffff,%sp@-	| not found in fast RAM
+	movel	&0xffffffff,%sp@-	| not found in chip or fast RAM
 	jsr	serdbg_hex
 	addqw	&4,%sp
 Lsc_sdone:
