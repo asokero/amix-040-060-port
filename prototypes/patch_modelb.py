@@ -116,6 +116,13 @@ P = [
  # as_map starts exactly where the file pages end, and uvbzero clears the full last-page tail.
  (0x57c1c, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "execmap:bss-start round +2047->+4095"),
  (0x57c22, b"\x74\x0b", b"\x74\x0c", "execmap:bss-start >>11/<<11 (#11->#12, 2KB->4KB page)"),
+ # elfexec aux-vector AT_PAGESZ (type 6) value @0xb842c: the kernel reports the page size
+ # to userland (getpagesize(2) / the dynamic linker reads it from the aux vector to align
+ # its mmaps and round segment/bss boundaries).  The stock value is 2048; on Model B the MMU
+ # page is 4096, so libc.so.1's runtime linker (do_reloc) rounded a segment/link-map boundary
+ # with 2KB granularity and dereferenced a wrongly-relocated pointer (0x66000030) -> USER BUS
+ # ERROR PC=C101100E in /sbin/init's interpreter, the first time init runs.  Report 4096.
+ (0xb842c, b"\x24\xfc\x00\x00\x08\x00", b"\x24\xfc\x00\x00\x10\x00", "elfexec:AT_PAGESZ 2048->4096"),
  # hat_ptalloc: FORCE the page_get path; never reuse a pooled PT page.  The free_pts
  # reuse path (0xb68a6..0xb6918) sub-allocates 512B fragments inside a page using 030
  # 2KB-page math (b68ec #11 / b68f6 #9) and bzero's the stored fragment address -- on
