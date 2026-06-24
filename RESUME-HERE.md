@@ -1,5 +1,39 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-24)
 
+## >>> ★ NEWEST (2026-06-24 eve): init hang ROOT-CAUSED = user-page PTE points to phys BEYOND RAM (Model B factor-of-2) <<<
+Branch `040-switch-trace`. The init-startup hang was traced END TO END with direct serial markers
+(execmark.s) on the 040 dbg build + a HEALTHY 030 baseline (relink-030-dbg.sh, golden reference).
+**The chain of symptoms (each proven, then superseded by the next):**
+- init never starts; boot hangs after `copyout(icode,0x80800000) ret=0` (markers `M`,`E`).
+- proc 1 DOES reach user mode + execs: `E`(exece) fires; the syscall path arg (the `/sbin/init`
+  path pointer) is GARBAGE on 040 (`copyinstr from=0x3C66..`) vs `0x8080000E` on 030.
+- The garbage arg comes from a WRONG saved usp: `u.u_ar0[0] = 0x070DB958` (a kernel addr) on 040
+  vs `0x8080002A` (icode's `lea L%stack,sp`) on 030.  Both trap from USER mode (SR=0, PC=8080000C)
+  -> icode ran -- but USP was never the value its `lea` set.
+- ROOT: the **icode page itself is incoherent**.  `lfuword(user 0x80800000)` = `0x00000000` on 040
+  (4FFB0170 on 030) -- EVEN right after copyout (`f` marker) and even after `cpusha`+`pflusha`.
+  The instruction FETCH runs the real icode (so it reaches a phys with icode); user-FC DATA reads
+  see zeros.  So the syscall arg copy (lfuword from the user stack) reads zeros/garbage.
+- URP walk (exece AND post-copyout, IDENTICAL): URP=07A6C000 (== copyout's, unchanged), leaf PTE
+  `0x07A5D019` -> phys **0x07A5D000**, which reads ZEROS.  copyout uses **DFC=1 (user data)** (movec
+  #1,%dfc; movesl) -- the SAME FC as lfuword -- so both resolve via URP to phys 0x07A5D000.  No
+  DTT/ITT split (ITT0=0-1GB only, ITT1 disabled, DTT1 supervisor-only).
+- **THE BUG: phys 0x07A5D000 is BEYOND the kernel's managed RAM.**  The 040 detects only 8MB
+  (`Total Unix memory = 8386560` = 0x7FF800; base 0x07000000 -> top ~0x077FF800) where the SAME
+  fs-uae config on 030 detects 16MB (16775168).  0x07A5D000 > 0x077FF800 by ~2.4MB.  The user-page
+  PTE points OUTSIDE RAM -> reads zeros.  This is a residual **Model B 2KB-click -> 4KB-page
+  factor-of-2 error in the USER-fault pfn/phys path** (a 2KB-click number used as a 4KB page-frame
+  number -> phys ~2x too big), which ALSO explains the 8MB-vs-16MB halving (same root).
+**NEXT (the fix): audit the user-fault pfn path** segvn_fault -> anon/page_get -> hat_memload ->
+hat_pteload(pfn) for a click(2KB)-vs-page(4KB) mismatch (`pfn<<12` in hat_pteload @Lwleaf expects a
+4KB page-frame number; if `page_get`/segvn hands it a 2KB click, the phys doubles).  Cross-check
+with the memory-sizing halving (maxclick/physmem).  Compare the GOOD kernel-region mappings (which
+work) vs the user ZFOD page.  Tools: the dbg markers are all in `prototypes/execmark.s` (040 build)
++ `relink-030-dbg.sh` (030 golden baseline); commits ae5f942..46a78aa on `040-switch-trace`.
+NOTE: a `cpusha+pflusha` was added to hat_pteload's exit (prototypes/hat040.s) as a coherency
+guard -- it did NOT fix this (the bug is the wrong phys, not cache), but it is correct for 040 and
+can stay (or be reverted if the per-fault cost matters).
+
 ## >>> LATEST (2026-06-24): init/copyout blocker SOLVED; now blocked on SCSI-DMA root-mount <<<
 Branch `040-switch-trace`. See memory [[amix-040-ctx-switch-working]] (updated) + commits
 `ae5f942` (init/copyout fixes), `fc01890` (SCSI localization).
