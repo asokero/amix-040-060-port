@@ -443,7 +443,60 @@ setregs:
 	addqw	&4,%sp
 Lx_go:
 	jmp	setregs_orig
+
+| exhd_getmap(a1,a2,a3,a4,&out): gexec maps the ELF exec header here (segmap-backed), and
+| the `hat_pteload pfn mismatch va=40448800` fires during this map.  If segmap delivers the
+| WRONG physical page, *out points at garbage -> gexec reads a bad magic -> no execsw entry
+| matches -> ENOEXEC -> elfexec(F) is never reached (exactly the observed G-but-no-F).  This
+| wrapper dumps the result so we can SEE the header: 'H' ret out-VA magic [+0x4 +0x8].
+| ELF magic must read 7F454C46.  Single-call save/restore (exhd_getmap is NOT idempotent --
+| it refcounts the segmap slot).  --add-symbol exhd_getmap_orig=0x5704e + --weaken exhd_getmap.
+	.globl	exhd_getmap
+exhd_getmap:
+	linkw	%fp,&0
+	moveml	%d2-%d3/%a2,%sp@-
+	movel	%fp@(24),%sp@-		| arg5 = &out (mapped header ptr written here)
+	movel	%fp@(20),%sp@-		| arg4
+	movel	%fp@(16),%sp@-		| arg3
+	movel	%fp@(12),%sp@-		| arg2
+	movel	%fp@(8),%sp@-		| arg1
+	jsr	exhd_getmap_orig
+	lea	%sp@(20),%sp		| pop 5 args
+	movel	%d0,%d2			| save return value
+	movel	Lh_n,%d3
+	cmpil	&4,%d3
+	bccw	Lh_go			| gate: only the first 4 calls
+	addql	&1,%d3
+	movel	%d3,Lh_n
+	pea	0x48			| 'H' -- exhd_getmap (exec header map) result follows
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%d2,%sp@-		| ret (0 = header mapped OK)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	moveal	%fp@(24),%a0		| a0 = &out
+	moveal	%a0@,%a2		| a2 = mapped header VA
+	movel	%a2,%sp@-		| header VA (expect a segmap addr ~0x40448xxx)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	tstl	%d2
+	bnew	Lh_go			| getmap failed -> ptr invalid, skip the byte dump
+	movel	%a2@,%sp@-		| magic (ELF = 7F454C46)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%a2@(4),%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%a2@(8),%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+Lh_go:
+	movel	%d2,%d0			| restore return value
+	moveml	%fp@(-12),%d2-%d3/%a2
+	unlk	%fp
+	rts
 	nop				| pad .text to keep text/data contiguous (loader copies as one block)
+	nop
 	nop
 	nop
 
@@ -476,6 +529,8 @@ Li_n:
 Lci_n:
 	.long	0
 Lut_n:
+	.long	0
+Lh_n:
 	.long	0
 g_inexec:
 	.long	0
