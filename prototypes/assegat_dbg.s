@@ -238,6 +238,38 @@ Lsc_sdone:
 	movel	%d0,%sp@-
 	jsr	serdbg_hex
 	addqw	&4,%sp
+| --- CACR=0 (caches off) kills the coherency theory.  Dump the icode page's first 16 bytes via
+|     lfuword (offsets 0/4/8/C) = 'i'.  Expected good icode: 4FFB0170 00000028 700B4E40 60FE....
+|     If offset 0/4 = 0 but offset 8 = 700B4E40 -> the lea (first 8 bytes) was lost while the
+|     moveq#11+trap#0 survived -> the zeros decode as ori.b and fall through to exec, AND the lea
+|     never runs -> USP stays the stale kernel value (070DB958).  That explains the whole failure.
+	pea	0x69			| 'i' -- icode page first 16 bytes follow
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0x80800000,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	&0x80800004,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	&0x80800008,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	&0x8080000c,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
 Lco_nopte:
 	movel	%fp@(12),%d2		| dst
 	cmpil	&0x80000000,%d2
