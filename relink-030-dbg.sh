@@ -41,6 +41,7 @@ m68k-linux-gnu-objcopy \
 	--add-symbol dirlook_orig=.text:0x6dbe0,function,global        --weaken-symbol dirlook \
 	--add-symbol iget_orig=.text:0x6f724,function,global           --weaken-symbol iget \
 	--add-symbol copyinstr_orig=.text:0x43ef4,function,global       --weaken-symbol copyinstr \
+	--add-symbol u_trap_orig=.text:0x5a47e,function,global         --weaken-symbol u_trap \
 	"$HERE/build/unix-030-dbg-stage1"
 
 OUT="$HERE/build/unix-030-dbg"

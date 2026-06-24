@@ -266,6 +266,36 @@ iget:
 Li_go:
 	jmp	iget_orig
 
+| ---------------------------------------------------------------------------
+| u_trap (0x5a47e) -- dump (usp, trapPC) for EVERY user-mode trap whose PC is in user space
+| (>=0x80000000), capped at 16.  u_trap's arg1 (sp@(4) at entry) = the captured usp; the saved
+| trap PC is at sp@(70) (u_trap reads fp@(74); fp@(8)=arg1 so PC = arg1+66 = sp@(70) at entry).
+| Trajectory of USP across proc 1's user life:  icode's first fetch may fault (PC=0x80800000,
+| usp=stale) -> after the lea runs, USP should become 0x8080002A; the exec trap#0 is PC=0x8080000C.
+| If usp is NEVER 0x8080002A -> icode's `lea` never set USP (or the capture is broken); if it is
+| set then later lost -> a switch/return path drops it.  'T' = a user-mode trap dump follows.
+	.globl	u_trap
+u_trap:
+	movel	%sp@(70),%d0		| saved trap PC
+	cmpil	&0x80000000,%d0
+	bcsw	Lut_go			| kernel-space trap -> skip
+	movel	Lut_n,%d0
+	cmpil	&16,%d0
+	bccw	Lut_go
+	addql	&1,%d0
+	movel	%d0,Lut_n
+	pea	0x54			| 'T'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%sp@(4),%sp@-		| usp (u_trap arg1)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%sp@(70),%sp@-		| saved trap PC
+	jsr	serdbg_hex
+	addqw	&4,%sp
+Lut_go:
+	jmp	u_trap_orig
+
 | ===========================================================================
 | Exec sub-step DIRECT markers (one-shot each, register/stack-transparent tail-jmps).
 | Placed because the STREAMS cmn_err path (e.g. the execmap wrapper) does NOT surface in a
@@ -358,6 +388,8 @@ Lk_n:
 Li_n:
 	.long	0
 Lci_n:
+	.long	0
+Lut_n:
 	.long	0
 g_inexec:
 	.long	0
