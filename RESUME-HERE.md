@@ -1,6 +1,25 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-24)
 
-## >>> ★★ TRUE ROOT CAUSE (2026-06-24 night): 68040 access-error WRITE-BACK not replayed -> copyout's first faulting store lost <<<
+## >>> ★★★ FIXED (2026-06-24 night): 68040 access-error WRITE-BACK replay -> init now reaches exec ELF-load <<<
+The init-bootstrap blocker is FIXED.  `prototypes/wb040.s` (commit 32a105c) ports the 68040
+access-error WRITE-BACK replay as a `usrxmemflt` wrapper: after as_fault resolves the demand-fault
+(ret==0) on a format-7 frame, re-issue every valid write-back (WB1/2/3; valid = WBxS bit7) via
+`moves.<size> WBxD -> (WBxA)` under `DFC = WBxS & 7`.  This completes copyout(icode)'s lost first
+store.  **VERIFIED in the serial log:** icode page offset 0 = 0x4FFB0170 (was 0), saved usp =
+0x8080002A (was the stale 0x070DB958), copyinstr path = "/sbin/init" (2F736269), and init now runs
+lookuppn -> gexec -> elfexec(F) -> relvm(V) -> setregs(X) -- it LOADS the init ELF binary.
+Wiring: usrxmemflt is file-local -> `--globalize-symbol usrxmemflt --weaken-symbol usrxmemflt
+--add-symbol usrxmemflt_orig=.text:0x5aede` + link build/wb040.o (relink-040-dbg.sh).  Frame WB
+offsets confirmed empirically (get_fault040 'W' dump): WB3S@+78 WB3A@+88 WB3D@+92, WB2 @+80/+96/+100,
+WB1 @+82/+104/+108; WBxS bit7=valid, &7=FC, >>5&3=SIZE(0=long,1=byte,2=word).
+**NEW FRONTIER (not yet login):** exec's ELF loading loops/retries with `hat_pteload pfn mismatch
+va=40448800 *pte=7A50001 newpfn=7A51 (overwriting)` (kvseg leaf-PTE remap) + `blkatoff page_find ->
+NULL` -- the user-VM / file-mapping hat family (hat_dup/hat_chgprot/segvn page cache).
+**TODO:** (1) move wb040.o from the dbg overlay into the BASE build (relink-040.sh) -- it's a real
+fix, not a probe; (2) also wrap krnxmemflt for kernel-space write faults; (3) the exec-loading
+hat frontier.  Memory [[amix-040-init-userpage-pfn]].
+
+## >>> (superseded by FIXED above) TRUE ROOT CAUSE (2026-06-24 night): 68040 access-error WRITE-BACK not replayed <<<
 The init hang is the **68040 access-error WRITE-BACK** not being replayed.  main()'s
 `copyout(icode, 0x80800000, szicode)` -- the FIRST `movesl` to the ZFOD page demand-faults; the
 68040 access-error frame carries the pending store (WB1/2/3), but the bus-error handler demand-pages
