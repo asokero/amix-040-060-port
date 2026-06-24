@@ -82,6 +82,27 @@ exece:
 	movel	%a0@(68),%sp@-		| [PC.lo.w][fmt/vec.w]
 	jsr	serdbg_hex
 	addqw	&4,%sp
+| --- read the icode as it sits in USER space (lfuword = moves SFC=1 user-data, the same path
+|     proc 1's instruction fetch uses for mapping).  '!' then user[0x80800000] (expect 0x4FFB0170
+|     = the lea encoding) + user[0x8080002C] (L%stack area, expect 0x8080000E path ptr nearby).
+|     If these match the kernel icode -> user memory/mapping is CORRECT and the bug is purely USP
+|     (icode's lea ran on valid code but USP was not written on 040).  If garbage -> the icode
+|     page is ALIASED (execution fetched a different phys page than copyout wrote / lfuword sees). ---
+	pea	0x21			| '!' -- user icode bytes follow
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0x80800000,%sp@-	| user[0x80800000] = icode[0]
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	&0x8080002c,%sp@-	| user[0x8080002C] (near L%stack path ptr)
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
 Lex_go:
 	jmp	exece_orig		| run the stock exece unchanged (register/stack transparent)
 
