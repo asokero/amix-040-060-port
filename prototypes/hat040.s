@@ -165,6 +165,19 @@ Lrd_no:
 	movel	%d0,%sp@-		| &out = fp@(-48)
 	jsr	hat_sdtalloc
 	addqw	&8,%sp
+| BUG FIX (2026-06-24, user-PT frontier): hat_sdtalloc does NOT return a zeroed table on 040.
+| MEASURED: a fresh exec as (Adesc==0) lazily allocated ptable=7D20200 here, but its slot[0]
+| read back as 0x3F0002 (stale leaf descriptor -> base 0x3F0000 = unbacked hole) -> the next
+| Bdesc check saw a bogus "resident" leaf -> hat_pt2ptdat "invalid pte ptr" PANIC.  A fresh 040
+| pointer table for an empty root region MUST be all-zero (every UDT invalid) so subsequent leaf
+| faults see Bdesc==0 and allocate leaves.  Zero all 512 bytes (128 x 4-byte descriptors) of the
+| just-allocated table.  Cached clrl writes are fine: hat_pteload reads Bdesc back through the
+| same cache and Lepi's cpusha+pflusha pushes the table to RAM for the HW walker.
+	moveal	%fp@(-48),%a0		| ptable base (hat_sdtalloc result)
+	moveq	&127,%d0		| 128 longs - 1
+Lrz_loop:
+	clrl	%a0@+
+	dbra	%d0,Lrz_loop		| 128 iters -> 512 bytes zeroed
 	moveal	%fp@(8),%a0		| re-derive root base (a0/d0 clobbered by the call)
 	moveal	%a0@(12),%a0
 	moveal	%a0@(20),%a0		| a0 = root table base
