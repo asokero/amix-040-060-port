@@ -62,53 +62,6 @@ Lgf_sub2:
 	movel	%d1,%d0
 	subql	&2,%d0
 Lgf_ret:
-| --- DBG (2026-06-24): on copyout's icode fault (FA == 0x80800000), dump the format-7 frame's
-|     SSW + write-back fields so we can see WHICH WBx holds the lost store (addr 0x80800000, data
-|     0x4FFB0170) and its valid encoding, before implementing the WB replay.  One-shot, DIRECT
-|     serial.  a0 = frame (preserved by serdbg_hex); d0 = FA (preserved).  Dumps longs +72..+112. ---
-	cmpil	&0x80800000,%d0
-	bnew	Lgf_nowb
-	movel	Lgf_wbn,%d1
-	bnew	Lgf_nowb		| one-shot
-	moveq	&1,%d1
-	movel	%d1,Lgf_wbn
-	pea	0x57			| 'W' -- frame SSW+WB dump follows (+72,+76,...,+112)
-	jsr	serdbg_mark
-	addqw	&4,%sp
-	movel	%a0@(72),%sp@-
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a0@(76),%sp@-
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a0@(80),%sp@-
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a0@(84),%sp@-
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a0@(88),%sp@-
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a0@(92),%sp@-
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a0@(96),%sp@-
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a0@(100),%sp@-
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a0@(104),%sp@-
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a0@(108),%sp@-
-	jsr	serdbg_hex
-	addqw	&4,%sp
-	movel	%a0@(112),%sp@-
-	jsr	serdbg_hex
-	addqw	&4,%sp
-Lgf_nowb:
 | --- DBG: trace user-space fault VAs (>=0x80000000 = init text/stack/data).  The LAST
 |     VA printed before init's SIGSEGV exit (hat_free ENTER) is the unresolvable fault
 |     that kills init -- tells us which user mapping the half-built user-VM hat misses.
@@ -140,6 +93,4 @@ Lgf_msg:
 Lgf_n:
 	.long	0
 Lgf_save:
-	.long	0
-Lgf_wbn:
 	.long	0
