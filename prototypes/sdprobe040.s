@@ -23,6 +23,18 @@ sdpartition:
 	linkw	%fp,&0
 	moveml	%d2-%d6/%a2,%sp@-	| callee-saved: survive read()/cmn_err
 	lea	block,%a2		| a2 = &block
+| --- VERIFY the DMA phys-addr hypothesis: svirtophys(&block) vs &block (DTT0 identity).
+|     If they DIFFER, the disk DMA (dd.c: vtop->svirtophys) targets the wrong phys -> the
+|     vtop040 identity override is the right fix.  (svirtophys is GLOBAL T @0xb7730.) ---
+	movel	%a2,%sp@-		| &block (VA == phys in the DTT0 identity region)
+	jsr	svirtophys
+	addqw	&4,%sp
+	movel	%a2,%sp@-		| blockVA (identity-expected phys)
+	movel	%d0,%sp@-		| svirtophys(&block)
+	pea	Lsvp
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
 	moveq	&0,%d4			| d4 = block index i
 	moveq	&-1,%d3			| d3 = found index (-1 = none)
 	moveq	&0,%d5			| d5 = last block[0] PRE-cinva
@@ -64,8 +76,12 @@ Lsp_done:
 	moveml	%fp@(-24),%d2-%d6/%a2
 	unlk	%fp
 	rts
+	nop				| pad .text to keep text/data contiguous
 
 	.data
 	.even
 Lprobe:
 	.asciz	"DBG PROBE found=%x b0post=%x b0pre=%x plist=%x readret=%x"
+	.even
+Lsvp:
+	.asciz	"DBG SVP svirtophys(&block)=%x  blockVA=%x"

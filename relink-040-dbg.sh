@@ -32,13 +32,13 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/serdbg.s"       -o "$HERE/build/
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/getfault040.s"  -o "$HERE/build/getfault040.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/assegat_dbg.s"  -o "$HERE/build/assegat_dbg.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/userspace040.s" -o "$HERE/build/userspace040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/sdprobe040.s"   -o "$HERE/build/sdprobe040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/vtop040.s"      -o "$HERE/build/vtop040.o"
 
 echo "[*] weaken ddopen + hat_dup + schedpaging + idle + resume + sched + CONPUTC (serial hook); globalize+weaken blkatoff"
 echo "    (anon_resv stub DROPPED 2026-06-23 -- swapconf configures swap now, real anon_resv balances)"
 echo "    as_segat WRAPPED (--add-symbol as_segat_orig=0xadefc + --weaken as_segat) to trace the interp fault"
 cp "$IN" "$HERE/build/unix-040-dbg-stage1"
-m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol hat_dup --weaken-symbol schedpaging --weaken-symbol idle --weaken-symbol resume --weaken-symbol sched --weaken-symbol get_fault --weaken-symbol conputc --globalize-symbol blkatoff --weaken-symbol blkatoff --add-symbol as_segat_orig=.text:0xadefc,function,global --weaken-symbol as_segat --add-symbol execmap_orig=.text:0x57a4c,function,global --weaken-symbol execmap --add-symbol copyout_orig=.text:0x576,function,global --weaken-symbol copyout --add-symbol as_map_orig=.text:0xae4f8,function,global --weaken-symbol as_map --weaken-symbol userspace --globalize-symbol block --add-symbol sdpart_read=.text:0xda72,function,global --weaken-symbol sdpartition "$HERE/build/unix-040-dbg-stage1"
+m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol hat_dup --weaken-symbol schedpaging --weaken-symbol idle --weaken-symbol resume --weaken-symbol sched --weaken-symbol get_fault --weaken-symbol conputc --globalize-symbol blkatoff --weaken-symbol blkatoff --add-symbol as_segat_orig=.text:0xadefc,function,global --weaken-symbol as_segat --add-symbol execmap_orig=.text:0x57a4c,function,global --weaken-symbol execmap --add-symbol copyout_orig=.text:0x576,function,global --weaken-symbol copyout --add-symbol as_map_orig=.text:0xae4f8,function,global --weaken-symbol as_map --weaken-symbol userspace --add-symbol vtop_orig=.text:0xb7568,function,global --weaken-symbol vtop "$HERE/build/unix-040-dbg-stage1"
 
 OUT="$HERE/build/unix-040-dbg"
 echo "[*] relinking -> $OUT"
@@ -46,7 +46,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-dbg-stage1" \
 	"$HERE/build/ddopen_dbg.o" "$HERE/build/forkdbg.o" \
 	"$HERE/build/blkatoff_dbg.o" "$HERE/build/mainmarks.o" "$HERE/build/serdbg.o" \
 	"$HERE/build/getfault040.o" "$HERE/build/assegat_dbg.o" \
-	"$HERE/build/userspace040.o" "$HERE/build/sdprobe040.o"
+	"$HERE/build/userspace040.o" "$HERE/build/vtop040.o"
 
 echo "[*] overridden defs (single strong def each):"
 for s in ddopen hat_dup; do
