@@ -27,8 +27,15 @@ KERNEL = sys.argv[1] if len(sys.argv) > 1 else "build/unix-040"
 # zeros -> the fix needs either a CORRECT pvn_kluster patch (find the bad site) or it is a
 # deeper hat_memload file-page mapping issue.  Bisection: set MODELB_PAGER_GROUPS to a
 # comma list of {ufs,pvngp,pvnk,segmap}.
+# NOTE (2026-06-24): 'pvnk' (pvn_kluster read-ahead) was historically left out of the
+# default groups -- it wasn't exercised by the early dir-read bisection.  But the exec-header
+# read DOES exercise it: pvn_kluster's UNPATCHED 2KB step builds a read-ahead page at file
+# offset 0x800, which segmap then maps at a 2KB VA stride (40448000 + 0x800) into the SAME 4KB
+# MMU leaf as the offset-0 page -> the 2nd clobbers the 1st -> gexec reads the wrong page
+# (ELF magic 0 instead of 7F454C46) -> ENOEXEC -> init never execs.  Enabling pvnk makes the
+# read-ahead step 4KB like every other Model B path, so no colliding 2KB page is created.
 GROUPS = set((os.environ.get("MODELB_PAGER_GROUPS")
-              or "ufs,pvngp,segmap,buf,genst,bufbk,dmapio,segu").split(","))
+              or "ufs,pvngp,pvnk,segmap,buf,genst,bufbk,dmapio,segu").split(","))
 def group_of(name):
     if name.startswith("ufs_get"):      return "ufs"
     if name.startswith("pvn_getpages"): return "pvngp"
