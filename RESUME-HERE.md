@@ -1,6 +1,30 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-24)
 
-## >>> ★ NEWEST (2026-06-24 eve): init hang ROOT-CAUSED = user-page PTE points to phys BEYOND RAM (Model B factor-of-2) <<<
+## >>> ★★ TRUE ROOT CAUSE (2026-06-24 night): 68040 access-error WRITE-BACK not replayed -> copyout's first faulting store lost <<<
+The init hang is the **68040 access-error WRITE-BACK** not being replayed.  main()'s
+`copyout(icode, 0x80800000, szicode)` -- the FIRST `movesl` to the ZFOD page demand-faults; the
+68040 access-error frame carries the pending store (WB1/2/3), but the bus-error handler demand-pages
+the page and NEVER re-issues the store, so **icode offset 0 stays 0** while offsets 4+ land.
+PROVEN with caches OFF (CACR=0, so lfuword = literal RAM): icode page =
+`0 / 00000028 / 700B4E40 / 60FE2F73` -- only the first long (the lea word 0x4FFB0170) missing.
+The zeroed first word decodes as `ori.b` and falls THROUGH to `moveq #11,d0; trap#0` (so E/exece
+still fires) but **the lea never runs -> USP stays stale 0x070DB958** -> systrap copies syscall args
+from kernel memory = garbage -> empty exec path -> lookuppn busy-loops -> init never starts.  So the
+wrong-usp + garbage-args + lookuppn-loop are ALL this one bug.
+**ALL earlier theories were WRONG (don't re-chase):** pfn factor-of-2 / phys-beyond-RAM (phys
+0x07A5D000 IS backed RAM, DEADBEEF write/readback OK); page-table cache coherency (CACR=0, caches
+OFF); the loader (copies the real memory list); FS/lookuppn (030 baseline boots fine).  8MB-vs-16MB
+is a separate Model-B accounting artifact.
+**FIX (next):** port 68040 access-error WRITE-BACK replay into the bus-error path (k_trap/u_trap /
+the nullvect/ktraps/utraps glue).  The 040 access-error frame (format 7) has WB1D/WB1S/WB1A (+WB2/3)
+status/addr/data for pending stores; after as_fault resolves the page, re-issue any write-back whose
+valid bit is set (check WBV/SIZE/TT/TM).  get_fault already reads FA at frame+84 from this frame, so
+some offsets are known.  Motorola 68040 UM: "Access Error Stack Frame" / "Returning from an Access
+Error".  Diagnostics: assegat_dbg.s copyout wrapper (icode-byte dump), execmark.s (usp/PC trace),
+relink-030-dbg.sh (030 golden ref -- boot UPSTREAM unix_boot, not unix_boot040).  Memory
+[[amix-040-init-userpage-pfn]].
+
+## >>> SUPERSEDED (2026-06-24 eve): "user-page PTE points to phys BEYOND RAM (Model B factor-of-2)" -- WRONG, see above <<<
 Branch `040-switch-trace`. The init-startup hang was traced END TO END with direct serial markers
 (execmark.s) on the 040 dbg build + a HEALTHY 030 baseline (relink-030-dbg.sh, golden reference).
 **The chain of symptoms (each proven, then superseded by the next):**
