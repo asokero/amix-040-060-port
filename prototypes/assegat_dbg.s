@@ -171,6 +171,32 @@ copyout:
 	movel	%d0,%sp@-
 	jsr	serdbg_hex
 	addqw	&4,%sp
+| --- SCAN fast RAM (phys 0x07000000..0x08000000, via DTT0 identity, 4KB step) for the icode
+|     signature 0x4FFB0170 = where copyout ACTUALLY wrote the icode.  's' + the phys (or FFFFFFFF).
+|     == 0x0752E800 (half) -> factor-of-2 (pfn doubled); == 0x07A5D000 -> the walk/read is wrong;
+|     elsewhere -> a different mapping bug.  (One-shot via Lco_n cap; copyout dst==0x80800000.) ---
+	pea	0x73			| 's' -- icode-phys scan result follows
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0x07000000,%d2		| scan ptr
+Lsc_loop:
+	cmpil	&0x08000000,%d2
+	bccw	Lsc_none
+	moveal	%d2,%a0
+	cmpil	&0x4ffb0170,%a0@	| icode first long (lea %pc@(L%stack),%sp)
+	beqw	Lsc_found
+	addil	&0x1000,%d2
+	braw	Lsc_loop
+Lsc_found:
+	movel	%d2,%sp@-		| phys where the icode was found
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	braw	Lsc_sdone
+Lsc_none:
+	movel	&0xffffffff,%sp@-	| not found in fast RAM
+	jsr	serdbg_hex
+	addqw	&4,%sp
+Lsc_sdone:
 Lco_nopte:
 	movel	%fp@(12),%d2		| dst
 	cmpil	&0x80000000,%d2
