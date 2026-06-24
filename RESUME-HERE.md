@@ -1,5 +1,16 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-24)
 
+## OVERALL STATUS (one-paragraph)
+68040 port boots: pstart040 (MMU/Model B) -> mlsetup -> root mounts (s5/ufs, vtop040) -> banner ->
+swapconf -> sched -> 040 context switch (resume040) -> proc 1 setup -> copyout(icode).  The
+init-bootstrap blocker (copyout's first store lost) is now FIXED by the 68040 write-back replay
+(wb040.s, in the dbg overlay).  init now reaches USER mode, gets the right "/sbin/init" path, and
+runs exec far enough to LOAD the init ELF binary (lookuppn -> gexec -> elfexec -> relvm -> setregs).
+NOT yet at a login prompt: exec's ELF loading loops (user-VM / file-mapping hat: hat_pteload
+pfn-mismatch + blkatoff page_find NULL).  Caches are OFF on 040 (CACR=0).  Next: (1) move wb040 into
+the BASE build; (2) the exec-load hat frontier.  See the FIXED section just below.
+
+
 ## >>> ★★★ FIXED (2026-06-24 night): 68040 access-error WRITE-BACK replay -> init now reaches exec ELF-load <<<
 The init-bootstrap blocker is FIXED.  `prototypes/wb040.s` (commit 32a105c) ports the 68040
 access-error WRITE-BACK replay as a `usrxmemflt` wrapper: after as_fault resolves the demand-fault
