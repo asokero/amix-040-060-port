@@ -95,6 +95,17 @@ P = [
  # and matches hat_ptalloc (which Model B left at #11/#9, page table = 256B via bzero).
  (0xb6d00, b"\x72\x0b", b"\x72\x0c", "hat_ptfree:pfn>>11 (pages bounds chk)"),
  (0xb6d2c, b"\x72\x0b", b"\x72\x0c", "hat_ptfree:pfn>>11 (pages[] index)"),
+ # hat_ptalloc: FORCE the page_get path; never reuse a pooled PT page.  The free_pts
+ # reuse path (0xb68a6..0xb6918) sub-allocates 512B fragments inside a page using 030
+ # 2KB-page math (b68ec #11 / b68f6 #9) and bzero's the stored fragment address -- on
+ # Model B (4KB pages, leaves from the patched page_get path) that path bzero'd a bad
+ # address (KERNEL FAULT pc inside bzero @0x31C, exec rebuild's first leaf for
+ # va=80009000).  The page_get path (b691c+) is already Model-B-patched (pfn<<12 @b6a74)
+ # and produces correct leaves (it ran for all of proc-1 setup).  Change the `free_pts
+ # empty?` branch from beqw to an unconditional braw so every leaf is a fresh page (the
+ # pool fills but is never drained -- a bounded leak, same philosophy as hat_free's V1
+ # pointer-table leak).  TODO: port the 4KB fragment pool if leaf churn ever matters.
+ (0xb68a2, b"\x67\x00\x00\x78", b"\x60\x00\x00\x78", "hat_ptalloc:force page_get (skip free_pts reuse)"),
 ]
 
 def main():
