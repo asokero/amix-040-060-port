@@ -135,6 +135,37 @@ exece:
 	movel	%d0,%sp@-
 	jsr	serdbg_hex
 	addqw	&4,%sp
+| --- dump proc 1's live URP + walk it to the leaf PTE for 0x80800000.  copyout ran with
+|     urp=7A6C000; if the URP here differs -> proc 1's URP itself changed (a context/resume bug);
+|     if same -> the tree CONTENT changed.  Walk (040 7/7/6, tables in <1GB phys -> DTT0 identity):
+|       Aidx=(va>>25)&7f=0x40 -> root@(urp+0x100) ; Bidx=(va>>18)&7f=0x20 ; leaf=(B&0xffffff00)+
+|       ((va>>12)&3f)*4 (== hat040 vatopte mask).  Dump URP, root desc, B desc, leaf PTE. ---
+	pea	0x55			| 'U' (URP + walk follow)
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	.word	0x4e7a,0x1806		| movec %urp,%d1
+	movel	%d1,%sp@-		| URP
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	moveal	%d1,%a0
+	movel	%a0@(0x100),%d2		| root desc (Aidx 0x40 *4 = 0x100)
+	movel	%d2,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%d2,%d0
+	andil	&0xffffff00,%d0		| pointer-table base
+	moveal	%d0,%a0
+	movel	%a0@(0x80),%d3		| B desc (Bidx 0x20 *4 = 0x80)
+	movel	%d3,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%d3,%d0
+	andil	&0xffffff00,%d0		| leaf-table base
+	moveal	%d0,%a0
+	movel	%a0@,%d4		| leaf PTE (Cidx (va>>12)&3f = 0 -> offset 0)
+	movel	%d4,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
 Lex_go:
 	jmp	exece_orig		| run the stock exece unchanged (register/stack transparent)
 
