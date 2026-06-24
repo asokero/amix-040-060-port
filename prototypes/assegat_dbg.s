@@ -193,9 +193,9 @@ Lsc_c:
 	addil	&0x1000,%d2
 	braw	Lsc_c
 Lsc_fast:
-	movel	&0x07000000,%d2		| fast RAM start
+	movel	&0x07000000,%d2		| fast RAM start (kernel + page tables region .. main fast RAM)
 Lsc_f:
-	cmpil	&0x08000000,%d2
+	cmpil	&0x09000000,%d2		| extend through 0x08000000.. (AmigaOS ExecBase @0x0800089c)
 	bccw	Lsc_none
 	moveal	%d2,%a0
 	cmpil	&0x4ffb0170,%a0@
