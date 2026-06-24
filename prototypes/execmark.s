@@ -49,8 +49,66 @@ lookuppn:
 	pea	0x4c			| 'L'
 	jsr	serdbg_mark
 	addqw	&4,%sp
+| --- dump the pathname the 040 lookuppn got (pn struct arg1 -> pn_path @+4) ---
+|     pn_path POINTER first (always safe: a kernel pointer value), then a 'q' marker, then the
+|     first 4 path bytes (= 0x2f736269 "/sbi" if good).  If hex+q print but then it hangs/panics
+|     on the byte read, the pn_path BUFFER page is unmapped on 040 (the layout-sensitive gap);
+|     if the pointer/bytes are garbage, pn_get/copyinstr produced a bad path.
+	moveal	%sp@(4),%a0		| a0 = pathname struct (arg1, kernel stack -- safe)
+	movel	%a0@(4),%sp@-		| pn_path pointer
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x71			| 'q' -- about to deref pn_path (byte read may fault if unmapped)
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	moveal	%sp@(4),%a0
+	moveal	%a0@(4),%a0		| a0 = pn_path
+	movel	%a0@,%sp@-		| first 4 path bytes
+	jsr	serdbg_hex
+	addqw	&4,%sp
 Ll_go:
 	jmp	lookuppn_orig
+
+| ---------------------------------------------------------------------------
+| copyinstr (0x43ef4) -- copies the path STRING from user space into the kernel pathname buffer
+| (called by pn_get, between E and L).  This is the prime suspect: a user-space READ on 040.
+| Bracket it: 'y' (entry) + dump `from` (user src), then call the original, then 'z' (returned) +
+| dump the return.  y with NO z  => hang INSIDE copyinstr (user read loop / fault that never
+| resolves) -- exactly matching the builds that reach E but not L.  Gated by g_inexec, capped.
+	.globl	copyinstr
+copyinstr:
+	tstl	g_inexec
+	beqw	Lci_tail
+	movel	Lci_n,%d0
+	cmpil	&4,%d0
+	bccw	Lci_tail
+	addql	&1,%d0
+	movel	%d0,Lci_n
+	linkw	%fp,&0
+	pea	0x79			| 'y' -- copyinstr entered
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%fp@(8),%sp@-		| `from` = user source address
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%fp@(20),%sp@-		| arg4 (&copied / maxlen depending on ABI)
+	movel	%fp@(16),%sp@-		| arg3
+	movel	%fp@(12),%sp@-		| arg2 (to)
+	movel	%fp@(8),%sp@-		| arg1 (from)
+	jsr	copyinstr_orig
+	lea	%sp@(16),%sp
+	movel	%d0,%sp@-		| save+dump return value
+	pea	0x7a			| 'z' -- copyinstr returned
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%sp@,%sp@-		| dump return
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	movel	%sp@+,%d0		| restore return
+	unlk	%fp
+	rts
+Lci_tail:
+	jmp	copyinstr_orig
 
 	.globl	bread
 bread:
@@ -215,6 +273,7 @@ setregs:
 	addqw	&4,%sp
 Lx_go:
 	jmp	setregs_orig
+	nop				| pad .text to keep text/data contiguous (loader copies as one block)
 
 	.data
 	.even
@@ -241,6 +300,8 @@ Ln_n:
 Lk_n:
 	.long	0
 Li_n:
+	.long	0
+Lci_n:
 	.long	0
 g_inexec:
 	.long	0

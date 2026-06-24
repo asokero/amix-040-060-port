@@ -40,6 +40,7 @@ m68k-linux-gnu-objcopy \
 	--add-symbol dnlc_lookup_orig=.text:0x5b89a,function,global    --weaken-symbol dnlc_lookup \
 	--add-symbol dirlook_orig=.text:0x6dbe0,function,global        --weaken-symbol dirlook \
 	--add-symbol iget_orig=.text:0x6f724,function,global           --weaken-symbol iget \
+	--add-symbol copyinstr_orig=.text:0x43ef4,function,global       --weaken-symbol copyinstr \
 	"$HERE/build/unix-030-dbg-stage1"
 
 OUT="$HERE/build/unix-030-dbg"
