@@ -103,6 +103,21 @@ exece:
 	movel	%d0,%sp@-
 	jsr	serdbg_hex
 	addqw	&4,%sp
+| --- cache-coherency test: push+invalidate all caches (cpusha bc) then RE-READ user[0x80800000].
+|     If it becomes 0x4FFB0170 -> copyout's icode write sat in the copyback D-cache (or the read
+|     hit a stale line) -> a 68040 I/D cache-coherency bug (exec/copyout must cpush the user page).
+|     If still 0x00000000 -> the PTE for 0x80800000 maps to a zero phys page (a hat/mapping bug:
+|     the page faulted to a different phys than copyout wrote). ---
+	pea	0x43			| 'C' -- post-cpusha re-read follows
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	.word	0xf4f8			| cpusha bc -- push+invalidate both caches
+	movel	&0x80800000,%sp@-	| re-read user[0x80800000] after cpusha
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
 Lex_go:
 	jmp	exece_orig		| run the stock exece unchanged (register/stack transparent)
 
@@ -381,6 +396,7 @@ setregs:
 Lx_go:
 	jmp	setregs_orig
 	nop				| pad .text to keep text/data contiguous (loader copies as one block)
+	nop
 
 	.data
 	.even
