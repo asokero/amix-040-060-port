@@ -105,6 +105,17 @@ P = [
  (0xad6ae, b"\x74\x0b", b"\x74\x0c", "anon_resv:size>>11 shift count (#11->#12)"),
  (0xad736, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "anon_unresv:size round +2047->+4095"),
  (0xad73c, b"\x72\x0b", b"\x72\x0c", "anon_unresv:size>>11 shift count (#11->#12)"),
+ # execmap bss handling (0x57c0e..0x57c80): the zero-fill (bss) part of a data segment is
+ # mapped by as_map starting at the first WHOLE page after the file content.  The 030 code
+ # rounded that bss start UP to a 2KB boundary (d2 = (vaddr+filesz+2047)>>11<<11).  On Model B
+ # the file-backed part is mapped in 4KB pages, so as_map_reliably already owns the 4KB page
+ # holding the file tail (e.g. [0x80009000,0x8000A000)); a 2KB-rounded bss start (0x80009800)
+ # lands INSIDE that page -> as_map overlaps an existing mapping -> ENOMEM (errno 12) ->
+ # 'elf exec: error 12: pid 1 killed' the first time init's data/bss segment is mapped.  Round
+ # to 4KB instead (the single moveq #11->#12 drives BOTH the >>11 and the <<11), so the bss
+ # as_map starts exactly where the file pages end, and uvbzero clears the full last-page tail.
+ (0x57c1c, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "execmap:bss-start round +2047->+4095"),
+ (0x57c22, b"\x74\x0b", b"\x74\x0c", "execmap:bss-start >>11/<<11 (#11->#12, 2KB->4KB page)"),
  # hat_ptalloc: FORCE the page_get path; never reuse a pooled PT page.  The free_pts
  # reuse path (0xb68a6..0xb6918) sub-allocates 512B fragments inside a page using 030
  # 2KB-page math (b68ec #11 / b68f6 #9) and bzero's the stored fragment address -- on
