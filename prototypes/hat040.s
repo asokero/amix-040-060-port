@@ -233,11 +233,14 @@ Lbhave:
 	movel	%d0,Lhp_dbgn
 	movel	%fp@(20),%sp@-		| new pfn
 	movel	%a4@,%sp@-		| existing *pte
+	movel	%a3@,%sp@-		| Bdesc value (pointer-table slot contents)
+	movel	%a3,%sp@-		| Bdesc slot address
+	movel	%a4,%sp@-		| leaf address (a4 = base + idx*4)
 	movel	%d2,%sp@-		| va
 	pea	Lpemsg1
 	pea	2			| CE_WARN (was 3=PANIC) -- diagnostic
 	jsr	cmn_err
-	lea	%sp@(20),%sp
+	lea	%sp@(32),%sp
 Lpfnok:
 	moveq	&7,%d3
 	andl	%d3,%fp@(24)		| prot &= 7
@@ -1012,7 +1015,7 @@ Lpo_n:
 Lpemsg0:
 	.asciz	"hat_pteload: root NOT resident va=%x rootbase=%x Aidx=%x Adesc4=%x desc8=%x"
 Lpemsg1:
-	.asciz	"DBG hat_pteload pfn mismatch va=%x *pte=%x newpfn=%x (overwriting)"
+	.asciz	"DBG hat_pteload pfn mismatch va=%x leaf=%x slot=%x Bdesc=%x *pte=%x newpfn=%x (overwriting)"
 	.even
 Lhp_dbgn:
 	.long	0
