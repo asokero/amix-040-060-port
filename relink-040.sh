@@ -49,6 +49,7 @@ m68k-linux-gnu-objcopy \
 	--globalize-symbol free_pts \
 	--globalize-symbol pt_waiting \
 	--globalize-symbol usrxmemflt \
+	--globalize-symbol krnxmemflt \
 	"$HERE/build/unix-stage1"
 m68k-linux-gnu-objcopy \
 	--weaken-symbol pstart \
@@ -73,6 +74,8 @@ m68k-linux-gnu-objcopy \
 	--add-symbol vtop_orig=.text:0xb7568,function,global \
 	--weaken-symbol usrxmemflt \
 	--add-symbol usrxmemflt_orig=.text:0x5aede,function,global \
+	--weaken-symbol krnxmemflt \
+	--add-symbol krnxmemflt_orig=.text:0x5b140,function,global \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -84,7 +87,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte hat_pteload hat_unlock hat_unload hat_alloc hat_free get_fault userspace vtop usrxmemflt usrxmemflt_orig vtop_orig; do
+for s in pstart sysseginit vatosde vatopte hat_pteload hat_unlock hat_unload hat_alloc hat_free get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"

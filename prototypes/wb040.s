@@ -9,13 +9,19 @@
 | init never starts.  PROVEN: icode page = 0 / 00000028 / 700B4E40 / 60FE2F73 (only the first long
 | missing); frame WB3S=0x0081 WB3A=0x80800000 WB3D=0x4FFB0170.
 |
-| k_trap calls usrxmemflt(frame, info) where arg1 = the trap frame (== get_fault's frame arg);
-| usrxmemflt -> as_fault resolves the demand-fault.  This wrapper replays the pending write-backs
-| AFTER the page is present (only if as_fault succeeded, ret==0).  Frame offsets (relative to the
-| frame arg, empirically dumped via get_fault040): WB3S@+78 WB3A@+88 WB3D@+92 ; WB2S@+80 WB2A@+96
-| WB2D@+100 ; WB1S@+82 WB1A@+104 WB1D@+108.  WBxS: valid = bit 7 (0x80); FC = bits 2-0; SIZE =
-| bits 6-5 (0=long,1=byte,2=word).  Re-issue with `moves` under the captured FC (DFC = ctrl 0x001).
-| --add-symbol usrxmemflt_orig=.text:0x5aede + --weaken-symbol usrxmemflt.
+| k_trap routes a fault through userspace(frame): user faults -> usrxmemflt(frame, info), kernel
+| faults -> krnxmemflt(frame).  Both run get_fault+ptest then as_fault to resolve the demand-fault.
+| BOTH need the write-back replay (a supervisor store into a not-yet-present kernel page faults the
+| same way), so this file wraps BOTH (same frame layout, same replay).  The replay runs ONLY after
+| as_fault succeeded (orig ret == 0) so we never write into a still-unmapped page.
+|
+| Frame offsets (relative to the frame arg = fp@(8), == get_fault's frame, empirically dumped):
+|   WB3S@+78 WB3A@+88 WB3D@+92 ; WB2S@+80 WB2A@+96 WB2D@+100 ; WB1S@+82 WB1A@+104 WB1D@+108.
+| WBxS: valid = bit 7 (0x80); FC = bits 2-0; SIZE = bits 6-5 (0=long,1=byte,2=word).  Re-issue
+| each valid write-back with `moves.<size> WBxD -> (WBxA)` under DFC = WBxS&7.
+|
+| Both are file-LOCAL ('t'): relink-040.sh globalizes+weakens them and aliases the originals
+| (usrxmemflt_orig=0x5aede, krnxmemflt_orig=0x5b140).
 
 	.text
 	.globl	usrxmemflt
@@ -28,41 +34,66 @@ usrxmemflt:
 	addqw	&8,%sp
 	movel	%d0,%d4			| save return (0 = demand-fault resolved)
 	tstl	%d4
-	bnew	Lwb_done		| not resolved -> do NOT write into a still-unmapped page
+	bnew	Lu_done
 	moveal	%fp@(8),%a2		| a2 = frame
+	bsrw	wb040_replay
+Lu_done:
+	movel	%d4,%d0			| restore usrxmemflt's return value
+	moveml	%fp@(-20),%d2-%d4/%a2-%a3
+	unlk	%fp
+	rts
+
+	.globl	krnxmemflt
+krnxmemflt:
+	linkw	%fp,&0
+	moveml	%d2-%d4/%a2-%a3,%sp@-
+	movel	%fp@(8),%sp@-		| arg1 = trap frame (krnxmemflt takes ONE arg)
+	jsr	krnxmemflt_orig
+	addqw	&4,%sp
+	movel	%d0,%d4			| save return (0 = demand-fault resolved)
+	tstl	%d4
+	bnew	Lk_done
+	moveal	%fp@(8),%a2		| a2 = frame
+	bsrw	wb040_replay
+Lk_done:
+	movel	%d4,%d0			| restore krnxmemflt's return value
+	moveml	%fp@(-20),%d2-%d4/%a2-%a3
+	unlk	%fp
+	rts
+
+| wb040_replay: a2 = trap frame.  If it is an 040 format-7 access-error frame, re-issue every
+| valid write-back (WB1, then WB2, then WB3).  Clobbers d0-d3/a3; preserves d4 (the orig return)
+| and a2 (the frame) for the calling wrapper.  No stack frame (leaf-ish; only bsr to Lwb_do).
+wb040_replay:
 	moveq	&0,%d0
 	moveb	%a2@(70),%d0		| format/vector high byte
 	lsrb	&4,%d0
 	cmpiw	&7,%d0			| 040 access-error (format 7) frame?
-	bnew	Lwb_done
-| --- replay WB1, then WB2, then WB3 (each: valid bit 7 set -> re-issue the store) ---
+	bnew	Lwr_ret
 	clrl	%d3
 	movew	%a2@(82),%d3		| WB1S
 	btst	&7,%d3
-	beqw	Lwb_2
+	beqw	Lwr_2
 	moveal	%a2@(104),%a3		| WB1A
 	movel	%a2@(108),%d2		| WB1D
 	bsrw	Lwb_do
-Lwb_2:
+Lwr_2:
 	clrl	%d3
 	movew	%a2@(80),%d3		| WB2S
 	btst	&7,%d3
-	beqw	Lwb_3
+	beqw	Lwr_3
 	moveal	%a2@(96),%a3		| WB2A
 	movel	%a2@(100),%d2		| WB2D
 	bsrw	Lwb_do
-Lwb_3:
+Lwr_3:
 	clrl	%d3
 	movew	%a2@(78),%d3		| WB3S
 	btst	&7,%d3
-	beqw	Lwb_done
+	beqw	Lwr_ret
 	moveal	%a2@(88),%a3		| WB3A
 	movel	%a2@(92),%d2		| WB3D
 	bsrw	Lwb_do
-Lwb_done:
-	movel	%d4,%d0			| restore usrxmemflt's return value
-	moveml	%fp@(-20),%d2-%d4/%a2-%a3
-	unlk	%fp
+Lwr_ret:
 	rts
 
 | Lwb_do: d3 = WBxS, a3 = target address, d2 = data.  Set DFC = WBxS&7, moves.<size> d2 -> (a3).
@@ -85,4 +116,5 @@ Lwb_long:
 	.word	0x0e93,0x2800		| moves.l %d2,%a3@
 	rts
 	nop				| pad .text to keep text/data contiguous
+	nop
 	nop
