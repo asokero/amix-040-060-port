@@ -217,16 +217,8 @@ Lsc_sdone:
 |     copyout wrote a DIFFERENT phys than the PTE names).  != DEADBEEF -> phys is UNBACKED (the page
 |     allocator handed out a phys not covered by RAM = a 040 physical-memory-map / maxclick bug, the
 |     same root as the 8MB-vs-16MB halving). ---
-	pea	0x62			| 'b' -- backed-RAM readback follows
-	jsr	serdbg_mark
-	addqw	&4,%sp
-	moveal	&0x07a5d000,%a0
-	movel	&0xdeadbeef,%a0@	| write marker to phys 0x07A5D000 (DTT0 identity)
-	.word	0xf4f8			| cpusha bc -- ensure it reaches RAM
-	moveal	&0x07a5d000,%a0
-	movel	%a0@,%sp@-		| read it back
-	jsr	serdbg_hex
-	addqw	&4,%sp
+| NOTE: the backed-RAM DEADBEEF write probe was REMOVED -- it wrote 0xDEADBEEF to phys 0x07A5D000
+| (= user 0x80800000 offset 0), which would re-corrupt the lea word that the WB040 replay now fixes.
 | --- dump the live CACR ('r').  68040: bit 31 = D-cache enable, bit 15 = I-cache enable.  sup_cacr
 |     .data init is 0x00000800 (an 030-style value); if CACR here has bit31=0 the D-cache is OFF and
 |     the bug is NOT cache coherency (the PTE genuinely names a phys copyout never wrote).  If bit31=1
