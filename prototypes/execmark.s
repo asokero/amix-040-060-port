@@ -47,6 +47,41 @@ exece:
 	movel	%a0@(8),%sp@-		| uap[2] = envp
 	jsr	serdbg_hex
 	addqw	&4,%sp
+| --- dump u.u_ar0 (saved-register frame ptr) + saved usp.  systrap reads each syscall arg with
+|     lfuword(usp+off) where usp = u.u_ar0[0] (a5 = *(u+0x864)).  lfuword uses moves SFC=1 (URP,
+|     correct on 040).  So if the args are garbage, the SAVED USP must be wrong.  On 030 expect
+|     u.u_ar0[0] = 0x8080002A (icode set sp=L%stack).  If 040 differs, the trap glue's
+|     `movel %usp,%a0` capture / the saved-frame layout is wrong on 040. ---
+	pea	0x55			| 'U' -- usp dump follows
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	u+0x864,%sp@-		| u.u_ar0 pointer
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	moveal	u+0x864,%a0
+	movel	%a0@,%sp@-		| u.u_ar0[0] = saved usp
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	moveal	u+0x864,%a0
+	movel	%a0@(4),%sp@-		| u.u_ar0[1] (next saved word -- confirm frame layout)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+| --- saved SR + PC + format/vector from the trap frame (u_trap: SR@fp@(72), PC@fp@(74),
+|     fmt@fp@(78); u.u_ar0=fp+8 so SR@ar0+64).  DECISIVE: saved SR bit 13 (S) = 0 -> the trap
+|     came from USER mode (so USP should be valid -> a USP-capture / context bug); = 1 -> icode
+|     ran in SUPERVISOR mode (the rte-to-user never dropped to user on 040).  PC = the user EA
+|     after trap#0 (icode's trap#0 is at user 0x80800008 -> expect PC 0x8080000A if icode ran). ---
+	pea	0x40			| '@' separator (frame SR/PC/fmt follow)
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	moveal	u+0x864,%a0
+	movel	%a0@(64),%sp@-		| [saved SR.w][PC.hi.w]
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	moveal	u+0x864,%a0
+	movel	%a0@(68),%sp@-		| [PC.lo.w][fmt/vec.w]
+	jsr	serdbg_hex
+	addqw	&4,%sp
 Lex_go:
 	jmp	exece_orig		| run the stock exece unchanged (register/stack transparent)
 
