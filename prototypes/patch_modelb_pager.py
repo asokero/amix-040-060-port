@@ -59,6 +59,7 @@ def group_of(name):
     if name.startswith("ufs_get"):      return "ufs"
     if name.startswith("pvn_getpages"): return "pvngp"
     if name.startswith("pvn_kluster"):  return "pvnk"
+    if name.startswith("pvn_done"):     return "pvnk"
     if name.startswith("segmap"):       return "segmap"
     if name.startswith("bp_map"):       return "buf"
     if name.startswith("gen_strategy"): return "genst"
@@ -137,6 +138,12 @@ P = [
  (0xb1966, b"\x06\x82"+A47, b"\x06\x82"+A95, "pvn_kluster:addil #2047 d2 (b)"),
  (0xb1970, b"\x02\x42\xf8\x00", b"\x02\x42\xf0\x00", "pvn_kluster:andiw #-2048 d2"),
  (0xb19b2, b"\xd6\xfc\x08\x00", b"\xd6\xfc\x10\x00", "pvn_kluster:addaw #2048 a3"),
+ # ===== pvn_done: the read-completion page-list walker.  Loops `while d4 < b_bcount`,
+ # pulling ONE page off b_pages (page_sub) per iteration and stepping d4 by PAGESIZE.  With
+ # 4KB pages the step must be 4KB or the loop runs ceil(bcount/2048) times over only
+ # ceil(bcount/4096) pages -> page_sub walks off the end -> "pp >= pages && pp < epages"
+ # panic (vm_page.c:1192).  Sole page-size constant in pvn_done; rest is p_next/flag walking. =====
+ (0xb1d60, b"\x06\x84"+A48, b"\x06\x84"+A96, "pvn_done:page-walk step d4 #2048"),
  # ===== segmap_pagecreate =====
  (0xa9742, b"\x02\x42\xf8\x00", b"\x02\x42\xf0\x00", "segmap_pagecreate:andiw #-2048 d2"),
  (0xa9892, b"\x06\x82"+A48, b"\x06\x82"+A96, "segmap_pagecreate:addil #2048 d2"),
