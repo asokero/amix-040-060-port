@@ -227,6 +227,17 @@ Lsc_sdone:
 	movel	%a0@,%sp@-		| read it back
 	jsr	serdbg_hex
 	addqw	&4,%sp
+| --- dump the live CACR ('r').  68040: bit 31 = D-cache enable, bit 15 = I-cache enable.  sup_cacr
+|     .data init is 0x00000800 (an 030-style value); if CACR here has bit31=0 the D-cache is OFF and
+|     the bug is NOT cache coherency (the PTE genuinely names a phys copyout never wrote).  If bit31=1
+|     the copyback D-cache is on -> the page-table coherency story holds. ---
+	pea	0x72			| 'r' -- live CACR follows
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	.word	0x4e7a,0x0002		| movec %cacr,%d0
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
 Lco_nopte:
 	movel	%fp@(12),%d2		| dst
 	cmpil	&0x80000000,%d2
