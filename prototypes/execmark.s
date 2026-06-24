@@ -26,6 +26,27 @@ exece:
 	pea	0x45			| 'E' -- first exec reached (proc 1 ran icode in user mode)
 	jsr	serdbg_mark
 	addqw	&4,%sp
+| --- dump u.u_ap (exece's arg1) + uap[0..2] = path/argv/envp.  systrap calls exece(u.u_ap).
+|     If uap is 0x8080xxxx -> u.u_ap points straight at the USER stack (read live); if 0x40xxxxxx
+|     or a u-area addr -> the args were copied to kernel.  On 030 uap[0]=0x8080000E (path); on 040
+|     it was 0x3C663C06 (garbage).  Whether uap[1]/uap[2] are ALSO wrong tells us "whole arg
+|     fetch from a bad usp" vs "single value aliased". ---
+	moveal	%sp@(4),%a0		| a0 = uap (arg1)
+	movel	%a0,%sp@-		| uap pointer
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	moveal	%sp@(4),%a0
+	movel	%a0@,%sp@-		| uap[0] = path
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	moveal	%sp@(4),%a0
+	movel	%a0@(4),%sp@-		| uap[1] = argv
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	moveal	%sp@(4),%a0
+	movel	%a0@(8),%sp@-		| uap[2] = envp
+	jsr	serdbg_hex
+	addqw	&4,%sp
 Lex_go:
 	jmp	exece_orig		| run the stock exece unchanged (register/stack transparent)
 
