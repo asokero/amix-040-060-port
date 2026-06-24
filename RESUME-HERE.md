@@ -3,12 +3,35 @@
 ## OVERALL STATUS (one-paragraph)
 68040 port boots: pstart040 (MMU/Model B) -> mlsetup -> root mounts (s5/ufs, vtop040) -> banner ->
 swapconf -> sched -> 040 context switch (resume040) -> proc 1 setup -> copyout(icode).  The
-init-bootstrap blocker (copyout's first store lost) is now FIXED by the 68040 write-back replay
-(wb040.s, in the dbg overlay).  init now reaches USER mode, gets the right "/sbin/init" path, and
-runs exec far enough to LOAD the init ELF binary (lookuppn -> gexec -> elfexec -> relvm -> setregs).
-NOT yet at a login prompt: exec's ELF loading loops (user-VM / file-mapping hat: hat_pteload
-pfn-mismatch + blkatoff page_find NULL).  Caches are OFF on 040 (CACR=0).  Next: (1) move wb040 into
-the BASE build; (2) the exec-load hat frontier.  See the FIXED section just below.
+init-bootstrap blocker (copyout's first store lost) is FIXED by the 68040 write-back replay
+(wb040.s); init reaches USER mode, gets the right "/sbin/init" path, and runs exec into gexec.
+All genuine 040 runtime ports (getfault040/userspace040/vtop040/wb040 + a krnxmemflt wrapper) now
+live in the BASE build (relink-040.sh, commits 0ffdac8/88e4339); the dbg overlay layers only
+diagnostics.  Caches are OFF on 040 (CACR=0).  **CURRENT FRONTIER = the exec-header read fails:**
+gexec maps the ELF header via exhd_getmap/segmap and reads magic = 0x00000000 (not 7F454C46) ->
+no execsw match -> ENOEXEC -> elfexec never runs -> init spins in icode's `bra .`.  ROOT CAUSE
+(data-confirmed): the file page cache still uses 2KB pages, so two file pages (poff 0 and 0x800)
+get separate 4KB frames but segmap maps them at a 2KB VA stride into ONE 4KB MMU leaf -> the 2nd
+clobbers the 1st -> gexec reads the wrong frame.  The proper fix is the COUPLED 4KB page-cache
+conversion (page_get-internal #2047/>>11 @0xaffb8/0xaffc0 + pvn_kluster/'pvnk' group + segmap
+per-page advance + page_find/enter offset granularity, all atomic) -- the documented Model B
+"heavy path".  Enabling just the pvnk group breaks early boot (proven).  See EXEC FRONTIER below.
+
+## >>> ★ EXEC FRONTIER (2026-06-24): exec-header read corrupt -> needs the 4KB page-cache conversion <<<
+gexec(G) runs but elfexec(F) never does -> exec fails before the execsw format dispatch.  Wrapped
+exhd_getmap (execmark.s, dumps 'H' ret hdrVA magic): `H 0 40448000 00000000 ...` -- magic is 0.
+Traced the colliding segmap maps (hat040.s Lpo_msg trace): `segmap-map va=40448000 poff=0 pfn=7A50`
++ `va=40448800 poff=0x800 pfn=7A51` -> two 4KB frames at a 2KB VA stride collide in the 4KB MMU
+leaf 40448000; the poff=0x800 page is a pvn_kluster READ-AHEAD page (its 2KB step is unpatched).
+Enabling the 'pvnk' patch group makes pvn_kluster step 4KB BUT breaks the early mount dir-read
+(boot dies after the first ddopen): pvn_kluster's final loop page_get(size)+page_enter's the
+returned LIST, but page_get's own size->count math is still 2KB (0xaffc0 `lsrl #11` unpatched), so a
+4KB size makes page_get return 2 pages while the loop expects 1.  => page_get-internal, pvn_kluster,
+segmap advance, and page_find/enter granularity are a COUPLED set; convert the page cache to 4KB
+ATOMICALLY.  Reverted to the working collision-but-boots state (commit 96834ee).  Diagnostics left
+in: hat040.s `DBG segmap-map` (gated 16) + execmark.s exhd_getmap 'H' dump.  page_get(size,flags):
+size@fp+8, internal `(size+2047)>>11` -> #page count; ALL ~10 page_get callers pass `pea 0x800`.
+Memory [[amix-040-init-userpage-pfn]].
 
 
 ## >>> ★★★ FIXED (2026-06-24 night): 68040 access-error WRITE-BACK replay -> init now reaches exec ELF-load <<<
@@ -26,9 +49,9 @@ WB1 @+82/+104/+108; WBxS bit7=valid, &7=FC, >>5&3=SIZE(0=long,1=byte,2=word).
 **NEW FRONTIER (not yet login):** exec's ELF loading loops/retries with `hat_pteload pfn mismatch
 va=40448800 *pte=7A50001 newpfn=7A51 (overwriting)` (kvseg leaf-PTE remap) + `blkatoff page_find ->
 NULL` -- the user-VM / file-mapping hat family (hat_dup/hat_chgprot/segvn page cache).
-**TODO:** (1) move wb040.o from the dbg overlay into the BASE build (relink-040.sh) -- it's a real
-fix, not a probe; (2) also wrap krnxmemflt for kernel-space write faults; (3) the exec-loading
-hat frontier.  Memory [[amix-040-init-userpage-pfn]].
+**TODO:** (1) DONE (commit 0ffdac8) -- wb040 + getfault040/userspace040/vtop040 moved to the BASE
+build; (2) DONE (commit 88e4339) -- krnxmemflt wrapped; (3) the exec frontier = the 4KB page-cache
+conversion (see the EXEC FRONTIER section above).  Memory [[amix-040-init-userpage-pfn]].
 
 ## >>> (superseded by FIXED above) TRUE ROOT CAUSE (2026-06-24 night): 68040 access-error WRITE-BACK not replayed <<<
 The init hang is the **68040 access-error WRITE-BACK** not being replayed.  main()'s
