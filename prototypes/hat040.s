@@ -112,6 +112,42 @@ Lpt_nodbg:
 	asll	&2,%d0			| Aidx*4   [030: *8]
 	moveal	%a0@(20),%a0		| root table base
 	movel	%a0@(0,%d0:l),%fp@(-56)	| Adesc (single long)
+
+| --- DBG (user-PT frontier, 2026-06-24): for exec-range faults (va>=0x80000000) dump the
+|     as, its root VA (hat@(12)@(20) = the tree hat_pteload itself walks), the live URP, the
+|     A index, and root[Aidx].  DECISIVE split for the 0x3F0002 stale-ptr-table panic:
+|       * Adesc == 0  -> hat_free DID clear root[Aidx]; the fresh ptr-table comes from
+|                        hat_sdtalloc and is NOT zeroed (slot[0]=3F0002) => hat_sdtalloc bug.
+|       * Adesc != 0  -> root[Aidx] still resident; either hat_free skipped this region, or
+|                        the rebuild walks a DIFFERENT as whose root was never cleaned
+|                        (compare as/rootVA here vs the 401AA400/401A9000 of proc-1 setup).
+|     Also: if rootVA's phys != urp, the HW walks a different root than hat_pteload writes.
+|     Gated 12, CE_WARN; d2/a2 reloaded after.  Remove once the source is fixed. ---
+	cmpil	&0x80000000,%d2
+	bcsw	Lrd_no
+	movel	Lrd_n,%d0
+	cmpil	&12,%d0
+	bccw	Lrd_no
+	addql	&1,%d0
+	movel	%d0,Lrd_n
+	moveal	%fp@(8),%a0		| hat
+	moveal	%a0@(12),%a1		| as
+	movel	%a1@(20),%d1		| rootVA = as@(20)
+	.word	0x4e7a			| movec %urp,%d0 (active user root PHYS)
+	.word	0x0806
+	movel	%fp@(-56),%sp@-		| Adesc (root[Aidx])
+	movel	%fp@(-28),%sp@-		| Aidx
+	movel	%d1,%sp@-		| rootVA
+	movel	%a1,%sp@-		| as
+	movel	%d0,%sp@-		| urp
+	movel	%d2,%sp@-		| va
+	pea	Lrd_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(32),%sp
+	movel	%fp@(12),%d2		| reload d2 (cmn_err scratch)
+	moveal	%fp@(16),%a2
+Lrd_no:
 	bfextu	%fp@(-53){&6:&2},%d0	| UDT = Adesc & 3
 	btst	&1,%d0			| resident? (UDT == 2 or 3 -> bit1 set)
 	bne	Lrootok
@@ -1021,6 +1057,11 @@ Lpt_dbgmsg:
 	.asciz	"DBG ptload va=%x urp=%x"
 	.even
 Lpt_dbgn:
+	.long	0
+Lrd_msg:
+	.asciz	"DBG ptload2 va=%x urp=%x as=%x rootVA=%x Aidx=%x Adesc=%x"
+	.even
+Lrd_n:
 	.long	0
 Lpo_msg:
 	.asciz	"DBG segmap-map va=%x poff=%x pfn=%x"
