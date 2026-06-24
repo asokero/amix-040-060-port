@@ -159,21 +159,48 @@ Lrd_no:
 | hat_sdtalloc(&out, count): count<<6 bytes, bzero'd, from the identity-mapped SDT pool (the
 | region the HW tablewalk reads); count=8 -> 512 bytes = 128 entries x 4 = one 040 pointer table.
 | hat_sdtalloc preserves d2(va)/a2(pp); install root[Aidx] = ptable | UDT(2 resident).
-	pea	8
+	pea	16			| count=16 -> 1024 B: room to carve a 512-ALIGNED 512 B table
 	movel	%fp,%d0
 	subil	&48,%d0
 	movel	%d0,%sp@-		| &out = fp@(-48)
 	jsr	hat_sdtalloc
 	addqw	&8,%sp
-| BUG FIX (2026-06-24, user-PT frontier): hat_sdtalloc does NOT return a zeroed table on 040.
-| MEASURED: a fresh exec as (Adesc==0) lazily allocated ptable=7D20200 here, but its slot[0]
-| read back as 0x3F0002 (stale leaf descriptor -> base 0x3F0000 = unbacked hole) -> the next
-| Bdesc check saw a bogus "resident" leaf -> hat_pt2ptdat "invalid pte ptr" PANIC.  A fresh 040
-| pointer table for an empty root region MUST be all-zero (every UDT invalid) so subsequent leaf
-| faults see Bdesc==0 and allocate leaves.  Zero all 512 bytes (128 x 4-byte descriptors) of the
-| just-allocated table.  Cached clrl writes are fine: hat_pteload reads Bdesc back through the
-| same cache and Lepi's cpusha+pflusha pushes the table to RAM for the HW walker.
-	moveal	%fp@(-48),%a0		| ptable base (hat_sdtalloc result)
+| BUG FIX (2026-06-24, user-PT frontier): two defects, both fixed here.
+| (1) ALIGNMENT.  An 040 root descriptor stores the pointer-table base in bits 31:9, so the
+|     table MUST be 512-aligned -- the HW walk and our Lrootok both mask with 0xfffffe00.  But
+|     hat_sdtalloc only guarantees 64-byte sub-slot alignment, so a sub-512-aligned base makes
+|     that mask round DOWN into the PRECEDING (stale) memory.  MEASURED: a fresh exec as got a
+|     table whose masked slot[0] read 0x3F0002 (stale leaf desc -> base 0x3F0000 = unbacked hole)
+|     -> bogus "resident" leaf -> hat_pt2ptdat "invalid pte ptr" PANIC, even after zeroing the
+|     raw result.  Fix: over-allocate (count=16 = 1024 B) and round the raw result UP to 512.
+| (2) NOT ZEROED.  hat_sdtalloc does not zero the table on 040; a fresh pointer table for an
+|     empty root region MUST be all-zero (every UDT invalid) so subsequent leaf faults see
+|     Bdesc==0 and allocate leaves.  Zero all 512 B (128 x 4-byte descriptors) of the aligned
+|     table.  Cached clrl is fine: hat_pteload reads Bdesc back through the same cache and Lepi's
+|     cpusha+pflusha pushes the table to RAM for the HW walker.
+	movel	%fp@(-48),%d3		| d3 = raw hat_sdtalloc result (64-aligned; d3 dead here)
+	movel	%d3,%d1
+	addil	&511,%d1
+	andil	&0xfffffe00,%d1		| round UP to 512-byte boundary
+	movel	%d1,%fp@(-48)		| store the aligned base back (used as ptable below)
+| DIAG (gated 8): show the raw result vs the aligned base for exec-range faults; confirms the
+| sub-512 alignment defect (raw != aligned).  Remove once stable.  d3 preserved across cmn_err.
+	cmpil	&0x80000000,%d2
+	bcsw	Lsz_no
+	movel	Lsz_n,%d0
+	cmpil	&8,%d0
+	bccw	Lsz_no
+	addql	&1,%d0
+	movel	%d0,Lsz_n
+	movel	%fp@(-48),%sp@-		| aligned base
+	movel	%d3,%sp@-		| raw result
+	movel	%d2,%sp@-		| va
+	pea	Lsz_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(20),%sp
+Lsz_no:
+	moveal	%fp@(-48),%a0		| aligned ptable base
 	moveq	&127,%d0		| 128 longs - 1
 Lrz_loop:
 	clrl	%a0@+
@@ -1075,6 +1102,11 @@ Lrd_msg:
 	.asciz	"DBG ptload2 va=%x urp=%x as=%x rootVA=%x Aidx=%x Adesc=%x"
 	.even
 Lrd_n:
+	.long	0
+Lsz_msg:
+	.asciz	"DBG sdtalloc ptable va=%x raw=%x aligned=%x"
+	.even
+Lsz_n:
 	.long	0
 Lpo_msg:
 	.asciz	"DBG segmap-map va=%x poff=%x pfn=%x"
