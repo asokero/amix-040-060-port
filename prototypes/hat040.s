@@ -171,6 +171,21 @@ Lballoc0:
 	moveal	%a0,%a4
 	addqw	&8,%sp
 Lbfill:
+| DIAG (gated 8): dump the leaf page-table address hat_ptalloc returned + va.  Localizes
+| whether the bad user-PT base (0x3F0000, unbacked hole) comes straight from hat_ptalloc/
+| hat_sdtalloc (a4 itself bad) or gets truncated later.  cmn_err preserves d2/a4 (callee-saved).
+	movel	Lba_dbgn,%d0
+	cmpil	&8,%d0
+	bccw	Lba_nodbg
+	addql	&1,%d0
+	movel	%d0,Lba_dbgn
+	movel	%a4,%sp@-		| leaf table addr (hat_ptalloc result)
+	movel	%d2,%sp@-		| va
+	pea	Lbamsg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
+Lba_nodbg:
 | ptdat bookkeeping (software state -- kept verbatim; @(4) keeps 030 packing)
 	moveal	%fp@(-4),%a0		| ptdat
 	moveal	%fp@(8),%a1		| hat
@@ -1018,6 +1033,11 @@ Lpemsg1:
 	.asciz	"DBG hat_pteload pfn mismatch va=%x leaf=%x slot=%x Bdesc=%x *pte=%x newpfn=%x (overwriting)"
 	.even
 Lhp_dbgn:
+	.long	0
+Lbamsg:
+	.asciz	"DBG hat_pteload Lballoc leaf va=%x leafpt=%x (hat_ptalloc result)"
+	.even
+Lba_dbgn:
 	.long	0
 Lhu_msg:
 	.asciz	"hat_unlock: invalid sde (040 walk)"
