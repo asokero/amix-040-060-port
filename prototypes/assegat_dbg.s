@@ -158,6 +158,19 @@ copyout:
 	movel	%d2,%sp@-
 	jsr	serdbg_hex
 	addqw	&4,%sp
+| --- read user[0x80800000] via lfuword RIGHT AFTER copyout = the CPU's live ATC view.  If this is
+|     0x4FFB0170 (icode) but the exece-time read is 0 -> copyout's fault loaded the ATC with the
+|     phys it wrote (P1) while the RAM leaf descriptor named 07A5D000 -> ATC vs RAM-PTE mismatch at
+|     fault time, exposed once the ATC is flushed.  Marker 'f'. ---
+	pea	0x66			| 'f' -- copyout-time lfuword(0x80800000) follows
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0x80800000,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
 Lco_nopte:
 	movel	%fp@(12),%d2		| dst
 	cmpil	&0x80000000,%d2
