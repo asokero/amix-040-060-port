@@ -120,6 +120,9 @@ copyout:
 	jsr	copyout_orig
 	lea	%sp@(12),%sp
 	movel	%d0,%d3			| save retval
+	.word	0xf4f8			| cpusha bc -- push copyout's (copyback) icode write to RAM so the
+					|   DTT0-identity PTE walk + RAM scan below read COHERENT memory, not
+					|   stale RAM that misses a still-cached write.
 | --- capture the URP active during copyout; compare to proc 1's runtime URP (ptload
 |     prints urp=7A6C000).  If they DIFFER, copyout wrote into a DIFFERENT address space
 |     than proc 1 runs in -> the icode lands in the wrong context (a 040 newproc/context
