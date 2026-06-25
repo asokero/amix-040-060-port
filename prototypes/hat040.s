@@ -76,14 +76,6 @@ Lpo_no:
 	bcsw	Lgt_no
 	cmpil	&0xc1031000,%d2
 	bccw	Lgt_no
-| --- TEST/WORKAROUND: force the GOT pages WRITABLE (prot |= PROT_WRITE).  Hypothesis: fs-uae's
-|     68040 does not generate a write-protect access error for USER-mode writes to a present
-|     W-protected page (it DOES for the supervisor `moves` suword test), so do_reloc's relocation
-|     writes to the RO GOT page are silently dropped -> the GOT stays raw.  Mapping the page
-|     writable lets the writes land (into the file-cache page -- acceptable for the single boot-time
-|     init).  If the GOT then relocates and the linker transfers to init, the write-protect/COW
-|     path is confirmed as the blocker; the real fix is an eager private copy at read-fault time. ---
-	oril	&2,%fp@(24)		| prot |= PROT_WRITE (force status 1 = writable)
 	movel	Lgt_n,%d0
 	cmpil	&40,%d0
 	bccw	Lgt_no
