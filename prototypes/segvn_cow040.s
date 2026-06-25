@@ -29,11 +29,23 @@
 | +5 type (2 = MAP_PRIVATE).  rw: 1 = read, 2 = write (verified from the boot fault log).
 | Local 't' -> relink globalizes+weakens it, alias segvn_fault_orig=0xac434.
 
+| Why a pflusha is needed after the COW (the second half of the fix, 2026-06-25):
+| forcing rw=2 DID COW the GOT page writable (boot log: C102F000 pfn 7CFE RO -> 7CFD
+| writable, PTE 7CFD001), but do_reloc's RMW relocations STILL didn't land while a
+| supervisor suword to the same page DID.  Within ONE fault segvn maps the VA TWICE --
+| first the shared file page (7CFE, read-only), then the anon_private copy (7CFD,
+| writable) -- so the 68040 ATC is left holding the stale read-only 7CFE entry.  The
+| faulting user RMW restarts through that stale RO ATC entry and fs-uae drops the write
+| (the same RMW-store-to-read-only drop that hides the missing write fault).  suword
+| escapes it because wb040's replay already does a pflusha before re-issuing the store.
+| So flush the ATC after the forced COW, before returning to the user instruction restart.
+
 	.text
 	.globl	segvn_fault
 segvn_fault:
 	linkw	%fp,&0
-	moveml	%d2/%a2,%sp@-
+	moveml	%d2-%d3/%a2,%sp@-
+	clrl	%d3			| d3 = "forced the eager COW" flag
 	movel	%fp@(24),%d2		| d2 = rw
 	cmpil	&1,%d2			| read fault?
 	bnew	Lsc_call		| no -> pass rw through unchanged
@@ -46,6 +58,7 @@ segvn_fault:
 	btst	&1,%a2@(3)		| prot & PROT_WRITE (bit 1)?
 	beqw	Lsc_call		| not writable -> leave it a read fault
 	moveq	&2,%d2			| writable private read fault -> force rw = write (eager COW)
+	moveq	&1,%d3			| remember to pflusha the stale RO ATC entry afterwards
 Lsc_call:
 	movel	%d2,%sp@-		| rw (forced to 2 for the eager-COW case)
 	movel	%fp@(20),%sp@-		| type
@@ -54,7 +67,13 @@ Lsc_call:
 	movel	%fp@(8),%sp@-		| seg
 	jsr	segvn_fault_orig
 	lea	%sp@(20),%sp		| d0/a0 = segvn_fault_orig's return
-	moveml	%fp@(-8),%d2/%a2
+	tstl	%d3
+	beqw	Lsc_ret
+	.word	0xf518			| pflusha -- drop the stale read-only ATC entry the
+					|   shared-page map left, so the restarted user RMW
+					|   store re-walks the page table to the writable copy
+Lsc_ret:
+	moveml	%fp@(-12),%d2-%d3/%a2
 	unlk	%fp
 	rts
 	nop				| pad .text to keep text/data contiguous (adjust after relink)
