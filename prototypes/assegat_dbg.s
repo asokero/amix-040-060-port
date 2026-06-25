@@ -371,6 +371,55 @@ Lam_done:
 	moveml	%fp@(-8),%d2-%d3
 	unlk	%fp
 	rts
+
+| ===========================================================================
+| rexit WRAPPER (orig 0x3f2c2, GLOBAL T) -- the dynamic linker (libc.so.1) calls exit()
+| BEFORE transferring to init's _start (proven: NO 0x80000000-region code fault ever appears
+| -- init's text @0x80000034 is never executed).  So the interp FAILS after do_reloc and bails.
+| This dumps the exit status + a window of the user stack so we can read the RETURN ADDRESS of
+| the exit() call (a C10xxxxx value = the linker function that decided to exit) and disassemble
+| libc.so.1 there to find the error condition.  rexit(uap@8): *uap = the exit status.
+| Direct serdbg (survives the respawn loop); capped at 2 firings.  Tail-jmps rexit_orig.
+	.globl	rexit
+rexit:
+	linkw	%fp,&0
+	moveml	%d2-%d3/%a2,%sp@-
+	movel	Lrx_n,%d0
+	cmpil	&2,%d0
+	bccw	Lrx_go			| cap at 2
+	addql	&1,%d0
+	movel	%d0,Lrx_n
+	pea	0x52			| 'R' -- rexit reached (exit syscall dispatched)
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	moveal	%fp@(8),%a0		| uap
+	movel	%a0@,%sp@-		| exit status
+	jsr	serdbg_hex
+	addqw	&4,%sp
+| --- dump user stack C07FFF60..C07FFFC0 (24 words) via lfuword; the exit() caller's return
+|     address (C10xxxxx) lives here.  Each word space-separated; newline at the end. ---
+	movel	&0xC07FFF60,%d2
+	movel	&24,%d3
+Lrx_loop:
+	pea	0x20			| ' '
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%d2,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	addil	&4,%d2
+	subql	&1,%d3
+	bnew	Lrx_loop
+	pea	0x0a			| '\n'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+Lrx_go:
+	moveml	%fp@(-12),%d2-%d3/%a2
+	unlk	%fp
+	jmp	rexit_orig
 	nop				| pad appended .text to keep text/data contiguous
 
 	.data
