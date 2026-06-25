@@ -373,6 +373,48 @@ Lam_done:
 	rts
 
 | ===========================================================================
+| as_fault WRAPPER (orig 0xae108, GLOBAL T) -- trace the GOT-page fault handling.  do_reloc's
+| writes to libc.so.1's GOT (page C102F000) don't persist while a kernel suword to the SAME page
+| does -- both go usrxmemflt -> as_fault -> wb040 replay.  Dump (addr, type, rw, ret) for faults in
+| the GOT data segment [C102E000, C1031000) so we can see: is the WRITE classified rw=2 (my 040 SSW
+| fix), and does as_fault RESOLVE it (ret==0, so wb040 replays)?  Capped at 24, CE_WARN.
+	.globl	as_fault
+as_fault:
+	linkw	%fp,&0
+	moveml	%d2/%a2,%sp@-
+	movel	%fp@(24),%sp@-		| rw
+	movel	%fp@(20),%sp@-		| type
+	movel	%fp@(16),%sp@-		| len
+	movel	%fp@(12),%sp@-		| addr
+	movel	%fp@(8),%sp@-		| as
+	jsr	as_fault_orig
+	lea	%sp@(20),%sp
+	movel	%d0,%d2			| ret
+	movel	%fp@(12),%d0		| addr
+	cmpil	&0xc102e000,%d0
+	bcsw	Laf_done
+	cmpil	&0xc1031000,%d0
+	bccw	Laf_done
+	movel	Laf_n,%d0
+	cmpil	&24,%d0
+	bccw	Laf_done
+	addql	&1,%d0
+	movel	%d0,Laf_n
+	movel	%d2,%sp@-		| ret
+	movel	%fp@(24),%sp@-		| rw
+	movel	%fp@(20),%sp@-		| type
+	movel	%fp@(12),%sp@-		| addr
+	pea	Laf_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
+Laf_done:
+	movel	%d2,%d0
+	moveml	%fp@(-8),%d2/%a2
+	unlk	%fp
+	rts
+
+| ===========================================================================
 | rexit WRAPPER (orig 0x3f2c2, GLOBAL T) -- the dynamic linker (libc.so.1) calls exit()
 | BEFORE transferring to init's _start (proven: NO 0x80000000-region code fault ever appears
 | -- init's text @0x80000034 is never executed).  So the interp FAILS after do_reloc and bails.
@@ -505,6 +547,12 @@ Lco_urp:
 	.long	0
 	.even
 Lrx_n:
+	.long	0
+	.even
+Laf_msg:
+	.asciz	"DBG as_fault addr=%x type=%x rw=%x ret=%x"
+	.even
+Laf_n:
 	.long	0
 	.even
 Lam_msg:
