@@ -1,20 +1,23 @@
-# RESUME HERE — AMIX 68040 port status (2026-06-24)
+# RESUME HERE — AMIX 68040 port status (2026-06-25)
 
 ## OVERALL STATUS (one-paragraph)
-68040 port boots: pstart040 (MMU/Model B) -> mlsetup -> root mounts (s5/ufs, vtop040) -> banner ->
-swapconf -> sched -> 040 context switch (resume040) -> proc 1 setup -> copyout(icode).  The
-init-bootstrap blocker (copyout's first store lost) is FIXED by the 68040 write-back replay
-(wb040.s); init reaches USER mode, gets the right "/sbin/init" path, and runs exec into gexec.
-All genuine 040 runtime ports (getfault040/userspace040/vtop040/wb040 + a krnxmemflt wrapper) now
-live in the BASE build (relink-040.sh, commits 0ffdac8/88e4339); the dbg overlay layers only
-diagnostics.  Caches are OFF on 040 (CACR=0).  The exec-header read frontier is now SOLVED (the
-coupled 4KB page-cache conversion, commits c8be89f/4b18053, boot-verified: ELF magic = 7F454C46,
-gexec -> elfexec -> relvm -> init's ELF program headers mapped).  **CURRENT FRONTIER = USER
-PAGE-TABLE HAT:** exec demand-faults a user page (va=80009000) and PANICs `hat_pt2ptdat: invalid
-pte ptr` -- hat_pteload(040) walks the pointer-table to a leaf whose `*pte = 0xFFFFFFFF` (garbage),
-so hat_pt2ptdat sees a bogus pfn.  Root: hat_ptalloc/hat_growsdt/hat_sdtalloc/hat_dup are all
-STOCK 030 (only hat_pteload is 040-replaced) so the USER address space's page tables are built with
-030 descriptors.  See USER-PT FRONTIER below.
+68040 port boots all the way to **/sbin/init running its DYNAMIC LINKER**.  pstart040 (MMU/Model B)
+-> mlsetup -> root mounts -> banner -> swapconf -> sched -> 040 ctx switch -> proc 1 -> copyout(icode)
+-> exec.  The USER-PAGE-TABLE frontier (prior session) is SOLVED: a chain of Model B 2KB->4KB fixes
+(hat_pteload lazy ptr-table zero+512-align; hat_ptalloc forced page_get; anon_resv/unresv 4KB;
+execmap bss-start 4KB; hat_ptfree no-op leak; elfexec AT_PAGESZ 4096 -- commits 03bae0f, 3e994ca,
+e801289, 0c00e09, 537a7dc, 45c63e0) took init through exec: it maps init (0x80000000) + the interp
+libc.so.1 (C1000000, the SVR4 m68k runtime linker), sets the aux vector + stack, and transfers to
+the interp entry C100F348.  libc.so.1's do_reloc runs and takes a USER BUS ERROR (PC=C101100E
+derefs 0x66000030).  **CURRENT FRONTIER = the user-VM DEMAND-FAULT PATH is still 2KB** (as_fault /
+segvn_fault / segvn_faultpage + the anon map).  A fault in the UPPER 2KB of a 4KB page (libc's GOT
+at C102FE68) maps at C102F800, which shares hat_pteload's leaf slot (va>>12)&0x3F with the page base
+C102F000 -> the 2nd 2KB fault overwrites the 1st's 4KB leaf PTE -> GOT corruption -> the linker
+bus-errors.  TIGHTLY COUPLED (3 boot-tested states prove piecemeal conversion breaks: both-4KB =
+kmem_alloc fault on the anon-map array; as_fault-4KB-only = "segvn_faultpage not found").  NEXT
+SUB-PROJECT = RE the anon_map struct + segvn_faultpage's hardcoded >>12 (@0xac0d2), convert as_fault
++ segvn_fault + segvn_faultpage + anon map as ONE verified set (full 19-site list in git 21dda30;
+best boot state = commit 357a6ce, all-2KB, reaches the linker).  See [[amix-040-init-userpage-pfn]].
 
 ## >>> ★ USER-PT FRONTIER (2026-06-24): hat_pt2ptdat invalid pte ptr -> port the user page-table builder <<<
 exec maps init's ELF segments (`execmap vaddr=80000034 filesz=66D4` / `vaddr=80008708 prot=F`),
