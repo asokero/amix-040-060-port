@@ -534,9 +534,11 @@ rexit:
 	pea	0x0a			| '\n'
 	jsr	serdbg_mark
 	addqw	&4,%sp
-| --- dump user stack C07FFF60..C07FFFC0 (24 words) via lfuword; the exit() caller's return
-|     address (C10xxxxx) lives here.  Each word space-separated; newline at the end. ---
-	movel	&0xC07FFF60,%d2
+| --- dump user stack C07FFFB0..C0800010 (24 words) via lfuword = the AUX VECTOR region (AT_PHDR(3)
+|     appeared at ~C07FFFB8 in the old window).  Looking for AT_BASE (type 7) <value>: must be
+|     C1000000 (the interp libc.so.1 base) or _rt_setup's self-relocation adds the wrong bias and
+|     leaves the GOT raw.  Each word space-separated; newline at the end. ---
+	movel	&0xC07FFFB0,%d2
 	movel	&24,%d3
 Lrx_loop:
 	pea	0x20			| ' '
@@ -577,6 +579,87 @@ Lrx_got:
 	subql	&1,%d3
 	bnew	Lrx_got
 	pea	0x0a			| '\n'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+| --- dump libc.so.1's .dynamic (vaddr C103073C, 22 words) via lfuword.  _rt_setup builds dyn[] from
+|     here and self-relocates with reladdr=ld_base+dyn[DT_RELA(7)], rend=reladdr+dyn[DT_RELASZ(8)].
+|     File values: DT_RELA `00000007 0000D0F8` @C103076C, DT_RELASZ `00000008 00002250` @C1030774,
+|     DT_NULL `00000000` @C103078C.  .dynamic ENDS at the data-segment bss boundary 0x30794, so if
+|     Model B partial-page bss handling zeroed/corrupted these tags -> empty self-reloc loop -> raw
+|     GOT -> linker exits.  Marker 'D'.  (Page C1030000 is the bss-COW pfn 7D00 at rexit; lfuword
+|     reads the same copy _rt_setup saw.) ---
+	pea	0x44			| 'D'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0xC103073C,%d2
+	movel	&22,%d3
+Lrx_dyn:
+	pea	0x20			| ' '
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%d2,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	addil	&4,%d2
+	subql	&1,%d3
+	bnew	Lrx_dyn
+	pea	0x0a			| '\n'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+| --- dump the RELA table _rt_setup's self-reloc loop walks: vaddr C100D0F8, 6 words = first 2
+|     Elf32_Rela entries (r_offset, r_info, r_addend).  Expected `0002E014 00000016 00011080
+|     0002E03C 00000016 0002E02C`.  If garbage/zero -> the loop reads bad relocations.  Marker 'L'. ---
+	pea	0x4c			| 'L'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0xC100D0F8,%d2
+	movel	&6,%d3
+Lrx_rela:
+	pea	0x20
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%d2,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	addil	&4,%d2
+	subql	&1,%d3
+	bnew	Lrx_rela
+	pea	0x0a
+	jsr	serdbg_mark
+	addqw	&4,%sp
+| --- DID the self-reloc loop EVER write the relocated _rtmalloc (file 0x1116E + C1000000 =
+|     C101116E) ANYWHERE in fast RAM?  Scan phys [0x07000000,0x08000000) via DTT0 identity, step 4.
+|     'Z' <phys|FFFFFFFF>.  Found -> the loop DID run (the page was later discarded/reverted = P2/
+|     teardown); not found -> the loop never executed its writes (bails/skips despite valid bounds). ---
+	pea	0x5a			| 'Z'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0x07000000,%d2
+Lrx_scan:
+	cmpil	&0x08000000,%d2
+	bccw	Lrx_snone
+	moveal	%d2,%a0
+	cmpil	&0xC101116E,%a0@
+	beqw	Lrx_sfound
+	addil	&4,%d2
+	braw	Lrx_scan
+Lrx_sfound:
+	movel	%d2,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	braw	Lrx_sdone
+Lrx_snone:
+	movel	&0xffffffff,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+Lrx_sdone:
+	pea	0x0a
 	jsr	serdbg_mark
 	addqw	&4,%sp
 | --- write-persistence test: store a sentinel to GOT+0x58 (C102FDE4) via the fault-safe suword,
