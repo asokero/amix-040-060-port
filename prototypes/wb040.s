@@ -28,36 +28,6 @@
 usrxmemflt:
 	linkw	%fp,&0
 	moveml	%d2-%d4/%a2-%a3,%sp@-
-| --- DBG (GOT-reloc frontier): trace usrxmemflt ENTRY for faults in the GOT data segment
-|     [C102E000,C1031000) BEFORE calling the original.  The as_fault wrapper only logs faults that
-|     REACH as_fault; this logs every fault that reaches usrxmemflt, so we can tell whether do_reloc's
-|     user-mode RMW WRITE to the file-backed GOT page even faults: a SSW bit8=0 (write) entry at a
-|     C102Fxxx addr -> the write DOES fault (fix usrxmemflt/wb040 classification); only bit8=1 (read)
-|     entries -> the 040 emulator never faults the RMW write (need eager private-anon copy).  FA@+84,
-|     SSW@+76, format/vector@+70.  Capped at 40, CE_WARN.  d2/d3/a2 are saved by the moveml above. ---
-	moveal	%fp@(8),%a2		| trap frame
-	movel	%a2@(84),%d2		| FA (fault address)
-	cmpil	&0xc102e000,%d2
-	bcsw	Lue_skip
-	cmpil	&0xc1031000,%d2
-	bccw	Lue_skip
-	movel	Lue_n,%d3
-	cmpil	&40,%d3
-	bccw	Lue_skip
-	addql	&1,%d3
-	movel	%d3,Lue_n
-	clrl	%d3
-	movew	%a2@(70),%d3		| format/vector word
-	movel	%d3,%sp@-		| 3rd vararg: fmt
-	clrl	%d3
-	movew	%a2@(76),%d3		| 040 SSW (bit8 = RW: 1=read, 0=write)
-	movel	%d3,%sp@-		| 2nd vararg: ssw
-	movel	%d2,%sp@-		| 1st vararg: fa
-	pea	Lue_msg
-	pea	2
-	jsr	cmn_err
-	lea	%sp@(20),%sp
-Lue_skip:
 	movel	%fp@(12),%sp@-		| arg2 (fault info)
 	movel	%fp@(8),%sp@-		| arg1 = trap frame
 	jsr	usrxmemflt_orig
@@ -155,12 +125,3 @@ Lwb_long:
 	rts
 	nop				| pad .text to keep text/data contiguous (pflusha +2 -> 2 nops, net same)
 	nop
-	nop				| +1 nop: entry-trace block left .text 2 bytes short of 4-align
-
-	.data
-	.even
-Lue_n:
-	.long	0
-Lue_msg:
-	.asciz	"DBG uxf-entry fa=%x ssw=%x fmt=%x"
-	.even

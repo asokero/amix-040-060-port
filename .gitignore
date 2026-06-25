@@ -26,3 +26,7 @@ unix_boot/arp40_2/
 *~
 *.swp
 ghindra-unix/
+
+# Third-party reference sources (do NOT commit -- copyright/size)
+svr4-src-3b2/
+fs-uae/
