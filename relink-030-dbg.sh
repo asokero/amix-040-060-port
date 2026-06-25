@@ -50,7 +50,7 @@ m68k-linux-gnu-objcopy \
 OUT="$HERE/build/unix-030-dbg"
 echo "[*] relinking -> $OUT"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-030-dbg-stage1" \
-	"$HERE/build/serdbg.o" "$HERE/build/serdbg_mark.o" "$HERE/build/execmark.o" "$HERE/build/asfault_probe.o"
+	"$HERE/build/serdbg.o" "$HERE/build/serdbg_mark.o" "$HERE/build/asfault_probe.o"
 
 # text/data contiguity (loader copies them as one block)
 CONTIG=$(m68k-linux-gnu-readelf -SW "$OUT" 2>/dev/null | awk '
