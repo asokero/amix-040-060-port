@@ -29,4 +29,6 @@ ghindra-unix/
 
 # Third-party reference sources (do NOT commit -- copyright/size)
 svr4-src-3b2/
+svr4-v4/
+usl-svr42/
 fs-uae/
