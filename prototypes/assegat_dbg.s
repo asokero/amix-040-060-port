@@ -451,5 +451,8 @@ Lco_flag:
 Lco_urp:
 	.long	0
 	.even
+Lrx_n:
+	.long	0
+	.even
 Lam_msg:
 	.asciz	"DBG as_map as=%x addr=%x size=%x ret=%x"
