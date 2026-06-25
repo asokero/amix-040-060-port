@@ -381,7 +381,7 @@ Lam_done:
 	.globl	as_fault
 as_fault:
 	linkw	%fp,&0
-	moveml	%d2-%d3/%a2,%sp@-
+	moveml	%d2-%d3/%a2-%a3,%sp@-
 	movel	%fp@(24),%sp@-		| rw
 	movel	%fp@(20),%sp@-		| type
 	movel	%fp@(16),%sp@-		| len
@@ -434,6 +434,15 @@ as_fault:
 	andil	&0x3f,%d0
 	asll	&2,%d0
 	movel	%a2@(0,%d0:l),%d3	| d3 = leaf PTE
+| --- read the trap frame's 040 SSW (frame+76) via the frame chain: as_fault's caller is
+|     usrxmemflt_orig, so my fp@(0) = usrxmemflt_orig's fp and *(that)+8 = its arg1 = the trap
+|     frame.  SSW bit 8 = RW (1=read,0=write), bit 10 = ATC fault, bits 2:0 = TM/FC.  This
+|     definitively shows whether do_reloc's WRITE is seen as a write (bit8=0) or read. ---
+	moveal	%fp@(0),%a3		| usrxmemflt_orig's fp
+	moveal	%a3@(8),%a3		| trap frame (usrxmemflt_orig arg1)
+	clrl	%d0
+	movew	%a3@(76),%d0		| 040 SSW
+	movel	%d0,%sp@-		| ssw
 	movel	%d3,%sp@-		| leaf PTE
 	movel	%d2,%sp@-		| ret
 	movel	%fp@(24),%sp@-		| rw
@@ -442,10 +451,10 @@ as_fault:
 	pea	Laf_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(28),%sp
+	lea	%sp@(32),%sp
 Laf_done:
 	movel	%d2,%d0
-	moveml	%fp@(-12),%d2-%d3/%a2
+	moveml	%fp@(-16),%d2-%d3/%a2-%a3
 	unlk	%fp
 	rts
 
@@ -585,7 +594,7 @@ Lrx_n:
 	.long	0
 	.even
 Laf_msg:
-	.asciz	"DBG as_fault addr=%x type=%x rw=%x ret=%x pte=%x"
+	.asciz	"DBG as_fault addr=%x type=%x rw=%x ret=%x pte=%x ssw=%x"
 	.even
 Laf_n:
 	.long	0
