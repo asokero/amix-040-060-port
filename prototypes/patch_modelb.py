@@ -185,6 +185,28 @@ P = [
  (0xad810, b"\x06\x81\x00\x00\x07\xff", b"\x06\x81\x00\x00\x0f\xff", "anon_dup:(size+2047)>>11 slot count -> +4095>>12 (fork)"),
  (0xad816, b"\x74\x0b", b"\x74\x0c", "anon_dup:slot-count shift >>11->>>12 (fork)"),
  (0xabc3e, b"\x72\x0b", b"\x72\x0c", "segvn_free:anon array kmem_free size (size>>11)*4 -> >>12 (match 4KB alloc)"),
+ # PHYSICAL PAGE PRIMITIVES (ppcopy / pagecopy / pagezero) -- pfn->phys shift + copy size.
+ # These take a struct page* and compute the physical address as `((page-pages)/60 + pages_base)
+ # << 11`, then bcopy/copyin/bzero a hardcoded 0x800 (2048) bytes.  On Model B both are wrong:
+ #   (a) pfn<<11 yields phys/2 -- a completely WRONG (half) physical address (the same pfn<<11->
+ #       <<12 fix already applied to gen_strategy, hat_sdtalloc, etc.; pages_base-relative pfns are
+ #       4KB on Model B so phys = pfn<<12).
+ #   (b) the hardcoded 0x800 copies/zeros only the LOWER 2KB of the 4KB page.
+ # THIS is the /sbin/init dynamic-linker bug (NOT the as_fault collision, which the 4KB demand-fault
+ # conversion already fixed): do_reloc WRITES the GOT (a private, file-backed page) -> the first
+ # copy-on-write of init's run -> segvn_faultpage -> anon_private -> ppcopy(orig,new).  ppcopy read
+ # from the wrong phys and copied only 2KB, so the new private GOT page's upper 2KB (the GOT slot at
+ # C102FE68 = _GLOBAL_OFFSET_TABLE_+0xDC) held garbage; do_reloc relocated it (+C1000000, wrapping
+ # ~0xA5xxxxxx -> 0x66000030) and dereferenced it -> USER BUS ERROR at 0x66000030 PC=C101100E.
+ # ppcopy (0xaf200): fix the shared shift (#11 drives BOTH lsll for from+to phys) and the size.
+ (0xaf230, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "ppcopy:copy size 2048->4096"),
+ (0xaf234, b"\x74\x0b", b"\x74\x0c", "ppcopy:pfn->phys shift <<11->>><12 (both from+to)"),
+ # pagecopy (0xaf24e): copyin a full page from a user addr into a phys page.
+ (0xaf268, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "pagecopy:copy size 2048->4096"),
+ (0xaf26c, b"\x72\x0b", b"\x72\x0c", "pagecopy:pfn->phys shift <<11->>><12"),
+ # pagezero (0xaf282): bzero; the byte count is a caller arg (left to the caller), only the base
+ # phys shift is wrong here.
+ (0xaf29c, b"\x72\x0b", b"\x72\x0c", "pagezero:pfn->phys shift <<11->>><12"),
  # hat_ptalloc: FORCE the page_get path; never reuse a pooled PT page.  The free_pts
  # reuse path (0xb68a6..0xb6918) sub-allocates 512B fragments inside a page using 030
  # 2KB-page math (b68ec #11 / b68f6 #9) and bzero's the stored fragment address -- on
