@@ -416,6 +416,31 @@ Lrx_loop:
 	pea	0x0a			| '\n'
 	jsr	serdbg_mark
 	addqw	&4,%sp
+| --- dump the libc.so.1 GOT (mapped @C102FD8C) starting at +0x50, 24 slots, so we can verify
+|     the R_68K_RELATIVE relocations: each should be C101xxxx/C102xxxx (file value + C1000000).
+|     A raw 0x000xxxxx = do_reloc never relocated it; garbage = COW page still wrong.  Marker 'G'.
+|     Key slots: +0x58 (C102FDE4) should be _rtmalloc C101116E; +0xDC (C102FE68) C102E050. ---
+	pea	0x47			| 'G'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0xC102FDDC,%d2		| GOT+0x50
+	movel	&40,%d3			| 40 slots -> +0x50..+0xEC (covers +0x58 _rtmalloc and +0xDC)
+Lrx_got:
+	pea	0x20			| ' '
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%d2,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	addil	&4,%d2
+	subql	&1,%d3
+	bnew	Lrx_got
+	pea	0x0a			| '\n'
+	jsr	serdbg_mark
+	addqw	&4,%sp
 Lrx_go:
 	moveml	%fp@(-12),%d2-%d3/%a2
 	unlk	%fp
