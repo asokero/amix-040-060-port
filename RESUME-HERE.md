@@ -1,23 +1,26 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-25)
 
-## OVERALL STATUS (one-paragraph)
-68040 port boots all the way to **/sbin/init running its DYNAMIC LINKER**.  pstart040 (MMU/Model B)
--> mlsetup -> root mounts -> banner -> swapconf -> sched -> 040 ctx switch -> proc 1 -> copyout(icode)
--> exec.  The USER-PAGE-TABLE frontier (prior session) is SOLVED: a chain of Model B 2KB->4KB fixes
-(hat_pteload lazy ptr-table zero+512-align; hat_ptalloc forced page_get; anon_resv/unresv 4KB;
-execmap bss-start 4KB; hat_ptfree no-op leak; elfexec AT_PAGESZ 4096 -- commits 03bae0f, 3e994ca,
-e801289, 0c00e09, 537a7dc, 45c63e0) took init through exec: it maps init (0x80000000) + the interp
-libc.so.1 (C1000000, the SVR4 m68k runtime linker), sets the aux vector + stack, and transfers to
-the interp entry C100F348.  libc.so.1's do_reloc runs and takes a USER BUS ERROR (PC=C101100E
-derefs 0x66000030).  **CURRENT FRONTIER = the user-VM DEMAND-FAULT PATH is still 2KB** (as_fault /
-segvn_fault / segvn_faultpage + the anon map).  A fault in the UPPER 2KB of a 4KB page (libc's GOT
-at C102FE68) maps at C102F800, which shares hat_pteload's leaf slot (va>>12)&0x3F with the page base
-C102F000 -> the 2nd 2KB fault overwrites the 1st's 4KB leaf PTE -> GOT corruption -> the linker
-bus-errors.  TIGHTLY COUPLED (3 boot-tested states prove piecemeal conversion breaks: both-4KB =
-kmem_alloc fault on the anon-map array; as_fault-4KB-only = "segvn_faultpage not found").  NEXT
-SUB-PROJECT = RE the anon_map struct + segvn_faultpage's hardcoded >>12 (@0xac0d2), convert as_fault
-+ segvn_fault + segvn_faultpage + anon map as ONE verified set (full 19-site list in git 21dda30;
-best boot state = commit 357a6ce, all-2KB, reaches the linker).  See [[amix-040-init-userpage-pfn]].
+## OVERALL STATUS (one-paragraph, updated 2026-06-25 late)
+68040 port boots to **/sbin/init running its DYNAMIC LINKER** (libc.so.1 interp @C1000000).  The
+0x66000030 bus error is GONE (fixed: demand-fault path 4KB + anon-array consumers + ppcopy/pagecopy/
+pagezero pfn<<12 + usrxmemflt SSW-rw@frame+76 + wb040 pflusha -- commits 57f8d1a/48aa2b4/8c4ddcb/
+a69d3ea/bca2b9e).  init jumps to the interp entry C100F348, do_reloc runs.  **CURRENT FRONTIER =
+libc.so.1's GOT is never RELOCATED -> the linker `jsr`s a raw GOT slot (calls exit not _rtmalloc)
+-> exit()s before init's _start @0x80000034 (which NEVER runs -- no 0x80000000 code fault ever).**
+ROOT (proven this session): do_reloc's USER-mode writes to the file-backed GOT page (pfn 7CFE) DON'T
+PERSIST.  It is NOT a write-protect/COW issue -- a force-writable test (hat_pteload prot|=2 for the
+GOT pages, reverted) mapped them writable and the GOT was STILL RAW.  Decisive: the as_fault wrapper
+(assegat_dbg.s) now dumps the leaf PTE (URP walk) + the trap-frame 040 SSW (frame chain) -> C102FE68
+is a genuine READ (ssw bit8=1, rw classification CORRECT), PTE 7CFE005 (RO file page); a supervisor
+`moves` (suword) to the SAME page COWs + persists; do_reloc's STACK writes (anon page) work.  So
+USER writes work for ANON pages but not the file-cache page.  hat_pteload "GOTmap" trace + Ghidra
+decompile show segvn_fault maps the page TWICE (Loop1 segvn_faultpage + Loop2 the VOP_GETPAGE plist
+walk, which does `p_keepcnt-- ; if 0 release page`).  LEADING HYPOTHESIS: the file page is RECLAIMED
+(p_keepcnt->0, and the 040 hat may not keep it referenced via p_mapping) and RE-READ from disk over
+do_reloc's relocations.  NEXT: Ghidra-trace WHY page C102F000 is re-faulted/reclaimed (the page
+reclaim path + hat_pteload p_mapping tracking); fix dir = eager private anon copy at read-fault OR a
+correct page-mapping reference.  TOOLING NOW: Ghidra headless decompiler (tools/ghidra-decomp.sh,
+LOCAL-BUILD-NOTES §7).  See [[amix-040-init-userpage-pfn]] (newest section).
 
 ## >>> ★ USER-PT FRONTIER (2026-06-24): hat_pt2ptdat invalid pte ptr -> port the user page-table builder <<<
 exec maps init's ELF segments (`execmap vaddr=80000034 filesz=66D4` / `vaddr=80008708 prot=F`),
