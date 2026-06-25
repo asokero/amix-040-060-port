@@ -97,7 +97,15 @@ Lwr_ret:
 	rts
 
 | Lwb_do: d3 = WBxS, a3 = target address, d2 = data.  Set DFC = WBxS&7, moves.<size> d2 -> (a3).
+| pflusha FIRST: when the faulting write was a write-PROTECT fault on a PRESENT page (do_reloc
+| relocating libc.so.1's GOT, which it had just READ -> the page was resident read-only), as_fault
+| COW'd it to a fresh writable page, but the 68040 ATC still holds the OLD read-only translation
+| for this VA.  Without flushing, this moves re-issues the store through the stale read-only ATC
+| entry and the write is lost -> the GOT stayed unrelocated.  (A not-present demand-fault write,
+| e.g. suword, has no stale entry, which is why those persisted.)  Flush the whole ATC so the
+| moves re-walks the page table and picks up the new writable PTE.
 Lwb_do:
+	.word	0xf518			| pflusha -- drop stale ATC entries before re-issuing the store
 	moveq	&7,%d0
 	andl	%d3,%d0			| FC = WBxS & 7
 	.word	0x4e7b,0x0001		| movec %d0,%dfc
@@ -115,6 +123,5 @@ Lwb_byte:
 Lwb_long:
 	.word	0x0e93,0x2800		| moves.l %d2,%a3@
 	rts
-	nop				| pad .text to keep text/data contiguous
-	nop
+	nop				| pad .text to keep text/data contiguous (pflusha +2 -> 2 nops, net same)
 	nop
