@@ -23,6 +23,7 @@ echo "[*] assembling serial hook + standalone serdbg_mark + exec/lookup markers"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/serdbg.s"       -o "$HERE/build/serdbg.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/serdbg_mark.s"  -o "$HERE/build/serdbg_mark.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/execmark.s"     -o "$HERE/build/execmark.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/asfault_probe.s" -o "$HERE/build/asfault_probe.o"
 
 echo "[*] weaken conputc + all marker targets; add _orig aliases (addrs from stock unix)"
 cp "$IN" "$HERE/build/unix-030-dbg-stage1"
@@ -42,12 +43,14 @@ m68k-linux-gnu-objcopy \
 	--add-symbol iget_orig=.text:0x6f724,function,global           --weaken-symbol iget \
 	--add-symbol copyinstr_orig=.text:0x43ef4,function,global       --weaken-symbol copyinstr \
 	--add-symbol u_trap_orig=.text:0x5a47e,function,global         --weaken-symbol u_trap \
+	--add-symbol exhd_getmap_orig=.text:0x5704e,function,global    --weaken-symbol exhd_getmap \
+	--add-symbol as_fault_orig=.text:0xae108,function,global       --weaken-symbol as_fault \
 	"$HERE/build/unix-030-dbg-stage1"
 
 OUT="$HERE/build/unix-030-dbg"
 echo "[*] relinking -> $OUT"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-030-dbg-stage1" \
-	"$HERE/build/serdbg.o" "$HERE/build/serdbg_mark.o" "$HERE/build/execmark.o"
+	"$HERE/build/serdbg.o" "$HERE/build/serdbg_mark.o" "$HERE/build/execmark.o" "$HERE/build/asfault_probe.o"
 
 # text/data contiguity (loader copies them as one block)
 CONTIG=$(m68k-linux-gnu-readelf -SW "$OUT" 2>/dev/null | awk '
