@@ -123,36 +123,23 @@ P = [
  # with 2KB granularity and dereferenced a wrongly-relocated pointer (0x66000030) -> USER BUS
  # ERROR PC=C101100E in /sbin/init's interpreter, the first time init runs.  Report 4096.
  (0xb842c, b"\x24\xfc\x00\x00\x08\x00", b"\x24\xfc\x00\x00\x10\x00", "elfexec:AT_PAGESZ 2048->4096"),
- # USER DEMAND-FAULT PATH (as_fault / as_faulta / as_setprot / segvn_fault): the 030 code rounds
- # the fault VA to a 2KB page and strides 2KB.  On Model B (4KB MMU pages) a fault in the UPPER
- # 2KB of a page (e.g. libc.so.1's GOT at C102FE68) rounds to C102F800; segvn_fault maps it, but
- # hat_pteload's leaf index (va>>12)&0x3F is identical for C102F800 and C102F000 -> the 2nd 2KB
- # fault OVERWRITES the 4KB leaf PTE of the 1st -> the page is corrupted (GOT slot reads garbage
- # 0x66000030) -> /sbin/init's runtime linker (libc.so.1 do_reloc) USER BUS ERRORs.  Convert the
- # whole coupled set to 4KB (as_fault rounds + calls segvn_fault, which loops pages internally).
- # Each site verified as a page-size constant (round/stride/click-shift), not an unrelated count.
- # --- as_fault (round fault range to page) ---
- (0xae156, b"\x02\x43\xf8\x00", b"\x02\x43\xf0\x00", "as_fault:round start -2048->-4096"),
- (0xae15e, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_fault:round end +2047->+4095"),
- (0xae164, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_fault:round end -2048->-4096"),
- # --- as_faulta (round + per-page stride loop) ---
- (0xae26a, b"\x02\x42\xf8\x00", b"\x02\x42\xf0\x00", "as_faulta:round start -2048->-4096"),
- (0xae272, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_faulta:round end +2047->+4095"),
- (0xae278, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_faulta:round end -2048->-4096"),
- (0xae2cc, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "as_faulta:stride +2048->+4096"),
- (0xae2d2, b"\x06\x83\xff\xff\xf8\x00", b"\x06\x83\xff\xff\xf0\x00", "as_faulta:size -2048->-4096"),
- # --- as_setprot (round range to page; called by execmap) ---
- (0xae2fc, b"\x02\x43\xf8\x00", b"\x02\x43\xf0\x00", "as_setprot:round start -2048->-4096"),
- (0xae304, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_setprot:round end +2047->+4095"),
- (0xae30a, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_setprot:round end -2048->-4096"),
- # --- segvn_fault internal page math: REVERTED (bisect 2026-06-25).  Converting these caused a
- #     kmem_alloc bus error during exec (segvn_fault->kmem_zalloc the anon-map array).  The anon
- #     map is a 2KB-granular array (size>>11 slots @ac4fe, indexed offset>>11 @ac52e) and changing
- #     its granularity is coupled to segvn_faultpage (which hardcodes a >>12) in a way that's not
- #     yet understood.  Keep segvn's internal 2KB anon map; the C102F800 COLLISION is addressed by
- #     as_fault rounding the fault VA to 4KB (above) -- test whether that alone fixes it before
- #     touching segvn_fault's stride/test (ac5d4/ac726/ac72c) again.  TODO: understand the anon-map
- #     vs segvn_faultpage >>12 coupling, then convert as a verified set.
+ # USER DEMAND-FAULT PATH (as_fault/as_faulta/as_setprot/segvn_fault/segvn_faultpage) -- NEXT
+ # SUB-PROJECT, NOT YET CONVERTED (attempt reverted 2026-06-25, commits 21dda30/ad64eee).
+ # The 030 path rounds the fault VA to 2KB and the anon map is a 2KB-granular array.  On Model B a
+ # fault in the UPPER 2KB of a 4KB page (libc.so.1's GOT at C102FE68) maps at C102F800, which shares
+ # hat_pteload's leaf slot (va>>12)&0x3F with C102F000 -> the 2nd 2KB fault overwrites the 1st's 4KB
+ # leaf PTE -> GOT corruption -> /sbin/init's runtime linker (libc.so.1 do_reloc) USER BUS ERROR at
+ # 0x66000030.  MEASURED COUPLING (do NOT convert piecemeal): (a) as_fault@0xae156 rounds the fault
+ # VA (andiw #-2048); (b) segvn_fault allocates the anon map size>>11 slots (@0xac4fe) indexed
+ # offset>>11 (@0xac52e/0xac778) with stride #2048 (@0xac726/0xac72c) and a single-page test #2048
+ # (@0xac5d4); (c) segvn_faultpage@0xac0d2 ALREADY hardcodes >>12.  Three boot-tested states:
+ #   * all 2KB (here): reaches the linker, GOT collision -> user bus error 0x66000030.
+ #   * as_fault 4KB + segvn 4KB: KERNEL bus error in kmem_alloc (segvn->kmem_zalloc anon map).
+ #   * as_fault 4KB + segvn 2KB: PANIC "segvn_faultpage not found".
+ # So as_fault and segvn must convert together AND the anon-map array/index granularity vs
+ # segvn_faultpage's >>12 must be reconciled first.  Full site list saved in git 21dda30.  TODO:
+ # RE the anon-map (anon_map struct @(8) array, @(12)/@(16)/@(20) cursors) + segvn_faultpage's
+ # page lookup before converting as a verified coupled set.
  # hat_ptalloc: FORCE the page_get path; never reuse a pooled PT page.  The free_pts
  # reuse path (0xb68a6..0xb6918) sub-allocates 512B fragments inside a page using 030
  # 2KB-page math (b68ec #11 / b68f6 #9) and bzero's the stored fragment address -- on
