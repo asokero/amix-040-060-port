@@ -1,26 +1,32 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-25)
 
-## OVERALL STATUS (one-paragraph, updated 2026-06-25 late)
+## OVERALL STATUS (one-paragraph, updated 2026-06-25 LATEST -- SMOKING GUN found)
 68040 port boots to **/sbin/init running its DYNAMIC LINKER** (libc.so.1 interp @C1000000).  The
-0x66000030 bus error is GONE (fixed: demand-fault path 4KB + anon-array consumers + ppcopy/pagecopy/
-pagezero pfn<<12 + usrxmemflt SSW-rw@frame+76 + wb040 pflusha -- commits 57f8d1a/48aa2b4/8c4ddcb/
-a69d3ea/bca2b9e).  init jumps to the interp entry C100F348, do_reloc runs.  **CURRENT FRONTIER =
-libc.so.1's GOT is never RELOCATED -> the linker `jsr`s a raw GOT slot (calls exit not _rtmalloc)
--> exit()s before init's _start @0x80000034 (which NEVER runs -- no 0x80000000 code fault ever).**
-ROOT (proven this session): do_reloc's USER-mode writes to the file-backed GOT page (pfn 7CFE) DON'T
-PERSIST.  It is NOT a write-protect/COW issue -- a force-writable test (hat_pteload prot|=2 for the
-GOT pages, reverted) mapped them writable and the GOT was STILL RAW.  Decisive: the as_fault wrapper
-(assegat_dbg.s) now dumps the leaf PTE (URP walk) + the trap-frame 040 SSW (frame chain) -> C102FE68
-is a genuine READ (ssw bit8=1, rw classification CORRECT), PTE 7CFE005 (RO file page); a supervisor
-`moves` (suword) to the SAME page COWs + persists; do_reloc's STACK writes (anon page) work.  So
-USER writes work for ANON pages but not the file-cache page.  hat_pteload "GOTmap" trace + Ghidra
-decompile show segvn_fault maps the page TWICE (Loop1 segvn_faultpage + Loop2 the VOP_GETPAGE plist
-walk, which does `p_keepcnt-- ; if 0 release page`).  LEADING HYPOTHESIS: the file page is RECLAIMED
-(p_keepcnt->0, and the 040 hat may not keep it referenced via p_mapping) and RE-READ from disk over
-do_reloc's relocations.  NEXT: Ghidra-trace WHY page C102F000 is re-faulted/reclaimed (the page
-reclaim path + hat_pteload p_mapping tracking); fix dir = eager private anon copy at read-fault OR a
-correct page-mapping reference.  TOOLING NOW: Ghidra headless decompiler (tools/ghidra-decomp.sh,
-LOCAL-BUILD-NOTES §7).  See [[amix-040-init-userpage-pfn]] (newest section).
+0x66000030 bus error is GONE.  init jumps to the interp entry C100F348; the linker runs but
+**libc.so.1's GOT is never RELOCATED -> the linker reads its own _rt_warn/_rt_tracing through the
+raw GOT, gets garbage, and `_exit(0)`s cleanly before init's _start runs.**  THREE theories were
+chased and KILLED this session: (1) ptest/F_PROT misclassification; (2) RMW-write-drop (the GOT
+relocs are ALL R_68K_RELATIVE PLAIN stores -- via the SVR4-3b2 rtld source); (3) "fs-uae drops user
+stores to COW'd pages" (REFUTED by reading fs-uae cpummu.cpp -- user write-protect WRITES fault
+correctly).  The 3 fixes built for those (eager-COW segvn_cow040.s, pflusha, usrxmemflt-trace) were
+WRONG-MODEL and were **REVERTED (commit a429df1)**.  **CORRECTED ROOT (SMOKING GUN): the interp's
+`.rela.data` file page maps 0x800 (2KB) TOO LOW -- a Model B 2KB file-offset straggler in the
+demand-paging path.**  Proof: SVR4-3b2 `rtld/m32/rtsetup.c` shows `_rt_setup`(0x127b4) self-relocates
+ld.so via `*(ld_base + r_offset) = ld_base + r_addend` over DT_RELA..DT_RELA+DT_RELASZ.  At runtime
+AT_BASE=C1000000 and `.dynamic`(DT_RELA=0xd0f8, DT_RELASZ=0x2250) are BOTH correct, so reladdr=
+C100D0F8.  But a rexit probe reading C100D0F8 (should be .rela.data[0] = `0002E014 00000016
+00011080`) got the ASCII strings `_devzero_fd\0ungetc\0sigs` = FILE offset **0xc8f8** -> 0xd0f8 -
+0xc8f8 = **0x800**.  So _rt_setup reads .strtab strings where its relocations should be -> the GOT is
+never relocated (a RAM scan for the relocated _rtmalloc C101116E found it NOWHERE).  OPEN LINK
+(don't over-claim): if the loop read this -0x800 garbage during the NORMAL run the bad type byte
+0x72 != RELATIVE(22) would SIGKILL, but we see a clean _exit -- so first CONFIRM the -0x800 is a
+normal demand-fault bug (dump C100D0F8 via an EARLIER hook, not rexit) and not a teardown artifact.
+Then FIND+FIX the 2KB straggler in segvn_fault/ufs_getpage's page file-offset (= svd->offset +
+(page_va - seg_base); a remaining >>11/0x800 round) -- same family as gen_strategy/pvn_*/segmap.
+Diags live: assegat_dbg.s rexit probes 'L'(rela)/'D'(.dynamic)/'Z'(RAM scan)/'P'(phys PTE)/auxv
+stack dump.  REFERENCE SOURCES (gitignored, do NOT commit -- copyright): `svr4-src-3b2/` (SVR4 VM +
+rtld C source) and `fs-uae/` (68040 MMU emulation cpummu.cpp).  Real 040 HW (a3640/Mercury) =
+separate later track (no serial cable now).  See [[amix-040-init-userpage-pfn]] (newest section).
 
 ## >>> ★ USER-PT FRONTIER (2026-06-24): hat_pt2ptdat invalid pte ptr -> port the user page-table builder <<<
 exec maps init's ELF segments (`execmap vaddr=80000034 filesz=66D4` / `vaddr=80008708 prot=F`),
