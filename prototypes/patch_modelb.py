@@ -218,6 +218,26 @@ P = [
  # pool fills but is never drained -- a bounded leak, same philosophy as hat_free's V1
  # pointer-table leak).  TODO: port the 4KB fragment pool if leaf churn ever matters.
  (0xb68a2, b"\x67\x00\x00\x78", b"\x60\x00\x00\x78", "hat_ptalloc:force page_get (skip free_pts reuse)"),
+ # ----------------------------------------------------------------------------------------------
+ # 68040 ACCESS-ERROR FRAME: read/write classification in usrxmemflt (NOT a Model B page-size
+ # patch -- an 040 trap-frame port, lives here because patch_modelb.py is the 040-only byte-patch
+ # pass).  usrxmemflt computes the fault's rw (read vs write) for as_fault from the SSW:
+ #   5af14: moveq #64,%d0          ; mask 0x40
+ #   5af16: andl  %a0@(72),%d0     ; & frame+72   -> (bit set) rw=1 read, else rw=2 write (=COW)
+ # frame+72 = the 030 SSW, but on the 68040 format-7 access-error frame +72 (=CPU+0x08) is the
+ # EFFECTIVE ADDRESS, not the SSW.  The 040 SSW is at frame+76 (CPU+0x0C) and its RW bit is bit 8
+ # (0x100; 1=read, 0=write) -- same place userspace040.s already reads for the FC/TM bits.  So on
+ # 040 the rw was derived from bit 6 of the fault EA = garbage -> a USER WRITE (do_reloc relocating
+ # libc.so.1's GOT, a private file-backed page) was misclassified as a READ -> segvn never COW'd
+ # the page -> the relocation writes never persisted -> the GOT stayed RAW (every slot = its file
+ # value, unrelocated) -> the dynamic linker called a raw GOT slot and exit()'d before transferring
+ # to /sbin/init.  PROVEN by the rexit GOT dump (all 40 slots raw 0x000xxxxx, e.g. +0x58 = 0001116E
+ # instead of the relocated C101116E _rtmalloc).
+ # Fix (6 bytes in place): read the 040 SSW high byte at frame+76 and test bit 8 via a byte AND:
+ #   moveq #1,%d0 ; andb %a0@(76),%d0   -> d0 = SSW bit 8 (RW).  bit set (read) -> rw=1; clear
+ #   (write) -> rw=2 (COW).  Same rw=1/rw=2 semantics the 030 path produced.  (usrxmemflt is also
+ #   wrapped by wb040.s, which calls usrxmemflt_orig = this patched code, so the fix is live.)
+ (0x5af14, b"\x70\x40\xc0\xa8\x00\x48", b"\x70\x01\xc0\x28\x00\x4c", "usrxmemflt:040 SSW rw bit (frame+72 030 -> frame+76 bit8 040)"),
 ]
 
 def main():
