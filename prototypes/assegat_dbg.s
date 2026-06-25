@@ -381,7 +381,7 @@ Lam_done:
 	.globl	as_fault
 as_fault:
 	linkw	%fp,&0
-	moveml	%d2/%a2,%sp@-
+	moveml	%d2-%d3/%a2,%sp@-
 	movel	%fp@(24),%sp@-		| rw
 	movel	%fp@(20),%sp@-		| type
 	movel	%fp@(16),%sp@-		| len
@@ -400,6 +400,41 @@ as_fault:
 	bccw	Laf_done
 	addql	&1,%d0
 	movel	%d0,Laf_n
+| --- walk the ACTIVE user page table (URP) for the fault VA and read the leaf PTE, so we see the
+|     page's protection AFTER as_fault resolved it.  d3 = leaf PTE; bit 2 = W (write-protected),
+|     bits 1:0 = UDT (1 = resident).  Tables live in fast-RAM phys (0x07xxxxxx), reachable as
+|     kernel VAs via the DTT0 identity window (va<0x40000000).  Walk: root[va>>25 &7F] (ptr base
+|     bits 31:9) -> ptr[va>>18 &7F] (leaf base bits 31:8) -> leaf[va>>12 &3F]. ---
+	clrl	%d3
+	.word	0x4e7a,0x0806		| movec %urp,%d0  (active user root phys)
+	moveal	%d0,%a2
+	movel	%fp@(12),%d1		| va
+	movel	%d1,%d0
+	lsrl	&8,%d0			| (lsrl max 8) -- shift va>>25 in two steps
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&1,%d0			| va>>25
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	movel	%a2@(0,%d0:l),%d0	| Adesc = root[Aidx]
+	andil	&0xfffffe00,%d0		| ptr table base
+	moveal	%d0,%a2
+	movel	%d1,%d0
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&2,%d0			| va>>18
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	movel	%a2@(0,%d0:l),%d0	| Bdesc = ptr[Bidx]
+	andil	&0xffffff00,%d0		| leaf table base
+	moveal	%d0,%a2
+	movel	%d1,%d0
+	lsrl	&8,%d0
+	lsrl	&4,%d0			| va>>12
+	andil	&0x3f,%d0
+	asll	&2,%d0
+	movel	%a2@(0,%d0:l),%d3	| d3 = leaf PTE
+	movel	%d3,%sp@-		| leaf PTE
 	movel	%d2,%sp@-		| ret
 	movel	%fp@(24),%sp@-		| rw
 	movel	%fp@(20),%sp@-		| type
@@ -407,10 +442,10 @@ as_fault:
 	pea	Laf_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(24),%sp
+	lea	%sp@(28),%sp
 Laf_done:
 	movel	%d2,%d0
-	moveml	%fp@(-8),%d2/%a2
+	moveml	%fp@(-12),%d2-%d3/%a2
 	unlk	%fp
 	rts
 
@@ -550,7 +585,7 @@ Lrx_n:
 	.long	0
 	.even
 Laf_msg:
-	.asciz	"DBG as_fault addr=%x type=%x rw=%x ret=%x"
+	.asciz	"DBG as_fault addr=%x type=%x rw=%x ret=%x pte=%x"
 	.even
 Laf_n:
 	.long	0
