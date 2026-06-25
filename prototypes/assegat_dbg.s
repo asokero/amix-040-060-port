@@ -482,6 +482,58 @@ rexit:
 	movel	%a0@,%sp@-		| exit status
 	jsr	serdbg_hex
 	addqw	&4,%sp
+| --- DBG (P1/P2/P3 distinguisher): walk curproc URP for C102FDE4 -> leaf PTE (pfn) and read the
+|     slot DIRECTLY from its physical page (DTT0 identity, va<0x40000000).  'P' <leafPTE> <physval>.
+|     pfn 7CFD == the eager-COW page (NOT re-COW'd/reclaimed -> writes truly never landed = P1/P3);
+|     a DIFFERENT pfn -> the page was replaced after do_reloc (P2).  physval vs the lfuword 'G' read:
+|     differ -> lfuword reads a stale ATC/mapping; same raw -> the RAM page itself is unrelocated. ---
+	pea	0x50			| 'P'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	.word	0x4e7a,0x0806		| movec %urp,%d0
+	moveal	%d0,%a2
+	movel	&0xC102FDE4,%d3		| va (preserved through the 3-level walk)
+	movel	%d3,%d0
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&1,%d0			| va>>25
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	movel	%a2@(0,%d0:l),%d0	| root[Aidx]
+	andil	&0xfffffe00,%d0
+	moveal	%d0,%a2
+	movel	%d3,%d0
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&2,%d0			| va>>18
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	movel	%a2@(0,%d0:l),%d0	| ptr[Bidx]
+	andil	&0xffffff00,%d0
+	moveal	%d0,%a2
+	movel	%d3,%d0
+	lsrl	&8,%d0
+	lsrl	&4,%d0			| va>>12
+	andil	&0x3f,%d0
+	asll	&2,%d0
+	movel	%a2@(0,%d0:l),%d2	| d2 = leaf PTE
+	movel	%d2,%sp@-
+	jsr	serdbg_hex		| leaf PTE (pfn in bits 31:12)
+	addqw	&4,%sp
+	pea	0x20			| ' '
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%d2,%d0
+	andil	&0xfffff000,%d0		| phys page base
+	oril	&0xDE4,%d0		| + (C102FDE4 & 0xFFF) = slot +0x58
+	moveal	%d0,%a0
+	movel	%a0@,%sp@-		| read slot DIRECTLY from RAM (DTT0 identity)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x0a			| '\n'
+	jsr	serdbg_mark
+	addqw	&4,%sp
 | --- dump user stack C07FFF60..C07FFFC0 (24 words) via lfuword; the exit() caller's return
 |     address (C10xxxxx) lives here.  Each word space-separated; newline at the end. ---
 	movel	&0xC07FFF60,%d2
