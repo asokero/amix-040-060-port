@@ -67,6 +67,31 @@ Lpo_nooff:
 	moveal	%fp@(16),%a2
 Lpo_no:
 
+| --- DBG: trace EVERY hat_pteload of the libc.so.1 GOT pages [C102F000, C1031000) -- va + pfn +
+|     prot.  Reveals page C102F000's mapping HISTORY: do_reloc's writes should map it WRITABLE
+|     (prot&2, a fresh COW pfn) and the read fault maps the RO file page (prot read-only, pfn
+|     0x7CFE).  If a writable mapping is later REPLACED by an RO mapping (different pfn), the COW
+|     relocations are reverted -> the linker reads raw.  Gated 40, CE_WARN; d2/a2 reloaded after. ---
+	cmpil	&0xc102f000,%d2
+	bcsw	Lgt_no
+	cmpil	&0xc1031000,%d2
+	bccw	Lgt_no
+	movel	Lgt_n,%d0
+	cmpil	&40,%d0
+	bccw	Lgt_no
+	addql	&1,%d0
+	movel	%d0,Lgt_n
+	movel	%fp@(24),%sp@-		| prot
+	movel	%fp@(20),%sp@-		| pfn
+	movel	%d2,%sp@-		| va
+	pea	Lgt_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(20),%sp
+	movel	%fp@(12),%d2		| reload (cmn_err scratch)
+	moveal	%fp@(16),%a2
+Lgt_no:
+
 | --- DBG: trace the first 40 maps >=0x48000000 (u-area in segu_get AND, after the
 |     8 u-area maps, any exec-REBUILD faults at init text 0x80800000 / stack 0xC07FF000
 |     -- shows whether the boot PROGRESSES past the teardown).  Gated, CE_WARN. ---
@@ -1148,6 +1173,12 @@ Lpo_msg:
 	.asciz	"DBG segmap-map va=%x poff=%x pfn=%x"
 	.even
 Lpo_n:
+	.long	0
+	.even
+Lgt_msg:
+	.asciz	"DBG GOTmap va=%x pfn=%x prot=%x"
+	.even
+Lgt_n:
 	.long	0
 Lpemsg0:
 	.asciz	"hat_pteload: root NOT resident va=%x rootbase=%x Aidx=%x Adesc4=%x desc8=%x"
