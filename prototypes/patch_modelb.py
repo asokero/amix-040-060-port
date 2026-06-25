@@ -167,6 +167,24 @@ P = [
  (0xac726, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "segvn_fault:loop addr stride +2048->+4096"),
  (0xac72c, b"\x06\x85\x00\x00\x08\x00", b"\x06\x85\x00\x00\x10\x00", "segvn_fault:loop file-offset stride +2048->+4096"),
  (0xac778, b"\x76\x0b", b"\x76\x0c", "segvn_fault:in-memory fast-path page index >>11->>>12"),
+ # ANON-ARRAY CONSUMERS -- the rest of the coupled set.  The anon[] array is now sized one-slot-
+ # per-4KB-page (segvn_fault site 1).  Every function that WALKS or FREES that array by a
+ # byte-size->slot-count conversion MUST also use >>12, else it runs off the (now smaller) array.
+ # This is what bus-errored kmem_alloc in the both-4KB attempt (21dda30): NOT as_setprot, but the
+ # relvm teardown.  Confirmed call path 2026-06-25: as_free -> seg_unmap -> segvn_unmap; for a
+ # WHOLE-segment unmap (ab72a: addr==s_base && len==s_size, always true during relvm) segvn_unmap
+ # calls seg_free -> segvn_free, which calls anon_free(base, BYTE size) + kmem_free(anon array,
+ # (size>>shift)*4).  segvn_unmap's PARTIAL-unmap split/realloc paths (ab74c+) do NOT run during
+ # relvm, so they stay 2KB for now (TODO: convert with the rest if munmap-in-the-middle is used).
+ # anon_free walks (size+2047)>>11 slots calling anon_decref -- off the end of a 4KB array it
+ # decrefs garbage -> corrupts the kmem free list -> the next kmem_zalloc (segvn_fault anon array)
+ # bus-errors.  vpage[] stays 2KB everywhere (init segments have uniform prot -> vpage==NULL), so
+ # segvn_free's vpage free (abb8e/abbbe) is left untouched.
+ (0xad852, b"\x06\x82\x00\x00\x07\xff", b"\x06\x82\x00\x00\x0f\xff", "anon_free:(size+2047)>>11 slot count -> +4095>>12"),
+ (0xad858, b"\x72\x0b", b"\x72\x0c", "anon_free:slot-count shift >>11->>>12"),
+ (0xad810, b"\x06\x81\x00\x00\x07\xff", b"\x06\x81\x00\x00\x0f\xff", "anon_dup:(size+2047)>>11 slot count -> +4095>>12 (fork)"),
+ (0xad816, b"\x74\x0b", b"\x74\x0c", "anon_dup:slot-count shift >>11->>>12 (fork)"),
+ (0xabc3e, b"\x72\x0b", b"\x72\x0c", "segvn_free:anon array kmem_free size (size>>11)*4 -> >>12 (match 4KB alloc)"),
  # hat_ptalloc: FORCE the page_get path; never reuse a pooled PT page.  The free_pts
  # reuse path (0xb68a6..0xb6918) sub-allocates 512B fragments inside a page using 030
  # 2KB-page math (b68ec #11 / b68f6 #9) and bzero's the stored fragment address -- on
