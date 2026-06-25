@@ -25,3 +25,4 @@ unix_boot/arp40_2/
 .claude/settings.local.json
 *~
 *.swp
+ghindra-unix/
