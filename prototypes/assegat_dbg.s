@@ -441,6 +441,34 @@ Lrx_got:
 	pea	0x0a			| '\n'
 	jsr	serdbg_mark
 	addqw	&4,%sp
+| --- write-persistence test: store a sentinel to GOT+0x58 (C102FDE4) via the fault-safe suword,
+|     then read it back via lfuword.  Format: 'W' <suword_ret> <readback>.
+|       ret=0 & readback=AA55AA55 -> page WRITABLE (do_reloc's writes should have persisted ->
+|         the bug is a read/write page split, or do_reloc never wrote);
+|       ret=FFFFFFFF             -> the store FAULTED = page READ-ONLY (COW never made it writable);
+|       ret=0 & readback!=sentinel -> reads and writes hit DIFFERENT phys pages (COW map split). ---
+	pea	0x57			| 'W'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0xAA55AA55,%sp@-	| value
+	movel	&0xC102FDE4,%sp@-	| addr = GOT+0x58
+	jsr	suword
+	addqw	&8,%sp
+	movel	%d0,%sp@-		| suword return (0 ok, -1 fault)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x20			| ' '
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0xC102FDE4,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-		| read-back value
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x0a			| '\n'
+	jsr	serdbg_mark
+	addqw	&4,%sp
 Lrx_go:
 	moveml	%fp@(-12),%d2-%d3/%a2
 	unlk	%fp
