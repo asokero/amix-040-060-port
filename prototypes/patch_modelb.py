@@ -145,15 +145,14 @@ P = [
  (0xae2fc, b"\x02\x43\xf8\x00", b"\x02\x43\xf0\x00", "as_setprot:round start -2048->-4096"),
  (0xae304, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_setprot:round end +2047->+4095"),
  (0xae30a, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_setprot:round end -2048->-4096"),
- # --- segvn_fault (internal page math: size->clicks, offset>>page, single-page test, stride) ---
- (0xac4fe, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segvn_fault:size +2047->+4095"),
- (0xac504, b"\x76\x0b", b"\x76\x0c", "segvn_fault:size>>11 shift (#11->#12)"),
- (0xac52e, b"\x76\x0b", b"\x76\x0c", "segvn_fault:offset>>11 shift (#11->#12)"),
- (0xac59a, b"\x76\x0b", b"\x76\x0c", "segvn_fault:>>11 shift (#11->#12)"),
- (0xac5d4, b"\x0c\xae\x00\x00\x08\x00", b"\x0c\xae\x00\x00\x10\x00", "segvn_fault:single-page test #2048->#4096"),
- (0xac726, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "segvn_fault:va stride +2048->+4096"),
- (0xac72c, b"\x06\x85\x00\x00\x08\x00", b"\x06\x85\x00\x00\x10\x00", "segvn_fault:off stride +2048->+4096"),
- (0xac778, b"\x76\x0b", b"\x76\x0c", "segvn_fault:va>>11 page index (#11->#12)"),
+ # --- segvn_fault internal page math: REVERTED (bisect 2026-06-25).  Converting these caused a
+ #     kmem_alloc bus error during exec (segvn_fault->kmem_zalloc the anon-map array).  The anon
+ #     map is a 2KB-granular array (size>>11 slots @ac4fe, indexed offset>>11 @ac52e) and changing
+ #     its granularity is coupled to segvn_faultpage (which hardcodes a >>12) in a way that's not
+ #     yet understood.  Keep segvn's internal 2KB anon map; the C102F800 COLLISION is addressed by
+ #     as_fault rounding the fault VA to 4KB (above) -- test whether that alone fixes it before
+ #     touching segvn_fault's stride/test (ac5d4/ac726/ac72c) again.  TODO: understand the anon-map
+ #     vs segvn_faultpage >>12 coupling, then convert as a verified set.
  # hat_ptalloc: FORCE the page_get path; never reuse a pooled PT page.  The free_pts
  # reuse path (0xb68a6..0xb6918) sub-allocates 512B fragments inside a page using 030
  # 2KB-page math (b68ec #11 / b68f6 #9) and bzero's the stored fragment address -- on
