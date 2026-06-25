@@ -123,23 +123,50 @@ P = [
  # with 2KB granularity and dereferenced a wrongly-relocated pointer (0x66000030) -> USER BUS
  # ERROR PC=C101100E in /sbin/init's interpreter, the first time init runs.  Report 4096.
  (0xb842c, b"\x24\xfc\x00\x00\x08\x00", b"\x24\xfc\x00\x00\x10\x00", "elfexec:AT_PAGESZ 2048->4096"),
- # USER DEMAND-FAULT PATH (as_fault/as_faulta/as_setprot/segvn_fault/segvn_faultpage) -- NEXT
- # SUB-PROJECT, NOT YET CONVERTED (attempt reverted 2026-06-25, commits 21dda30/ad64eee).
+ # USER DEMAND-FAULT PATH (as_fault + segvn_fault) -- the MINIMAL coupled set, 4KB.
  # The 030 path rounds the fault VA to 2KB and the anon map is a 2KB-granular array.  On Model B a
  # fault in the UPPER 2KB of a 4KB page (libc.so.1's GOT at C102FE68) maps at C102F800, which shares
  # hat_pteload's leaf slot (va>>12)&0x3F with C102F000 -> the 2nd 2KB fault overwrites the 1st's 4KB
  # leaf PTE -> GOT corruption -> /sbin/init's runtime linker (libc.so.1 do_reloc) USER BUS ERROR at
- # 0x66000030.  MEASURED COUPLING (do NOT convert piecemeal): (a) as_fault@0xae156 rounds the fault
- # VA (andiw #-2048); (b) segvn_fault allocates the anon map size>>11 slots (@0xac4fe) indexed
- # offset>>11 (@0xac52e/0xac778) with stride #2048 (@0xac726/0xac72c) and a single-page test #2048
- # (@0xac5d4); (c) segvn_faultpage@0xac0d2 ALREADY hardcodes >>12.  Three boot-tested states:
- #   * all 2KB (here): reaches the linker, GOT collision -> user bus error 0x66000030.
- #   * as_fault 4KB + segvn 4KB: KERNEL bus error in kmem_alloc (segvn->kmem_zalloc anon map).
- #   * as_fault 4KB + segvn 2KB: PANIC "segvn_faultpage not found".
- # So as_fault and segvn must convert together AND the anon-map array/index granularity vs
- # segvn_faultpage's >>12 must be reconciled first.  Full site list saved in git 21dda30.  TODO:
- # RE the anon-map (anon_map struct @(8) array, @(12)/@(16)/@(20) cursors) + segvn_faultpage's
- # page lookup before converting as a verified coupled set.
+ # 0x66000030.  Fix: round the fault to 4KB (as_fault) and loop/index the anon array at 4KB
+ # granularity (segvn_fault), so one fault -> one 4KB page -> one leaf, no collision.
+ #
+ # WHAT THE STRUCTS PROVE (vanilla/usr/include/vm/{anon,seg_vn}.h, read 2026-06-25):
+ #   struct anon_map { u_int refcnt; u_int size; struct anon **anon; u_int swresv; }
+ #   The anon[] array holds ONE struct anon* PER PAGE; #slots = size/PAGESIZE, indexed off/PAGESIZE.
+ #   So PAGESIZE 2048->4096 means alloc (size+4095)>>12 slots and index (addr-base)>>12 -- a SELF-
+ #   consistent set as long as the loop stride matches (4096) so a2 advances one slot per page.
+ # segvn_faultpage (0xac01a) was claimed to "hardcode >>12 @0xac0d2": NOT a page shift -- 0xac0d2 is
+ #   `moveq #12,d0` = errno ENOMEM (12) into the return value.  segvn_faultpage has NO page-size
+ #   const; it receives the anon slot ptr + page already resolved by segvn_fault.  So the entire
+ #   granularity lives in segvn_fault (these 8 sites) + as_fault (3 sites).  Verified by full
+ #   disassembly 2026-06-25.
+ #
+ # WHY as_faulta + as_setprot are OMITTED (the 2026-06-25 21dda30 both-4KB failure post-mortem):
+ #   21dda30 converted as_fault+segvn_fault (CORRECT bytes) BUT ALSO as_faulta + as_setprot, and
+ #   bus-errored in kmem_alloc.  Root cause = OVER-conversion: as_setprot rounds the protection
+ #   range, then calls segvn_setprot which sizes/indexes the per-page vpage[] array -- still 2KB,
+ #   UNCONVERTED.  4KB-rounded range vs 2KB vpage math overruns the vpage array -> kernel heap
+ #   corruption -> the next kmem_zalloc (segvn_fault's anon array @0xac50c) bus-errors.  So the
+ #   prior "anon-map kmem_alloc" blame was a SYMPTOM, not the cause.  Leaving as_setprot at 2KB is
+ #   safe here: it issues redundant 2KB hat_chgprot calls WITHIN a 4KB leaf (same prot both halves;
+ #   init's ELF segment boundaries are 4KB-aligned via p_align), never overrunning anything.
+ #   as_faulta (the lock-fault entry) is not on init's demand-fault path.  Both can be converted
+ #   later TOGETHER with segvn_setprot's vpage math as their own coupled set.
+ # --- as_fault: round the fault range DOWN/UP to a 4KB page (then calls segvn_fault per seg) ---
+ (0xae156, b"\x02\x43\xf8\x00",         b"\x02\x43\xf0\x00",         "as_fault:round start -2048->-4096"),
+ (0xae15e, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_fault:round end +2047->+4095"),
+ (0xae164, b"\x02\x40\xf8\x00",         b"\x02\x40\xf0\x00",         "as_fault:round end -2048->-4096"),
+ # --- segvn_fault: anon-array alloc (size/PAGE slots) + fault index + plist alloc + single-page
+ #     test + per-page loop stride (addr & file-offset) + in-memory fast-path page index ---
+ (0xac4fe, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segvn_fault:anon array (size+2047)>>11 -> +4095>>12"),
+ (0xac504, b"\x76\x0b", b"\x76\x0c", "segvn_fault:anon array alloc shift >>11->>>12"),
+ (0xac52e, b"\x76\x0b", b"\x76\x0c", "segvn_fault:fault-page anon index (addr-base)>>11->>>12"),
+ (0xac59a, b"\x76\x0b", b"\x76\x0c", "segvn_fault:plist array (len>>11)+1 -> (len>>12)+1"),
+ (0xac5d4, b"\x0c\xae\x00\x00\x08\x00", b"\x0c\xae\x00\x00\x10\x00", "segvn_fault:single-page test len<=2048 -> <=4096"),
+ (0xac726, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "segvn_fault:loop addr stride +2048->+4096"),
+ (0xac72c, b"\x06\x85\x00\x00\x08\x00", b"\x06\x85\x00\x00\x10\x00", "segvn_fault:loop file-offset stride +2048->+4096"),
+ (0xac778, b"\x76\x0b", b"\x76\x0c", "segvn_fault:in-memory fast-path page index >>11->>>12"),
  # hat_ptalloc: FORCE the page_get path; never reuse a pooled PT page.  The free_pts
  # reuse path (0xb68a6..0xb6918) sub-allocates 512B fragments inside a page using 030
  # 2KB-page math (b68ec #11 / b68f6 #9) and bzero's the stored fragment address -- on
