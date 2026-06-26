@@ -391,12 +391,26 @@ as_fault:
 	lea	%sp@(20),%sp
 	movel	%d0,%d2			| ret
 	movel	%fp@(12),%d0		| addr
+| --- WIDENED gate (2026-06-26): trace the GOT range [C102E000,C1031000) OR low user
+|     [0x10000,0x40000000).  The low range catches a wrong-base reloc store (off =
+|     r_offset + bad_base ~ 0x2Exxx), which is INVISIBLE to the old GOT-only/>=0x80800000
+|     gates -- the 040-only test of "do the linker's relocation stores even land where we
+|     think, or go to a low/wrong address (so the C102F GOT stays raw)".  addr<0x10000 = null-ish,
+|     skipped.  Kernel accesses to <0x40000000 use DTT0 (no fault), so a [0x10000,0x40000000)
+|     FAULT is an anomalous user access = exactly the signature we want. ---
+	cmpil	&0x40000000,%d0
+	bccw	Laf_chkgot		| addr >= 0x40000000 -> only the GOT range qualifies
+	cmpil	&0x00010000,%d0
+	bccw	Laf_trace		| 0x10000 <= addr < 0x40000000 -> low/suspicious, TRACE
+	braw	Laf_done		| addr < 0x10000 -> skip
+Laf_chkgot:
 	cmpil	&0xc102e000,%d0
 	bcsw	Laf_done
 	cmpil	&0xc1031000,%d0
 	bccw	Laf_done
+Laf_trace:
 	movel	Laf_n,%d0
-	cmpil	&24,%d0
+	cmpil	&48,%d0
 	bccw	Laf_done
 	addql	&1,%d0
 	movel	%d0,Laf_n

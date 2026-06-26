@@ -66,10 +66,18 @@ Lgf_ret:
 |     VA printed before init's SIGSEGV exit (hat_free ENTER) is the unresolvable fault
 |     that kills init -- tells us which user mapping the half-built user-VM hat misses.
 |     Gated to 24 prints, CE_WARN.  d0 = fault VA; saved across cmn_err via Lgf_save. ---
+| WIDENED (2026-06-26): also trace low user faults [0x10000,0x40000000) -- catches a wrong-base
+| reloc store (off = r_offset + bad_base ~ 0x2Exxx), invisible to the old >=0x80000000 gate.
+| Kernel accesses <0x40000000 use DTT0 (no fault), so a low FAULT here = anomalous user access.
 	cmpil	&0x80000000,%d0
-	bcsw	Lgf_nodbg
+	bccw	Lgf_dodbg		| >= 0x80000000 (init/libc high) -> trace
+	cmpil	&0x40000000,%d0
+	bccw	Lgf_nodbg		| 0x40000000..0x7FFFFFFF = kernel -> skip
+	cmpil	&0x00010000,%d0
+	bcsw	Lgf_nodbg		| < 0x10000 = null-ish -> skip
+Lgf_dodbg:
 	movel	Lgf_n,%d1
-	cmpil	&24,%d1
+	cmpil	&48,%d1
 	bccw	Lgf_nodbg
 	addql	&1,%d1
 	movel	%d1,Lgf_n
