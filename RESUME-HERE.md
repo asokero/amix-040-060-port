@@ -1,6 +1,23 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-26)
 
-## FIX FOUND 2026-06-26 (UNVERIFIED -- needs boot): gen_strategy disk SECTORS-PER-PAGE d3 #4->#8
+## ★★★ 2026-06-26 VERIFIED: GOT/dynamic-linker SOLVED -> NEW BLOCKER = usrxmemflt F_PROT/COW path
+The gen_strategy d3 #4->#8 fix (commit a3668a8) is BOOT-VERIFIED on the instrumented fs-uae:
+c100f348=204f, c100f364=61ff (correct _rt_boot), **c10127b4=4e56 (_rt_setup RUNS)**, reloc loop
+iterates, **872 GOT writes relocate the whole GOT**, then c100f370 `jmp %a0@` -> init's relocated
+_start.  The whole GOT/linker sub-project (C1012088 bus error) is SOLVED; init runs (serial: pid 5).
+**NEW BLOCKER (serial): KERNEL bus error pc=0x5B088 fmt=7 in usrxmemflt+0x1aa while pid 5 init runs.**
+Backtrace u_trap->k_trap->usrxmemflt.  It's the **F_PROT/COW path** (5b040: SSW bit 0x800) -- so
+**ptest040 (526b708) is now PAYING OFF** (init's write-protect fault is correctly classified F_PROT,
+not F_INVAL).  The handler crashes at 5b068-88: `jsr uvatosde` (per-proc SW page-table walker) then
+leaf PTE addr = SDE@(4) + `((VA>>11)&0x3f)*4` (0x5b078) -> `bfextu a2@(3)` @0x5b088 bus-errors (a2
+invalid).  TWO causes: (1) **uvatosde(0xb74f8)/uvatopte/uvirtophys(0xb7860) are STOCK 030 walkers,
+UNPORTED** (no override exists) -> walk the INERT 030 tree -> garbage SDE; need an 040 per-proc-root
+port (like kernel vatosde040 in kvm040.s).  (2) usrxmemflt leaf `(VA>>11)&0x3f` is a 2KB straggler at
+**0x5b078 + 0x5b102** (check siblings 0x5afa0/0x5b02e) -> >>12.  **NEXT SUB-PROJECT = uvatosde/
+uvatopte/uvirtophys 040 port + usrxmemflt leaf >>11->>>12 (+ likely hat_chgprot x6 COW).**  This is
+the user-VM SW-walker + COW frontier, now live because init runs COW faults.
+
+## (DONE, VERIFIED) gen_strategy disk SECTORS-PER-PAGE d3 #4->#8
 The 2KB straggler is `gen_strategy` **0x3d9e6 `moveq #4,%d3`** (disk sectors per page = 2048/512 = 4).
 Pinned by static analysis in source order (Amiga image -> root=ufs; SVR4 ufs_vnops.c; gen_strategy
 binary).  init's libc.so.1 text fault (off=0xF000) -> ufs_getapage; root fs_bsize=8KB (>4KB page) ->
