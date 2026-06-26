@@ -1,6 +1,26 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-26)
 
-## ★★★ 2026-06-26 VERIFIED: GOT/dynamic-linker SOLVED -> NEW BLOCKER = usrxmemflt F_PROT/COW path
+## ★★★★ 2026-06-26 VERIFIED: uvatosde040 -> COW WORKS, init runs rc scripts -> NEW BLOCKER hat_free/hat_dup
+The uvatosde 040 port (commit, uvatosde040.s + usrxmemflt inline-leaf patches) is BOOT-VERIFIED:
+the F_PROT/COW path now resolves -- serial shows `as_fault addr=C102F11C type=1 rw=2 ret=0` (a
+genuine F_PROT/COW write fault, ret=0) and `GOTmap C102F000 prot=F` (the GOT page COW'd to a
+writable private copy).  The 0x5B088 bus error is GONE.  **init now runs its rc scripts** -- it
+forks a shell and execs `/sbin/autopush -f /etc/amiga.ap` from /etc/inittab.  uvatosde040 does the
+full per-proc 040 walk (curproc->p_as@(124)->root040@(20) -> A=va>>25&7f / B=va>>18&7f / C=va>>12&3f)
+and returns &PTE; usrxmemflt's two inline 030 leaf walks (0x5b072 F_PROT, 0x5b0fc hardbus) are
+byte-patched to `moveal %a0,%a2` to consume it.
+**NEW BLOCKER: KERNEL bus error pc=0x5B088->now 0xD8064 (hat040.s `Lf_PTE`) during a CHILD's exit.**
+Backtrace: exit -> relvm -> as_free -> **hat_free** -> Lf_PTE `tstl %a3@` where a3 = leaf base
+(Bdesc & 0xffffff00) is INVALID.  The child (autopush) first took a `User BUS ERROR at FFFFFFFF
+PC:800024FE` (reason TBD -- maybe a real missing feature, maybe a bad page) -> exit -> teardown.
+ROOT (likely): **hat_dup (0xb502a, fork's page-table copy) is NOT 040-ported** -- STUBBED in the dbg
+build (forkdbg.s), STOCK 030 in the base build -> fork builds the child a malformed 040 tree (a
+pointer-table slot with UDT set but a garbage leaf base) -> hat_free040 walks it and bus-errors.
+**NEXT SUB-PROJECT = the user-VM fork/teardown HAT family: port hat_dup (+ likely hat_growsdt) to
+040 (copy the per-proc root040->ptr->leaf tree), and/or make hat_free040 robust to a stale slot.**
+Also open: WHY autopush user-faults at FFFFFFFF (investigate after the kernel teardown is clean).
+
+## (DONE, VERIFIED) usrxmemflt F_PROT/COW path -- uvatosde040 + inline-leaf patches
 The gen_strategy d3 #4->#8 fix (commit a3668a8) is BOOT-VERIFIED on the instrumented fs-uae:
 c100f348=204f, c100f364=61ff (correct _rt_boot), **c10127b4=4e56 (_rt_setup RUNS)**, reloc loop
 iterates, **872 GOT writes relocate the whole GOT**, then c100f370 `jmp %a0@` -> init's relocated
