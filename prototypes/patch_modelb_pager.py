@@ -180,6 +180,16 @@ P = [
  # (single-page @3d9c0, breakup-setup @3dae6) + the page-count/round/threshold consts. =====
  (0x3d994, b"\x0c\xaa"+A48, b"\x0c\xaa"+A96, "gen_strategy:cmpil #2048 a2@(32) single-page thresh"),
  (0x3d9c0, b"\x7a\x0b", b"\x7a\x0c", "gen_strategy:PFN<<11 phys (single-page) [THE BUG]"),
+ # multi-page B_PAGEIO breakup loop (b_pages != NULL): the per-page DISK-SECTOR STRIDE.
+ # d3 = sectors per page = PAGESIZE/DEV_BSIZE = 2048/512 = 4 (Model A).  Used in the page-walk
+ # at 0x3daa2 as `b_blkno = base + d3 * page_index`.  Under Model B a page is 4096 bytes = 8
+ # sectors, so d3 MUST be 8.  THE multi-page deposit BUG: d1 (per-page DMA byte count @0x3da40)
+ # was already patched to 4096, but d3 stayed 4 -> page[1] DMAs 4096 bytes from disk base+4sec
+ # (=2KB = file 0xE800) instead of base+8sec (=file 0xF000).  This is why init's libc.so.1 text
+ # page C100F000 loaded file[0xE800..] (the 0xEB48 fetch).  Single-page reads (dir-read
+ # validation) never hit this loop, so it was never exercised.  Same family as the d1/npages
+ # patches just above; one missed straggler.
+ (0x3d9e6, b"\x76\x04", b"\x76\x08", "gen_strategy:disk sectors-per-page d3 #4->#8 (2KB->4KB) [THE multi-page deposit BUG]"),
  (0x3d9ec, b"\x7a\x0b", b"\x7a\x0c", "gen_strategy:bcount>>11 npages"),
  (0x3d9f4, b"\x02\x80"+A47, b"\x02\x80"+A95, "gen_strategy:andil #2047 bcount remainder"),
  (0x3da30, b"\x02\x80"+A47, b"\x02\x80"+A95, "gen_strategy:andil #2047 last-chunk"),

@@ -1,6 +1,24 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-26)
 
-## OVERALL STATUS (2026-06-26 LATEST -- ROOT CAUSE pinned by an INSTRUMENTED fs-uae)
+## FIX FOUND 2026-06-26 (UNVERIFIED -- needs boot): gen_strategy disk SECTORS-PER-PAGE d3 #4->#8
+The 2KB straggler is `gen_strategy` **0x3d9e6 `moveq #4,%d3`** (disk sectors per page = 2048/512 = 4).
+Pinned by static analysis in source order (Amiga image -> root=ufs; SVR4 ufs_vnops.c; gen_strategy
+binary).  init's libc.so.1 text fault (off=0xF000) -> ufs_getapage; root fs_bsize=8KB (>4KB page) ->
+lbnoff=0xE000 -> pvn_kluster builds a **2-page cluster** (0xE000+0xF000, io_len=8KB).  gen_strategy's
+**multi-page breakup loop** (0x3da20, b_pages!=NULL, bcount>4096) deposits it: `b_blkno = base +
+d3*page_index` (0x3daa2).  The per-page DMA byte count d1 (0x3da40) was ALREADY patched to 4096, but
+**d3 stayed 4** -> page[1] reads 4096 bytes from disk base+4sec (=2KB=file 0xE800) not base+8sec
+(=file 0xF000) -> C100F000 = file[0xE800..] -> C100F348 = file[0xEB48], EXACTLY the observed bug.
+Single-page reads (the dir-read validation) never enter this loop -> never exercised.  FIX in
+`patch_modelb_pager.py` group genst: 0x3d9e6 `7604`->`7608`.  BUILT (relink-040.sh + -dbg.sh, 88
+pager patches, 0 complaints, byte-verified).  ALL the offset-arithmetic suspects (as_fault/segvn_
+fault/ufs_getpage/ufs_getapage/pvn_kluster) were proven 4KB-CORRECT in the live build -- the bug was
+the DISK-SECTOR STRIDE, not an offset.  (buf_breakup 0x3d21e `pea 0x800` = a separate latent 2KB site
+in the LINEAR-buffer path, NOT on init's path; convert later if it bites.)  **VERIFY: boot
+build/unix-040 on the instrumented fs-uae -> AMIXPC f348=204f, f364=61ff, C10127B4(_rt_setup) fetched
+-> GOT relocated -> init past C1012088.**
+
+## OVERALL STATUS (2026-06-26 -- ROOT CAUSE pinned by an INSTRUMENTED fs-uae; FIX above)
 68040 port boots to **/sbin/init running its DYNAMIC LINKER** (libc.so.1 interp @C1000000); the
 0x66000030 bus error is GONE.  **DEFINITIVE ROOT CAUSE (PC-accurate, via an instrumented fs-uae):
 the demand-paged TEXT page C100F000 is loaded from FILE offset 0xE800 instead of 0xF000 -- exactly
