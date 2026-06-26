@@ -1,6 +1,27 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-26)
 
-## ★★★★ 2026-06-26 VERIFIED: uvatosde040 -> COW WORKS, init runs rc scripts -> NEW BLOCKER hat_free/hat_dup
+## ★★★★★ 2026-06-26 VERIFIED: hat_free040 robust -> NO KERNEL PANIC, init runs rc + spawns getty/sac
+The hat_free040 garbage-slot skip (commit 689db7d) WORKS: boot shows **0 kernel panics**.  hat_free
+was bus-erroring on a pointer-table at region A=6 filled with the 030-invalid pattern 0xFFFFFFFF
+(Bdesc=FFFFFFFF, UDT=3 looked "valid"); now it validates leaf base in [pages_base,pages_end) and
+SKIPS bad slots (12 logged, A=6 B=0..11, bounded leak).  Source of the FFFFFFFF table = stock-030
+hat_growsdt/hat_dup region fill (not yet ported; skip is the robust fix).  **init now runs its rc
+scripts (/etc/sysinit, /etc/brc, /etc/rc2) and spawns the multi-user/login entries (/etc/getty,
+/usr/lib/saf/sac, /sbin/autopush) from /etc/inittab.**  We are at the threshold of a console login.
+**NEW BLOCKER: every exec'd CHILD takes `User BUS ERROR at FFFFFFFF PC:800024FE` and respawns in a
+loop.**  PC 800024FE is in autopush's TEXT-DATA GAP (text ends 0x8000139C, data starts 0x8000339C) =
+a WILD JUMP into unmapped space.  autopush's relocations are **R_68K_JMP_SLOT (LAZY PLT** for
+exit/open/printf/ioctl/getopt...): the program calls a libc fn via the PLT, and if the lazy resolver
+(GOT[2]=_rt_bind) / PLT stub isn't set up, the jump lands in garbage.  init (kernel-exec'd) + the
+init shell got far enough, but these children wild-jump.  **CAVEAT (user, 2026-06-26): the disk image
+FS corrupts intermittently from our boots -> some boots fsck, some don't, and a corrupted autopush
+file would ALSO produce a garbage GOT/PLT -> the SAME wild jump.  So CONFIRM this reproduces on a
+known-clean FS before investing in a lazy-PLT-resolver fix.**  NEXT: verify determinism (clean FS),
+then if systematic, investigate the lazy PLT/_rt_bind setup for child execs (cf. SVR4-3b2 rtld
+rtbind.c).  Also still open (deferred, robust skip in place): the region-A=6 FFFFFFFF table source
+(hat_growsdt 040 zero-fill).
+
+## (DONE, VERIFIED) uvatosde040 -> COW WORKS, init runs rc scripts
 The uvatosde 040 port (commit, uvatosde040.s + usrxmemflt inline-leaf patches) is BOOT-VERIFIED:
 the F_PROT/COW path now resolves -- serial shows `as_fault addr=C102F11C type=1 rw=2 ret=0` (a
 genuine F_PROT/COW write fault, ret=0) and `GOTmap C102F000 prot=F` (the GOT page COW'd to a
