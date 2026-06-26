@@ -466,6 +466,36 @@ Laf_trace:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(32),%sp
+| --- EARLY .dynamic dump (2026-06-26): if THIS fault is the C1030 COW (addr in page C1030000),
+|     dump the .dynamic entries from the JUST-COW'd physical page -- what _rt_setup's dyn[] build
+|     actually reads DURING THE RUN (vs the rexit 'D' probe).  d3 = leaf PTE (survives cmn_err);
+|     phys page = d3 & 0xFFFFF000 (RAM, <0x40000000 -> DTT0 identity); .dynamic @ +0x73C.  Dump
+|     6 longs from page-off 0x764 (= .dynamic[5..7]: DT_SYMENT(0B/10), DT_RELA(07/d0f8),
+|     DT_RELASZ(08/2250)).  Expected output: "0B 10 07 D0F8 08 2250".  If garbage -> dyn[] bounds
+|     wrong -> reloc loop SKIPPED (the bug).  Capped 2.  (.dynamic @ page-off 0x73C, 8B entries.) ---
+	movel	%fp@(12),%d0
+	andil	&0xfffff000,%d0
+	cmpil	&0xc1030000,%d0
+	bnew	Laf_done
+	movel	Ladyn_n,%d0
+	cmpil	&2,%d0
+	bccw	Laf_done
+	addql	&1,%d0
+	movel	%d0,Ladyn_n
+	movel	%d3,%d0
+	andil	&0xfffff000,%d0		| phys base of page C1030000 (DTT0 identity VA)
+	oril	&0x764,%d0		| + .dynamic[5] page-offset (.dynamic@0x73C + 5*8 = 0x764)
+	moveal	%d0,%a2
+	movel	%a2@(20),%sp@-		| .dynamic[5..7] longs (DT_RELASZ val = 0x2250)
+	movel	%a2@(16),%sp@-
+	movel	%a2@(12),%sp@-
+	movel	%a2@(8),%sp@-
+	movel	%a2@(4),%sp@-
+	movel	%a2@(0),%sp@-
+	pea	Ladyn_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(32),%sp
 Laf_done:
 	movel	%d2,%d0
 	moveml	%fp@(-16),%d2-%d3/%a2-%a3
@@ -746,6 +776,12 @@ Laf_msg:
 	.asciz	"DBG as_fault addr=%x type=%x rw=%x ret=%x pte=%x ssw=%x"
 	.even
 Laf_n:
+	.long	0
+	.even
+Ladyn_msg:
+	.asciz	"DBG dynRUN[5..7] %x %x %x %x %x %x (expect 0B 10 07 D0F8 08 2250)"
+	.even
+Ladyn_n:
 	.long	0
 	.even
 Lam_msg:
