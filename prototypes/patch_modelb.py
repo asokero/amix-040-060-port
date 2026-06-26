@@ -238,6 +238,18 @@ P = [
  #   (write) -> rw=2 (COW).  Same rw=1/rw=2 semantics the 030 path produced.  (usrxmemflt is also
  #   wrapped by wb040.s, which calls usrxmemflt_orig = this patched code, so the fix is live.)
  (0x5af14, b"\x70\x40\xc0\xa8\x00\x48", b"\x70\x01\xc0\x28\x00\x4c", "usrxmemflt:040 SSW rw bit (frame+72 030 -> frame+76 bit8 040)"),
+ # usrxmemflt SECOND SSW read (5b050), on the W (write-protect / COW) path.  After ptest040 routes
+ # a write to a read-only page here (MMUSR W set), 5b050 gates the COW: the 030 code tested
+ #   5b054: movel %a0@(72),%d0 ; andil #0x140 ; cmpil #0x100  (frame+72 030 SSW: bit8 set, bit6 clr)
+ # but frame+72 is the 040 EFFECTIVE ADDRESS (garbage) -> the test fails for our GOT VA and mis-
+ # routes to 5b0f2/hardbus.  Mirror the 5af14 fix: read the 040 SSW at frame+76 bit 8 (1=read) and
+ # branch to 5b0f2 only on a READ fault; a WRITE (bit8==0, our COW case) falls through to 5b068.
+ #   5b054: moveq #1,%d0 ; andb %a0@(76),%d0 ; bnew 0x5b0f2 ; <5x nop>  (same 20 bytes)
+ # (bnew disp = 0x5b0f2 - 0x5b05c = 0x96.)  The moveal %fp@(8),%a0 at 5b050 is left untouched.
+ (0x5b054,
+  b"\x20\x28\x00\x48\x02\x80\x00\x00\x01\x40\x0c\x80\x00\x00\x01\x00\x66\x00\x00\x8c",
+  b"\x70\x01\xc0\x28\x00\x4c\x66\x00\x00\x96\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71",
+  "usrxmemflt:040 SSW 2nd read on COW path (frame+72 030 -> frame+76 bit8 040)"),
 ]
 
 def main():
