@@ -1011,6 +1011,35 @@ Lf_B:
 	addil	&256,%d1
 	movel	%d1,%d3			| d3 = leaf end bound (leaf + 64*4)
 	moveal	%fp@(-4),%a3		| a3 = leaf PTE cursor
+| --- DBG + ROBUSTNESS (2026-06-26): validate the leaf-table base is a real RAM page-frame before
+|     walking it.  A garbage pointer-table slot (UDT set but a bogus leaf base) bus-errors at
+|     `tstl %a3@`.  Check leafbase>>12 is in [pages_base, pages_end) -- the SAME test Lf_ppzero
+|     applies to PTE pfns.  If valid, walk it (Lf_PTE).  If not, LOG it (cmn_err flushes because we
+|     do NOT crash -- we continue) and SKIP the slot (braw Lf_nextB, a bounded leak: the garbage
+|     leaf is not freed).  The cmn_err line reveals the bad A/B/Bdesc/leafbase.  d0/d1 scratch. ---
+	movel	%fp@(-4),%d0		| leafbase
+	moveq	&12,%d1
+	lsrl	%d1,%d0			| leafbase >> 12 = page frame
+	cmpl	pages_base,%d0
+	bcsw	Lf_badleaf
+	cmpl	pages_end,%d0
+	bccw	Lf_badleaf
+	braw	Lf_PTE			| leaf base in managed RAM -> walk it
+Lf_badleaf:
+	movel	Lhfb_n,%d0
+	cmpil	&12,%d0
+	bccw	Lf_nextB		| capped -> skip silently
+	addql	&1,%d0
+	movel	%d0,Lhfb_n
+	movel	%fp@(-4),%sp@-		| leafbase (4th %x)
+	movel	%a2@,%sp@-		| Bdesc raw (3rd %x)
+	movel	%fp@(-24),%sp@-		| B (2nd %x)
+	movel	%fp@(-20),%sp@-		| A (1st %x)
+	pea	Lhfb_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
+	braw	Lf_nextB		| skip the garbage slot (do NOT hat_ptfree it)
 Lf_PTE:
 	tstl	%a3@
 	beqw	Lf_nextPTE		| empty PTE -> skip
@@ -1216,4 +1245,9 @@ Lhf_failmsg:
 	.asciz	"DBG hat_free: pte not in revmap *pte=%x pte@=%x"
 	.even
 Lhf_failn:
+	.long	0
+Lhfb_msg:
+	.asciz	"DBG hatfree BAD-slot A=%x B=%x Bdesc=%x leaf=%x (skipped)"
+	.even
+Lhfb_n:
 	.long	0
