@@ -1,6 +1,52 @@
-# RESUME HERE — AMIX 68040 port status (2026-06-25)
+# RESUME HERE — AMIX 68040 port status (2026-06-26)
 
-## OVERALL STATUS (one-paragraph, updated 2026-06-25 LATEST -- SMOKING GUN found)
+## OVERALL STATUS (2026-06-26 LATEST -- ROOT CAUSE pinned by an INSTRUMENTED fs-uae)
+68040 port boots to **/sbin/init running its DYNAMIC LINKER** (libc.so.1 interp @C1000000); the
+0x66000030 bus error is GONE.  **DEFINITIVE ROOT CAUSE (PC-accurate, via an instrumented fs-uae):
+the demand-paged TEXT page C100F000 is loaded from FILE offset 0xE800 instead of 0xF000 -- exactly
+0x800 (2KB) TOO LOW -- a Model B 2KB file-offset straggler in the text-segment demand-paging path.**
+Proof: a patched fs-uae `mmu_get_iword` logged the actual WORDS fetched while executing `_rt_boot`
+at C100F348+; every word was WRONG (got 0000/0016/0002/f9fe... = an Elf32_Rela table, r_info type
+0x16=R_68K_RELATIVE) where `_rt_boot` code (204f/2f3b...) was expected.  A file search placed the
+runtime bytes at C100F348 at file 0xEB48 = 0xF348 - 0x800.  So `_rt_boot`'s `bsrl _rt_setup`
+(file 0xf364, should be `0x61ff`, reads `0x0002`) is GARBAGE -> **`_rt_setup`(0x127b4) NEVER runs**
+(AMIXPC trace confirms C10127B4/C10128DE are never fetched) -> the GOT is never relocated -> init
+bus-errors (PC C1012088, /sbin/init).  This RETIRES all earlier symptom-theories (COW/ptest
+classification, aliasing, the -0x800 .rela DATA read, "loop runs but stores vanish") -- they were
+ALL downstream of running CORRUPTED libc code.  **NEXT (the fix):** find the getpage/kluster site
+that computes the text page's file-offset ONE 2KB-click too few (page C100F000 = seg-offset 0xF000
+= click 0x1E, loads from 0xE800 = click 0x1D); fix in `prototypes/patch_modelb_pager.py`
+(ufs_getapage/pvn_getpages/pvn_kluster/segmap family).  Prime suspect: pvn_kluster read-behind
+start-offset, OR ufs_getapage file-offset->block.  Same family as the already-fixed
+gen_strategy/pvn_*/segmap stragglers -- this one just never ran before init exercised it.
+
+### TOOL: instrumented fs-uae (THE breakthrough enabler -- PC-accurate ground truth)
+Source `kernelsupport/fs-uae` (git, **checkout v3.2.35** = SDL2, matches the user's binary; master
+needs SDL3 -- GITIGNORED, do NOT commit).  Patches (AMIX-DBG comments): `src/include/cpummu.h`
+(mmu_get/put_long/word/byte + mmu_get_iword PC+word trace), `src/cpummu.cpp` (mmu_*_slow = the
+faulting/ATC-miss path), `src/rpc.cpp` (debuggable()->1).  Build: `cd kernelsupport/fs-uae &&
+make -j8` (deps: libtool libsdl2-dev libopenal-dev libmpeg2-4-dev libflac-dev).  User runs it by
+full path from `kernelsupport/fs-uae` with `flush_log = 1` in the config (else the log buffers at
+~57KB); log = `~/Asiakirjat/FS-UAE/Cache/Logs/fs-uae.log.txt`.  Use a CLEAN disk image (torn-file
+boots corrupt it).  Success criterion for the fix: AMIXPC shows the CORRECT `_rt_boot` words
+(f348=204f, f364=61ff) and C10127B4 (_rt_setup) IS fetched.
+
+## SOURCE-CONSULTATION ORDER (user rule -- ALWAYS follow before digging into binaries)
+When you need to understand a function or layout, check sources in THIS order:
+1. **Amiga Unix disk-image tree FIRST** -- `~/kehitys/amix-playground/vanilla/usr/sys/` and
+   `vanilla/usr/src/` (the image is ALWAYS mounted there) + extracted `kernelsupport/amix-src/sys/`.
+   129 C files exist, but `vm/` is binary-only (just `exp`+Makefile).  Always check here first for
+   headers/struct layouts and the fs/exec/os modules that DO ship C.
+2. **Related System V sources SECOND** (full C for VM/pager): `kernelsupport/usl-svr42/common/uts/
+   mem/{vm_pvn.c,seg_vn.c,seg_map.c}` (SVR4.2, closest), `kernelsupport/svr4-src-3b2/`,
+   `kernelsupport/svr4-v4/`.  Not Amiga, but the SVR4 logic is stable.  (gitignored -- copyright.)
+3. **Ghidra decompilation of the unix kernel THIRD** -- `sh tools/ghidra-decomp.sh func1,func2`
+   (headless, MC68030, decompiles named fns of `vanilla/stand/unix`; calls show as `func_0x0` --
+   resolve with `m68k-linux-gnu-objdump -d -r`).  GUI project at `ghindra-unix/amix.rep` (gitignored).
+   Use this for the binary-only core (vm/os/disp/ml `exp`) BEFORE hand-disassembling.
+4. **Raw binary disasm LAST** -- `m68k-linux-gnu-objdump -d -r --start-address/--stop-address`.
+
+## (SUPERSEDED 2026-06-25 -- refined by the 06-26 text-page finding above) SMOKING GUN
 68040 port boots to **/sbin/init running its DYNAMIC LINKER** (libc.so.1 interp @C1000000).  The
 0x66000030 bus error is GONE.  init jumps to the interp entry C100F348; the linker runs but
 **libc.so.1's GOT is never RELOCATED -> the linker reads its own _rt_warn/_rt_tracing through the
