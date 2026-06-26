@@ -1,5 +1,18 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-26)
 
+## ►► CURRENT STATUS (one-glance) ◄◄
+The 040 kernel now boots with **0 kernel panics** all the way to **/sbin/init running its rc scripts
+(/etc/sysinit, /etc/brc, /etc/rc2) and spawning the multi-user/login entries (/etc/getty,
+/usr/lib/saf/sac) from /etc/inittab** -- i.e. the THRESHOLD of a console login.  THREE bugs solved
+this session (branch 040-switch-trace, all committed, boot-verified): (1) **gen_strategy d3 #4->#8**
+(disk sectors-per-page; the multi-page B_PAGEIO 2KB straggler) -> the GOT/dynamic-linker bug is GONE
+(libc.so.1 relocates, 872 GOT writes, init's _start runs).  (2) **uvatosde040** (per-proc user
+page-table walker 040 port) + usrxmemflt inline-leaf patches -> COW/F_PROT faults resolve (init's
+write-protect faults work).  (3) **hat_free040 garbage-slot skip** -> no KERNEL FAULT on child-exit
+teardown.  **CURRENT FRONTIER (next task): every exec'd CHILD wild-jumps (`User BUS ERROR FFFFFFFF
+PC:800024FE`) -- a lazy-PLT/GOT[2] (=_rt_bind) base bug, CONFIRMED SYSTEMATIC on a clean FS.  See the
+section immediately below.**  Build: `sh relink-040.sh` (base) + `sh relink-040-dbg.sh` (dbg).
+
 ## ★★★★★ 2026-06-26 CONFIRMED SYSTEMATIC (clean FS): children wild-jump via PLT[0] -> GOT[2] wrong
 Re-booted on a KNOWN-CLEAN (fsck'd) FS: the child fault `User BUS ERROR FFFFFFFF PC:800024FE` is
 DETERMINISTIC (18x, every exec'd child: getty/sac/autopush/rc2/sysinit) -- NOT FS corruption.  0
