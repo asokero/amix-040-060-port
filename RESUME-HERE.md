@@ -1,6 +1,25 @@
 # RESUME HERE — AMIX 68040 port status (2026-06-26)
 
-## ★★★★★ 2026-06-26 VERIFIED: hat_free040 robust -> NO KERNEL PANIC, init runs rc + spawns getty/sac
+## ★★★★★ 2026-06-26 CONFIRMED SYSTEMATIC (clean FS): children wild-jump via PLT[0] -> GOT[2] wrong
+Re-booted on a KNOWN-CLEAN (fsck'd) FS: the child fault `User BUS ERROR FFFFFFFF PC:800024FE` is
+DETERMINISTIC (18x, every exec'd child: getty/sac/autopush/rc2/sysinit) -- NOT FS corruption.  0
+kernel panics (hat_free040 robust).  MECHANISM (static, from autopush): the program's lazy PLT --
+`PLT[n]: jmp *JMP_SLOT` -> push index -> `PLT[0](0x5d0): push GOT[1]; jmp *GOT[2]`.  In the FILE
+autopush's GOT[1]=0 (link map) and **GOT[2]=0 (the lazy resolver _rt_bind)**; the rtld sets them at
+runtime.  The wild jump to 0x800024FE = program_base(0x80000000) + 0x24FE means **GOT[2] was set to
+0x800024FE** (program base + 0x24FE) instead of libc's _rt_bind (0xC10xxxxx) -> `jmp *GOT[2]` lands
+in autopush's unmapped TEXT-DATA GAP -> executes garbage -> derefs FFFFFFFF.  So _rt_setup computed
+the child's lazy resolver with the WRONG base.  KEY DIFFERENCE: init is exec'd by the KERNEL (works,
+GOT resolved -- rexit dump shows C101116E) but the children are exec'd by a USER process (the init
+shell) -> suspect the kernel's USER-initiated exec path (elfexec auxv AT_BASE for the interp, or how
+the interp/_rt_setup runs for a user-exec) sets up the child's interp base wrong.  Children's auxv
+AT_BASE was NOT yet captured (the rexit dump with AT_BASE=C1000000 was INIT's, not a child's).
+**NEXT: capture the CHILD's runtime GOT[2] + auxv AT_BASE -- via the instrumented fs-uae (trace the
+child's PLT[0]@0x800005d0 + the value read from GOT[2]@0x80003e40) OR a kernel probe in elfexec's
+auxv build.  Then fix the base used for the child interp/_rt_bind.**  Source refs: SVR4-3b2
+lib/rtld/m32/reloc.c + rtld.c (GOT[1]/GOT[2]/_rt_bind setup), the AMIX elfexec (0xb80f2) auxv build.
+
+## (DONE, VERIFIED) hat_free040 robust -> NO KERNEL PANIC, init runs rc + spawns getty/sac
 The hat_free040 garbage-slot skip (commit 689db7d) WORKS: boot shows **0 kernel panics**.  hat_free
 was bus-erroring on a pointer-table at region A=6 filled with the 030-invalid pattern 0xFFFFFFFF
 (Bdesc=FFFFFFFF, UDT=3 looked "valid"); now it validates leaf base in [pages_base,pages_end) and
