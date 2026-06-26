@@ -250,6 +250,25 @@ P = [
   b"\x20\x28\x00\x48\x02\x80\x00\x00\x01\x40\x0c\x80\x00\x00\x01\x00\x66\x00\x00\x8c",
   b"\x70\x01\xc0\x28\x00\x4c\x66\x00\x00\x96\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71",
   "usrxmemflt:040 SSW 2nd read on COW path (frame+72 030 -> frame+76 bit8 040)"),
+ # usrxmemflt INLINE leaf walk (TWO sites) -- consume uvatosde040's &PTE directly.
+ # Stock usrxmemflt calls uvatosde (030: returns &SDE) then walks an INLINE 030 leaf:
+ #   moveal %a0,%a3 ; d0=VA ; d0=(VA>>11)&0x3F ; d0<<=2 ; a2=d0 ; addal %a3@(4),%a2  -> a2=&PTE
+ # That is the 030 8-byte-SDE format (leaf at SDE+4) + a 2KB leaf index -- both wrong on 040,
+ # and the SDE itself is garbage (stock uvatosde walks the inert 030 tree).  uvatosde040.s
+ # (--weaken-symbol uvatosde) now does the FULL per-proc 040 walk and returns &PTE in %a0.
+ # So replace each 22-byte inline 030 leaf walk with `moveal %a0,%a2` + 10x nop: a2 = &PTE.
+ # Site 1 (0x5b072): F_PROT/COW path -- the bfextu %a2@(3) PTE read at 0x5b088 (the actual
+ #   bus-error site that blocked init at pid 5) then chooses the as_fault rw variant.
+ # Site 2 (0x5b0fc): the hardbus (genuine bus-error reporting) path -- passes &PTE to hardbus.
+ # Both sequences are byte-identical (same instructions), so old/new are shared.
+ (0x5b072,
+  b"\x26\x48\x20\x2e\xff\xdc\x72\x0b\xe2\xa8\x72\x3f\xc0\x81\xe5\x80\x24\x40\xd5\xeb\x00\x04",
+  b"\x24\x48\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71",
+  "usrxmemflt:inline 030 leaf -> moveal a0,a2 (uvatosde040 returns &PTE) site1 F_PROT/COW"),
+ (0x5b0fc,
+  b"\x26\x48\x20\x2e\xff\xdc\x72\x0b\xe2\xa8\x72\x3f\xc0\x81\xe5\x80\x24\x40\xd5\xeb\x00\x04",
+  b"\x24\x48\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71",
+  "usrxmemflt:inline 030 leaf -> moveal a0,a2 (uvatosde040 returns &PTE) site2 hardbus"),
 ]
 
 def main():
