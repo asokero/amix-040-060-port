@@ -391,23 +391,75 @@ as_fault:
 	lea	%sp@(20),%sp
 	movel	%d0,%d2			| ret
 	movel	%fp@(12),%d0		| addr
-| --- WIDENED gate (2026-06-26): trace the GOT range [C102E000,C1031000) OR low user
-|     [0x10000,0x40000000).  The low range catches a wrong-base reloc store (off =
-|     r_offset + bad_base ~ 0x2Exxx), which is INVISIBLE to the old GOT-only/>=0x80800000
-|     gates -- the 040-only test of "do the linker's relocation stores even land where we
-|     think, or go to a low/wrong address (so the C102F GOT stays raw)".  addr<0x10000 = null-ish,
-|     skipped.  Kernel accesses to <0x40000000 use DTT0 (no fault), so a [0x10000,0x40000000)
-|     FAULT is an anomalous user access = exactly the signature we want. ---
-	cmpil	&0x40000000,%d0
-	bccw	Laf_chkgot		| addr >= 0x40000000 -> only the GOT range qualifies
-	cmpil	&0x00010000,%d0
-	bccw	Laf_trace		| 0x10000 <= addr < 0x40000000 -> low/suspicious, TRACE
-	braw	Laf_done		| addr < 0x10000 -> skip
-Laf_chkgot:
-	cmpil	&0xc102e000,%d0
-	bcsw	Laf_done
-	cmpil	&0xc1031000,%d0
+| --- CRASH probe (2026-06-26 PM): the child bus-errors with FAULT ADDR 0xFFFFFFFF (malloc deref of
+|     its bss global 0x80010e48 == 0xFFFFFFFF).  setregs proved 0x80010e48 = 0 at EXEC time, with NO
+|     re-fault of page 0x80010000 before the crash -> the physical page (exec-time pfn 7CAB) is
+|     OVERWRITTEN with 0xFFFFFFFF during sh's run.  On the FFFFFFFF fault, walk the URP for 0x80010000
+|     and dump (leaf PTE = crash-time pfn) + (RAM @ pfn<<12 +0xe48, DTT0 identity).  pfn==7CAB but
+|     RAM==FFFFFFFF -> page stayed mapped, its RAM was reused = double-alloc / page-free bug (fork +
+|     040-no-op hat_dup).  pfn changed -> the mapping was silently replaced.  Cap 4. ---
+	cmpil	&0xffffffff,%d0
+	bnew	Laf_gate
+	movel	Lcrash_n,%d1
+	cmpil	&4,%d1
 	bccw	Laf_done
+	addql	&1,%d1
+	movel	%d1,Lcrash_n
+	.word	0x4e7a,0x0806		| movec %urp,%d0
+	moveal	%d0,%a2
+	movel	&0x80010000,%d1		| va
+	movel	%d1,%d0
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&1,%d0			| va>>25
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	movel	%a2@(0,%d0:l),%d0	| root[Aidx]
+	andil	&0xfffffe00,%d0
+	moveal	%d0,%a2
+	movel	%d1,%d0
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&2,%d0			| va>>18
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	movel	%a2@(0,%d0:l),%d0	| ptr[Bidx]
+	andil	&0xffffff00,%d0
+	moveal	%d0,%a2
+	movel	%d1,%d0
+	lsrl	&8,%d0
+	lsrl	&4,%d0			| va>>12
+	andil	&0x3f,%d0
+	asll	&2,%d0
+	movel	%a2@(0,%d0:l),%d3	| d3 = leaf PTE (crash-time pfn for 0x80010000)
+	movel	%d3,%d0
+	andil	&0xfffff000,%d0
+	oril	&0xe48,%d0		| phys RAM byte 0xe48 in that page (DTT0 identity)
+	moveal	%d0,%a2
+	movel	%a2@,%d0		| RAM @ 0x80010e48
+	movel	%d0,%sp@-		| RAM value
+	movel	%d3,%sp@-		| leaf PTE
+	pea	Lcrash_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
+	braw	Laf_done
+Laf_gate:
+| --- REFOCUSED gate (2026-06-26 PM): trace ONLY the failing child program's user region
+|     [0x80000000, 0x80020000) = /sbin/sh's text (0x80000034..0x8000d6f8) + data/bss
+|     (0x8000f6f8..0x800114b4).  ROOT FINDING this session: the child bus-error (FFFFFFFF
+|     PC:800024FE) is malloc dereferencing its bss global at 0x80010e48 which reads 0xFFFFFFFF
+|     (NOT file content "(CDS)" nor zero) = a recycled, UNZEROED page.  This trace shows, for
+|     sh's data page 0x80010000: fault type (F_INVAL=fresh anon zero-fill vs F_PROT=COW), the
+|     resolved leaf PTE/pfn (which phys page), and ret -- to decide whether the bzeroba tail-zero
+|     write was lost (COW) or the page was never zero-filled (anon).  The C102 libc-GOT range is
+|     DROPPED: libc's GOT was already confirmed relocated (G-dump = C10xxxxx).  Cap 48 now all
+|     goes to sh. ---
+	cmpil	&0x80000000,%d0
+	bcsw	Laf_done		| addr < 0x80000000 -> skip
+	cmpil	&0x80020000,%d0
+	bccw	Laf_done		| addr >= 0x80020000 -> skip
 Laf_trace:
 	movel	Laf_n,%d0
 	cmpil	&48,%d0
@@ -448,6 +500,28 @@ Laf_trace:
 	andil	&0x3f,%d0
 	asll	&2,%d0
 	movel	%a2@(0,%d0:l),%d3	| d3 = leaf PTE
+| --- record sh's data-page PHYS base for the hatalloc double-alloc detector (hatalloc_dbg.s):
+|     when this fault is in sh's data segment [0x8000f000,0x80012000), stash (leaf PTE & ~0xfff) in
+|     g_shdatabase.  The hat_sdtalloc/hat_ptalloc wrappers then flag any PT allocation that returns
+|     that same phys page = the double-allocation, and log the caller (allocation path). ---
+	movel	%fp@(12),%d0
+	cmpil	&0x80010000,%d0
+	bcsw	Laf_norec
+	cmpil	&0x80011000,%d0
+	bccw	Laf_norec
+	movel	%d3,%d0
+	andil	&0xfffff000,%d0
+	movel	%d0,g_shdatabase
+| also compute g_shdatapp = pages + ((base>>12) - pages_base) * 60  (page struct, 60-byte stride)
+| so the page_free wrapper can detect a spurious free of this exact page by pointer compare.
+	movel	%d0,%d1
+	lsrl	&8,%d1
+	lsrl	&4,%d1			| pfn = base >> 12
+	subl	pages_base,%d1		| idx = pfn - pages_base
+	mulul	&60,%d1			| idx * 60
+	addl	pages,%d1		| + pages array base = pp
+	movel	%d1,g_shdatapp
+Laf_norec:
 | --- read the trap frame's 040 SSW (frame+76) via the frame chain: as_fault's caller is
 |     usrxmemflt_orig, so my fp@(0) = usrxmemflt_orig's fp and *(that)+8 = its arg1 = the trap
 |     frame.  SSW bit 8 = RW (1=read,0=write), bit 10 = ATC fault, bits 2:0 = TM/FC.  This
@@ -782,6 +856,12 @@ Ladyn_msg:
 	.asciz	"DBG dynRUN[5..7] %x %x %x %x %x %x (expect 0B 10 07 D0F8 08 2250)"
 	.even
 Ladyn_n:
+	.long	0
+	.even
+Lcrash_msg:
+	.asciz	"DBG CRASH 80010000 leafPTE=%x RAM@e48=%x (exec-pfn was 7CAB; pfn same+RAM FFFF=double-alloc)"
+	.even
+Lcrash_n:
 	.long	0
 	.even
 Lam_msg:

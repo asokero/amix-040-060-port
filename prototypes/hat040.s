@@ -332,19 +332,23 @@ Lbhave:
 	tstl	%a4@
 	beq	Lfreshleaf		| leaf empty -> fill it
 
-| leaf present: verify the pfn matches.  Stock 030 hat_pteload (0xb4eba) ALSO panics
-| here (LC%1, level 3) -- a mismatch = a stale leaf PTE (a missed unload) or a VA->leaf
-| collision, which a correct kernel never produces.  DIAGNOSTIC: print va, existing *pte
-| and the new pfn (gated to first 8, CE_WARN) and CONTINUE -- the code overwrites the
-| leaf below (Lp_nolock) regardless, so we see the offending VA/pfns and how far boot
-| gets.  Restore to panic(3) once the stale-leaf source is fixed.  a4=&leaf, d2=va,
-| both preserved across cmn_err (clobbers only d0/d1/a0/a1).
+| leaf present: verify the pfn matches.  SAME pfn -> Lpfnok (update prot only; the
+| mapping and the page's p_mapping reverse-map already exist).  DIFFERENT pfn = the leaf
+| slot already maps a DIFFERENT page (a COW replacement / stale leaf).  Stock 030 panicked
+| here, but on 040 the COW fault path legitimately drives this: segvn installs the private
+| copy at the SAME va without a preceding hat_unload.  We MUST go through Lreplace, which
+| (1) unlinks the OLD page from its p_mapping reverse-map and (2) registers the NEW page in
+| p_mapping.  Falling into Lpfnok instead (the old behaviour) wrote the PTE but left the NEW
+| page with p_mapping==0 -> anon_decref/page_abort saw PP_ISMAPPED()==false and freed the
+| page WHILE its 040 leaf PTE was still live -> page_get re-handed it as a leaf table ->
+| 0xFFFFFFFF fill clobbered the live page (THE child-exec wild-jump: User BUS ERROR FFFFFFFF
+| PC:800024FE).  Diagnostic print (gated 8) kept.  a4=&leaf, d2=va preserved across cmn_err.
 	bfextu	%a4@{&0:&20},%d0		| existing PFN (20 bits)  [030: 21]
 	cmpl	%fp@(20),%d0
 	beq	Lpfnok
 	movel	Lhp_dbgn,%d0
 	cmpil	&8,%d0
-	bccw	Lpfnok			| after 8 prints, stop (still overwrites)
+	bccw	Lreplace		| after 8 prints, skip log, still go to Lreplace
 	addql	&1,%d0
 	movel	%d0,Lhp_dbgn
 	movel	%fp@(20),%sp@-		| new pfn
@@ -357,6 +361,7 @@ Lbhave:
 	pea	2			| CE_WARN (was 3=PANIC) -- diagnostic
 	jsr	cmn_err
 	lea	%sp@(32),%sp
+	bra	Lreplace
 Lpfnok:
 	moveq	&7,%d3
 	andl	%d3,%fp@(24)		| prot &= 7
@@ -493,6 +498,72 @@ Lepi:
 	unlk	%fp
 	rts
 
+| --- Lreplace: leaf slot maps a DIFFERENT page than requested (COW replacement).
+| Reconcile the p_mapping reverse-maps, then write the new leaf PTE.  a4=&leaf,
+| a2=new pp (may be 0), d2=va, fp@(20)=new pfn, fp@(24)=prot.  Counts (seg rss,
+| leaf lock/use) are intentionally LEFT UNCHANGED: this is a 1:1 replace, not a new
+| mapping, so the slot was already counted when the OLD page was loaded.
+Lreplace:
+| (1) unlink &a4 from the OLD page's p_mapping list (old pfn = current *a4).
+	bfextu	%a4@{&0:&20},%d0		| old pfn
+	cmpl	pages_base,%d0
+	bcsw	Lrp_status		| old pfn < pages[] -> no pp, skip unlink
+	cmpl	pages_end,%d0
+	bccw	Lrp_status		| old pfn >= end -> skip
+	subl	pages_base,%d0
+	moveq	&60,%d3
+	mulsl	%d3,%d0
+	moveal	pages,%a0
+	addal	%d0,%a0			| a0 = old_pp
+	lea	%a0@(32),%a1		| a1 = &old_pp->p_mapping (list head slot)
+	movel	&256,%d3		| findmap safety counter
+Lrp_find:
+	cmpal	%a1@,%a4		| *a1 == &leaf ?
+	beq	Lrp_unlink
+	subql	&1,%d3
+	beq	Lrp_status		| not found -> give up (leave list as-is)
+	moveal	%a1@,%a1		| follow: cur = *a1
+	addaw	&256,%a1		| next-pointer slot = cur + NPGPT*4
+	bra	Lrp_find
+Lrp_unlink:
+	movel	%a4@(256),%a1@		| splice &leaf out: *a1 = leaf->next
+| (2) compute the PTE status from prot (mirror Lw_st).
+Lrp_status:
+	moveq	&7,%d3
+	andl	%d3,%fp@(24)		| prot &= 7
+	moveq	&2,%d0
+	andl	%fp@(24),%d0
+	tstl	%d0
+	beq	Lrp_ro
+	moveq	&1,%d3
+	movel	%d3,%fp@(-44)		| writable -> status 1
+	bra	Lrp_wr
+Lrp_ro:
+	tstl	%fp@(24)
+	bne	Lrp_rop
+	clrl	%fp@(-44)		| prot 0 -> status 0
+	bra	Lrp_wr
+Lrp_rop:
+	moveq	&5,%d3
+	movel	%d3,%fp@(-44)		| read-only -> status 5
+Lrp_wr:
+	movel	%fp@(20),%d0		| new pfn
+	moveq	&12,%d3
+	lsll	%d3,%d0			| pfn<<12
+	movel	%fp@(-44),%d3
+	orl	%d0,%d3
+	movel	%d3,%a4@		| *leaf = (newpfn<<12) | status
+| (3) register the NEW page (a2) in its p_mapping list (mirror Lw_nopp).
+	tstl	%a2
+	beq	Lrp_flush
+	movel	%a2@(32),%a4@(256)	| leaf->next = new_pp->p_mapping
+	movel	%a4,%a2@(32)		| new_pp->p_mapping = &leaf
+Lrp_flush:
+	pea	1
+	movel	%d2,%sp@-
+	jsr	flushmmu		| flushmmu(va, 1)
+	bra	Lepi
+
 | ===========================================================================
 | hat_unlock (orig 0xb5d1e, GLOBAL T) -- 040 port.
 | Decrements the lock count on the page-table page holding va's leaf PTE, and
@@ -575,6 +646,48 @@ Lhu_invalid:
 Lhu_done:
 	moveml	%fp@(-44),%d2-%d4/%a2-%a3
 	moveal	%d0,%a0
+	unlk	%fp
+	rts
+	nop				| pad .text to a 4-byte multiple
+
+| ===========================================================================
+| hat_pageunload (orig 0xb4598, GLOBAL T) -- 040 port.
+| Called by page_abort/pageout (and others) to remove ALL mappings of a physical page `pp` before
+| the page is freed/reclaimed.  CONTRACT (SVR4 vm_hat.c): walk pp->p_mapping -- a list of pte_t*
+| (each = the address of a leaf PTE mapping pp), chained via *(pte + NPGPT) where NPGPT=64 entries
+| = +256 bytes (the 512B leaf fragment = 256B PTEs + 256B reverse-map ptrs, see hat_unload) -- and
+| INVALIDATE each PTE, then NULL pp->p_mapping.
+| WHY a port is needed: the stock-030 hat_pageunload, when a leaf table's in-use count hits 0, takes
+| a "table empty" path that invalidates the 030 SDE (via as->a_hat.hat_srama, the INERT 030 tree on
+| 040) and hat_ptfree's the table -- WITHOUT clearing the live 040 leaf PTE.  Result (measured): a
+| reclaimed page's 040 leaf PTE stays resident (e.g. 7CAB019), so after page_free + page_get
+| re-hands the page to hat_sdtalloc (which fills it 0xFFFFFFFF), the original owner still reads it
+| through the stale PTE -> bss reads 0xFFFFFFFF -> child malloc bus-errors.
+| THIS port: the 040 leaf PTE address is ALREADY in p_mapping (hat_pteload set pp->p_mapping=&PTE),
+| so just clrl each PTE (UDT->0 invalid) directly -- no tree walk -- then cpusha+pflusha so the HW
+| walker reloads the invalid descriptor and the next access faults & re-maps.  CONSERVATIVE: does
+| NOT free the now-emptier leaf tables or adjust as->a_rss (a bounded leak / soft-count drift, same
+| philosophy as hat_free040) -- correctness (no stale resident PTE on a freed page) comes first.
+| Args: arg@8 = pp.  Returns void.
+	.globl	hat_pageunload
+hat_pageunload:
+	linkw	%fp,&0
+	moveml	%d2-%d3/%a2-%a3,%sp@-
+	moveal	%fp@(8),%a2		| a2 = pp
+	movel	%a2@(32),%d2		| d2 = pp->p_mapping (head: &leaf PTE, or 0)
+Lpu_loop:
+	tstl	%d2
+	beqw	Lpu_done
+	moveal	%d2,%a3			| a3 = &PTE (current)
+	movel	%a3@(256),%d3		| d3 = next = *(pte + NPGPT*4)  (reverse-map chain)
+	clrl	%a3@			| *pte = 0 -> 040 leaf descriptor INVALID (UDT=0)
+	movel	%d3,%d2			| advance to next mapping
+	braw	Lpu_loop
+Lpu_done:
+	clrl	%a2@(32)		| pp->p_mapping = NULL
+	.word	0xf4f8			| cpusha bc -- push the cleared PTE lines to RAM
+	.word	0xf518			| pflusha   -- flush the ATC so the walker reloads invalid descriptors
+	moveml	%sp@+,%d2-%d3/%a2-%a3
 	unlk	%fp
 	rts
 	nop				| pad .text to a 4-byte multiple
@@ -864,11 +977,40 @@ Lhl_no7:
 	moveal	%fp@(-44),%a0
 	tstb	%a0@(6)
 	bnew	Lhl_chkmore
-	movel	%fp@(-36),%sp@-		| leaf empty -> free it
-	jsr	hat_ptfree
-	addqw	&4,%sp
-	moveal	%fp@(-20),%a0
-	bfclr	%a0@(3){&6:&2}		| invalidate Bdesc UDT (low 2 bits)
+| --- DBG (2026-06-27): trace leaf-table FREE for sh's text/data region [0x80000000,0x80080000).
+|     d4 = npgs unloaded THIS call; since pt_inuse just reached 0, npgs == the leaf's pt_inuse just
+|     before this decrement = how many active PTEs the leaf had.  SMALL npgs (1-2) while sh's leaf
+|     should hold all of text+data = the churn bug (premature pt_inuse==0 -> SD_CLRVALID -> realloc).
+|     LARGE npgs = legitimate teardown.  d2=va (advanced to leaf boundary), fp@-36=leaf base.
+|     cmn_err preserves d2-d7/a2-a6, so d2/d4 survive.  Capped 12. ---
+	cmpil	&0x80000000,%d2
+	bcsw	Lhl_freego
+	cmpil	&0x80080000,%d2
+	bccw	Lhl_freego
+	movel	Lhul_n,%d0
+	cmpil	&12,%d0
+	bccw	Lhl_freego
+	addql	&1,%d0
+	movel	%d0,Lhul_n
+	movel	%d4,%sp@-		| npgs (= pt_inuse just before hitting 0)
+	movel	%fp@(-36),%sp@-		| leaf base
+	movel	%d2,%sp@-		| va (advanced to leaf boundary)
+	pea	Lhul_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
+Lhl_freego:
+| FIX (2026-06-27): do NOT free the leaf / invalidate the Bdesc when pt_inuse hits 0.
+| Freeing here caused leaf-table CHURN -> the child-crash double-alloc: anon_private()'s COW
+| does hat_unload(addr) (empties a 1-page leaf -> pt_inuse 0) and IMMEDIATELY hat_memload(new
+| page) at the SAME addr.  If we SD_CLRVALID + free the leaf here, that remap calls
+| hat_ptalloc->page_get for a fresh leaf, which hands out a still-live page (the very COW page
+| being mapped) -> the page is both data AND its own leaf table (offset-32 p_mapping/p_ptdats
+| union collision) -> hat fills it 0xFFFFFFFF -> User BUS ERROR FFFFFFFF PC:800024FE.  hat_ptfree
+| is ALREADY a no-op (leaf pages leak regardless), so freeing gained nothing.  Keep the empty
+| leaf VALID so the immediate remap REUSES it (Lbhave->Lfreshleaf, no page_get, no churn).  Leaf
+| tables are reclaimed at hat_free (full AS teardown).  Bounded per-AS leak; correctness > leak.
+	nop				| (was: hat_ptfree(leaf) + bfclr Bdesc UDT) -- leaf intentionally KEPT
 
 Lhl_chkmore:
 	cmpl	%d2,%d3
@@ -1096,18 +1238,26 @@ Lf_find:
 Lf_findfail:
 	movel	Lhf_failn,%d0
 	cmpil	&4,%d0
-	bccw	Lf_nextPTE
+	bccw	Lf_fail_clr		| cap exceeded: still must clear the stale PTE
 	addql	&1,%d0
 	movel	%d0,Lhf_failn
 	movel	%a3,%sp@-		| pte addr
-	movel	%a3@,%sp@-		| *pte
+	movel	%a3@,%sp@-		| *pte (read BEFORE clear so log shows real value)
 	pea	Lhf_failmsg
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(16),%sp
+Lf_fail_clr:
+	clrl	%a3@			| FIX: clear stale 040 leaf PTE (revmap unlink skipped)
 	braw	Lf_nextPTE
 Lf_unlink:
 	movel	%a3@(256),%a4@		| *a4 = pte->revmap_next
+	clrl	%a3@			| FIX: clear the 040 leaf PTE -- hat_free only unlinked
+					|   p_mapping (pp->p_mapping=0) but left PTE valid.
+					|   Later anon_decref->page_abort(p_mapping=0) skips
+					|   hat_pageunload and calls page_free directly, so
+					|   page_get can re-hand this pfn as a new leaf table
+					|   while the old PTE still maps to it (double-alloc bug).
 Lf_nextPTE:
 	addqw	&4,%a3
 	cmpl	%a3,%d3			| d3 - a3
@@ -1132,8 +1282,7 @@ Lf_done:
 	moveal	%d0,%a0
 	unlk	%fp
 	rts
-	nop				| pad .text to a 4-byte multiple
-	nop				| +1: align total .text to 16 (text/data contiguity)
+	| (nops removed: +4B from hat_free040 clrl-PTE fix absorbed here)
 
 | ===========================================================================
 | hat_ptfree (orig 0xb6cf4, file-local -> globalize+weaken) -- 040 NO-OP (leak) stub.
@@ -1234,6 +1383,12 @@ Lhl_failmsg:
 	.asciz	"DBG hat_unload: pte not in revmap *pte=%x pp=%x pte@=%x"
 	.even
 Lhl_failn:
+	.long	0
+	.even
+Lhul_msg:
+	.asciz	"DBG htunload FREELEAF va=%x leaf=%x npgs=%x (pt_inuse hit 0)"
+	.even
+Lhul_n:
 	.long	0
 	.even
 Lhf_msg:

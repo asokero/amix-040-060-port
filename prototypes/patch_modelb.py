@@ -38,6 +38,14 @@ def text_sec(b):
 
 # (vaddr, expect_bytes, new_bytes, name)
 P = [
+ # --- hat_ptalloc: zero the FULL 4KB leaf-table page, not just 256 B (2026-06-27 EXPERIMENT).
+ #     hat_ptalloc is forced to page_get (page-aligned full pages); it bzero's only the 64-PTE
+ #     region (256 B), leaving [256,4096) STALE.  Under the 040 page-recycling double-allocation
+ #     (a still-mapped child data page is re-handed as a leaf table), that stale tail = 0xFFFFFFFF
+ #     corrupts the child's bss (malloc global @0x80010e48 reads 0xFFFFFFFF -> bus error).  Zeroing
+ #     the whole page makes the recycled data read 0 (correct for bss) -> benign.  NOTE: a band-aid
+ #     for the deeper free-while-mapped / p_mapping bug, not a root fix. ---
+ (0xb6904, b"\x48\x78\x01\x00", b"\x48\x78\x10\x00", "hat_ptalloc:bzero leaf table 256->4096 (full-page, recycled-page band-aid)"),
  # --- mlsetup: define click = 4KB (maxclick) + sptmap range in 4KB clicks ---
  (0x48af4, b"\x76\x0b", b"\x76\x0c", "mlset:VSIZOFMEM>>11 (memsize clicks)"),
  (0x48b1a, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "mlset:maxclick round +2047"),

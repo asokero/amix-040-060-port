@@ -360,6 +360,64 @@ Li_go:
 | set then later lost -> a switch/return path drops it.  'T' = a user-mode trap dump follows.
 	.globl	u_trap
 u_trap:
+| --- CRASH probe (2026-06-26 PM): the FFFFFFFF fault does NOT reach as_fault (SIGBUS via
+|     as_segat=NULL), but u_trap IS called.  When the saved trap PC is in sh's malloc crash region
+|     [0x80002400,0x80002600], walk the URP for 0x80010000 and dump (leaf PTE = crash-time pfn) +
+|     (RAM @ pfn<<12 +0xe48, DTT0 identity).  Compare to exec-time pfn 7CAB: pfn same + RAM FFFFFFFF
+|     -> page stayed mapped, RAM reused = double-alloc/page-free bug; pfn changed -> silent remap.
+|     Balanced moveml save/restore leaves sp unchanged before the normal u_trap logic.  Cap 4. ---
+	movel	%sp@(70),%d0		| saved trap PC
+	cmpil	&0x80002400,%d0
+	bcsw	Lcr2_skip
+	cmpil	&0x80002600,%d0
+	bccw	Lcr2_skip
+	movel	Lcr2_n,%d0
+	cmpil	&4,%d0
+	bccw	Lcr2_skip
+	addql	&1,%d0
+	movel	%d0,Lcr2_n
+	moveml	%d0-%d3/%a0-%a2,%sp@-	| save 7 regs (28 bytes); sp restored below
+	.word	0x4e7a,0x0806		| movec %urp,%d0
+	moveal	%d0,%a2
+	movel	&0x80010000,%d1		| va
+	movel	%d1,%d0
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&1,%d0			| va>>25
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	movel	%a2@(0,%d0:l),%d0	| root[Aidx]
+	andil	&0xfffffe00,%d0
+	moveal	%d0,%a2
+	movel	%d1,%d0
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&2,%d0			| va>>18
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	movel	%a2@(0,%d0:l),%d0	| ptr[Bidx]
+	andil	&0xffffff00,%d0
+	moveal	%d0,%a2
+	movel	%d1,%d0
+	lsrl	&8,%d0
+	lsrl	&4,%d0			| va>>12
+	andil	&0x3f,%d0
+	asll	&2,%d0
+	movel	%a2@(0,%d0:l),%d3	| d3 = leaf PTE (crash-time pfn)
+	movel	%d3,%d0
+	andil	&0xfffff000,%d0
+	oril	&0xe48,%d0
+	moveal	%d0,%a2
+	movel	%a2@,%d0		| RAM @ 0x80010e48
+	movel	%d0,%sp@-		| RAM value
+	movel	%d3,%sp@-		| leaf PTE
+	pea	Lcr2_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
+	moveml	%sp@+,%d0-%d3/%a0-%a2	| restore; sp back to entry value
+Lcr2_skip:
 	movel	%sp@(70),%d0		| saved trap PC
 	cmpil	&0x80000000,%d0
 	bcsw	Lut_go			| kernel-space trap -> skip
@@ -432,17 +490,98 @@ relvm:
 Lv_go:
 	jmp	relvm_orig
 
+| setregs (0x58b62) runs LAST in the exec chain (F->V->X) -- by here the new user image's
+| stack is built (execpoststack copied argc/argv/envp/auxv to the top of the user stack) and
+| setregs writes the new user SP into the saved trap frame (u.u_ar0[0], == saved USP, proven
+| by the icode case where u.u_ar0[0]=0x8080002A).  So AFTER setregs_orig runs, u.u_ar0[0] is
+| the NEW user SP pointing at [argc][argv..][0][envp..][0][auxv pairs..].  We dump a window of
+| longwords from that SP so the auxv is visible RAW (no in-asm parsing): scan the dump offline
+| for AT_BASE (type 7) followed by ld.so's load base = voffset.  For init this MUST read 7 then
+| C1000000 (the known-good interp base).  If a CHILD reads 7 then 0x80000000 (the program base)
+| -> AT_BASE is wrong for user-initiated exec -> _rt_setup places _rt_bind at program_base+off
+| -> the PLT[0] `jmp *GOT[2]` wild-jumps into the program (observed PC 0x800024FE).
+| Capped at 5 execs (init + first children).  lfuword (moves SFC=user) reads user VA safely
+| (faults caught by onfault -> returns -1, never crashes the kernel).
 	.globl	setregs
 setregs:
-	movel	Lx_n,%d0
-	bnew	Lx_go
-	moveq	&1,%d0
-	movel	%d0,Lx_n
-	pea	0x58			| 'X' -- setregs entered (new image OK; setting up return-to-user)
+	linkw	%fp,&0
+	moveml	%d2-%d6,%sp@-
+	movel	%fp@(8),%sp@-		| arg1 = struct uarg *
+	jsr	setregs_orig
+	addqw	&4,%sp
+	movel	%d0,%d2			| save setregs return value
+	movel	Lx_n,%d3
+	cmpil	&5,%d3
+	bccw	Lx_done			| past cap -> just return
+	addql	&1,%d3
+	movel	%d3,Lx_n
+	pea	0x58			| 'X' -- setregs done; auxv dump follows
 	jsr	serdbg_mark
 	addqw	&4,%sp
-Lx_go:
-	jmp	setregs_orig
+	moveal	u+0x864,%a0		| a0 = u.u_ar0 (saved register frame)
+	movel	%a0@,%d4		| d4 = u.u_ar0[0] = new user SP (top of arg/auxv block)
+	movel	%d4,%sp@-		| dump the SP itself first
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x62			| 'b' -- stack window (longwords from SP) follows
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%d4,%d6			| d6 = running user address
+	moveq	&47,%d5			| 48 longwords (covers argc/argv/envp/auxv for short execs)
+Lx_dmp:
+	movel	%d6,%sp@-
+	jsr	lfuword			| d0 = *(user d6) (or -1 on fault)
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	addql	&4,%d6
+	dbra	%d5,Lx_dmp
+| --- sh partial data/bss page dump (2026-06-26 PM): meaningful only for /sbin/sh execs (identify
+|     via the auxv string above).  sh's data page 0x80010000 = file data [0x80010000,0x800106e8)
+|     + bss tail that execmap zeroes via bzeroba(end, roundup(end,4096)-end).  The crash reads
+|     0xFFFFFFFF at 0x80010e48 (upper 2KB of this page) -- but bzeroba's range covers it, so dump
+|     ACROSS the 2KB boundary 0x80010800 to see EXACTLY where the zeros stop: if [..0x800107fc]=0
+|     and [0x80010800..]=FFFFFFFF -> a 2KB straggler in the partial-page tail zero-fill (the bug).
+|     At setregs time the page is present (faulted during elfexec/execmap, earlier in the chain),
+|     so lfuword reads the real RAM.  'P'<sentinel @0x80010000> 'B'<24 longs @0x800107c0> 'g'<@0x80010e48>.
+	pea	0x50			| 'P' -- sentinel: 0x80010000 (file data start; expect file content, not -1)
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0x80010000,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x42			| 'B' -- 24 longs spanning the 2KB boundary 0x80010800
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0x800107c0,%d6		| 0x40 below the 2KB boundary
+	moveq	&23,%d5			| 24 longs -> 0x800107c0 .. 0x80010820
+Lx_pp:
+	movel	%d6,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	addql	&4,%d6
+	dbra	%d5,Lx_pp
+	pea	0x67			| 'g' -- the malloc bss global @0x80010e48 (what the crash dereferences)
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	&0x80010e48,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+Lx_done:
+	movel	%d2,%d0			| restore setregs return value
+	moveml	%fp@(-20),%d2-%d6
+	unlk	%fp
+	rts
 
 | exhd_getmap(a1,a2,a3,a4,&out): gexec maps the ELF exec header here (segmap-backed), and
 | the `hat_pteload pfn mismatch va=40448800` fires during this map.  If segmap delivers the
@@ -499,6 +638,9 @@ Lh_go:
 	nop
 	nop
 	nop
+	nop
+	nop
+	nop
 
 	.data
 	.even
@@ -532,5 +674,11 @@ Lut_n:
 	.long	0
 Lh_n:
 	.long	0
+Lcr2_n:
+	.long	0
+	.even
+Lcr2_msg:
+	.asciz	"DBG uCRASH PC-malloc 80010000 leafPTE=%x RAM@e48=%x (exec-pfn=7CAB)"
+	.even
 g_inexec:
 	.long	0

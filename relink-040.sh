@@ -17,10 +17,11 @@ ENV="/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
 . "$ENV"
 mkdir -p "$HERE/build"
 
-echo "[*] assembling pstart040.s + kvm040.s + hat040.s"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/pstart040.s" -o "$HERE/build/pstart040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/kvm040.s"    -o "$HERE/build/kvm040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat040.s"    -o "$HERE/build/hat040.o"
+echo "[*] assembling pstart040.s + kvm040.s + hat040.s + hat_chgprot040.s"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/pstart040.s"     -o "$HERE/build/pstart040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/kvm040.s"        -o "$HERE/build/kvm040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat040.s"        -o "$HERE/build/hat040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat_chgprot040.s" -o "$HERE/build/hat_chgprot040.o"
 
 echo "[*] assembling genuine 68040 trap/fault runtime ports (moved out of the dbg overlay --"
 echo "    these are REAL fixes, not diagnostics, so they belong in the base kernel):"
@@ -63,9 +64,11 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol hat_pteload \
 	--weaken-symbol hat_unlock \
 	--weaken-symbol hat_unload \
+	--weaken-symbol hat_pageunload \
 	--weaken-symbol hat_alloc \
 	--weaken-symbol hat_free \
 	--weaken-symbol hat_ptfree \
+	--weaken-symbol hat_chgprot \
 	--weaken-symbol ptest \
 	"$HERE/build/unix-stage1"
 
@@ -88,13 +91,14 @@ OUT="$HERE/build/unix-040"
 echo "[*] relinking -> $OUT"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/pstart040.o" "$HERE/build/kvm040.o" "$HERE/build/hat040.o" \
+	"$HERE/build/hat_chgprot040.o" \
 	"$HERE/build/getfault040.o" "$HERE/build/userspace040.o" \
 	"$HERE/build/vtop040.o" "$HERE/build/wb040.o" "$HERE/build/ptest040.o" \
 	"$HERE/build/uvatosde040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
