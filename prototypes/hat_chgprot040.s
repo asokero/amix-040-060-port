@@ -93,13 +93,27 @@ Lcp_walk:
 	movel	%d0,%d1
 	andil	&3,%d1			| UDT
 	bnew	Lcp_aok
-	movel	%d2,%d0			| A absent -> next 32MB (2^25) boundary
+Lcp_nextA:
+	movel	%d2,%d0			| A absent/garbage -> next 32MB (2^25) boundary
 	andil	&0xfe000000,%d0
 	addil	&0x2000000,%d0
 	movel	%d0,%d2
 	braw	Lcp_chkmore
 Lcp_aok:
 	andil	&0xfffffe00,%d0		| Btable = Adesc & ~0x1ff
+| V2.2 guard (boot-verified crash pc=0xD84C0, pid sac at LOGIN stage): garbage descriptors
+| with UDT bits set (the FFFFFFFF fill relics from unported hat_exec/hat_growsdt 030 writes)
+| pass the UDT check and deref an unbacked base (FFFFFE00) -> KERNEL FAULT.  Validate the
+| table base is a managed RAM frame ([pages_base,pages_end)) -- same test as hat_free040's
+| Lf_badleaf -- and treat a bad slot as ABSENT (skip the region; prot change on a garbage
+| region is meaningless).
+	movel	%d0,%d1
+	moveq	&12,%d5
+	lsrl	%d5,%d1
+	cmpl	pages_base,%d1
+	bcsw	Lcp_nextA
+	cmpl	pages_end,%d1
+	bccw	Lcp_nextA
 	movel	%d2,%d1
 	moveq	&18,%d5
 	lsrl	%d5,%d1
@@ -111,13 +125,22 @@ Lcp_aok:
 	movel	%d1,%d0
 	andil	&3,%d0			| UDT
 	bnew	Lcp_bok
-	movel	%d2,%d0			| B absent -> next 256KB (2^18) boundary
+Lcp_nextB:
+	movel	%d2,%d0			| B absent/garbage -> next 256KB (2^18) boundary
 	andil	&0xfffc0000,%d0
 	addil	&0x40000,%d0
 	movel	%d0,%d2
 	braw	Lcp_chkmore
 Lcp_bok:
 	andil	&0xffffff00,%d1		| leaf base = Bdesc & ~0xff
+| same guard for the leaf base (garbage Bdesc FFFFFFFF -> FFFFFF00 deref)
+	movel	%d1,%d0
+	moveq	&12,%d5
+	lsrl	%d5,%d0
+	cmpl	pages_base,%d0
+	bcsw	Lcp_nextB
+	cmpl	pages_end,%d0
+	bccw	Lcp_nextB
 	moveal	%d1,%a3			| a3 = leaf base
 
 Lcp_pte:

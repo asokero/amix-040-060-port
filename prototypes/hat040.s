@@ -736,13 +736,24 @@ Lhl_leafwalk:
 	movel	%d0,%d1
 	andil	&3,%d1			| UDT
 	bnew	Lhl_aok
-	movel	%d2,%d0			| A absent -> next 32MB (2^25) boundary
+Lhl_nextAreg:
+	movel	%d2,%d0			| A absent/garbage -> next 32MB (2^25) boundary
 	andil	&0xfe000000,%d0
 	addil	&0x2000000,%d0
 	movel	%d0,%d2
 	braw	Lhl_chkmore
 Lhl_aok:
 	andil	&0xfffffe00,%d0		| Btable = Adesc & ~0x1ff
+| V2.2 guard (mirror of hat_chgprot040 + hat_free040 Lf_badleaf): a garbage descriptor with
+| UDT set (FFFFFFFF relics) passes the UDT check and derefs an unbacked base -> KERNEL FAULT.
+| Validate the table frame against [pages_base, pages_end); bad slot = treat as ABSENT.
+	movel	%d0,%d1
+	moveq	&12,%d5
+	lsrl	%d5,%d1
+	cmpl	pages_base,%d1
+	bcsw	Lhl_nextAreg
+	cmpl	pages_end,%d1
+	bccw	Lhl_nextAreg
 	movel	%d2,%d1
 	moveq	&18,%d5
 	lsrl	%d5,%d1
@@ -755,13 +766,22 @@ Lhl_aok:
 	movel	%d1,%d0
 	andil	&3,%d0			| UDT
 	bnew	Lhl_bok
-	movel	%d2,%d0			| B absent -> next 256KB (2^18) boundary
+Lhl_nextBreg:
+	movel	%d2,%d0			| B absent/garbage -> next 256KB (2^18) boundary
 	andil	&0xfffc0000,%d0
 	addil	&0x40000,%d0
 	movel	%d0,%d2
 	braw	Lhl_chkmore
 Lhl_bok:
 	andil	&0xffffff00,%d1		| leaf base = Bdesc & ~0xff
+| same guard for the leaf base (garbage Bdesc FFFFFFFF -> FFFFFF00 deref)
+	movel	%d1,%d0
+	moveq	&12,%d5
+	lsrl	%d5,%d0
+	cmpl	pages_base,%d0
+	bcsw	Lhl_nextBreg
+	cmpl	pages_end,%d0
+	bccw	Lhl_nextBreg
 	movel	%d1,%fp@(-36)
 	movel	%d2,%d0
 	moveq	&12,%d5
