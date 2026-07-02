@@ -387,6 +387,86 @@ Lhpa_done:
 	moveml	%fp@(-12),%d2-%d3/%a2
 	unlk	%fp
 	rts
+
+	.data
+	.even
+Lhx_n:
+	.long	0
+	.even
+Lhx_emsg:
+	.asciz	"DBG hat_exec ENTER oas=%x nas=%x shd@e48=%x freemem=%x availrmem=%x availsmem=%x"
+	.even
+Lhx_xmsg:
+	.asciz	"DBG hat_exec EXIT ret=%x shd@e48=%x"
+	.even
+
+	.text
+| hat_exec (0xb6f20) wrapper -- hat_exec is the exec-time STACK MOVE (3B2 vm_hat.c:2723): it moves
+| the new-image stack pages from the old AS to the new AS by DIRECT 030 SDE/PTE-table writes and
+| calls hat_growsdt (030 SD-invalid fill).  NEITHER is 040-ported, and as_exec(0xaed8a)->hat_exec
+| is the ONLY live hat_growsdt caller in this build (hat_alloc040 replaced stock hat_alloc,
+| hat_dup is stubbed) -- so this runs stock-030 table writes on EVERY exec.  Suspected corruptor
+| of live user pages (FFFFFFFF fill / stray p_mapping-chain write hits sh's data page).
+| Probe: log the 6 args + sh-data-page RAM @ +0xe48 (g_shdatabase phys, DTT0 identity) at ENTRY
+| and EXIT -- a 0 -> FFFFFFFF transition INSIDE the bracket = smoking gun.  Cap 24.
+	.globl	hat_exec
+hat_exec:
+	linkw	%fp,&0
+	moveml	%d2-%d3/%a2,%sp@-
+	movel	Lhx_n,%d0
+	cmpil	&64,%d0
+	bccw	Lhx_call
+	addql	&1,%d0
+	movel	%d0,Lhx_n
+	bsrw	Lhx_read		| d0 = RAM@e48 (or -2 if base unset)
+	movel	availsmem,%sp@-		| availsmem (4KB clicks)
+	movel	availrmem,%sp@-		| availrmem (4KB clicks)
+	movel	freemem,%sp@-		| freemem (4KB clicks) -- leak trajectory per exec
+	movel	%d0,%sp@-		| shd@e48
+	movel	%fp@(20),%sp@-		| nas
+	movel	%fp@(8),%sp@-		| oas
+	pea	Lhx_emsg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(32),%sp
+Lhx_call:
+	movel	%fp@(28),%sp@-
+	movel	%fp@(24),%sp@-
+	movel	%fp@(20),%sp@-
+	movel	%fp@(16),%sp@-
+	movel	%fp@(12),%sp@-
+	movel	%fp@(8),%sp@-
+	jsr	hat_exec_orig
+	lea	%sp@(24),%sp
+	movel	%d0,%d3			| preserve ret
+	movel	Lhx_n,%d0
+	cmpil	&64,%d0
+	bccw	Lhx_done
+	bsrw	Lhx_read
+	movel	%d0,%sp@-		| shd@e48
+	movel	%d3,%sp@-		| ret
+	pea	Lhx_xmsg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
+Lhx_done:
+	movel	%d3,%d0			| return orig's ret
+	moveml	%fp@(-12),%d2-%d3/%a2
+	unlk	%fp
+	rts
+| helper: d0 = *(g_shdatabase | 0xe48) read via DTT0 identity; -2 if g_shdatabase unset
+Lhx_read:
+	movel	g_shdatabase,%d0
+	beqs	Lhxr_unset
+	andil	&0xfffff000,%d0
+	oril	&0xe48,%d0
+	moveal	%d0,%a2
+	movel	%a2@,%d0
+	rts
+Lhxr_unset:
+	moveq	&-2,%d0
+	rts
+	nop				| pad (freemem-trace edit changed size by 2)
 	nop				| pad .text to keep text/data contiguous
 	nop
 	nop

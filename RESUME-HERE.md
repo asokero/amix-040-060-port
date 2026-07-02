@@ -1,6 +1,45 @@
-# RESUME HERE — AMIX 68040 port status (2026-06-26)
+# RESUME HERE — AMIX 68040 port status (2026-07-02)
 
 ## ►► CURRENT STATUS (one-glance) ◄◄
+**2026-07-02: THE CHILD CRASH IS SOLVED (root cause proven, fix built, AWAITING BOOT TEST).**
+The deterministic `User BUS ERROR FFFFFFFF PC:800024FE` in every fork+exec'd child was **NOT**
+kernel page corruption, NOT a lazy-PLT/GOT[2] bug, NOT free-while-mapped (all those framings are
+RETIRED): the fs-uae `AMIXE48` watch caught the write **`addr=80010e48 val=ffffffff s=0
+PC=80002494` = USER-MODE, sh ITSELF** storing sbrk()'s return value.  Chain (disasm-verified in
+/sbin/sh): malloc calls sbrk(0x600) -> kernel **brk() rounds nva/ova to 2KB** (`+2047 >>11 <<11`
+@0x58130/0x58136/0x58144 — an unpatched Model-B straggler) -> ova=0x80011800 lands INSIDE the
+4KB-rounded exec data/bss segment (ends 0x80012000) -> as_map overlap -> ENOMEM -> sbrk returns
+-1 -> malloc stores -1 in its arena head (0x80010e48) and writes through it (`movel %a0,%a1@`,
+a1=-1) -> BUS ERROR at FFFFFFFF, PC = next insn 0x800024FE.  init survives because its break
+rounds identically at 2KB and 4KB.  **FIX: 8 byte-patches in patch_modelb.py (brk 3 + grow 5,
+2KB->4KB roundups/shifts), built into unix-040 + unix-040-dbg.**  Also this session:
+hat_chgprot040 boot-tested (fires, kept — real fork-COW bug, but wasn't the crash);
+hat_exec probe added (clean brackets = hat_exec NOT the corruptor; still unported, flag=1 path);
+anon_decref dbg wrapper found DEAD (symbol is file-local `t` — weaken can't bind it).
+**BOOT-VERIFIED (2026-07-02 eve): 0 BUS ERRORs — children run past malloc, rc scripts exec real
+programs.  NEW FRONTIER hit next: `PANIC: swap_xlate`** (user fault -> segvn_fault ->
+segvn_faultpage -> anon_getpage got a garbage anon ptr) once fork/exec/unmap churn started.
+ROOT CAUSE: the seg_vn/as user-VM family was only PARTIALLY 4KB-converted (fault path 4KB, the
+create/dup/unmap/free/setprot/... family still 2KB) = the exact mixed-granularity hazard the old
+as_setprot post-mortem warned about (e.g. segvn_unmap's split path computes anon_index with 2KB
+math against 4KB-indexed anon arrays).  **FIX: +99 byte-patches (detect_pagesize.py-classified,
+gen_uservm_patches.py-verified) completing the whole coupled set** — segvn_create/extend_prev/
+extend_next/anonmap_alloc/dup/unmap/free/softunlock/non_anon/faulta/unload/setprot/checkprot/
+getprot/kluster/swapout/sync/incore/lockop/vpage/isanon + as_faulta/setprot/checkprot/unmap/map/
+incore/ctl + map_addr.  patch_modelb.py now 176 sites; both kernels rebuilt, relocs clean.
+DEFERRED (noted in patch_modelb.py): as_iolock, execstk_addr, phystopp, vm_swap internals.
+**BOOT-VERIFIED (2026-07-02 night): no swap_xlate panic, 0 BUS ERRORs — the system is ALIVE and
+responds to Enter on the console.  NEW FRONTIER: `ldterm/console_get_buffer: out of blocks` =
+allocb's kmem_alloc(KM_NOSLEEP) returns NULL = kernel heap genuinely exhausted after ~36 execs
+(~150-200KB lost per process; allocb has NO strthresh check on this path, so it IS memory).
+Suspects: exit teardown not returning pages (as_free/segvn_free/anon chain) vs processes never
+exiting vs (small, known) hat PT leaks.  MEASURE FIRST: the hat_exec dbg probe now logs
+freemem/availrmem/availsmem per exec (cap 64).  NEXT: boot unix-040-dbg, then
+`grep -a "hat_exec ENTER" /tmp/amix-boot.log` -> read the freemem trajectory: never recovers
+after exits = teardown leak; stable = STREAMS-pool-specific.
+(NOTE: the serial log contains NUL bytes — plain grep silently matches nothing, ALWAYS -a).**
+
+## ►► PREVIOUS STATUS (2026-06-26, superseded) ◄◄
 The 040 kernel now boots with **0 kernel panics** all the way to **/sbin/init running its rc scripts
 (/etc/sysinit, /etc/brc, /etc/rc2) and spawning the multi-user/login entries (/etc/getty,
 /usr/lib/saf/sac) from /etc/inittab** -- i.e. the THRESHOLD of a console login.  THREE bugs solved
