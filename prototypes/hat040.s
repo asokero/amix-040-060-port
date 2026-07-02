@@ -1321,12 +1321,25 @@ hat_ptfree:
 	mulsl	%d1,%d0
 	moveal	%d0,%a0
 	addal	pages,%a0		| a0 = pp = pages + (pfn - pages_base)*60
+| V2.1 (boot-verified V2 hit PANIC page_free: pp@(2) keepcnt!=0): mirror the 3B2 reference
+| release (vm_hat.c:2334 PAGE_RELE + accounting).  page_get hands the page out HELD
+| (p_keepcnt@(2) = 1) and hat_ptalloc charged availrmem/availsmem/pages_pp_kernel; the
+| release must undo both, and page_free panics unless keepcnt/mapping/lck/cow are all 0.
 	clrl	%a0@(32)		| clear p_mapping/p_ptdats union (stale pt_inuse)
+	tstw	%a0@(2)
+	beqw	Lpf_leak		| keepcnt already 0 = not a held page_get page -> leak+log
+	subqw	&1,%a0@(2)		| PAGE_RELE: drop our keep (page_get's hold)
+	bnew	Lpf_held		| someone else still holds it -> do NOT free
+	addql	&1,availrmem
+	addql	&1,availsmem
+	subql	&1,pages_pp_kernel
 	clrl	%sp@-			| dontneed = 0
 	movel	%a0,%sp@-		| pp
 	jsr	page_free
 	addqw	&8,%sp
 	braw	Lpf_ret
+Lpf_held:
+	braw	Lpf_ret			| hold released; another holder keeps the page alive
 Lpf_leak:
 	movel	Lpf_n,%d0
 	cmpil	&8,%d0
