@@ -131,6 +131,138 @@ P = [
  # with 2KB granularity and dereferenced a wrongly-relocated pointer (0x66000030) -> USER BUS
  # ERROR PC=C101100E in /sbin/init's interpreter, the first time init runs.  Report 4096.
  (0xb842c, b"\x24\xfc\x00\x00\x08\x00", b"\x24\xfc\x00\x00\x10\x00", "elfexec:AT_PAGESZ 2048->4096"),
+ # brk(2) / grow (os/grow.c, binary 0x580e8/0x5820e): the sbrk/brk syscall handler rounds the
+ # new and old break addresses to 2KB (+2047 >>11 <<11).  execmap (patched above) creates the
+ # data/bss segment 4KB-rounded (e.g. sh's ends at 0x80012000), so ova = roundup2K(brkbase+
+ # brksize) = 0x80011800 lands INSIDE the existing segment -> as_map(ova, change) overlaps ->
+ # error -> brk returns ENOMEM -> libc sbrk returns -1 -> sh's malloc stores -1 in its arena
+ # head (0x80010e48) and dereferences it -> the deterministic child crash "User BUS ERROR at
+ # FFFFFFFF PC:800024FE" (PC = insn after `movel %a0,%a1@`, a1 = -1).  PROVEN 2026-07-02 by the
+ # fs-uae AMIXE48 watch: `addr=80010e48 val=ffffffff s=0 PC=80002494` = sh ITSELF stores sbrk's
+ # -1 -- NOT kernel page corruption (that whole framing is retired).  init survives only because
+ # its break happens to round identically at 2KB and 4KB.  One moveq drives all four shifts in
+ # brk (nva >>11 <<11, ova >>11 <<11); same pattern in grow (stack growth) for the stack rlimit
+ # compare and the as_map addr/size click<->byte conversions.
+ (0x58130, b"\x06\x82\x00\x00\x07\xff", b"\x06\x82\x00\x00\x0f\xff", "brk:nva round +2047->+4095"),
+ (0x58136, b"\x72\x0b", b"\x72\x0c", "brk:nva/ova >>11<<11 shift count (#11->#12, all 4 shifts)"),
+ (0x58144, b"\x06\x83\x00\x00\x07\xff", b"\x06\x83\x00\x00\x0f\xff", "brk:ova round +2047->+4095"),
+ (0x58222, b"\x06\x83\x00\x00\x07\xff", b"\x06\x83\x00\x00\x0f\xff", "grow:stksize round +2047->+4095"),
+ (0x58228, b"\x72\x0b", b"\x72\x0c", "grow:stksize/growth >>11 shift count (#11->#12, both)"),
+ (0x58234, b"\x06\x82\x00\x00\x07\xff", b"\x06\x82\x00\x00\x0f\xff", "grow:growth round +2047->+4095"),
+ (0x58270, b"\x72\x0b", b"\x72\x0c", "grow:total clicks<<11 (stack rlimit compare, #11->#12)"),
+ (0x582ba, b"\x72\x0b", b"\x72\x0c", "grow:as_map addr/size clicks<<11 (#11->#12, both shifts)"),
+ # USER-VM PER-PAGE-ARRAY COMPLETION (2026-07-02): the seg_vn/as family was only PARTIALLY
+ # converted (segvn_fault/as_fault/anon_dup/anon_free/anon_resv 4KB, everything else 2KB) --
+ # exactly the mixed-granularity hazard the as_setprot post-mortem warned about.  Symptom:
+ # PANIC swap_xlate once rc-script fork/exec/unmap churn started (segvn_fault -> anon_getpage
+ # got a garbage anon ptr): e.g. segvn_unmap's partial-unmap/split path computes anon_index and
+ # the anon_free range with 2KB math against arrays the 4KB fault path populates.  Fix = convert
+ # the WHOLE coupled set in one sweep (sites classified by detect_pagesize.py, byte-verified by
+ # gen_uservm_patches.py): segvn_create/extend_prev/extend_next/anonmap_alloc/dup/unmap/free/
+ # softunlock/non_anon/faulta/unload/setprot/checkprot/getprot/kluster/swapout/sync/incore/
+ # lockop/vpage/isanon + as_faulta/setprot/checkprot/unmap/map/incore/ctl + map_addr.
+ # DEFERRED (noted, not converted): as_iolock (async-IO path), execstk_addr (works today;
+ # interacts with as_exec/hat_exec stack move), phystopp (verify pages[] index basis first),
+ # vm_swap internals (2KB-consistent internally; matters only when real swap-out starts).
+ (0xaacb8, b"\x02\x41\xf8\x00", b"\x02\x41\xf0\x00", "segvn_create:offset mask &-2048"),
+ (0xaad34, b"\x02\x41\xf8\x00", b"\x02\x41\xf0\x00", "segvn_create:offset mask &-2048"),
+ (0xaae8e, b"\x02\x41\xf8\x00", b"\x02\x41\xf0\x00", "segvn_create:offset mask &-2048"),
+ (0xaaf1c, b"\x06\x86\x00\x00\x07\xff", b"\x06\x86\x00\x00\x0f\xff", "segvn_create:npages round +2047"),
+ (0xaaf22, b"\x72\x0b", b"\x72\x0c", "segvn_create:npages >>11"),
+ (0xaafc4, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "segvn_create:vpage-loop va step"),
+ (0xab10c, b"\x02\x41\xf8\x00", b"\x02\x41\xf0\x00", "segvn_extend_prev:offset mask"),
+ (0xab146, b"\x78\x0b", b"\x78\x0c", "segvn_extend_prev:pages<<11"),
+ (0xab1c2, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segvn_extend_prev:npages round"),
+ (0xab1c8, b"\x78\x0b", b"\x78\x0c", "segvn_extend_prev:npages >>11"),
+ (0xab1e0, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segvn_extend_prev:npages round"),
+ (0xab26c, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "segvn_extend_next:offset mask"),
+ (0xab2a0, b"\x76\x0b", b"\x76\x0c", "segvn_extend_next:pages<<11"),
+ (0xab2ee, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segvn_extend_next:npages round"),
+ (0xab340, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segvn_extend_next:npages round"),
+ (0xab346, b"\x76\x0b", b"\x76\x0c", "segvn_extend_next:npages >>11"),
+ (0xab366, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segvn_extend_next:npages round"),
+ (0xab3e6, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "anonmap_alloc:anon slots round +2047"),
+ (0xab3ec, b"\x72\x0b", b"\x72\x0c", "anonmap_alloc:anon slots >>11"),
+ (0xab430, b"\x06\x82\x00\x00\x07\xff", b"\x06\x82\x00\x00\x0f\xff", "segvn_dup:npages round (vpage copy)"),
+ (0xab436, b"\x72\x0b", b"\x72\x0c", "segvn_dup:npages >>11"),
+ (0xab670, b"\x02\x80\x00\x00\x07\xff", b"\x02\x80\x00\x00\x0f\xff", "segvn_unmap:addr pageoff &2047"),
+ (0xab67c, b"\x02\x80\x00\x00\x07\xff", b"\x02\x80\x00\x00\x0f\xff", "segvn_unmap:len pageoff &2047"),
+ (0xab754, b"\x06\x85\x00\x00\x07\xff", b"\x06\x85\x00\x00\x0f\xff", "segvn_unmap:anon_free npages round"),
+ (0xab75a, b"\x72\x0b", b"\x72\x0c", "segvn_unmap:anon_free npages >>11"),
+ (0xaba08, b"\x06\x84\x00\x00\x07\xff", b"\x06\x84\x00\x00\x0f\xff", "segvn_unmap:split anon_index round"),
+ (0xaba0e, b"\x72\x0b", b"\x72\x0c", "segvn_unmap:split anon_index >>11"),
+ (0xaba3a, b"\x06\x84\x00\x00\x07\xff", b"\x06\x84\x00\x00\x0f\xff", "segvn_unmap:split vpage idx round"),
+ (0xaba40, b"\x72\x0b", b"\x72\x0c", "segvn_unmap:split vpage idx >>11"),
+ (0xaba9c, b"\x72\x0b", b"\x72\x0c", "segvn_unmap:split idx >>11"),
+ (0xabb8e, b"\x06\x82\x00\x00\x07\xff", b"\x06\x82\x00\x00\x0f\xff", "segvn_free:anon array npages round"),
+ (0xabb94, b"\x72\x0b", b"\x72\x0c", "segvn_free:anon array npages >>11"),
+ (0xabd2e, b"\x7c\x0b", b"\x7c\x0c", "segvn_softunlock:page idx >>11"),
+ (0xabd56, b"\x7c\x0b", b"\x7c\x0c", "segvn_softunlock:page idx >>11"),
+ (0xabdae, b"\x7c\x0b", b"\x7c\x0c", "segvn_softunlock:page idx >>11"),
+ (0xabee0, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "segvn_softunlock:loop bound step"),
+ (0xabf2e, b"\x06\x80\x00\x00\x08\x00", b"\x06\x80\x00\x00\x10\x00", "non_anon:next-page step"),
+ (0xabf4e, b"\x06\x80\x00\x00\x08\x00", b"\x06\x80\x00\x00\x10\x00", "non_anon:next-page step"),
+ (0xac868, b"\x74\x0b", b"\x74\x0c", "segvn_faulta:page idx >>11"),
+ (0xac922, b"\x7a\x0b", b"\x7a\x0c", "segvn_unload:page idx >>11"),
+ (0xaca92, b"\x7c\x0b", b"\x7c\x0c", "segvn_setprot:page idx >>11"),
+ (0xacab6, b"\x7c\x0b", b"\x7c\x0c", "segvn_setprot:page idx >>11"),
+ (0xacb5e, b"\x06\x85\x00\x00\x08\x00", b"\x06\x85\x00\x00\x10\x00", "segvn_setprot:va loop step"),
+ (0xacb84, b"\x7c\x0b", b"\x7c\x0c", "segvn_setprot:page idx >>11"),
+ (0xacc2e, b"\x78\x0b", b"\x78\x0c", "segvn_checkprot:page idx >>11"),
+ (0xacc9a, b"\x76\x0b", b"\x76\x0c", "segvn_getprot:page idx >>11"),
+ (0xaccd2, b"\x76\x0b", b"\x76\x0c", "segvn_getprot:page idx >>11"),
+ (0xacd80, b"\x06\x81\x00\x00\x07\xff", b"\x06\x81\x00\x00\x0f\xff", "segvn_kluster:idx round"),
+ (0xacd86, b"\x78\x0b", b"\x78\x0c", "segvn_kluster:idx >>11"),
+ (0xace4c, b"\x72\x0b", b"\x72\x0c", "segvn_swapout:npages >>11"),
+ (0xace98, b"\x72\x0b", b"\x72\x0c", "segvn_swapout:page<<11"),
+ (0xacf7a, b"\x72\x0b", b"\x72\x0c", "segvn_swapout:page<<11"),
+ (0xad034, b"\x72\x0b", b"\x72\x0c", "segvn_sync:page idx >>11"),
+ (0xad096, b"\x72\x0b", b"\x72\x0c", "segvn_sync:page idx >>11"),
+ (0xad0dc, b"\x06\x84\x00\x00\x08\x00", b"\x06\x84\x00\x00\x10\x00", "segvn_sync:va loop step"),
+ (0xad162, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "segvn_sync:va loop step"),
+ (0xad1aa, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segvn_incore:npages round"),
+ (0xad1b0, b"\x7c\x0b", b"\x7c\x0c", "segvn_incore:npages >>11"),
+ (0xad1c8, b"\x7c\x0b", b"\x7c\x0c", "segvn_incore:page idx >>11"),
+ (0xad2c0, b"\x06\x84\x00\x00\x08\x00", b"\x06\x84\x00\x00\x10\x00", "segvn_incore:va loop step"),
+ (0xad3b6, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segvn_lockop:npages round"),
+ (0xad3bc, b"\x7c\x0b", b"\x7c\x0c", "segvn_lockop:npages >>11"),
+ (0xad3f4, b"\x7c\x0b", b"\x7c\x0c", "segvn_lockop:page idx >>11"),
+ (0xad41e, b"\x7c\x0b", b"\x7c\x0c", "segvn_lockop:page idx >>11"),
+ (0xad596, b"\x06\x84\x00\x00\x08\x00", b"\x06\x84\x00\x00\x10\x00", "segvn_lockop:va loop step"),
+ (0xad59c, b"\x06\xae\x00\x00\x08\x00", b"\x06\xae\x00\x00\x10\x00", "segvn_lockop:va loop step (fp-var)"),
+ (0xad5ea, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segvn_vpage:npages round"),
+ (0xad5f0, b"\x74\x0b", b"\x74\x0c", "segvn_vpage:npages >>11"),
+ (0xad672, b"\x72\x0b", b"\x72\x0c", "segvn_isanon:page idx >>11"),
+ (0xae26a, b"\x02\x42\xf8\x00", b"\x02\x42\xf0\x00", "as_faulta:addr mask &-2048"),
+ (0xae272, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_faulta:size round +2047"),
+ (0xae278, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_faulta:size mask &-2048"),
+ (0xae2cc, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "as_faulta:addr step"),
+ (0xae2d2, b"\x06\x83\xff\xff\xf8\x00", b"\x06\x83\xff\xff\xf0\x00", "as_faulta:size step -2048"),
+ (0xae2fc, b"\x02\x43\xf8\x00", b"\x02\x43\xf0\x00", "as_setprot:addr mask"),
+ (0xae304, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_setprot:size round"),
+ (0xae30a, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_setprot:size mask"),
+ (0xae3a8, b"\x02\x43\xf8\x00", b"\x02\x43\xf0\x00", "as_checkprot:addr mask"),
+ (0xae3b0, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_checkprot:size round"),
+ (0xae3b6, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_checkprot:size mask"),
+ (0xae456, b"\x02\x43\xf8\x00", b"\x02\x43\xf0\x00", "as_unmap:addr mask"),
+ (0xae460, b"\x06\x84\x00\x00\x07\xff", b"\x06\x84\x00\x00\x0f\xff", "as_unmap:size round"),
+ (0xae466, b"\x02\x44\xf8\x00", b"\x02\x44\xf0\x00", "as_unmap:size mask"),
+ (0xae50e, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_map:addr mask"),
+ (0xae516, b"\x06\x81\x00\x00\x07\xff", b"\x06\x81\x00\x00\x0f\xff", "as_map:size round"),
+ (0xae51c, b"\x02\x41\xf8\x00", b"\x02\x41\xf0\x00", "as_map:size mask"),
+ (0xaea34, b"\x02\x43\xf8\x00", b"\x02\x43\xf0\x00", "as_incore:addr mask"),
+ (0xaea3c, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_incore:size round"),
+ (0xaea42, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_incore:size mask"),
+ (0xaeac0, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_incore:npages round"),
+ (0xaeac6, b"\x7c\x0b", b"\x7c\x0c", "as_incore:npages >>11"),
+ (0xaeb78, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_ctl:npages round"),
+ (0xaeb7e, b"\x72\x0b", b"\x72\x0c", "as_ctl:npages >>11"),
+ (0xaebe0, b"\x02\x42\xf8\x00", b"\x02\x42\xf0\x00", "as_ctl:addr mask"),
+ (0xaebe8, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "as_ctl:size round"),
+ (0xaebee, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "as_ctl:size mask"),
+ (0xaf0f0, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "map_addr:addr round"),
+ (0xaf0f6, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "map_addr:addr mask"),
+ (0xaf11e, b"\xd2\xfc\x08\x00", b"\xd2\xfc\x10\x00", "map_addr:addr += pagesize"),
  # USER DEMAND-FAULT PATH (as_fault + segvn_fault) -- the MINIMAL coupled set, 4KB.
  # The 030 path rounds the fault VA to 2KB and the anon map is a 2KB-granular array.  On Model B a
  # fault in the UPPER 2KB of a 4KB page (libc.so.1's GOT at C102FE68) maps at C102F800, which shares
