@@ -38,6 +38,10 @@ hat_chgprot:
 	moveal	%fp@(8),%a0
 	moveal	%a0@(12),%a0		| as = seg->s_as
 	moveal	%a0@(20),%a4		| a4 = 040 root VA (as@(20), stored by hat_alloc)
+| V2.2 guard: after hat_free the root is freed and as@(20)==0 (hat_free040 clears it);
+| post-free hat ops must be no-ops (stock semantics) -- walk from 0 would read low RAM.
+	movel	%a4,%d0
+	beqw	Lcp_done
 	movel	%fp@(12),%d2		| d2 = va (running cursor)
 	movel	%d2,%d3
 	addl	%fp@(16),%d3

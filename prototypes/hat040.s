@@ -709,6 +709,10 @@ Lhl_nodbg:
 	moveal	%fp@(8),%a0
 	moveal	%a0@(12),%a0		| seg
 	movel	%a0@(20),%fp@(-12)	| fp@-12 = root = seg@(20)
+| V2.2 guard: after hat_free (as_free runs hat_free FIRST, seg teardown SECOND) the root is
+| freed and as@(20)==0 -- stock semantics make post-free hat ops no-ops.  Without this the
+| A-walk reads descriptors from address 0 (low RAM) -> KERNEL FAULT pc=0xD7Dxx (boot-verified).
+	beqw	Lhl_rootnull
 	moveq	&4,%d5
 	andl	%fp@(20),%d5
 	movel	%d5,%fp@(-76)		| fp@-76 = flags & 4
@@ -994,6 +998,10 @@ Lhl_chkmore:
 	bccw	Lhl_leafwalk		| d3 >= va -> more to unmap
 	moveml	%fp@(-116),%d2-%d5/%a2-%a4
 	moveal	%d0,%a0
+	unlk	%fp
+	rts
+Lhl_rootnull:
+	moveml	%fp@(-116),%d2-%d5/%a2-%a4
 	unlk	%fp
 	rts
 	nop				| pad .text to a 4-byte multiple
