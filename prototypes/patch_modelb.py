@@ -151,6 +151,13 @@ P = [
  (0x58234, b"\x06\x82\x00\x00\x07\xff", b"\x06\x82\x00\x00\x0f\xff", "grow:growth round +2047->+4095"),
  (0x58270, b"\x72\x0b", b"\x72\x0c", "grow:total clicks<<11 (stack rlimit compare, #11->#12)"),
  (0x582ba, b"\x72\x0b", b"\x72\x0c", "grow:as_map addr/size clicks<<11 (#11->#12, both shifts)"),
+ # grow SUCCESS/SHRINK TAIL (missed by the first pass -- its scan window ended at 0x582e0;
+ # ALWAYS scan to the function's real end).  BOOT-PROVEN bug: as_map mapped d2<<12 bytes but
+ # the bookkeeping moved p_stkbase/-size by d2<<11 (half) -> stkbase=C07FE000/stksize=2000
+ # after a 2-page map [C07FD000,C07FF000) -> the process's SECOND grow as_map overlaps ->
+ # grow ret=0 -> 'User BUS ERROR at C07FC5D0' (/usr/lib/saf/listen tcp at the login prompt).
+ (0x5830c, b"\x72\x0b", b"\x72\x0c", "grow:shrink as_unmap size d2<<11 (#11->#12)"),
+ (0x58328, b"\x72\x0b", b"\x72\x0c", "grow:success tail p_stksize+=/p_stkbase-= d2<<11 (#11->#12, one moveq drives both)"),
  # USER-VM PER-PAGE-ARRAY COMPLETION (2026-07-02): the seg_vn/as family was only PARTIALLY
  # converted (segvn_fault/as_fault/anon_dup/anon_free/anon_resv 4KB, everything else 2KB) --
  # exactly the mixed-granularity hazard the as_setprot post-mortem warned about.  Symptom:
