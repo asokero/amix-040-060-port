@@ -263,6 +263,24 @@ P = [
  (0xaf0f0, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "map_addr:addr round"),
  (0xaf0f6, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "map_addr:addr mask"),
  (0xaf11e, b"\xd2\xfc\x08\x00", b"\xd2\xfc\x10\x00", "map_addr:addr += pagesize"),
+ # segu_softunload (u-area TEARDOWN, proc death): segu_softload was 4KB-converted (pager table)
+ # but softUNLOAD stayed 2KB -> the u-area/kernel-stack pages are looked up with wrong index/
+ # range math at process exit and not returned -> part of the ~26-pages-per-exec kernel-heap
+ # drain behind 'ldterm: out of blocks'.  Same-pattern flips incl. the two PTE pfn bitfields
+ # {0:21}->{0:20}.  segu_getprot's page-index shift converted for symmetry.  NOT converted
+ # (deliberate): segu_get 0xaa6dc/0xaa6fa -- those belong to an inline 030-format table walk
+ # (va>>17 SDE + va>>11 leaf, copies u-area PTEs into the ublk save area) that is structurally
+ # 030 and inert on 040 (resume040 reads the kvsegu VA + kptr040 instead); flipping its shifts
+ # would just make a differently-wrong 030 walk.
+ (0xaa386, b"\x74\x0b", b"\x74\x0c", "segu_getprot:page idx >>11"),
+ (0xaa884, b"\x02\x42\xf8\x00", b"\x02\x42\xf0\x00", "segu_softunload:addr mask &-2048"),
+ (0xaa88c, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segu_softunload:size round +2047"),
+ (0xaa892, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "segu_softunload:size mask &-2048"),
+ (0xaa8f4, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segu_softunload:PTE idx round +2047"),
+ (0xaa8fa, b"\x7a\x0b", b"\x7a\x0c", "segu_softunload:PTE idx >>11"),
+ (0xaa91e, b"\xe9\xd3\x00\x15", b"\xe9\xd3\x00\x14", "segu_softunload:pfn bfextu {0:21}->{0:20}"),
+ (0xaa940, b"\xe9\xd3\x00\x15", b"\xe9\xd3\x00\x14", "segu_softunload:pfn bfextu {0:21}->{0:20} (pages[] idx)"),
+ (0xaa9c2, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "segu_softunload:va loop step"),
  # USER DEMAND-FAULT PATH (as_fault + segvn_fault) -- the MINIMAL coupled set, 4KB.
  # The 030 path rounds the fault VA to 2KB and the anon map is a 2KB-granular array.  On Model B a
  # fault in the UPPER 2KB of a 4KB page (libc.so.1's GOT at C102FE68) maps at C102F800, which shares

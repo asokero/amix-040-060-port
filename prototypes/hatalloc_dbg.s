@@ -29,6 +29,15 @@ Lhpa_n:
 	.long	0
 g_pageget_n:
 	.long	0			| bumped by the page_get wrapper on every call
+	.globl	g_pagefree_n
+g_pagefree_n:
+	.long	0			| bumped by the page_free wrapper on every call
+	.globl	g_ptalloc_n
+g_ptalloc_n:
+	.long	0			| bumped by the hat_ptalloc wrapper on every call
+	.globl	g_sdtalloc_n
+g_sdtalloc_n:
+	.long	0			| bumped by the hat_sdtalloc wrapper on every call
 Lsd_save:
 	.long	0			| g_pageget_n snapshot at hat_sdtalloc entry
 	.even
@@ -240,6 +249,7 @@ Lpu_tail:
 | fork tree, or relvm/anon teardown).  Cap 6.  Register-transparent (page_free returns void).
 	.globl	page_free
 page_free:
+	addql	&1,g_pagefree_n
 	linkw	%fp,&0
 	moveml	%d2/%a2,%sp@-
 	moveal	%fp@(8),%a2		| pp
@@ -319,6 +329,7 @@ page_get:
 | g_shdatabase.
 	.globl	hat_sdtalloc
 hat_sdtalloc:
+	addql	&1,g_sdtalloc_n
 	linkw	%fp,&0
 	moveml	%d2-%d3/%a2,%sp@-
 	movel	g_pageget_n,%d0		| snapshot page_get call count at entry
@@ -358,6 +369,7 @@ Lhsd_done:
 | hat_ptalloc(&ptdat, n): returns a0 = new page table (identity phys).  Compare base page.
 	.globl	hat_ptalloc
 hat_ptalloc:
+	addql	&1,g_ptalloc_n
 	linkw	%fp,&0
 	moveml	%d2-%d3/%a2,%sp@-
 	movel	%fp@(12),%sp@-		| n
@@ -394,7 +406,7 @@ Lhx_n:
 	.long	0
 	.even
 Lhx_emsg:
-	.asciz	"DBG hat_exec ENTER oas=%x nas=%x shd@e48=%x freemem=%x availrmem=%x availsmem=%x"
+	.asciz	"DBG hat_exec ENTER oas=%x nas=%x shd@e48=%x freemem=%x availrmem=%x availsmem=%x pg=%x pf=%x pt=%x sdt=%x"
 	.even
 Lhx_xmsg:
 	.asciz	"DBG hat_exec EXIT ret=%x shd@e48=%x"
@@ -419,6 +431,10 @@ hat_exec:
 	addql	&1,%d0
 	movel	%d0,Lhx_n
 	bsrw	Lhx_read		| d0 = RAM@e48 (or -2 if base unset)
+	movel	g_sdtalloc_n,%sp@-	| total hat_sdtalloc calls (ptr/SDT tables)
+	movel	g_ptalloc_n,%sp@-	| total hat_ptalloc calls (leaf tables)
+	movel	g_pagefree_n,%sp@-	| total page_free calls
+	movel	g_pageget_n,%sp@-	| total page_get calls (pg-pf = net pages held)
 	movel	availsmem,%sp@-		| availsmem (4KB clicks)
 	movel	availrmem,%sp@-		| availrmem (4KB clicks)
 	movel	freemem,%sp@-		| freemem (4KB clicks) -- leak trajectory per exec
@@ -428,7 +444,7 @@ hat_exec:
 	pea	Lhx_emsg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(32),%sp
+	lea	%sp@(48),%sp
 Lhx_call:
 	movel	%fp@(28),%sp@-
 	movel	%fp@(24),%sp@-
@@ -467,6 +483,7 @@ Lhxr_unset:
 	moveq	&-2,%d0
 	rts
 	nop				| pad (freemem-trace edit changed size by 2)
+	nop				| pad (counter edit changed size by 2)
 	nop				| pad .text to keep text/data contiguous
 	nop
 	nop
