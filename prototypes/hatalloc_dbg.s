@@ -75,6 +75,17 @@ Lad_n:
 Lad_msg:
 	.asciz	"DBG anon_decref ap=%x an_refcnt=%x caller=%x (1=>frees page; if child still maps it, fork anon_dup missed the refcnt bump)"
 	.even
+Lgr_n:
+	.long	0
+Lgr_n2:
+	.long	0
+	.even
+Lgr_msg:
+	.asciz	"DBG grow ENTER sp=%x stkbase=%x stksize=%x rlim=%x"
+	.even
+Lgr_rmsg:
+	.asciz	"DBG grow EXIT ret=%x (1=grown, 0=FAIL->SIGSEGV/BUS)"
+	.even
 
 	.text
 | segvn_unmap (0xab63c) wrapper -- log (seg, seg->s_as, addr, len) for every unmap, capped 16, so
@@ -481,6 +492,50 @@ Lhx_read:
 	rts
 Lhxr_unset:
 	moveq	&-2,%d0
+	rts
+| grow (0x5820e, GLOBAL T) wrapper -- the stack-growth syscall/fault helper (os/grow.c).
+| /usr/lib/saf/listen dies 'User BUS ERROR at C07FC5D0' = a fault ~3 pages below the 1-page
+| initial stack -> the FIRST real stack growth in the boot; if grow fails (ret 0) the trap
+| delivers SIGSEGV/SIGBUS.  Log args (sp, p_stkbase@60, p_stksize@64, rlimit-STACK@u+0x7bc)
+| + ret to see WHY it fails (rlimit garbage? stkbase wrong from unpatched execstk_addr?
+| as_map overlap?) -- or whether it is never called (trap routing).  Cap 16 each.
+	.globl	grow
+grow:
+	linkw	%fp,&0
+	moveml	%d2/%a2,%sp@-
+	movel	Lgr_n,%d0
+	cmpil	&16,%d0
+	bccw	Lgr_call
+	addql	&1,%d0
+	movel	%d0,Lgr_n
+	moveal	u+0x730,%a2		| u.u_procp
+	movel	u+0x7bc,%sp@-		| u_rlimit[RLIMIT_STACK].rlim_cur
+	movel	%a2@(64),%sp@-		| p_stksize
+	movel	%a2@(60),%sp@-		| p_stkbase
+	movel	%fp@(8),%sp@-		| sp arg
+	pea	Lgr_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
+Lgr_call:
+	movel	%fp@(8),%sp@-
+	jsr	grow_orig
+	addqw	&4,%sp
+	movel	%d0,%d2
+	movel	Lgr_n2,%d0
+	cmpil	&16,%d0
+	bccw	Lgr_done
+	addql	&1,%d0
+	movel	%d0,Lgr_n2
+	movel	%d2,%sp@-		| ret
+	pea	Lgr_rmsg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(12),%sp
+Lgr_done:
+	movel	%d2,%d0
+	moveml	%fp@(-8),%d2/%a2
+	unlk	%fp
 	rts
 	nop				| pad (freemem-trace edit changed size by 2)
 	nop				| pad (counter edit changed size by 2)
