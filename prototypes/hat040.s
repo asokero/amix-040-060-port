@@ -181,55 +181,21 @@ Lrd_no:
 | the 030 hat_growsdt indexes/writes the root differently (8-byte descs, 030 VA split) than our
 | 040 hat_pteload reads (va>>25 Aidx, 4-byte), so it never populates this slot.  Rather than port
 | hat_growsdt, allocate the pointer table here -- symmetric with the leaf alloc below.
-| hat_sdtalloc(&out, count): count<<6 bytes, bzero'd, from the identity-mapped SDT pool (the
-| region the HW tablewalk reads); count=8 -> 512 bytes = 128 entries x 4 = one 040 pointer table.
-| hat_sdtalloc preserves d2(va)/a2(pp); install root[Aidx] = ptable | UDT(2 resident).
-	pea	16			| count=16 -> 1024 B: room to carve a 512-ALIGNED 512 B table
+| V2 (2026-07-02, table-leak fix): allocate the pointer table as a WHOLE 4KB PAGE via
+| hat_ptalloc (page_get), exactly like the leaf tables below.  This replaces the old
+| hat_sdtalloc(16) + round-up-to-512 + manual-zero dance: a page is naturally 512-aligned
+| (the old sub-512-alignment bug can't happen) and hat_ptalloc's Model-B bzero clears the
+| full 4096 B (patch_modelb 0xb6904), so the table starts all-invalid.  Crucially it makes
+| the pointer table FREEABLE at hat_free040 (page-aligned -> hat_ptfree V2 page_free's it);
+| the sdtalloc carves could never be page-freed (shared/offset carve).  This was 17
+| hat_sdtalloc calls/exec = the bulk of the ~26-page/exec kernel-heap drain behind
+| 'ldterm: out of blocks'.  hat_ptalloc preserves d2(va)/a2(pp) (callee-saved regs).
+	pea	1			| one table
 	movel	%fp,%d0
 	subil	&48,%d0
-	movel	%d0,%sp@-		| &out = fp@(-48)
-	jsr	hat_sdtalloc
+	movel	%d0,%sp@-		| &out = fp@(-48) = 4KB page, zeroed, page-aligned
+	jsr	hat_ptalloc
 	addqw	&8,%sp
-| BUG FIX (2026-06-24, user-PT frontier): two defects, both fixed here.
-| (1) ALIGNMENT.  An 040 root descriptor stores the pointer-table base in bits 31:9, so the
-|     table MUST be 512-aligned -- the HW walk and our Lrootok both mask with 0xfffffe00.  But
-|     hat_sdtalloc only guarantees 64-byte sub-slot alignment, so a sub-512-aligned base makes
-|     that mask round DOWN into the PRECEDING (stale) memory.  MEASURED: a fresh exec as got a
-|     table whose masked slot[0] read 0x3F0002 (stale leaf desc -> base 0x3F0000 = unbacked hole)
-|     -> bogus "resident" leaf -> hat_pt2ptdat "invalid pte ptr" PANIC, even after zeroing the
-|     raw result.  Fix: over-allocate (count=16 = 1024 B) and round the raw result UP to 512.
-| (2) NOT ZEROED.  hat_sdtalloc does not zero the table on 040; a fresh pointer table for an
-|     empty root region MUST be all-zero (every UDT invalid) so subsequent leaf faults see
-|     Bdesc==0 and allocate leaves.  Zero all 512 B (128 x 4-byte descriptors) of the aligned
-|     table.  Cached clrl is fine: hat_pteload reads Bdesc back through the same cache and Lepi's
-|     cpusha+pflusha pushes the table to RAM for the HW walker.
-	movel	%fp@(-48),%d3		| d3 = raw hat_sdtalloc result (64-aligned; d3 dead here)
-	movel	%d3,%d1
-	addil	&511,%d1
-	andil	&0xfffffe00,%d1		| round UP to 512-byte boundary
-	movel	%d1,%fp@(-48)		| store the aligned base back (used as ptable below)
-| DIAG (gated 8): show the raw result vs the aligned base for exec-range faults; confirms the
-| sub-512 alignment defect (raw != aligned).  Remove once stable.  d3 preserved across cmn_err.
-	cmpil	&0x80000000,%d2
-	bcsw	Lsz_no
-	movel	Lsz_n,%d0
-	cmpil	&8,%d0
-	bccw	Lsz_no
-	addql	&1,%d0
-	movel	%d0,Lsz_n
-	movel	%fp@(-48),%sp@-		| aligned base
-	movel	%d3,%sp@-		| raw result
-	movel	%d2,%sp@-		| va
-	pea	Lsz_msg
-	pea	2
-	jsr	cmn_err
-	lea	%sp@(20),%sp
-Lsz_no:
-	moveal	%fp@(-48),%a0		| aligned ptable base
-	moveq	&127,%d0		| 128 longs - 1
-Lrz_loop:
-	clrl	%a0@+
-	dbra	%d0,Lrz_loop		| 128 iters -> 512 bytes zeroed
 	moveal	%fp@(8),%a0		| re-derive root base (a0/d0 clobbered by the call)
 	moveal	%a0@(12),%a0
 	moveal	%a0@(20),%a0		| a0 = root table base
@@ -1107,6 +1073,10 @@ hat_free:
 	moveml	%d2-%d4/%a2-%a5,%sp@-
 	moveal	%fp@(8),%a0
 	moveal	%a0@(20),%a5		| a5 = 040 root base (preserved across hat_ptfree)
+| V2 guard: root already freed/never allocated (as@(20)==0) -> nothing to tear down.
+| Matters now that Lf_done kmem_frees the root and clears as@(20) (double-free guard).
+	movel	%a5,%d0
+	beqw	Lf_nullroot
 | --- one-shot ENTER marker: proves hat_free runs (exec/exit teardown reached) ---
 	movel	Lhf_n,%d0
 	bnew	Lhf_nodbg
@@ -1270,7 +1240,12 @@ Lf_nextB:
 	addql	&1,%fp@(-24)
 	braw	Lf_B
 Lf_freeA:
-| V1: LEAK the pointer table (no hat_sdtfree yet); clear root[A] so the as is clean.
+| V2: FREE the pointer-table page (hat_pteload V2 allocates it via hat_ptalloc = a whole
+| page).  hat_ptfree's guards (page-aligned + pfn bounds) leak anything else -- e.g. the
+| hat_exec/hat_growsdt 030-written relic tables -- exactly as V1 did.  Then clear root[A].
+	movel	%fp@(-32),%sp@-		| pointer-table base (stashed at Lf_A)
+	jsr	hat_ptfree
+	addqw	&4,%sp
 	movel	%fp@(-20),%d0
 	asll	&2,%d0
 	clrl	%a5@(0,%d0:l)		| root[A] = 0 (UDT invalid)
@@ -1278,8 +1253,27 @@ Lf_nextA:
 	addql	&1,%fp@(-20)
 	braw	Lf_A
 Lf_done:
+| V2: free the 040 ROOT page (hat_alloc040's kmem_zalloc(0x1000)) and invalidate
+| as->hat_root, then flush caches+ATC so no stale user translation references a freed
+| table.  Safe: hat_free runs only at AS death (as_free/relvm); kernel/supervisor
+| accesses never use urp, and no user-mode access happens before a new root is
+| installed (exec installs the new as; exit -> resume loads the next proc's root).
+| Mirrors stock 030 hat_free, which frees the SDT here (3B2 vm_hat.c:245 + the
+| srama default-SDT switch kludge for the ublock).
+	pea	0x1000			| size (kmem_free 2nd arg)
+	movel	%a5,%sp@-		| root VA (loaded from as@(20) at entry, callee-saved)
+	jsr	kmem_free
+	addqw	&8,%sp
+	moveal	%fp@(8),%a0
+	clrl	%a0@(20)		| as->hat_root = 0
+	.word	0xf4f8			| cpusha bc
+	.word	0xf518			| pflusha
 	moveml	%fp@(-60),%d2-%d4/%a2-%a5
 	moveal	%d0,%a0
+	unlk	%fp
+	rts
+Lf_nullroot:
+	moveml	%fp@(-60),%d2-%d4/%a2-%a5
 	unlk	%fp
 	rts
 	| (nops removed: +4B from hat_free040 clrl-PTE fix absorbed here)
@@ -1300,25 +1294,60 @@ Lf_done:
 | One-shot gated marker (first 8) confirms it is reached + gauges the leak rate.
 	.globl	hat_ptfree
 hat_ptfree:
+| V2 (2026-07-02): REAL free.  Under Model B every leaf AND (since the hat_pteload V2
+| change) every pointer table is a whole 4KB page from hat_ptalloc/page_get, so the free
+| is page_free(pages + (pfn - pages_base)*60, 0).  Guards: page-aligned base + pfn within
+| [pages_base, pages_end) -- anything else (hat_exec/hat_growsdt 030-written relics,
+| garbage slots, old-style sdtalloc carves) LEAKS exactly as the V1 stub did (logged,
+| cap 8).  pp->p_mapping/p_ptdats (offset-32 union) is cleared FIRST so a stale pt_inuse
+| count can never be misread as a reverse-map pointer once the page recycles (3B2
+| vm/anon page_abort does `if (PP_ISMAPPED) hat_pageunload` on that field).  page_free's
+| own entry swap_anon(pp->p_vnode,..) is safe: page_get pages carry no vnode identity.
+| Preserves ALL registers (moveml d0-d1/a0-a1 + C callee-saved) -- callers (hat_free
+| B-loop, stock hat_unload paths) keep live state across this call.
+	moveml	%d0-%d1/%a0-%a1,%sp@-
+	movel	%sp@(20),%d0		| table base (16 saved + retaddr + arg0)
+	movel	%d0,%d1
+	andil	&0xfff,%d1
+	bnew	Lpf_leak		| not page-aligned -> not ours -> leak (V1 behavior)
+	moveq	&12,%d1
+	lsrl	%d1,%d0			| pfn
+	cmpl	pages_base,%d0
+	bcsw	Lpf_leak
+	cmpl	pages_end,%d0
+	bccw	Lpf_leak
+	subl	pages_base,%d0
+	moveq	&60,%d1
+	mulsl	%d1,%d0
+	moveal	%d0,%a0
+	addal	pages,%a0		| a0 = pp = pages + (pfn - pages_base)*60
+	clrl	%a0@(32)		| clear p_mapping/p_ptdats union (stale pt_inuse)
+	clrl	%sp@-			| dontneed = 0
+	movel	%a0,%sp@-		| pp
+	jsr	page_free
+	addqw	&8,%sp
+	braw	Lpf_ret
+Lpf_leak:
 	movel	Lpf_n,%d0
 	cmpil	&8,%d0
-	bccs	Lpf_ret			| after 8 prints, silent leak
+	bccw	Lpf_ret			| after 8 prints, silent leak
 	addql	&1,%d0
 	movel	%d0,Lpf_n
-	movel	%sp@(4),%d1		| leaf arg (sp@0=retaddr, sp@4=arg0)
+	movel	%sp@(20),%d1		| table arg
 	movel	%d1,%sp@-
 	pea	Lpf_msg
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(12),%sp
 Lpf_ret:
+	moveml	%sp@+,%d0-%d1/%a0-%a1
 	rts
 	nop				| pad .text to a 4-byte multiple
 
 	.data
 	.even
 Lpf_msg:
-	.asciz	"DBG hat_ptfree LEAK leaf=%x (no-op, Model B)"
+	.asciz	"DBG hat_ptfree LEAK table=%x (guarded: not page-aligned / not in pages[])"
 	.even
 Lpf_n:
 	.long	0
