@@ -193,9 +193,20 @@ Lrd_no:
 	pea	1			| one table
 	movel	%fp,%d0
 	subil	&48,%d0
-	movel	%d0,%sp@-		| &out = fp@(-48) = 4KB page, zeroed, page-aligned
+	movel	%d0,%sp@-		| &out -- receives the PTDAT DESCRIPTOR (not the table!)
 	jsr	hat_ptalloc
 	addqw	&8,%sp
+| V2.2 (boot-verified V2 bug): hat_ptalloc's out-param is the ptdat DESCRIPTOR (a 16-byte
+| hat_sdtalloc carve, e.g. 0x7CB3200) -- the TABLE address is the RETURN VALUE %a0 (identity-
+| phys 4KB page base), exactly like the leaf path's `moveal %a0,%a4`.  V2 installed the
+| descriptor as the pointer table -> garbage Bdescs (stale 3F0002) -> pfn-mismatch overwrite
+| -> PANIC hat_pt2ptdat.  Also: the page_get path bzeros only 256 B (leaf size, 0xb6a7a);
+| a pointer table is 512 B, so zero all 128 descriptors ourselves.
+	movel	%a0,%fp@(-48)		| table = RETURN VALUE (fresh page, identity phys)
+	moveq	&127,%d0
+Lrz_loop:
+	clrl	%a0@+
+	dbra	%d0,Lrz_loop		| zero 512 B (128 x 4-byte descriptors)
 	moveal	%fp@(8),%a0		| re-derive root base (a0/d0 clobbered by the call)
 	moveal	%a0@(12),%a0
 	moveal	%a0@(20),%a0		| a0 = root table base
