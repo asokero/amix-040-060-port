@@ -1,6 +1,23 @@
-# RESUME HERE — AMIX 68040 port status (2026-07-02)
+# RESUME HERE — AMIX 68040 port status (2026-07-03)
 
-## ►► CURRENT STATUS (one-glance) ◄◄
+## ►►► MILESTONE 2026-07-03: ROOT LOGIN WORKS — interactive shell on the 040 kernel ◄◄◄
+Boot (unix_boot unix-040-dbg) runs with 0 panics / 0 BUS errors to the login prompt; after the
+debug-print caps fill (~30-60 s) the console quiets, `root` logs in and gets a shell.  freemem is
+STABLE (exit teardown returns memory).  Fix chain this session: brk/grow 2KB roundups, the seg_vn
+per-page-array completion (+99), segu_softunload, hat040 V2 table freeing (V2.1 PAGE_RELE, V2.2
+ptalloc API: table = RETURN VALUE, out-param = ptdat descriptor), root==0 + descriptor-frame
+guards, grow success-tail <<11.  patch_modelb.py = 187 sites.
+**NEW FRONTIER: commands get 'Killed' (SIGKILL)** — uname -a / ls -la die instantly; some rc
+processes too; the console getty can hit 'INIT: Command is respawning too rapidly'.  Suspected
+link: **memory accounting halved** — banner says 8 MB, machine has 16 MB (030 boot shows 16 MB;
+freemem 2964 4KB-clicks and pfns to 0x7EE9 prove the full 16 MB IS used) → unpatched ctob (<<11)
+in the sizing/threshold family (maxclick/banner + possibly lotsfree/desfree/minfree feeding the
+pageout/swap KILL path).  NEXT: psignal/sigtoproc sig==9 probe + detect_pagesize audit of
+mlsetup/startup/sched thresholds.  Then: hat_dup 040 port (NOTE: BASE unix-040 has STOCK-030
+hat_dup — only the dbg build stubs it; base is NOT boot-safe), hat_exec port (garbage-write
+source), vm_swap 2KB units (real swap-out would corrupt), quiet-dbg variant, real-HW test.
+
+## ►► PREVIOUS STATUS (2026-07-02) ◄◄
 **2026-07-02: THE CHILD CRASH IS SOLVED (root cause proven, fix built, AWAITING BOOT TEST).**
 The deterministic `User BUS ERROR FFFFFFFF PC:800024FE` in every fork+exec'd child was **NOT**
 kernel page corruption, NOT a lazy-PLT/GOT[2] bug, NOT free-while-mapped (all those framings are
