@@ -151,4 +151,75 @@ Lgd_out:
 	moveml	%fp@(-8),%d2-%d3
 	unlk	%fp
 	rts
+
+| ---------------------------------------------------------------------------
+| clock_hook SAMPLER (2026-07-03 EVE, the "boot stalls, no W-dumps" frontier).  Boot 6 hung
+| with ZERO idle proc-table dumps -> the CPU never idles -> a process SPINS.  The keyboard
+| still echoes = interrupts run = the CIA clock still ticks.  clock() (0x3db9c) calls
+| (*clock_hook)(frame) FIRST if the pointer is nonzero (clock_hook is a COMMON bss long;
+| our .data definition below wins over the common and installs the sampler at link time).
+| frame layout (from clock's own derefs + setregs u_ar0 use): @64 = SR word (btst #5 =
+| S bit; bfextu 5,3 = IPL), @66 = interrupted PC long.
+| Every 16th tick (~0.3s at 50Hz), cap 1024 (~5.5 min): print "C<pid>:<PC>:<SR> " via
+| DIRECT serial.  During a spin the samples repeat one PC (or a tight range) -> the loop
+| is named: kernel PC -> map via nm; user PC (SR S-bit clear) -> 0x80000000=program /
+| 0xC1000000=libc.so.1 offset.  Interrupt-level safe: only d0/a0 + balanced stack.
+
+	.data
+	.even
+	.globl	clock_hook
+clock_hook:
+	.long	clock_sampler
+Lcs_tick:
+	.long	0
+Lcs_n:
+	.long	0
+
+	.text
+clock_sampler:
+	addql	&1,Lcs_tick
+	movel	Lcs_tick,%d0
+	andil	&15,%d0			| every 16th tick
+	bnew	Lcs_out
+	movel	Lcs_n,%d0
+	cmpil	&1024,%d0
+	bccw	Lcs_out
+	addql	&1,%d0
+	movel	%d0,Lcs_n
+	pea	0x43			| 'C' -- clock sample record
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	moveal	curproc,%a0
+	movel	%a0@(264),%d0		| p_pidp (0 for a half-built proc)
+	beqw	Lcs_p0
+	moveal	%d0,%a0
+	movel	%a0@(4),%sp@-		| pid_id
+	braw	Lcs_pgo
+Lcs_p0:
+	clrl	%sp@-
+Lcs_pgo:
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x3a			| ':'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	moveal	%sp@(4),%a0		| frame ptr (stack balanced here)
+	movel	%a0@(66),%sp@-		| interrupted PC
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x3a			| ':'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	moveal	%sp@(4),%a0
+	clrl	%d0
+	movew	%a0@(64),%d0		| SR (S bit = kernel/user)
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x20
+	jsr	serdbg_mark
+	addqw	&4,%sp
+Lcs_out:
+	rts
 	nop				| pad: keep the relinked .text a multiple of 4 (text/data contiguity)
+	nop
