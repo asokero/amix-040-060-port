@@ -464,7 +464,34 @@ gexec:
 	jsr	serdbg_mark
 	addqw	&4,%sp
 Lg_go:
+| --- gexec CALL logger (2026-07-03 NIGHT, the date loop): the clock sampler caught pid 24
+|     INSIDE the gexec wrapper during the "hang" -> the loop involves repeated EXECS, not a
+|     single stuck fault.  Log every gexec (pid + CURRENT psargs = who execs; the exec'd
+|     path shows up in the NEXT record), cap 64.  cmn_err, process context. ---
+	movel	Lgx_n,%d0
+	cmpil	&64,%d0
+	bccw	Lgx_skip
+	addql	&1,%d0
+	movel	%d0,Lgx_n
+	pea	u+0x3b0			| caller's psargs (who is exec'ing)
+	moveal	u+0x730,%a0
+	moveal	%a0@(264),%a0
+	movel	%a0@(4),%sp@-		| pid
+	pea	Lgx_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
+Lgx_skip:
 	jmp	gexec_orig
+
+	.data
+	.even
+Lgx_n:
+	.long	0
+Lgx_msg:
+	.asciz	"DBG gexec pid=%d by psargs=%s"
+	.even
+	.text
 
 	.globl	elfexec
 elfexec:

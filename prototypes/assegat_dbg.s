@@ -395,10 +395,10 @@ as_fault:
 |     iteration.  Log EVERY nonzero return (pid, addr, type F_INVAL=0/F_PROT=1/F_SOFTLOCK=2,
 |     rw, ret) with its own cap 64 -- names the fault VA + error code in one boot. ---
 	tstl	%d2
-	beqw	Laff_ok
+	beqw	Laff_rep
 	movel	Laff_n,%d1
 	cmpil	&64,%d1
-	bccw	Laff_ok
+	bccw	Laff_rep
 	addql	&1,%d1
 	movel	%d1,Laff_n
 	movel	%d2,%sp@-		| ret
@@ -412,6 +412,40 @@ as_fault:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(28),%sp
+Laff_rep:
+| --- REPEAT detector (2026-07-03 NIGHT): boot 9 showed the loop's as_fault calls all return 0
+|     (FAIL logger silent) -- so the SAME address gets "resolved" over and over.  Track the last
+|     fault addr; on repeats log every 512th with the USER PC (u_ar0@66 = the faulting user
+|     instruction) so the looping (addr, upc, type, ret) tuple is named.  Cap 16 prints. ---
+	movel	%fp@(12),%d1
+	cmpl	Laflp_addr,%d1
+	beqw	Laflp_same
+	movel	%d1,Laflp_addr
+	clrl	Laflp_n
+	braw	Laff_ok
+Laflp_same:
+	addql	&1,Laflp_n
+	movel	Laflp_n,%d1
+	andil	&0x1ff,%d1		| every 512th repeat
+	bnew	Laff_ok
+	movel	Laflp_p,%d1
+	cmpil	&16,%d1
+	bccw	Laff_ok
+	addql	&1,%d1
+	movel	%d1,Laflp_p
+	movel	Laflp_n,%sp@-		| n (repeat count)
+	movel	%d2,%sp@-		| ret
+	movel	%fp@(20),%sp@-		| type
+	moveal	u+0x864,%a0		| u_ar0
+	movel	%a0@(66),%sp@-		| user PC (the faulting instruction)
+	movel	%fp@(12),%sp@-		| addr
+	moveal	u+0x730,%a0
+	moveal	%a0@(264),%a0
+	movel	%a0@(4),%sp@-		| pid
+	pea	Laflp_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(32),%sp
 Laff_ok:
 	movel	%fp@(12),%d0		| addr
 | --- CRASH probe (2026-06-26 PM): the child bus-errors with FAULT ADDR 0xFFFFFFFF (malloc deref of
@@ -888,6 +922,15 @@ Laff_n:
 	.long	0
 Laff_msg:
 	.asciz	"DBG as_fault FAIL pid=%d addr=%x type=%x rw=%x ret=%x"
+	.even
+Laflp_addr:
+	.long	0
+Laflp_n:
+	.long	0
+Laflp_p:
+	.long	0
+Laflp_msg:
+	.asciz	"DBG as_fault REPEAT pid=%d addr=%x upc=%x type=%x ret=%x n=%x"
 	.even
 Lcrash_n:
 	.long	0

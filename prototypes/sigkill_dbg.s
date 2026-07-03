@@ -20,8 +20,10 @@
 	.even
 Lsk_n:
 	.long	0
+Lsf_n:
+	.long	0
 Lsk_msg:
-	.asciz	"DBG SIGKILL pid=%d stat=%x psargs=%s uret=%x uarg2=%x kcaller=%x fu=%x"
+	.asciz	"DBG SIG sig=%d pid=%d stat=%x psargs=%s uret=%x uarg2=%x kcaller=%x fu=%x"
 	.even
 
 | v3 (2026-07-03): the killer is USERLAND self-kill (kill(2), sender==target, fu=1) -- the SVR4
@@ -45,12 +47,30 @@ sigtoproc:
 	movel	%fp@(12),%d0		| sig
 	moveq	&9,%d1
 	cmpl	%d0,%d1
-	bnew	Lsk_done
+	beqw	Lsk_cap9
+| v4 (2026-07-03 NIGHT, the date loop): trapsig fires EVERY loop cycle -> also log the other
+| FATAL signals 4..11 (ILL/TRAP/ABRT/EMT/FPE/KILL/BUS/SEGV) so the loop's signal + target are
+| named.  Rate-limited: first 8 occurrences + every 256th after (the loop repeats forever).
+	moveq	&4,%d1
+	cmpl	%d0,%d1
+	bgtw	Lsk_done		| sig < 4 -> ignore
+	moveq	&11,%d1
+	cmpl	%d0,%d1
+	bltw	Lsk_done		| sig > 11 -> ignore
+	addql	&1,Lsf_n
+	movel	Lsf_n,%d0
+	cmpil	&8,%d0
+	blsw	Lsk_log			| first 8 -> log
+	andil	&0xff,%d0
+	beqw	Lsk_log			| every 256th -> log
+	braw	Lsk_done
+Lsk_cap9:
 	movel	Lsk_n,%d0
 	cmpil	&64,%d0
 	bccw	Lsk_done
 	addql	&1,%d0
 	movel	%d0,Lsk_n
+Lsk_log:
 	moveal	%fp@(8),%a2		| a2 = target proc
 	moveal	u+0x864,%a0		| u_ar0 (sender's saved trap regs)
 	movel	%a0@,%d3		| d3 = saved user SP
@@ -73,10 +93,11 @@ sigtoproc:
 	movel	%d0,%sp@-		| target p_stat
 	moveal	%a2@(264),%a0		| target p_pidp
 	movel	%a0@(4),%sp@-		| target pid
+	movel	%fp@(12),%sp@-		| sig
 	pea	Lsk_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(36),%sp
+	lea	%sp@(40),%sp
 Lsk_done:
 	moveml	%fp@(-12),%d2-%d3/%a2
 	unlk	%fp
