@@ -427,7 +427,7 @@ Laflp_same:
 	addql	&1,Laflp_n
 	movel	Laflp_n,%d1
 	andil	&0x1ff,%d1		| every 512th repeat
-	bnew	Laff_ok
+	bnew	Laff_str
 	movel	Laflp_p,%d1
 	cmpil	&16,%d1
 	bccw	Laff_ok
@@ -446,6 +446,34 @@ Laflp_same:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(32),%sp
+Laff_str:
+| --- STREAM sampler (2026-07-03 LATE: boot 10 = REPEAT detector silent -> the loop's fault
+|     addresses ALTERNATE (ping-pong page eviction: mapping B evicts A, touching A evicts B --
+|     e.g. two VAs colliding on one hat leaf slot), which a consecutive-same-addr streak can
+|     never see.  Sample the address STREAM instead: every 128th as_fault call (cap 48) log
+|     pid/addr/userPC/type/ret -- the loop dominates the stream, so the samples spell out the
+|     alternating working set directly. ---
+	addql	&1,Lafs_n
+	movel	Lafs_n,%d1
+	andil	&0x7f,%d1		| every 128th call
+	bnew	Laff_ok
+	movel	Lafs_p,%d1
+	cmpil	&48,%d1
+	bccw	Laff_ok
+	addql	&1,%d1
+	movel	%d1,Lafs_p
+	movel	%d2,%sp@-		| ret
+	movel	%fp@(20),%sp@-		| type
+	moveal	u+0x864,%a0
+	movel	%a0@(66),%sp@-		| user PC
+	movel	%fp@(12),%sp@-		| addr
+	moveal	u+0x730,%a0
+	moveal	%a0@(264),%a0
+	movel	%a0@(4),%sp@-		| pid
+	pea	Lafs_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(28),%sp
 Laff_ok:
 	movel	%fp@(12),%d0		| addr
 | --- CRASH probe (2026-06-26 PM): the child bus-errors with FAULT ADDR 0xFFFFFFFF (malloc deref of
@@ -931,6 +959,13 @@ Laflp_p:
 	.long	0
 Laflp_msg:
 	.asciz	"DBG as_fault REPEAT pid=%d addr=%x upc=%x type=%x ret=%x n=%x"
+	.even
+Lafs_n:
+	.long	0
+Lafs_p:
+	.long	0
+Lafs_msg:
+	.asciz	"DBG as_fault STREAM pid=%d addr=%x upc=%x type=%x ret=%x"
 	.even
 Lcrash_n:
 	.long	0
