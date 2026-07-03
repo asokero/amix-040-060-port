@@ -456,6 +456,9 @@ P = [
  (0xaf37a, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "execstk_addr:hole-scan +NBPC compensation 1 (2KB->4KB)"),
  (0xaf3a4, b"\x06\x83\x00\x00\x08\x00", b"\x06\x83\x00\x00\x10\x00", "execstk_addr:hole-scan +NBPC compensation 2 (2KB->4KB)"),
 ]
+# NOTE (2026-07-03): elfexec's auxv AT_PAGESZ 2048->4096 was checked while chasing the rtld
+# self-SIGKILL family -- it is ALREADY patched above (0xb842c, the early-session entry), so
+# userland has been seeing the correct 4096 all along.  Not the AT_BASE killer.
 
 def main():
     buf=bytearray(open(KERNEL,"rb").read())

@@ -540,25 +540,64 @@ setregs:
 	jsr	cmn_err
 	lea	%sp@(20),%sp
 Lxf_ok:
+| v2 (2026-07-03, the auxv-missing-AT_BASE kills): dump the auxv AS RTLD WILL SEE IT.
+| Every SIGKILL victim dies at _rt_setup+0xE2 = "auxv has no AT_BASE (type 7)" -- but elfexec
+| ALWAYS writes AT_BASE when the interp mapped (and rtld running proves it did).  So the vector
+| the process READS differs from what the kernel BUILT.  setregs runs LAST in exec (after the
+| old-as -> new-as stack-block move through stock-030 hat_exec), so an lfuword walk from the
+| final USP shows the block in its final state.  Walk exactly like crt/rtld:
+| [argc][argv 0..argc-1][0][envp ...][0][auxv].  Output: X<pid> <usp> a<auxvaddr> <20 longs>.
+| Dying pids (match DBG SIGKILL lines): zeros at auxv = move lost the tail page; a correct
+| auxv +-2KB away = layout parity bug; FFFFFFFF = stock hat_exec stray-SDE garbage.
 	movel	Lx_n,%d3
-	cmpil	&5,%d3
+	cmpil	&40,%d3
 	bccw	Lx_done			| past cap -> just return
 	addql	&1,%d3
 	movel	%d3,Lx_n
-	pea	0x58			| 'X' -- setregs done; auxv dump follows
+	pea	0x58			| 'X' -- setregs done; pid + usp + auxv dump follow
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	moveal	u+0x730,%a0		| curproc
+	moveal	%a0@(264),%a0		| p_pidp
+	movel	%a0@(4),%sp@-		| pid (correlate with DBG SIGKILL pid=)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x20
 	jsr	serdbg_mark
 	addqw	&4,%sp
 	moveal	u+0x864,%a0		| a0 = u.u_ar0 (saved register frame)
 	movel	%a0@,%d4		| d4 = u.u_ar0[0] = new user SP (top of arg/auxv block)
-	movel	%d4,%sp@-		| dump the SP itself first
+	movel	%d4,%sp@-		| dump the SP itself
 	jsr	serdbg_hex
 	addqw	&4,%sp
-	pea	0x62			| 'b' -- stack window (longwords from SP) follows
+	movel	%d4,%sp@-
+	jsr	lfuword			| d0 = argc
+	addqw	&4,%sp
+	lsll	&2,%d0
+	addl	%d0,%d4
+	addql	&8,%d4			| skip argc + argv[0..argc-1] + NULL
+	movel	&255,%d5		| envp walk bound (env can be large)
+Lx_env:
+	movel	%d4,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	addql	&4,%d4
+	tstl	%d0
+	beqw	Lx_aux			| envp NULL hit -> d4 = auxv start
+	dbra	%d5,Lx_env
+Lx_aux:
+	pea	0x61			| 'a' -- auxv start address (as rtld computes it)
 	jsr	serdbg_mark
 	addqw	&4,%sp
+	movel	%d4,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
 	movel	%d4,%d6			| d6 = running user address
-	moveq	&47,%d5			| 48 longwords (covers argc/argv/envp/auxv for short execs)
+	moveq	&19,%d5			| 20 longwords = 10 auxv pairs (8 real + NULL + slack)
 Lx_dmp:
+	pea	0x20
+	jsr	serdbg_mark
+	addqw	&4,%sp
 	movel	%d6,%sp@-
 	jsr	lfuword			| d0 = *(user d6) (or -1 on fault)
 	addqw	&4,%sp
@@ -567,6 +606,9 @@ Lx_dmp:
 	addqw	&4,%sp
 	addql	&4,%d6
 	dbra	%d5,Lx_dmp
+	pea	0x0a			| newline terminates the X record
+	jsr	serdbg_mark
+	addqw	&4,%sp
 | --- sh partial data/bss page dump (2026-06-26 PM): meaningful only for /sbin/sh execs (identify
 |     via the auxv string above).  sh's data page 0x80010000 = file data [0x80010000,0x800106e8)
 |     + bss tail that execmap zeroes via bzeroba(end, roundup(end,4096)-end).  The crash reads
