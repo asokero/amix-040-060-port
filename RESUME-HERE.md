@@ -8,14 +8,37 @@ per-page-array completion (+99), segu_softunload, hat040 V2 table freeing (V2.1 
 ptalloc API: table = RETURN VALUE, out-param = ptdat descriptor), root==0 + descriptor-frame
 guards, grow success-tail <<11.  patch_modelb.py = 187 sites.
 **NEW FRONTIER: commands get 'Killed' (SIGKILL)** — uname -a / ls -la die instantly; some rc
-processes too; the console getty can hit 'INIT: Command is respawning too rapidly'.  Suspected
-link: **memory accounting halved** — banner says 8 MB, machine has 16 MB (030 boot shows 16 MB;
-freemem 2964 4KB-clicks and pfns to 0x7EE9 prove the full 16 MB IS used) → unpatched ctob (<<11)
-in the sizing/threshold family (maxclick/banner + possibly lotsfree/desfree/minfree feeding the
-pageout/swap KILL path).  NEXT: psignal/sigtoproc sig==9 probe + detect_pagesize audit of
-mlsetup/startup/sched thresholds.  Then: hat_dup 040 port (NOTE: BASE unix-040 has STOCK-030
-hat_dup — only the dbg build stubs it; base is NOT boot-safe), hat_exec port (garbage-write
-source), vm_swap 2KB units (real swap-out would corrupt), quiet-dbg variant, real-HW test.
+processes too; the console getty can hit 'INIT: Command is respawning too rapidly'.
+
+### ►► 2026-07-03 PM: "Killed" ANALYZED + probe & fix BUILT — AWAITING BOOT TEST ◄◄
+Static audit of all psignal(p,9) sites: the only SILENT kills are **exece 0x566b6 (setregs
+ret!=0 after point-of-no-return → psignal 9, NO message)** and restorecontext+0x66 (bad
+sigcontext).  rm_outofanon ("Sorry, pid %d (%s) ... lack of swap space") PRINTS and is absent
+from all logs → NOT the killer.  setregs (0x58b62) has exactly ONE failure exit: copyin(new
+user stack args → u_psargs) EFAULT.  Prime suspect chain: **execstk_addr (0xaf2b8, was on the
+DEFERRED list) still used NBPC=2KB pads/bounds** (size+2048, region ends 0xBFFFF800/0xFFFFF800,
+two +2048 hole-scan compensations) → a 2KB-odd stack pick disagrees with the 4KB segvn mapping →
+setregs copyin EFAULT → silent SIGKILL; whether an exec dies depends on its arg/env-size 2KB
+parity (matches "uname/ls die, other execs fine").  **BANNER 8MB SOLVED (cosmetic!): main
+0x59890/0x598ac print physmem<<11/freemem<<11 — counters are fine, only the print was halved.**
+BUILT (both kernels rebuilt, relocs 0, contiguity OK; patch_modelb.py = 194 sites):
+ 1. patch_modelb.py +7: execstk_addr ×5 (2KB→4KB) + banner ×2 (<<11→<<12).
+ 2. prototypes/sigkill_dbg.s: sigtoproc wrapper (weaken + sigtoproc_orig=0x4750e in
+    relink-040-dbg.sh) — logs every sig==9: target pid/stat/flag, sender pid + u_comm(u+0x1C0),
+    caller+grandcaller, cap 24.  Catches psignal too (it tail-calls sigtoproc).
+ 3. execmark.s setregs wrapper: logs "DBG setregs FAIL ret= psargs-uva= nc=" on ret!=0,
+    OUTSIDE the 5-exec dump cap (kills happen late).  A psargs-uva ending 0x800 = smoking gun.
+**BOOT TEST NEXT (fs-uae + serial): login, run uname -a / ls -la.**  Outcomes: (a) no kills +
+banner 16MB = execstk_addr was it, done; (b) kills persist → grep -a 'DBG SIGKILL' + 'setregs
+FAIL' names the real path.  Audit leftovers (documented, NOT patched): setupclock<<11 ×2 +
+pageout>>11 ×2 (internally consistent pair, defer); mlsetup 0x48b58 = (syssegs+2047)>>11 +
+`pea 0x800` click-count for sptmap mfree (latent sptalloc-arena size bug — arena thinks 0x800
+2KB clicks = 4MB but clicks are 4KB → could hand out VAs past kvseg end under heavy sptalloc;
+works today, fix with the vm_swap/units pass); btop/btopr/ptob (0x530ee/0x53100/0x53118)
+GLOBAL helpers still >>11/<<11 — audit their callers before flipping.
+Then: hat_dup 040 port (NOTE: BASE unix-040 has STOCK-030 hat_dup — only the dbg build stubs
+it; base is NOT boot-safe), hat_exec port (garbage-write source), vm_swap 2KB units (real
+swap-out would corrupt), quiet-dbg variant, real-HW test.
 
 ## ►► PREVIOUS STATUS (2026-07-02) ◄◄
 **2026-07-02: THE CHILD CRASH IS SOLVED (root cause proven, fix built, AWAITING BOOT TEST).**

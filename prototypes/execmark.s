@@ -502,6 +502,14 @@ Lv_go:
 | -> the PLT[0] `jmp *GOT[2]` wild-jumps into the program (observed PC 0x800024FE).
 | Capped at 5 execs (init + first children).  lfuword (moves SFC=user) reads user VA safely
 | (faults caught by onfault -> returns -1, never crashes the kernel).
+	.data
+	.even
+Lxf_n:
+	.long	0
+Lxf_msg:
+	.asciz	"DBG setregs FAIL ret=%d psargs-uva=%x nc=%x -> exece sends silent SIGKILL"
+	.even
+	.text
 	.globl	setregs
 setregs:
 	linkw	%fp,&0
@@ -510,6 +518,28 @@ setregs:
 	jsr	setregs_orig
 	addqw	&4,%sp
 	movel	%d0,%d2			| save setregs return value
+| setregs's ONLY failure exit is copyin(uap@(56)-uap@(12) -> u_psargs) = EFAULT, and exece
+| answers a nonzero setregs return with a SILENT psignal(p,9) (0x566b6) -- the prime "Killed"
+| suspect.  Log every failure (uncapped by the Lx_n dump cap -- kills happen way past 5 execs):
+| ret + the user VA the copyin read (a xxx800-tail = 2KB-parity smoking gun, execstk_addr).
+	tstl	%d2
+	beqw	Lxf_ok
+	movel	Lxf_n,%d0
+	cmpil	&16,%d0
+	bccw	Lxf_ok
+	addql	&1,%d0
+	movel	%d0,Lxf_n
+	moveal	%fp@(8),%a0
+	movel	%a0@(16),%sp@-		| nc (copyin len = min(nc,79))
+	movel	%a0@(56),%d0
+	subl	%a0@(12),%d0
+	movel	%d0,%sp@-		| user VA of the arg strings copyin reads back
+	movel	%d2,%sp@-		| setregs ret (14=EFAULT)
+	pea	Lxf_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(20),%sp
+Lxf_ok:
 	movel	Lx_n,%d3
 	cmpil	&5,%d3
 	bccw	Lx_done			| past cap -> just return

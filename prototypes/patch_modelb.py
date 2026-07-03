@@ -434,6 +434,27 @@ P = [
   b"\x26\x48\x20\x2e\xff\xdc\x72\x0b\xe2\xa8\x72\x3f\xc0\x81\xe5\x80\x24\x40\xd5\xeb\x00\x04",
   b"\x24\x48\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71\x4e\x71",
   "usrxmemflt:inline 030 leaf -> moveal a0,a2 (uvatosde040 returns &PTE) site2 hardbus"),
+
+ # ---- 2026-07-03 "Killed" frontier: main banner + execstk_addr (the last exec-path 2KB relic).
+ # main (0x59890/0x598ac): the boot banner's "real/avail mem" = physmem<<11 / freemem<<11.
+ # Model B made those counters 4KB clicks, so the banner printed HALF the real memory
+ # (8MB on the 16MB machine).  Purely cosmetic, but it made "memory accounting halved" look
+ # like a live kernel-wide bug -- fix it so the banner becomes a truthful diagnostic again.
+ (0x59890, b"\x72\x0b", b"\x72\x0c", "main:banner real-mem physmem<<11 -> <<12"),
+ (0x598ac, b"\x72\x0b", b"\x72\x0c", "main:banner avail-mem freemem<<11 -> <<12"),
+ # execstk_addr (0xaf2b8, DEFERRED until now): picks the user-VA hole where exec builds the
+ # new image's arg/env stack.  All its pads/bounds are NBPC=2KB: size+2048 headroom, region
+ # bounds 0xBFFFF800 (=0xC0000000-NBPC) / 0xFFFFF800 (=-NBPC), and two +2048 rounding
+ # compensations in the 128KB-chunk hole scan.  A 2KB-but-not-4KB-aligned pick makes the
+ # address math disagree with the (now 4KB) segvn mapping of the stack -> setregs's
+ # copyin(args->u_psargs) EFAULTs -> exece answers with a SILENT psignal(p,9) (0x566b6)
+ # = the instant 'Killed' on exec.  Whether a given exec dies depends on the 2KB slot
+ # parity of its arg/env size -- matching "uname/ls die, other execs fine".
+ (0xaf2ca, b"\x06\x87\x00\x00\x08\x00", b"\x06\x87\x00\x00\x10\x00", "execstk_addr:size+2048 headroom -> +4096"),
+ (0xaf310, b"\x28\x3c\xbf\xff\xf8\x00", b"\x28\x3c\xbf\xff\xf0\x00", "execstk_addr:region2 end 0xC0000000-NBPC (2KB->4KB)"),
+ (0xaf320, b"\x28\x3c\xff\xff\xf8\x00", b"\x28\x3c\xff\xff\xf0\x00", "execstk_addr:region3 end -NBPC (2KB->4KB)"),
+ (0xaf37a, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "execstk_addr:hole-scan +NBPC compensation 1 (2KB->4KB)"),
+ (0xaf3a4, b"\x06\x83\x00\x00\x08\x00", b"\x06\x83\x00\x00\x10\x00", "execstk_addr:hole-scan +NBPC compensation 2 (2KB->4KB)"),
 ]
 
 def main():
