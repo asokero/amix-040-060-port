@@ -167,6 +167,21 @@ Lsp_ret:
 | ---------------------------------------------------------------------------
 | idle (GLOBAL T) -- swtch idles here only when maxrunpri==-1.  One-shot 'I' marker (direct)
 | so we can tell "swtch chose to idle" from "swtch transferred to a child".  --weaken-symbol idle.
+|
+| + HANG PROBE (2026-07-03, the "boot stalls but keyboard echoes" frontier): every 2048th idle
+| wakeup (~10-30s; idle wakes on every interrupt), dump the WHOLE proc table via DIRECT serial
+| (works even if STREAMS is wedged): 'W' then " <pid>:<p_stat>:<p_wchan>" per proc (practive
+| chain, p_next@276, p_pidp@264->pid_id@4, p_stat@0, p_wchan@28).  Max 8 dumps per boot.
+| Reading: stat 1=SSLEEP (wchan names WHAT it waits on -- map the address offline),
+| 2=SRUN, 4=SSTOP, 5=SIDL, 6=SONPROC.  NO W-dumps during a hang = the CPU never idles
+| = some process is SPINNING (equally diagnostic).
+	.data
+	.even
+Lidw_cnt:
+	.long	0
+Lidw_dumps:
+	.long	0
+	.text
 	.globl	idle
 idle:
 	movel	Lidle_n,%d0
@@ -177,6 +192,60 @@ idle:
 	jsr	serdbg_mark
 	addqw	&4,%sp
 Lidle_stop:
+	addql	&1,Lidw_cnt
+	movel	Lidw_cnt,%d0
+	andil	&0x7ff,%d0		| every 2048th wakeup
+	bnew	Lidw_skip
+	movel	Lidw_dumps,%d0
+	cmpil	&8,%d0
+	bccw	Lidw_skip
+	addql	&1,%d0
+	movel	%d0,Lidw_dumps
+	moveml	%d3/%a2,%sp@-
+	pea	0x57			| 'W' -- proc-table dump follows
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	moveal	practive,%a2
+	moveq	&40,%d3			| bound: max 40 procs
+Lidw_loop:
+	movel	%a2,%d0
+	beqw	Lidw_done
+	pea	0x20
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%a2@(264),%d0		| p_pidp (guard: 0 for a half-built proc)
+	beqw	Lidw_pid0
+	moveal	%d0,%a0
+	movel	%a0@(4),%sp@-		| pid_id
+	braw	Lidw_pidgo
+Lidw_pid0:
+	clrl	%sp@-
+Lidw_pidgo:
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x3a			| ':'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	clrl	%d0
+	moveb	%a2@,%d0		| p_stat
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x3a			| ':'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%a2@(28),%sp@-		| p_wchan
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	moveal	%a2@(276),%a2		| p_next
+	subql	&1,%d3
+	bnew	Lidw_loop
+Lidw_done:
+	pea	0x0a
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	moveml	%sp@+,%d3/%a2
+Lidw_skip:
 	stop	&0x2000			| stock idle wait -- let the boot run naturally
 	rts
 	nop

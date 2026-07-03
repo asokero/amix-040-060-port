@@ -493,10 +493,16 @@ P = [
  (0xad148, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_sync:len"),
  (0xad482, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_lockop:segvn_fault len site1"),
  (0xad536, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_lockop:segvn_fault len site2"),
- (0x645d8, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "prusrio:as_fault len site1 (/proc IO)"),
- (0x6467a, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "prusrio:as_fault len site2 (/proc IO)"),
- (0xaefdc, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "as_iolock:SOP softlock len site1"),
- (0xaefe4, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "as_iolock:SOP softlock len site2"),
+ # REVERTED 2026-07-03 EVE (boot-5 hang suspect): the as_iolock and prusrio pea-len flips
+ # are WITHDRAWN.  Both functions' INTERNALS are still 2KB (as_iolock: ~10 unpatched
+ # mask/step sites 0xaee6a..0xaf01c incl. loop step `movel #2048,%d3`; prusrio: 0x64580/
+ # 0x64586) -- they were DELIBERATELY deferred, and flipping only their lock/fault LENGTHS
+ # made lock-len 4KB vs step 2KB = OVERLAPPING SOFTLOCKS = p_lck imbalance = hang risk.
+ # The partial-conversion hazard, self-inflicted.  Convert them as complete sets later:
+ #  (0x645d8/0x6467a prusrio as_fault lens) + (0x64580 andiw#-2048, 0x64586 addil#2048)
+ #  (0xaefdc/0xaefe4 as_iolock SOP lens) + (0xaee6a/0xaeed6/0xaf01c andil#2047,
+ #   0xaeeba/0xaeece andiw#-2048, 0xaeedc/0xaf000 movel#2048,%d3, 0xaef02/0xaf006
+ #   addil#2048, 0xaef10 addil#-2048) + audit as_iounlock's mirror.
 ]
 # pea-800 sites DELIBERATELY NOT flipped (triaged 2026-07-03): 0xdbbe/0xdd58/0x20c60/0x20c9c
 # (ngeteblk/allocb buffer sizes -- STREAMS/block semantics, not page), 0xee3e/0xee90 (bbmem
