@@ -471,7 +471,7 @@ P = [
  (0xaddfa, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "anon_zero:pagezero len 2048->4096 (ZFOD half-zero = THE rtld killer)"),
  (0x744f0, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "s5getapage:pagezero len (file-page tail zero)"),
  (0x81f50, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "ufs_getapage:pagezero len (file-page tail zero)"),
- (0xadc24, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "anon_private:hat_unload len (1 page either way; unit hygiene)"),
+ # (0xadc24 anon_private:hat_unload len -- WITHDRAWN with the seg-family batch below)
  # page_get(size,flag): btoc(0x800)==btoc(0x1000)==1 page -> functionally identical, flipped
  # for unit consistency (a future btoc change must not halve these).
  (0x74494, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "s5getapage:page_get size"),
@@ -483,16 +483,20 @@ P = [
  (0xadd62, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "anon_zero:page_get size"),
  (0xb1124, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "page_delmem:page_get size"),
  (0xb6974, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "hat_ptalloc:page_get size (hat040 leaf/ptr tables)"),
- # seg_vn/anon/as fault- and range-length args (the same coupled user-VM set the +99 sweep
- # converted -- these pea-encoded lengths were its blind spot).
- (0xac13e, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_faultpage:anon_getpage len"),
- (0xad9a6, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "anon_getpage:VOP_GETPAGE len"),
- (0xac8c2, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_faulta:len"),
- (0xa93ba, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segmap_faulta:len"),
- (0xacf36, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_swapout:page range len"),
- (0xad148, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_sync:len"),
- (0xad482, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_lockop:segvn_fault len site1"),
- (0xad536, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_lockop:segvn_fault len site2"),
+ # REVERTED 2026-07-03 NIGHT (boot-7 clock-sampler verdict): the seg-family fault-len flips
+ # are WITHDRAWN pending individual analysis.  Boot 5/6 hung deterministically at date
+ # (pid 24) in an infinite unresolvable-fault loop (samples: u_trap -> usrxmemflt ->
+ # hardbus -> trapsig -> ts_trapret -> fault again, with ptest/wb040_replay active); boot 4
+ # WITHOUT this batch passed the same point.  The pagezero trio + page_get sizes are kept
+ # (page_get's btoc is (x+4095)>>12 -> 0x800 and 0x1000 both = 1 page, verified in-binary).
+ # Withdrawn (re-add ONE AT A TIME with a boot test each, after reading how each len is
+ # bounds-checked downstream -- suspect: a still-2KB bound check turns off+0x1000 into
+ # EFAULT where off+0x800 passed, e.g. at a segment's last page):
+ #  (0xac13e segvn_faultpage:anon_getpage len)  <- prime suspect, hot COW/anon fault path
+ #  (0xad9a6 anon_getpage:VOP_GETPAGE len)      <- prime suspect, same path
+ #  (0xadc24 anon_private:hat_unload len)       <- 1 page either way, but on the loop path
+ #  (0xac8c2 segvn_faulta) (0xa93ba segmap_faulta) (0xacf36 segvn_swapout)
+ #  (0xad148 segvn_sync) (0xad482/0xad536 segvn_lockop)
  # REVERTED 2026-07-03 EVE (boot-5 hang suspect): the as_iolock and prusrio pea-len flips
  # are WITHDRAWN.  Both functions' INTERNALS are still 2KB (as_iolock: ~10 unpatched
  # mask/step sites 0xaee6a..0xaf01c incl. loop step `movel #2048,%d3`; prusrio: 0x64580/
