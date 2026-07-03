@@ -606,6 +606,30 @@ Lx_dmp:
 	addqw	&4,%sp
 	addql	&4,%d6
 	dbra	%d5,Lx_dmp
+| v3 (boot-4 finding): the auxv is INTACT at its correct place -- the ENVP ARRAY's NULL
+| TERMINATOR is the single clobbered word (walk overshoot matched 4*argc+8+4*(envc+1+15)
+| exactly on all 7 victims).  Dump the POINTER-ARRAY window too (16 longs from USP: argc,
+| argv[], NULL, envp[], NULL-slot, auxv head) -- the CLOBBER VALUE names the writer:
+| random garbage = hat_exec move damage; 0x00000003 = auxv double-copied 4 low; a C07FFxxx
+| string addr = one env pointer too many (count/layout mismatch); FFFFFFFF = stray SDE fill.
+	pea	0x76			| 'v' -- pointer-array window follows
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	moveal	u+0x864,%a0
+	movel	%a0@,%d6		| re-load USP (u_ar0[0] unchanged)
+	moveq	&15,%d5			| 16 longwords from USP
+Lx_vdmp:
+	pea	0x20
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%d6,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	addql	&4,%d6
+	dbra	%d5,Lx_vdmp
 	pea	0x0a			| newline terminates the X record
 	jsr	serdbg_mark
 	addqw	&4,%sp

@@ -455,10 +455,60 @@ P = [
  (0xaf320, b"\x28\x3c\xff\xff\xf8\x00", b"\x28\x3c\xff\xff\xf0\x00", "execstk_addr:region3 end -NBPC (2KB->4KB)"),
  (0xaf37a, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "execstk_addr:hole-scan +NBPC compensation 1 (2KB->4KB)"),
  (0xaf3a4, b"\x06\x83\x00\x00\x08\x00", b"\x06\x83\x00\x00\x10\x00", "execstk_addr:hole-scan +NBPC compensation 2 (2KB->4KB)"),
+
+ # ---- 2026-07-03 THE `pea 0x800` FAMILY (the rtld-kill root cause).  detect_pagesize.py's
+ # idiom scan keys on IMMEDIATES (#2048 etc); `pea 800` assembles as ABSOLUTE-ADDRESS pea
+ # (4878 0800) and evaded every audit.  Systematic whole-kernel triage of all 44 sites
+ # (function + callee): the VM family below carries PAGE-SIZE semantics and was still 2KB.
+ # ★ THE KILLER: anon_zero's pagezero(pp, 0, 0x800) zeroes only HALF of every zero-fill-
+ # on-demand page -> the UPPER 2KB keeps the previous owner's data.  The exec arg block
+ # relies on ZFOD zeros for its argv/envp NULL TERMINATORS (extractarg/copyarglist never
+ # write them!) -> a recycled dirty page puts garbage in the envp NULL slot -> rtld's auxv
+ # scan runs past it, eats the auxv as environ, finds no AT_BASE -> _rt_setup+0xE2 silent
+ # self-SIGKILL (boot-4 X-dumps: auxv INTACT at the right place on all 7 victims, overshoot
+ # = exactly envc+1+15 words).  Same dirty-upper-half explains the ls user-mode loop, the
+ # `open (%%%%/dev/console)` garbage path (dirty argv NULL), and bss flakiness.
+ (0xaddfa, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "anon_zero:pagezero len 2048->4096 (ZFOD half-zero = THE rtld killer)"),
+ (0x744f0, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "s5getapage:pagezero len (file-page tail zero)"),
+ (0x81f50, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "ufs_getapage:pagezero len (file-page tail zero)"),
+ (0xadc24, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "anon_private:hat_unload len (1 page either way; unit hygiene)"),
+ # page_get(size,flag): btoc(0x800)==btoc(0x1000)==1 page -> functionally identical, flipped
+ # for unit consistency (a future btoc change must not halve these).
+ (0x74494, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "s5getapage:page_get size"),
+ (0x81f1a, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "ufs_getapage:page_get size"),
+ (0xa12e2, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "rfc_writefill:page_get size"),
+ (0xa1cc0, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "rfc_pageget:page_get size"),
+ (0xa97a0, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segmap_pagecreate:page_get size"),
+ (0xadb64, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "anon_private:page_get size (COW new page)"),
+ (0xadd62, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "anon_zero:page_get size"),
+ (0xb1124, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "page_delmem:page_get size"),
+ (0xb6974, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "hat_ptalloc:page_get size (hat040 leaf/ptr tables)"),
+ # seg_vn/anon/as fault- and range-length args (the same coupled user-VM set the +99 sweep
+ # converted -- these pea-encoded lengths were its blind spot).
+ (0xac13e, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_faultpage:anon_getpage len"),
+ (0xad9a6, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "anon_getpage:VOP_GETPAGE len"),
+ (0xac8c2, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_faulta:len"),
+ (0xa93ba, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segmap_faulta:len"),
+ (0xacf36, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_swapout:page range len"),
+ (0xad148, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_sync:len"),
+ (0xad482, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_lockop:segvn_fault len site1"),
+ (0xad536, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_lockop:segvn_fault len site2"),
+ (0x645d8, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "prusrio:as_fault len site1 (/proc IO)"),
+ (0x6467a, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "prusrio:as_fault len site2 (/proc IO)"),
+ (0xaefdc, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "as_iolock:SOP softlock len site1"),
+ (0xaefe4, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "as_iolock:SOP softlock len site2"),
 ]
-# NOTE (2026-07-03): elfexec's auxv AT_PAGESZ 2048->4096 was checked while chasing the rtld
-# self-SIGKILL family -- it is ALREADY patched above (0xb842c, the early-session entry), so
-# userland has been seeing the correct 4096 all along.  Not the AT_BASE killer.
+# pea-800 sites DELIBERATELY NOT flipped (triaged 2026-07-03): 0xdbbe/0xdd58/0x20c60/0x20c9c
+# (ngeteblk/allocb buffer sizes -- STREAMS/block semantics, not page), 0xee3e/0xee90 (bbmem
+# kmem 2KB buffer), 0x3d21e (buf_breakup chunk min -- disk transfer, audit separately),
+# 0x48b64 (mlsetup sptmap arena -- known latent, fix with the vm_swap/units pass),
+# 0x52238 (checkpage/pageout -- read before touching, pageout barely runs at 16MB),
+# 0x599be (main as_map 0x800 for icode/u -- works, p0/p1 layout risk), 0x5c1e2 (pathname
+# buffer), 0xaa9ae/0xaaaa4/0xaaaae (segu u-area 2KB chunks -- u-area is 2x4KB, works,
+# needs its own analysis), 0xb4936/0xb53e0/0xb543e (stock 030 hat_unload/hat_dup -- dead
+# code in our build, superseded by hat040/stub).
+# NOTE: ppcopy 0xaf230 / pagecopy 0xaf268 pea-800s were ALREADY patched (entries above);
+# elfexec auxv AT_PAGESZ 2048->4096 likewise (0xb842c) -- userland saw 4096 all along.
 
 def main():
     buf=bytearray(open(KERNEL,"rb").read())
