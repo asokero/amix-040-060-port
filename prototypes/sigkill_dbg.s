@@ -21,34 +21,53 @@
 Lsk_n:
 	.long	0
 Lsk_msg:
-	.asciz	"DBG SIGKILL pid=%d stat=%x flag=%x from pid=%d comm=%s caller=%x gcaller=%x fu=%x"
+	.asciz	"DBG SIGKILL pid=%d stat=%x psargs=%s uret=%x uarg2=%x kcaller=%x fu=%x"
 	.even
+
+| v3 (2026-07-03): the killer is USERLAND self-kill (kill(2), sender==target, fu=1) -- the SVR4
+| rtld convention: ld.so (inside libc.so.1 @C1000000) does _kill(_getpid(),SIGKILL) on EVERY
+| fatal (rtsetup.c ~9 sites, binder.c 2 sites -- lazy PLT bind failure would explain "plain ls
+| dies, ls -al lives": different first-call PLT sets).  The saved user PC is useless (always
+| inside the _kill stub), but the USER STACK top holds the return address into _kill's CALLER
+| = the exact rtld error site: uret - 0xC1000000 = offset in libc.so.1 -> disassemble offline.
+|   uret  = lfuword(*u_ar0)   (u_ar0 = u+0x864; u_ar0[0] = saved user SP at the trap)
+|   uarg2 = lfuword(usp+8)    (kill's 2nd arg -- MUST read 9; validates the stack layout)
+| comm was empty at u+0x8A0 -> print u_psargs (u+0x3B0) instead: setregs itself fills it
+| (we disassembled that copyin), so it is guaranteed populated for any exec'd process.
+| Cap 64: the sac/listen respawn population self-kills every cycle and ate the old cap 24
+| before login; their uret is equally interesting (same site as ls = one bug family).
 
 	.text
 	.globl	sigtoproc
 sigtoproc:
 	linkw	%fp,&0
-	moveml	%a2-%a3,%sp@-
+	moveml	%d2-%d3/%a2,%sp@-
 	movel	%fp@(12),%d0		| sig
 	moveq	&9,%d1
 	cmpl	%d0,%d1
 	bnew	Lsk_done
 	movel	Lsk_n,%d0
-	cmpil	&24,%d0
+	cmpil	&64,%d0
 	bccw	Lsk_done
 	addql	&1,%d0
 	movel	%d0,Lsk_n
 	moveal	%fp@(8),%a2		| a2 = target proc
-	moveal	%fp@,%a3		| a3 = caller's frame ptr (caller is gcc code w/ linkw)
-	movel	%fp@(16),%sp@-		| fromuser (3rd arg)
-	movel	%a3@(4),%sp@-		| grandcaller return addr
-	movel	%fp@(4),%sp@-		| caller return addr
-	pea	u+0x8a0			| sender u_comm -- rm_outofanon: lea u+0x730,%a0; pea %a0@(448)
-					| = u+0x730+0x1C0 = u+0x8A0 (first build used u+0x1C0 -> comm= empty)
-	moveal	u+0x730,%a0		| curproc
-	moveal	%a0@(264),%a0		| p_pidp
-	movel	%a0@(4),%sp@-		| sender pid
-	movel	%a2@(4),%sp@-		| target p_flag
+	moveal	u+0x864,%a0		| u_ar0 (sender's saved trap regs)
+	movel	%a0@,%d3		| d3 = saved user SP
+	movel	%d3,%sp@-
+	jsr	lfuword			| d0 = *(usp) = return addr into _kill's caller
+	addqw	&4,%sp
+	movel	%d0,%d2			| d2 = uret
+	addql	&8,%d3
+	movel	%d3,%sp@-
+	jsr	lfuword			| d0 = *(usp+8) = kill's sig arg (expect 9)
+	addqw	&4,%sp
+	movel	%d3,%d3			| (keep d3 dead-safe)
+	movel	%fp@(16),%sp@-		| fu (3rd sigtoproc arg)
+	movel	%fp@(4),%sp@-		| kcaller (kernel-side return addr)
+	movel	%d0,%sp@-		| uarg2
+	movel	%d2,%sp@-		| uret
+	pea	u+0x3b0			| sender u_psargs (setregs fills it -- always populated)
 	clrl	%d0
 	moveb	%a2@,%d0
 	movel	%d0,%sp@-		| target p_stat
@@ -57,9 +76,9 @@ sigtoproc:
 	pea	Lsk_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(40),%sp
+	lea	%sp@(36),%sp
 Lsk_done:
-	moveml	%fp@(-8),%a2-%a3
+	moveml	%fp@(-12),%d2-%d3/%a2
 	unlk	%fp
 	jmp	sigtoproc_orig
 
@@ -131,5 +150,5 @@ Lgd_out:
 	movel	%d2,%d0
 	moveml	%fp@(-8),%d2-%d3
 	unlk	%fp
-	rts				| (no pad needed at current size -- re-add a nop if the
-					|  contiguity check ever FAILs by 2 after an edit)
+	rts
+	nop				| pad: keep the relinked .text a multiple of 4 (text/data contiguity)
