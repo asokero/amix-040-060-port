@@ -390,6 +390,29 @@ as_fault:
 	jsr	as_fault_orig
 	lea	%sp@(20),%sp
 	movel	%d0,%d2			| ret
+| --- FAIL logger (2026-07-03 NIGHT, the date unresolvable-fault loop): the clock sampler
+|     showed pid 24 cycling usrxmemflt -> hardbus -> trapsig forever = as_fault FAILS every
+|     iteration.  Log EVERY nonzero return (pid, addr, type F_INVAL=0/F_PROT=1/F_SOFTLOCK=2,
+|     rw, ret) with its own cap 64 -- names the fault VA + error code in one boot. ---
+	tstl	%d2
+	beqw	Laff_ok
+	movel	Laff_n,%d1
+	cmpil	&64,%d1
+	bccw	Laff_ok
+	addql	&1,%d1
+	movel	%d1,Laff_n
+	movel	%d2,%sp@-		| ret
+	movel	%fp@(24),%sp@-		| rw
+	movel	%fp@(20),%sp@-		| type
+	movel	%fp@(12),%sp@-		| addr
+	moveal	u+0x730,%a0		| curproc
+	moveal	%a0@(264),%a0		| p_pidp
+	movel	%a0@(4),%sp@-		| pid
+	pea	Laff_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(28),%sp
+Laff_ok:
 	movel	%fp@(12),%d0		| addr
 | --- CRASH probe (2026-06-26 PM): the child bus-errors with FAULT ADDR 0xFFFFFFFF (malloc deref of
 |     its bss global 0x80010e48 == 0xFFFFFFFF).  setregs proved 0x80010e48 = 0 at EXEC time, with NO
@@ -860,6 +883,11 @@ Ladyn_n:
 	.even
 Lcrash_msg:
 	.asciz	"DBG CRASH 80010000 leafPTE=%x RAM@e48=%x (exec-pfn was 7CAB; pfn same+RAM FFFF=double-alloc)"
+	.even
+Laff_n:
+	.long	0
+Laff_msg:
+	.asciz	"DBG as_fault FAIL pid=%d addr=%x type=%x rw=%x ret=%x"
 	.even
 Lcrash_n:
 	.long	0
