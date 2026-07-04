@@ -522,6 +522,56 @@ P = [
  #  (0xaefdc/0xaefe4 as_iolock SOP lens) + (0xaee6a/0xaeed6/0xaf01c andil#2047,
  #   0xaeeba/0xaeece andiw#-2048, 0xaeedc/0xaf000 movel#2048,%d3, 0xaef02/0xaf006
  #   addil#2048, 0xaef10 addil#-2048) + audit as_iounlock's mirror.
+ # ========================================================================
+ # SPTMAP ARENA FAMILY COMPLETION (2026-07-04, boot-14 ttymon kmem free-list
+ # corruption panic pc=0x704211C).  The kvseg sptmap arena is 4KB-click since
+ # Tier 0 (mlsetup base syssegs>>12 @0x48b5e, sptalloc va=click<<12 @0xa8bfa/
+ # 0xa8c3e) -- but only the ALLOC side was converted.  The FREE side stayed
+ # 2KB: sptfree computed the rmfree slot as va>>11 = DOUBLE the click index,
+ # so every >4KB kmem_free freed the WRONG arena range (the real slot leaked,
+ # a live neighbor's slot was marked free) -> the next sptalloc hands out an
+ # OVERLAPPING va -> kernel heap corruption; ttymon's STREAMS open/close churn
+ # (allocq etc.) exposed it as a corrupted Km_FreeLists node.  bp_mapin/
+ # bp_mapout (dmapio group) were already 4KB and PROVE the arena unit.
+ # Coupled set (all remaining sptmap users + the mapout/free PTE walkers):
+ # --- kmem_alloc/kmem_free oversize (>4KB) btoc: clicks + accounting ---
+ (0x41ffc, b"\x06\x82\x00\x00\x07\xff", b"\x06\x82\x00\x00\x0f\xff", "kmem_alloc:oversize btoc round +2047"),
+ (0x42002, b"\x72\x0b", b"\x72\x0c", "kmem_alloc:oversize btoc >>11 (clicks; also availrmem units)"),
+ (0x420b6, b"\x72\x0b", b"\x72\x0c", "kmem_alloc:oversize kmeminfo bytes clicks<<11"),
+ (0x42464, b"\x06\x82\x00\x00\x07\xff", b"\x06\x82\x00\x00\x0f\xff", "kmem_free:oversize btoc round +2047"),
+ (0x4246a, b"\x7c\x0b", b"\x7c\x0c", "kmem_free:oversize shift (one moveq feeds >>11 clicks AND <<11 kmeminfo)"),
+ # --- sptfree: THE wrong-slot bug + mapout byte len (one moveq feeds both) ---
+ (0xa8c7e, b"\x06\x82\x00\x00\x07\xff", b"\x06\x82\x00\x00\x0f\xff", "sptfree:va->slot round +2047"),
+ (0xa8c84, b"\x78\x0b", b"\x78\x0c", "sptfree:shift (va>>11 rmfree slot + clicks<<11 mapout bytes)"),
+ (0xa8cbe, b"\x78\x0b", b"\x78\x0c", "sptfree:flag=0 kptbl path click<</>> (dead path, kept consistent)"),
+ # --- segkmem_mapout: PTE unload walker (mirror of patched segkmem_alloc) ---
+ (0xa8b06, b"\x72\x0b", b"\x72\x0c", "segkmem_mapout:leaf index (va-s_base)>>11 -> >>12"),
+ (0xa8b26, b"\xe9\xd3\x10\x15", b"\xe9\xd3\x10\x14", "segkmem_mapout:pfn bfextu {0:21}->{0:20}"),
+ (0xa8b88, b"\x06\x82\xff\xff\xf8\x00", b"\x06\x82\xff\xff\xf0\x00", "segkmem_mapout:loop step -2048 -> -4096"),
+ (0xa8b96, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segkmem_mapout:flushmmu pages round"),
+ (0xa8b9c, b"\x72\x0b", b"\x72\x0c", "segkmem_mapout:flushmmu pages >>11"),
+ # --- segkmem_free: the OTHER PTE unload walker (unkseg path; same 5-site mirror) ---
+ (0xa87e8, b"\x72\x0b", b"\x72\x0c", "segkmem_free:leaf index (va-s_base)>>11 -> >>12"),
+ (0xa8814, b"\xe9\xee\x10\x15", b"\xe9\xee\x10\x14", "segkmem_free:pfn bfextu {0:21}->{0:20}"),
+ (0xa888a, b"\x06\x82\xff\xff\xf8\x00", b"\x06\x82\xff\xff\xf0\x00", "segkmem_free:loop step -2048 -> -4096"),
+ (0xa8898, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segkmem_free:flushmmu pages round"),
+ (0xa889e, b"\x72\x0b", b"\x72\x0c", "segkmem_free:flushmmu pages >>11"),
+ # --- kseg/unkseg: remaining sptmap users (cinit/msginit/RFS; effectively dead
+ #     in current config -- cinit passes 0 clicks -- but unpatched they'd map at
+ #     click<<11 = a WRONG, sub-arena VA; patched they're correct if ever used).
+ #     ksegtbl key (va-syssegs)>>17 needs no change: ptmalloc's 0x3f align makes
+ #     kseg VAs 256KB-apart -> key stays unique. ---
+ (0xa8db6, b"\x72\x0b", b"\x72\x0c", "kseg:segkmem_alloc va/len clicks<<11 (one moveq, both args)"),
+ (0xa8dea, b"\x72\x0b", b"\x72\x0c", "kseg:va = click<<11 -> <<12 (ksegtbl key + bzero + return)"),
+ (0xa8e0a, b"\x72\x0b", b"\x72\x0c", "kseg:bzero len clicks<<11"),
+ (0xa8e34, b"\x70\x0b", b"\x70\x0c", "unkseg:rmfree slot va>>11 -> >>12"),
+ (0xa8e58, b"\x70\x0b", b"\x70\x0c", "unkseg:segkmem_free len clicks<<11"),
+ # NOT flipped (audited, symmetric as-is): kmem_allocspool/bpool + kmem_freepool
+ # hardcoded 2/8-click pool sizes (pea 2/pea 8/moveq -- alloc AND free use the
+ # same constants at the same, now-correct slot => pools are merely 2x oversized
+ # maps, ~4KB+16KB waste per pool; flip the whole 8+-site set later if memory
+ # matters).  kvm_init's sptalloc caller 0x48e7e already passes 4KB clicks
+ # (0x48e64/0x48e6a flipped in Tier 0).  bp_mapin/bp_mapout already 4KB (dmapio).
 ]
 # pea-800 sites DELIBERATELY NOT flipped (triaged 2026-07-03): 0xdbbe/0xdd58/0x20c60/0x20c9c
 # (ngeteblk/allocb buffer sizes -- STREAMS/block semantics, not page), 0xee3e/0xee90 (bbmem
