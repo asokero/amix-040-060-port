@@ -260,18 +260,97 @@ Lhb_n:
 Lhb_msg:
 	.asciz	"DBG hardbus pid=%d addr=%x pte=%x ret=%x upc=%x n=%x"
 	.even
+Lhbx_n:
+	.long	0
+Lhbx_msg:
+	.asciz	"DBG hardbus XPAGE addr=%x -> next page %x mapped, retrying (n=%x)"
+	.even
+
+| ★ PAGE-CROSSING FIX (2026-07-04, ROOT CAUSE of the date loop, CONFIRMED from the binary):
+| date's instruction at 0x80000FFC is `jsr 0x80000c2c` (4eb9 8000 0c2c, 6 bytes) -- the
+| absolute-address EXTENSION WORD starts at 0xFFE and CROSSES the page boundary: bytes
+| 0xFFE-0xFFF on (mapped) page 0, bytes 0x1000-0x1001 on (unmapped) page 0x80001000.  The
+| 68040 reports FA = the start of the crossing access (0xFFE, page 0) -- NOT the part that
+| actually missed (0x1000).  usrxmemflt resolves page 0 (already valid, PTE 7B7F00D), the
+| 030-frame-semantic tail checks misroute the fault to hardbus, hardbus probes page 0's
+| phys OK -> return 0 -> retry -> same fault: observed 3.1+ MILLION iterations.  Any binary
+| whose layout puts a multi-word instruction (or misaligned data operand) across a not-yet-
+| resident page boundary hits this -- pure layout luck (why date; why nondeterministic-
+| looking earlier under the ZFOD dirt).
+| FIX at this choke point: for USER addresses within 8 bytes of a page end, as_fault BOTH
+| the operand's page AND the next page (read, F_INVAL); if either resolves -> return 0 and
+| let the CPU retry (now with the crossing target mapped).  Only if both fail -> genuine
+| hardbus.  Faulting the CURRENT page too keeps a misrouted last-bytes-of-unmapped-page
+| fault from turning into a new infinite loop (next-page-only would remap the wrong page
+| forever).  The proper long-term fix = port usrxmemflt's tail dispatch to 040 frame/SSW
+| semantics (MA bit) -- noted for the base-build sync.
 
 	.text
 	.globl	hardbus
 hardbus:
 	linkw	%fp,&0
 	moveml	%d2-%d3,%sp@-
+	addql	&1,Lhb_n
+	movel	%fp@(8),%d0		| addr
+	cmpil	&0x80000000,%d0
+	bcsw	Lhb_norm		| kernel/low address -> normal hardbus
+	movel	%d0,%d1
+	andil	&0xfff,%d1
+	cmpil	&0xff8,%d1
+	bcsw	Lhb_norm		| not within 8 bytes of page end -> normal hardbus
+	andil	&0xfffff000,%d0
+	movel	%d0,%d3			| d3 = current page base
+| -- resolve the CURRENT page (usually already valid -> cheap no-op) --
+	pea	1			| rw = read
+	clrl	%sp@-			| type = F_INVAL
+	pea	4			| len
+	movel	%d3,%sp@-
+	moveal	u+0x730,%a0
+	movel	%a0@(124),%sp@-		| as = curproc->p_as
+	jsr	as_fault
+	lea	%sp@(20),%sp
+	movel	%d0,%d2			| remember current-page result
+| -- resolve the NEXT page (the actual crossing target) --
+	addil	&0x1000,%d3
+	pea	1			| rw = read
+	clrl	%sp@-			| type = F_INVAL
+	pea	4			| len
+	movel	%d3,%sp@-
+	moveal	u+0x730,%a0
+	movel	%a0@(124),%sp@-
+	jsr	as_fault
+	lea	%sp@(20),%sp
+	tstl	%d0
+	beqw	Lhb_fixed		| next page mapped -> retry
+	tstl	%d2
+	beqw	Lhb_fixed		| current page (re)resolved -> retry
+	braw	Lhb_norm		| both failed -> genuine hard-error path
+Lhb_fixed:
+	movel	Lhbx_n,%d0
+	addql	&1,%d0
+	movel	%d0,Lhbx_n
+	cmpil	&16,%d0
+	blsw	Lhbx_log		| first 16 -> log
+	andil	&0x3ff,%d0
+	beqw	Lhbx_log		| every 1024th -> log (loop visibility)
+	braw	Lhbx_q
+Lhbx_log:
+	movel	Lhbx_n,%sp@-		| n
+	movel	%d3,%sp@-		| next page va
+	movel	%fp@(8),%sp@-		| original fault addr
+	pea	Lhbx_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(20),%sp
+Lhbx_q:
+	clrl	%d2			| return 0 = not a hard error, retry
+	braw	Lhb_out
+Lhb_norm:
 	movel	%fp@(12),%sp@-		| ptep
 	movel	%fp@(8),%sp@-		| addr
 	jsr	hardbus_orig
 	addqw	&8,%sp
 	movel	%d0,%d2			| ret
-	addql	&1,Lhb_n
 	movel	Lhb_n,%d3
 	cmpil	&8,%d3
 	blsw	Lhb_log			| first 8 -> log
