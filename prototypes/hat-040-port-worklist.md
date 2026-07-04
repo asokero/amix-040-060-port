@@ -457,3 +457,126 @@ core page-frame set must flip together-ish, then test.  Model A allowed per-func
 test cadence; Model B is more big-batch.  (The hybrid "4KB allocator + 2KB
 accounting" keeps maxclick/pages[]/btoc at 2KB -- fewer functions -- but mixes two
 page sizes; the wart is variable-size sub-4KB allocations.)
+
+---
+
+## hat_dup — PORT PLAN (2026-07-04, branch 040-hat-dup-port)
+
+Status: **PLANNED, not yet implemented.**  This is the #1 item on "Remaining for a
+clean multi-user base" (PROJECT-PLAN.md, RESUME-HERE.md, KNOWN-ISSUES.md ISSUE-4).
+Interactive login + fork+exec workloads (pipes, background jobs) are boot-verified
+stable on 040 as of the interactive-login milestone (commit 4fe60df) — but every one
+of those tests is fork+exec, where exec immediately rebuilds the child's address
+space and papers over hat_dup's no-op stub.  The port below targets the untested gap:
+fork WITHOUT an immediate exec (shell subshells, any COW write racing parent/child).
+
+### Disassembly (0xb502a–0xb57e0, 1974 B, GLOBAL T, vanilla/stand/unix)
+Full RE done this session: `m68k-linux-gnu-objdump -d -r --start-address=0xb502a
+--stop-address=0xb57e0 vanilla/stand/unix`. Args: fp@8=oldas, fp@12=newas. Frame
+`linkw -208`, saves d2-d5.
+
+**Part A (b502a–b50bd): root-region grow.** Loop d4=0..3 (030's 4-entry A-table,
+region = 1 GB granularity, `asll #3` = 8-byte SDE stride). For each region resident
+in `oldas` (`bfextu root[region]@3{6:2}` != 0), calls **`hat_growsdt(newas, region,
+oldstatus+1)`** to ensure `newas` has a matching root-level table; else clears the
+bit in `newas` root. **`hat_growsdt` (0xb6058, 562 B) has NEVER been ported** — it's
+the "hardest" item in the DONE-batch above and was always deferred.
+
+**Part B (b50be–b57d4): parallel segment walk.** Walks `oldas`'s segment list
+(head `oldas@4`, next-ptr `seg@16`) in lockstep with `newas`'s (already-populated by
+the generic C-level `as_dup`/`segvn_dup` before hat_dup runs — segment/anon
+structures exist, only the HAT PTE tree + physical page duplication is hat_dup's job).
+Skips any segment where `seg@24 != segvn_ops` (0xb50de reloc) — non-segvn segments
+(device, etc.) are not touched here.
+
+For segvn segments, reads `svd@2`/`svd@5`/`svd@3` to pick a mode: **doanon=1**
+("shared anon" fast path — both old/new point at compatible anon-slot arrays,
+skips per-page anon_alloc) or **doanon=0** (default — full private-copy path).
+
+Then, per **128 KB VA chunk** (`Bidx = va>>17 & 0x1FFF`, 8-byte SDE stride — the
+030 pointer-level granularity):
+- reads OLD SDE resident bit; if absent, just advances the cursor to the next
+  128 KB boundary (sparse region, nothing to copy) — no page-table work.
+- if present: computes the OLD leaf PTE address (`SDE.addr + Pidx*4`, `Pidx =
+  (va>>11)&63` — **2 KB click index**), and if the NEW SDE is absent, calls
+  `hat_ptalloc` (already Model-B-ported) to allocate a leaf page table and builds
+  a NEW SDE descriptor for it (8-byte write: limit/status@0, addr@4 — SAME 8-byte
+  layout as hat_pteload's original B-desc build).
+- per-click (2KB): if OLD leaf PTE present, for **doanon=0 (private)**: calls
+  `anon_alloc` (fresh anon slot) + `page_lookup`/`page_get` (find or allocate a
+  physical page) + **`ppcopy`** (a REAL physical page copy, not a refcounted COW
+  share) + `page_enter`, then writes the NEW leaf PTE pointing at the COPY. For
+  **doanon=1 (shared)**: just copies the anon pointer/PTE across (true sharing).
+  PFN packing: `bfextu pte{0:21}` (21-bit PFN, 030) → `pfn<<11|1` rebuild — the
+  OLD 2KB-click format Model B already replaced everywhere else with `{0:20}`/`<<12`.
+- advances all four cursors (old/new SDE ptr, old/new anon-slot ptr) by one PTE
+  (4 bytes) or, at a 128 KB boundary, re-walks the tree for the next chunk.
+
+**Key point: the per-page copy semantics (anon_alloc/page_get/ppcopy/page_enter/
+wakeprocs/page_abort) are format-agnostic control flow — NO port needed there.**
+Only three kinds of thing change:
+
+1. **VA-decode constants** (same-size immediate swaps, same pattern as
+   hat_pteload/hat_chgprot040): A-index `>>30&3` → `>>25&0x7f`; B-index
+   `>>17&0x1FFF` → `>>18&0x7f`; the outer-loop chunk size `128 KB (2^17)` →
+   `256 KB (2^18)` (matches hat_chgprot040's `Lcp_chkmore` re-walk-at-256KB
+   pattern — reuse it); click index `>>11&63` → `>>12&63` (Model B, 4KB clicks);
+   PFN field `{0:21}` → `{0:20}`, rebuild `pfn<<11` → `pfn<<12`; the `pages[]`
+   index arithmetic (`(pfn-pages_base)*60+pages`, b555a-d0/b55c4-d8) shift
+   `>>11`/`<<11` → `>>12`/`<<12`.
+2. **Structural 8-byte→4-byte descriptor collapses** (transcribe + rewrite, same
+   method as hat_pteload/hat_free040/hat_chgprot040), at exactly three sites:
+   - Part A's root-region resident check (currently routed through hat_growsdt —
+     see ELIMINATED below, this site disappears).
+   - Part B's OLD/NEW SDE fetch from root (`root[A] + Bidx*8` → single-long
+     `root[A]` (040 root is now flat, `va>>25&0x7f` indexes it directly — same as
+     hat_chgprot040's `Lcp_walk`) `+ Bidx*4` into the pointer table it references).
+   - Part B's NEW-SDE-build-on-demand (8-byte write with limit/status template) →
+     single-long `*slot = leaftable | UDT(2)` (hat_pteload's B-desc-build pattern).
+3. **`hat_growsdt` dependency — ELIMINATED, do not port it.** hat_pteload's own
+   lazy pointer-table allocator (hat040.s `Lrz_loop`/`Lrootok`, ~line 179–219)
+   already does exactly what Part A needs: allocate a full 4 KB page via
+   `hat_ptalloc(1)` (page-aligned, Model-B-bzero'd, hat_free040-freeable — see
+   hat040.s's own comment explaining why this replaced hat_sdtalloc for this
+   purpose), zero its 128 4-byte descriptors, install `root[Aidx] = table|2`.
+   Replace hat_dup's Part A (the 4-region hat_growsdt loop) with the SAME
+   inline pattern, keyed off the 040 root layout (`va>>25&0x7f`, 128 entries)
+   instead of the 030 4-region layout — i.e. Part A's job becomes "for every
+   040 root slot resident in oldas but absent in newas, lazily alloc+install a
+   pointer table in newas", which is a *much* smaller rewrite than porting
+   hat_growsdt's full descriptor-builder (562 B, was rated "hardest" precisely
+   because of the 8192→128-entry level change — a change this approach sidesteps
+   by reusing hat_ptalloc's already-Model-B leaf-alloc machinery instead of
+   hat_growsdt's own table-builder).
+
+### Build / link mechanism (established pattern, no new tooling needed)
+`hat_dup` is GLOBAL T (like hat_chgprot) → plain `--weaken-symbol hat_dup` in
+`relink-040.sh`, alongside the existing `hat_chgprot040.o`. Write `hat_dup040.s`
+in `prototypes/`, add its assembly + weaken-symbol + link step to `relink-040.sh`
+(mirroring the `hat_chgprot040.o` lines already there) and to `relink-040-dbg.sh`
+(replacing forkdbg.s's stub — keep the dbg build's other probes). Validate with
+`check_relink_relocs.py` (0 complaints expected) before booting.
+
+### Test plan (once built)
+1. Re-run the manual stress already done 2026-07-04 (`ls -al | grep`, `| wc`,
+   9× `sleep 100 &`) — must stay clean (0 PANIC/BUS/guru), confirms no regression.
+2. **New test — the actual gap this closes**: a fork WITHOUT immediate exec
+   (shell subshell `( sleep 1; echo done )`, or a small forked shell builtin
+   loop) followed by a parent-side write to a variable/file the child also
+   touches — this is the path that was previously silently wrong (no COW, no
+   real hat_dup) and never exercised by fork+exec tests.
+3. Grep serial log for the existing `hat_chgprot040 ENTER` one-shot marker
+   firing (confirms COW write-protect ran) together with a NEW hat_dup040
+   one-shot ENTER marker (mirror the `Lcp_msg`/`Lhd_msg` pattern) — both firing
+   on the SAME fork confirms the COW contract (hat_chgprot protects parent,
+   hat_dup builds the child tree) is now actually wired end to end.
+
+### Risk / honesty note
+This is comparable in size to hat_pteload + hat_chgprot040 combined (~1974 B vs
+710+~700 B), with one dependency eliminated (hat_growsdt) but a genuinely new
+piece of control flow (the doanon shared-vs-private branch, and the real
+ppcopy-based physical duplication for private anon pages) that has no existing
+040-family analogue to crib from as directly as hat_chgprot040 could crib from
+hat_unload040 / hat_pteload. Budget it as a multi-session port; test after Part
+A+B together (coupled, like hat_pteload+hat_ptalloc were) — there is no smaller
+testable increment within the function.
