@@ -108,6 +108,55 @@ descs, va>>25/>>18/>>12 indices).  This is the main thing standing between "dbg 
 hat_exec (exec stack move — currently neutered by the hat_free040/hat_chgprot040 garbage-slot
 guards), uvirtophys/uvatosde (user SW page-table walkers).  Full batch list: RESUME-HERE.md.
 
+## ISSUE-5: `haltsys` (reboot/halt path) still runs unguarded 030 `pmove` — KERNEL PANIC on `reboot`
+**Status:** OPEN (2026-07-05), root cause CONFIRMED by disassembly, fix planned, not yet built.
+**Symptom:** running `reboot` on `unix-040`/`unix-040-dbg` (fs-uae, boot-verified 2026-07-04/05)
+reliably panics: native kernel strings (confirmed in `vanilla/stand/unix`'s own string table, not
+our instrumentation) `"kstack 0x%x!"` print a recursive-trap unwind, ending in
+`PANIC: KERNEL FAULT psw=0x2311, pc=0x4000001E, fmt=0x0, vector=0x4 (Illegal Instruction)`. Happens
+either right after issuing `reboot` or, once, at the next boot's login prompt (same signature).
+Serial-log correlation (2026-07-05 capture): system goes fully IDLE (proc 0, healthy repeating
+`C00000000:070D96FA:00002000` idle-PC samples, hundreds of them — NOT a spin on a changing PC) for
+a long stretch before the panic, and the last `hat_dup040 ENTER` markers logged are far earlier
+(getty/login forks) — this is NOT a fork-in-flight crash, it's unrelated to the `hat_dup040` port
+on branch `040-hat-dup-port`. `getdents LOOP` markers (pid 172, likely the shutdown sequence
+scanning `/proc` to signal remaining processes) precede the idle stretch — consistent with a normal
+`reboot`/`uadmin` shutdown sequence, not a hang.
+
+**Root cause (RE'd from `vanilla/stand/unix`, 2026-07-05):** `uadmin` (0x467d6) → `mdboot` (0x5637a)
+→ `haltsys` (0x18eb8, **GLOBAL T**) → falls straight into the local label `nomsg` (0x18ece, always
+reached regardless of the message argument):
+```
+18ece: movew  #9984,%sr        ; interrupts off
+18ed2: lea    zero,%a0
+18ed8: pmove  %a0@,%tc         ; *** 68030-ONLY, illegal on 68040 (vector 4) ***
+18edc: lea    nullrp,%a0
+18ee2: pmove  %a0@,%crp        ; *** same ***
+18ee6: pmove  %a0@,%srp        ; *** same ***
+18eea: moveq  #0,%d0
+18eec: movec  %d0,%cacr        ; already CPU-agnostic, no change needed
+18ef0: bset   #7,0xde0002      ; hardware bit, CPU-agnostic, no change needed
+18ef8: tstl   %d2
+18efa: bnel   reboot           ; -> new_funky_reboot (reset+jmp) or a ROM ktrap jmp
+```
+This is the **exact same bug class** as the very first issue this project ever fixed
+(`prototypes/copyit.s`'s original unguarded `pmove tc/crp/srp` in the Amiga-side MMU-disable code,
+see that file's header comment) — just a third, never-audited site: the kernel's own shutdown path.
+`copyit.s` already has a proven, boot-verified fix for the identical instructions (AttnFlags bit
+`AFB_68040` check, `movec` substitutes for `tc`/`itt0`/`itt1`/`dtt0`/`dtt1`, `pflusha` to flush the
+ATC — `crp`/`srp` have no 040 equivalent load needed since clearing `tc`'s enable bit alone turns
+off translation). `haltsys` is the only GLOBAL symbol in this cluster (`nomsg`/`halt`/`reboot`/
+`new_funky_reboot` are all local `t` symbols in the same object) — so the fix is a `--weaken-symbol
+haltsys` override that transcribes the WHOLE function (conditional `haltmsg` printf, AttnFlags-
+guarded MMU-disable, the hardware `bset`, then the halt-spin-loop or reboot-jump dispatch depending
+on the original message-arg), following the identical AttnFlags/movec pattern `copyit.s` already
+proved. Low complexity, high confidence — unlike the HAT layer, this is ~20 instructions with a
+direct working reference to crib from.
+
+**Plan:** branch `040-haltsys-reboot-fix` (off master, independent of `040-hat-dup-port` — this bug
+predates and is unrelated to the hat_dup work). Implementation delegated to a Fable subagent per
+this project's Sonnet-plans/Fable-executes workflow.
+
 ## ISSUE-3: hat_unload reverse-map findmap is a bounded skip (verify later)
 **Status:** OPEN (2026-06-22), defensive — works, but confirm correctness under memory
 pressure.  hat_unload's `Lhl_findmap` walks pages[pfn]'s reverse-map list (head @(32),
