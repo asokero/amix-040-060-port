@@ -62,19 +62,32 @@ hat_dup:
 	linkw	%fp,&-208
 	moveml	%d2-%d5,%sp@-
 
-| --- one-shot ENTER marker: proves the REAL hat_dup runs (fork child-tree build).
-|     Pairs with hat_chgprot040's "fork COW WP" marker: both firing on the same
-|     fork confirms the COW contract is wired end to end. ---
+| --- ENTER marker (2026-07-04 NIGHT: rate-limited, was one-shot). A recursive
+|     "kstack 0x...!" / KERNEL FAULT panic (NATIVE krnlflt strings, not ours) was
+|     seen twice near fork-heavy moments (reboot teardown, login-prompt getty
+|     spawns) -- the old one-shot marker only proved hat_dup040 ran ONCE per boot,
+|     so a crash log couldn't show which fork (if any) was in flight right before
+|     a later panic. Log every call's (pid, oldas, newas, call#) for the first 128
+|     calls, then every 64th -- same convention as hardbus/getdents (first-N +
+|     every-Nth), generous enough that a crash-adjacent boot log now carries
+|     recent hat_dup context instead of just the first fork of the session. ---
+	addql	&1,Lhd_n
 	movel	Lhd_n,%d0
-	bnew	Lhd_nodbg
-	moveq	&1,%d0
-	movel	%d0,Lhd_n
+	cmpil	&128,%d0
+	blsw	Lhd_log			| first 128 -> log
+	andil	&0x3f,%d0
+	bnew	Lhd_nodbg		| not every 64th -> skip
+Lhd_log:
 	movel	%fp@(12),%sp@-		| newas
 	movel	%fp@(8),%sp@-		| oldas
+	moveal	u+0x730,%a0		| curproc
+	moveal	%a0@(264),%a0		| p_pidp
+	movel	%a0@(4),%sp@-		| pid
+	movel	Lhd_n,%sp@-		| call number
 	pea	Lhd_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(16),%sp
+	lea	%sp@(24),%sp
 Lhd_nodbg:
 
 | ============================================================================
@@ -760,7 +773,7 @@ Lhd_out:
 	.data
 	.even
 Lhd_msg:
-	.asciz	"DBG hat_dup040 ENTER oldas=%x newas=%x (fork child tree build)"
+	.asciz	"DBG hat_dup040 ENTER n=%x pid=%d oldas=%x newas=%x"
 	.even
 Lhd_cmsg:
 	.asciz	"DBG hat_dup040 first private-page copy va=%x oldpp=%x newpp=%x"
