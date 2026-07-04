@@ -40,7 +40,9 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/uvatosde040.s"  -o "$HERE/build/
 #                    030 st_top1 writes are inert on 040; fixes the prgetpsinfo panic
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/prumap040.s"    -o "$HERE/build/prumap040.o"
 #     haltsys040   = AttnFlags-guarded MMU disable for the reboot/halt path (ISSUE-5) --
-#                    stock haltsys falls into unguarded 030 pmove tc/crp/srp, illegal on 040
+#                    stock haltsys falls into unguarded 030 pmove tc/crp/srp, illegal on 040.
+#                    Overrides rtnfirm TOO: mdboot calls rtnfirm (not haltsys) for fcn>=1,
+#                    i.e. on every real reboot (ISSUE-5 fix v2)
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/haltsys040.s"   -o "$HERE/build/haltsys040.o"
 
 echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
@@ -78,6 +80,7 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol ptest \
 	--weaken-symbol prumap \
 	--weaken-symbol haltsys \
+	--weaken-symbol rtnfirm \
 	"$HERE/build/unix-stage1"
 
 # Genuine 040 trap/fault runtime overrides (getfault040/userspace040/vtop040/wb040).
@@ -106,7 +109,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys rtnfirm; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"

@@ -109,7 +109,26 @@ hat_exec (exec stack move — currently neutered by the hat_free040/hat_chgprot0
 guards), uvirtophys/uvatosde (user SW page-table walkers).  Full batch list: RESUME-HERE.md.
 
 ## ISSUE-5: `haltsys` (reboot/halt path) still runs unguarded 030 `pmove` — KERNEL PANIC on `reboot`
-**Status:** FIX BUILT, NOT YET BOOT-TESTED (2026-07-05). `prototypes/haltsys040.s` reimplements the
+**Status:** FIX v2 BUILT (rtnfirm override added), NOT YET BOOT-TESTED (2026-07-05).
+
+**FIX v1 was insufficient (2026-07-05):** the `haltsys` override alone NEVER EXECUTED on the
+reboot path. Disassembly of `mdboot` (0x5637a) proves it calls `haltsys(0)` ONLY for fcn==0
+(halt); for fcn>=1 — i.e. every actual `reboot` — it calls **`rtnfirm`** (0x18eb0, GLOBAL T)
+instead. `rtnfirm` is a second entry point 8 bytes BEFORE `haltsys` in the same object: it does
+`movel #1,%sp@(4)` (forces msg=1) and FALLS THROUGH into the `haltsys` body → `nomsg` → the old
+MMU-disable block. In the patched binary that block's three 030 `pmove`s are already NOP'd by the
+byte-patch scripts, so the old `rtnfirm` path left the MMU ENABLED when it jumped to the ROM
+reboot vector — the ROM then ran/trampled memory with kernel translation still live → recursive
+trap cascade → the observed `PANIC: KERNEL FAULT pc=0x4000001E vector=0x4`. FIX v2: haltsys040.s
+now also defines a global `rtnfirm` immediately before its `haltsys:` (byte-identical layout,
+`2f7c 0000 0001 0004`, falls through), and `relink-040.sh` adds `--weaken-symbol rtnfirm`.
+`rtnfirm` has 5 caller reloc sites (0xd60, 0x3e6b4, 0x3e886, 0x3e898, 0x563ca=mdboot) — the
+symbol override fixes all of them at once. Verified: both builds clean, `check_relink_relocs.py`
+0 complaints each, single strong `T rtnfirm` at 0xd89bc / `T haltsys` at 0xd89c4 in both
+binaries, new rtnfirm encodes `2f7c 0000 0001 0004` and falls through into the AttnFlags-guarded
+haltsys, old cluster at 0x18eb0 no longer owns the symbol (remains as unreachable bytes).
+
+**FIX v1 (superseded, retained below for the RE details):** `prototypes/haltsys040.s` reimplements the
 whole `haltsys` function (it's the only GLOBAL symbol in its cluster) with an AttnFlags-guarded
 MMU disable mirroring `copyit.s`'s proven pattern: 68030 keeps the verbatim original `pmove
 tc/crp/srp`; 68040/68060 use `movec` (tc/itt0/itt1/dtt0/dtt1) + `pflusha` instead. `haltmsg`/

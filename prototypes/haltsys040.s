@@ -1,5 +1,18 @@
-| haltsys040.s -- override haltsys (orig 0x18eb8, GLOBAL T) for the 68040/68060 reboot/halt
-| path.  See KNOWN-ISSUES.md ISSUE-5 for the full RE writeup this file implements.
+| haltsys040.s -- override haltsys (orig 0x18eb8, GLOBAL T) AND rtnfirm (orig 0x18eb0,
+| GLOBAL T) for the 68040/68060 reboot/halt path.  See KNOWN-ISSUES.md ISSUE-5 for the
+| full RE writeup this file implements.
+|
+| WHY rtnfirm TOO (ISSUE-5 fix v2): disassembly of mdboot (0x5637a) proves it calls
+| haltsys(0) ONLY for fcn==0 (halt).  For fcn>=1 -- i.e. every actual `reboot` -- mdboot
+| calls rtnfirm instead.  rtnfirm is a second entry point 8 bytes BEFORE haltsys in the
+| same object: `movel #1,%sp@(4)` (forces msg=1) and FALLS THROUGH into the haltsys body.
+| So a haltsys-only override never executes on the reboot path: rtnfirm still entered the
+| OLD cluster, whose three 030 pmoves are NOP'd by the byte-patch scripts in the patched
+| binary -- meaning the old rtnfirm path left the MMU ENABLED when it jumped to the ROM
+| reboot vector, and the ROM then ran with kernel translation still live -> recursive
+| trap cascade -> "PANIC: KERNEL FAULT pc=0x4000001E vector=0x4".  That was the actual
+| observed panic mechanism.  Overriding rtnfirm here (falling through into our haltsys,
+| replicating the original layout byte-for-byte) fixes all 4 caller reloc sites at once.
 |
 | BUG: the stock haltsys falls into the file-LOCAL label `nomsg`, which disables the MMU with
 | three UNGUARDED 68030 `pmove` instructions (tc/crp/srp) before halting or resetting the
@@ -52,6 +65,10 @@
 	.set	AFB_68060,7
 
 	.text
+	.globl	rtnfirm
+rtnfirm:
+	movel	&1,%sp@(4)		| force msg=1, fall through into haltsys (verbatim orig 0x18eb0)
+
 	.globl	haltsys
 haltsys:
 	movel	%sp@(4),%d2		| d2 = msg arg (sets flags on the moved value)
