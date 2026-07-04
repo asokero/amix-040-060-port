@@ -1,17 +1,22 @@
 # Project Plan — 68040 (then 68060) support for Amiga Unix
 
-## ★ CURRENT STATUS (2026-06-22 night) — Phase 1 DONE, Phase 2 (single-user) in progress
-The 040 kernel boots through ALL of Phase 1 (MMU-on) AND the whole VM/HAT format port AND
-swap config: pstart040 → early init → segmap → svirtophys → hat_* → **root fs MOUNTS →
-banner → init → swapconf configures → main creates all 4 daemons → proc 0 enters sched()**.
-swapconf/namei (the old blocker) is SOLVED (gen_strategy PFN<<11→<<12).  **MEASURED
-`maxrunpri=0x4F` at sched entry → the fork/enqueue path WORKS; the run queue is non-empty.**
-**Current blocker = the 040 CONTEXT SWITCH** (swtch dispatch + resume@0x9c/save@0x84 + the
-child context from setuctxt + the 040 trap/exception frames) — proc 0 never transfers to a
-child.  Remaining for Phase 2: that context-switch chunk, then first user fork/exec (hat_dup/
-hat_growsdt), then 040 trap frames.  **Canonical detail: RESUME-HERE.md (SOURCE MAP + BATCH
-PLAN).**  Source map in memory kernel-source-vs-binary.md (traps = SOURCE ttrap.s/vec.s;
-save/resume/swtch = binary RE).  Real-HW line PAUSED (RESUME-HERE-040-HARDWARE.md).
+## ★ CURRENT STATUS (2026-07-04) — Phase 2 (single-user) essentially REACHED on the emulator
+The 040 kernel boots with **0 panics / 0 BUS errors to an interactive `root` login**; `ls`,
+`ls -al`, `uname -a` all run at the shell (fs-uae, `unix_boot unix-040-dbg`).  Everything up to
+and through this point works: Phase 1 (MMU-on), the whole VM/HAT format port, swap config, the
+040 context switch (resume040 dual-path remap), root fs mount, init + rc scripts, getty/ttymon
+respawn, login, and basic user commands.  patch_modelb.py = **234 sites**.
+**Solved since the 06-22 note (all committed on 040-switch-trace, boot-verified):** context
+switch, first fork/exec, brk/grow 2KB roundups, the seg_vn per-page-array +99 sweep, hat040 table
+freeing, the date/hardbus page-crossing hang, the "Killed"/rtld-SIGKILL (anon_zero ZFOD
+half-zero), the segu /proc window (VOP lens + prumap040), and the sptmap arena free-side.
+**Remaining for a clean multi-user base:** port **hat_dup** (BASE unix-040 still has stock-030
+hat_dup — only the dbg build stubs it, so the BASE kernel is not yet fork-safe), **hat_chgprot ×6**
+(fork COW), **hat_exec** (exec stack move, currently neutered by guards), **uvirtophys/uvatosde**
+user walkers, **vm_swap 2KB units**.  Method going forward = drive real workloads and read the
+serial log; each remaining bug surfaces on a specific path, not by blind auditing.
+**Canonical detail: RESUME-HERE.md** (milestone + fix chain + BATCH PLAN).  Source map in memory
+kernel-source-vs-binary.md.  Real-HW line still PAUSED (RESUME-HERE-040-HARDWARE.md).
 
 ## Goal
 Make the AMIX SVR4 kernel boot and run on 68040, then 68060, on an Amiga 3000.

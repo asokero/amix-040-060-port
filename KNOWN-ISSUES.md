@@ -79,13 +79,34 @@ path, which the 040 work replaces with `movec` (Draft 2). So:
 
 ---
 
-## ISSUE-2: temporary debug markers in the 040 build (cleanup TODO)
-**Status:** OPEN (2026-06-22), low priority — remove once swapconf is past.
-`prototypes/hat040.s` and the debug objects print CE_WARN console markers on every
-040 boot: `DBG ddopen …`, `DBG hat_unload va=…` (first 6 calls), `DBG hat_unload: pte
-not in revmap …` (first 4).  Plus `ddopen_dbg.s`/`sdpartition_dbg.s` (only in
-build/unix-040-dbg via relink-040-dbg.sh).  Harmless but noisy.  Strip the marker
-blocks + their `.data` strings/counters from hat040.s when stabilizing.
+## ISSUE-2: temporary debug markers / serial spam in the dbg build (cleanup TODO)
+**Status:** OPEN (updated 2026-07-04), low priority — cleanup gated on hat_dup (see below).
+The instrumented kernel `build/unix-040-dbg` (relink-040-dbg.sh) prints a lot of debug output;
+all of it is HARMLESS but noisy.  Notable at the interactive-login stage:
+- **`C<pid>:<PC>:<SR>` forever** — `prototypes/sigkill_dbg.s` clock_sampler (every 16th tick,
+  cap 1024 ≈ 5.5 min).  `pid=0 PC=0x070D8EC2 SR=0x2000` = proc 0 idling in the kernel (healthy).
+- **`W <pid>:<stat>:<wchan>`** — mainmarks.s idle proc-table dump (cap 8/boot).
+- **`DBG hardbus XPAGE …`** — the hardbus page-crossing wrapper firing normally (a real fix, but
+  the log line is diagnostic).
+- Plus `DBG ddopen …`, `DBG hat_* …`, `G…`/`C…` exec markers, sigkill/setregs/as_fault probes.
+
+**Cleanup path:** these live in the *dbg* overlay (mainmarks.s, sigkill_dbg.s, execmark.s,
+hatalloc_dbg.s, assegat_dbg.s, ddopen_dbg.s …) layered by relink-040-dbg.sh — the genuine 040
+runtime fixes already moved to the BASE build (relink-040.sh).  A clean quiet boot needs the BASE
+`unix-040` to be self-sufficient, which is currently blocked by ISSUE-4 (stock-030 hat_dup in the
+base).  Once hat_dup is ported into the base, boot `unix-040` directly for a quiet console, or
+make a "quiet-dbg" overlay that keeps only the serial `conputc` hook.  ALWAYS read the serial log
+with `grep -a` — it contains NUL bytes and plain grep silently matches nothing.
+
+## ISSUE-4: BASE unix-040 still has stock-030 hat_dup (fork not yet safe in the base build)
+**Status:** OPEN (2026-07-04).  Only `build/unix-040-dbg` stubs hat_dup (via relink-040-dbg.sh);
+the BASE `build/unix-040` links the stock 030 hat_dup, whose 8-byte-descriptor tree walk is
+garbage on 040.  Interactive login works on the *dbg* build because the stub avoids it, but any
+real fork COW / user-fork path needs a proper `hat_dup040` (mirror hat_pteload/hat_free040: 4-byte
+descs, va>>25/>>18/>>12 indices).  This is the main thing standing between "dbg build logs in" and
+"clean base multi-user boot".  Related pending 040 ports: hat_chgprot ×6 (COW write-protect),
+hat_exec (exec stack move — currently neutered by the hat_free040/hat_chgprot040 garbage-slot
+guards), uvirtophys/uvatosde (user SW page-table walkers).  Full batch list: RESUME-HERE.md.
 
 ## ISSUE-3: hat_unload reverse-map findmap is a bounded skip (verify later)
 **Status:** OPEN (2026-06-22), defensive — works, but confirm correctness under memory

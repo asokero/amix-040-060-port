@@ -1,44 +1,49 @@
-# RESUME HERE — AMIX 68040 port status (2026-07-03)
+# RESUME HERE — AMIX 68040 port status (2026-07-04)
 
-## ►►► MILESTONE 2026-07-03: ROOT LOGIN WORKS — interactive shell on the 040 kernel ◄◄◄
-Boot (unix_boot unix-040-dbg) runs with 0 panics / 0 BUS errors to the login prompt; after the
-debug-print caps fill (~30-60 s) the console quiets, `root` logs in and gets a shell.  freemem is
-STABLE (exit teardown returns memory).  Fix chain this session: brk/grow 2KB roundups, the seg_vn
-per-page-array completion (+99), segu_softunload, hat040 V2 table freeing (V2.1 PAGE_RELE, V2.2
-ptalloc API: table = RETURN VALUE, out-param = ptdat descriptor), root==0 + descriptor-frame
-guards, grow success-tail <<11.  patch_modelb.py = 187 sites.
-**NEW FRONTIER: commands get 'Killed' (SIGKILL)** — uname -a / ls -la die instantly; some rc
-processes too; the console getty can hit 'INIT: Command is respawning too rapidly'.
+## ►►► MILESTONE 2026-07-04: INTERACTIVE 040 LOGIN WORKS — ls / ls -al / uname -a all run ◄◄◄
+Boot (`unix_boot unix-040-dbg`) runs with **0 panics / 0 BUS errors** to a `root` login on the
+040 kernel; `ls`, `ls -al`, `uname -a` all work at the shell.  patch_modelb.py = **234 sites**.
+This is the first genuinely usable interactive 040 boot.
 
-### ►► 2026-07-03 PM: "Killed" ANALYZED + probe & fix BUILT — AWAITING BOOT TEST ◄◄
-Static audit of all psignal(p,9) sites: the only SILENT kills are **exece 0x566b6 (setregs
-ret!=0 after point-of-no-return → psignal 9, NO message)** and restorecontext+0x66 (bad
-sigcontext).  rm_outofanon ("Sorry, pid %d (%s) ... lack of swap space") PRINTS and is absent
-from all logs → NOT the killer.  setregs (0x58b62) has exactly ONE failure exit: copyin(new
-user stack args → u_psargs) EFAULT.  Prime suspect chain: **execstk_addr (0xaf2b8, was on the
-DEFERRED list) still used NBPC=2KB pads/bounds** (size+2048, region ends 0xBFFFF800/0xFFFFF800,
-two +2048 hole-scan compensations) → a 2KB-odd stack pick disagrees with the 4KB segvn mapping →
-setregs copyin EFAULT → silent SIGKILL; whether an exec dies depends on its arg/env-size 2KB
-parity (matches "uname/ls die, other execs fine").  **BANNER 8MB SOLVED (cosmetic!): main
-0x59890/0x598ac print physmem<<11/freemem<<11 — counters are fine, only the print was halved.**
-BUILT (both kernels rebuilt, relocs 0, contiguity OK; patch_modelb.py = 194 sites):
- 1. patch_modelb.py +7: execstk_addr ×5 (2KB→4KB) + banner ×2 (<<11→<<12).
- 2. prototypes/sigkill_dbg.s: sigtoproc wrapper (weaken + sigtoproc_orig=0x4750e in
-    relink-040-dbg.sh) — logs every sig==9: target pid/stat/flag, sender pid + u_comm(u+0x1C0),
-    caller+grandcaller, cap 24.  Catches psignal too (it tail-calls sigtoproc).
- 3. execmark.s setregs wrapper: logs "DBG setregs FAIL ret= psargs-uva= nc=" on ret!=0,
-    OUTSIDE the 5-exec dump cap (kills happen late).  A psargs-uva ending 0x800 = smoking gun.
-**BOOT TEST NEXT (fs-uae + serial): login, run uname -a / ls -la.**  Outcomes: (a) no kills +
-banner 16MB = execstk_addr was it, done; (b) kills persist → grep -a 'DBG SIGKILL' + 'setregs
-FAIL' names the real path.  Audit leftovers (documented, NOT patched): setupclock<<11 ×2 +
-pageout>>11 ×2 (internally consistent pair, defer); mlsetup 0x48b58 = (syssegs+2047)>>11 +
-`pea 0x800` click-count for sptmap mfree (latent sptalloc-arena size bug — arena thinks 0x800
-2KB clicks = 4MB but clicks are 4KB → could hand out VAs past kvseg end under heavy sptalloc;
-works today, fix with the vm_swap/units pass); btop/btopr/ptob (0x530ee/0x53100/0x53118)
-GLOBAL helpers still >>11/<<11 — audit their callers before flipping.
-Then: hat_dup 040 port (NOTE: BASE unix-040 has STOCK-030 hat_dup — only the dbg build stubs
-it; base is NOT boot-safe), hat_exec port (garbage-write source), vm_swap 2KB units (real
-swap-out would corrupt), quiet-dbg variant, real-HW test.
+**Fix chain that got here (all committed on branch 040-switch-trace, boot-verified):**
+- **date/hardbus infinite-loop hang** (commit 70344f0): a `jsr abs.L` whose extension word
+  straddles a 4KB page boundary; the 040 reports FA = the crossing access's START (mapped page),
+  the 030-semantic usrxmemflt tail misroutes to hardbus, which resolves the already-OK page and
+  retries forever.  Fix = hardbus wrapper (sigkill_dbg.s): for a user addr within 8 B of a page
+  end, as_fault BOTH pages; either resolving → return 0.  DBG-only crutch; the proper fix (port
+  usrxmemflt's tail to 040 SSW MA-bit semantics) is still open, low priority.
+- **"Killed" / rtld self-SIGKILL** (commit 44ebf05): anon_zero HALF-zeroed every ZFOD page
+  (`pagezero(pp,0,0x800)` — a `pea 0x800` invisible to detect_pagesize.py) → the exec arg-block's
+  envp NULL terminator (which relies on ZFOD zero) held garbage → rtld ate the auxv as environ →
+  no AT_BASE → silent `_kill(getpid(),9)`.  Fixed + a batch of pea-0x800 fault-len args.
+- **segu u-area /proc window** (commit 04edaed): 3 VOP page lens 0x800→0x1000 + prumap040.s
+  (proc-0 kvsegu slot-0 alias into kptr040; p0init wrote it into inert st_top1).  Cleared the
+  scrmenu/prgetpsinfo KERNEL FAULT (pid 43).
+- **sptmap arena free-side** (commit 0d85da7): the kvseg arena was 4KB on the ALLOC side only;
+  sptfree's `va>>11` freed the wrong slot → overlapping sptalloc → kmem heap corruption (ttymon
+  panic pc=0x704211C).  23 byte-patches completing the coupled set (kmem_alloc/free oversize,
+  sptfree, segkmem_mapout/segkmem_free walkers, kseg/unkseg).
+
+**NEXT — drive the system, don't audit blind.**  Every fix this session was found because a real
+command crashed, not by guessing which 2KB site to flip next.  Fastest path to the next real bug:
+run heavier workloads (`ps -ef`, a compile, `ls -R /`, multi-process scripts) and read the serial
+log.  Known-pending 040 ports that only trigger on specific paths (see the batch list below):
+**hat_dup** (fork — NOTE: BASE unix-040 still has STOCK-030 hat_dup, only the dbg build stubs it,
+so BASE is NOT yet boot-safe for fork-heavy loads), **hat_chgprot ×6** (fork COW), **hat_exec**
+(exec-time stack move, 030 garbage-write source, currently neutered-by-guards), **uvirtophys/
+uvatosde** user walkers, **vm_swap 2KB units** (real swap-out would corrupt).
+
+**Serial-log note:** the endless `C<pid>:<PC>:<SR>` and `W <pid>:...` lines are NOT a bug — they
+are leftover debug probes in prototypes/sigkill_dbg.s (clock_sampler, cap 1024) and mainmarks.s
+(idle W-dump, cap 8).  `pid=0 PC=0x070D8EC2 SR=0x2000` = proc 0 idling in the kernel (healthy).
+A quiet-dbg variant (or a clean base boot once hat_dup lands) removes them.  The `XPAGE` lines
+are the hardbus page-crossing wrapper firing normally.  ALWAYS `grep -a` (log has NUL bytes).
+
+### ►► SUPERSEDED (2026-07-03): the "commands get Killed" frontier ◄◄
+Solved — see the "Killed / rtld self-SIGKILL" bullet above (anon_zero ZFOD half-zero, commit
+44ebf05).  The earlier execstk_addr / setregs-copyin-EFAULT theory was a mis-diagnosis; the real
+cause was the half-zeroed ZFOD page corrupting the exec arg block.  Banner "8 MB" was cosmetic
+(main printed physmem/freemem `<<11`, counters were always right) — fixed.
 
 ## ►► PREVIOUS STATUS (2026-07-02) ◄◄
 **2026-07-02: THE CHILD CRASH IS SOLVED (root cause proven, fix built, AWAITING BOOT TEST).**
@@ -484,12 +489,15 @@ Full map in memory `kernel-source-vs-binary.md`.  Summary:
    `stkrestore`/`framesz` + vec.s (signal return / sigreturn frame sizes), use trap.h/reg.h/pcb.h.
 3. **child context (setuctxt/procdup) -- DONE in effect** (children resume + run; resume040
    transfers correctly).  Revisit only if a child's first-resume frame misbehaves.
-4. **>>> CURRENT BLOCKER: user-VM hat family 040 port (BINARY/RE) <<<** -- hat_pteload (fault-
-   fill) + hat_alloc DONE.  Pending, all 030 8-byte-desc: **hat_free@0xb41e0 / hat_ptfree@0xb6cf4
-   / hat_sdtfree** (teardown -- crashes NOW), **hat_growsdt@0xb6058** (build -- root left empty,
-   lazy-patched in hat_pteload for now), **hat_dup** (fork), **hat_chgprot ×6** (COW),
-   hat_swapout/swapin.  Port like hat_pteload: 4-byte descs, va>>25/>>18/>>12 indices, immu.h
-   sde_t/pte_t + vm_hat.h hat_t for the layout.  Start with hat_free+hat_ptfree.
+4. **user-VM hat family 040 port (BINARY/RE) -- MOSTLY DONE.** DONE + boot-verified in the BASE
+   build (hat040.s): hat_pteload (fault-fill), hat_alloc, hat_free040/hat_ptfree (teardown, with
+   [pages_base,pages_end) garbage-slot guards), hat_chgprot040 (fires), hat_unload040.  Still
+   PENDING: **hat_dup** (fork -- BASE unix-040 has STOCK-030 hat_dup; only the dbg build stubs it,
+   so the base is not fork-safe = ISSUE-4), **hat_exec@0xb6f20** (exec stack move -- 030 garbage-
+   write source, currently neutered by the garbage-slot guards; port to per-4KB-page move via our
+   hat040 primitives), **hat_growsdt@0xb6058** (build -- lazy-patched in hat_pteload for now).
+   Port like hat_pteload: 4-byte descs, va>>25/>>18/>>12 indices, immu.h sde_t/pte_t + vm_hat.h
+   hat_t.  Start with hat_dup (biggest exposure).
 5. **user SW page-table walkers (BINARY/RE)** -- uvirtophys/uvatosde/uvatopte (per-proc root);
    needed when the inert 030 st_top1 path is exercised for user procs.
 6. **Model B 4KB sweep (byte-patch, 696 NEW sites kernel-wide; detect_pagesize.py)** --
