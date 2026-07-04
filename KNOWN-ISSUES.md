@@ -109,7 +109,22 @@ hat_exec (exec stack move — currently neutered by the hat_free040/hat_chgprot0
 guards), uvirtophys/uvatosde (user SW page-table walkers).  Full batch list: RESUME-HERE.md.
 
 ## ISSUE-5: `haltsys` (reboot/halt path) still runs unguarded 030 `pmove` — KERNEL PANIC on `reboot`
-**Status:** OPEN (2026-07-05), root cause CONFIRMED by disassembly, fix planned, not yet built.
+**Status:** FIX BUILT, NOT YET BOOT-TESTED (2026-07-05). `prototypes/haltsys040.s` reimplements the
+whole `haltsys` function (it's the only GLOBAL symbol in its cluster) with an AttnFlags-guarded
+MMU disable mirroring `copyit.s`'s proven pattern: 68030 keeps the verbatim original `pmove
+tc/crp/srp`; 68040/68060 use `movec` (tc/itt0/itt1/dtt0/dtt1) + `pflusha` instead. `haltmsg`/
+`nullrp`/`zero` are DUPLICATED locally (byte-identical, verified via `objdump -s` against the
+original) rather than globalizing three more local symbols — lower relink risk for such trivial
+content. `boot_arg0` is GLOBAL `D` already (0x4780) so it's referenced directly, no globalize
+needed. Wired into `relink-040.sh` (assemble + `--weaken-symbol haltsys` + link + nm-report);
+`relink-040-dbg.sh` needs no changes since it inherits `haltsys` as a strong def from
+`build/unix-040` (same pattern as `hat_chgprot040.o`). Verified: standalone assemble clean; both
+`relink-040.sh` and `relink-040-dbg.sh` build clean; `check_relink_relocs.py` reports 0 complaints
+for both; `nm` shows a single strong `T haltsys` at the same address (0xd89bc) in both binaries;
+disassembly of the final linked `haltsys` in both binaries confirms the 040/060 branch skips the
+`Lhs_mmu030` block entirely — no `pmove` reachable on the 68040 path (the 030 `pmove` bytes remain
+as correct dead code for an eventual 030 boot of the same binary). NOT boot-tested on fs-uae/HW —
+that remains for a human.
 **Symptom:** running `reboot` on `unix-040`/`unix-040-dbg` (fs-uae, boot-verified 2026-07-04/05)
 reliably panics: native kernel strings (confirmed in `vanilla/stand/unix`'s own string table, not
 our instrumentation) `"kstack 0x%x!"` print a recursive-trap unwind, ending in
