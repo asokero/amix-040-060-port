@@ -288,6 +288,14 @@ P = [
  (0xaa91e, b"\xe9\xd3\x00\x15", b"\xe9\xd3\x00\x14", "segu_softunload:pfn bfextu {0:21}->{0:20}"),
  (0xaa940, b"\xe9\xd3\x00\x15", b"\xe9\xd3\x00\x14", "segu_softunload:pfn bfextu {0:21}->{0:20} (pages[] idx)"),
  (0xaa9c2, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "segu_softunload:va loop step"),
+ # segu softload/softunload VOP_GETPAGE/VOP_PUTPAGE lens (2026-07-04, boot-13 panic): the
+ # segu round/index/step math is already 4KB (softunload above, softload in patch_modelb_pager)
+ # but the pager calls still passed len 0x800 -> VOP_GETPAGE rejects the sub-page request
+ # (as_fault ret=0x1605 = FC_MAKE_ERR(EINVAL)) -> the kvsegu window page never maps ->
+ # prgetpsinfo's raw movel from 0x48440900 -> KERNEL FAULT pc=0x7064436 (scrmenu ioctl, pid 43).
+ (0xaaaa4, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segu_softload:VOP_GETPAGE plsz 0x800->0x1000"),
+ (0xaaaae, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segu_softload:VOP_GETPAGE len 0x800->0x1000"),
+ (0xaa9ae, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segu_softunload:VOP_PUTPAGE len 0x800->0x1000"),
  # USER DEMAND-FAULT PATH (as_fault + segvn_fault) -- the MINIMAL coupled set, 4KB.
  # The 030 path rounds the fault VA to 2KB and the anon map is a 2KB-granular array.  On Model B a
  # fault in the UPPER 2KB of a 4KB page (libc.so.1's GOT at C102FE68) maps at C102F800, which shares
@@ -521,8 +529,7 @@ P = [
 # 0x48b64 (mlsetup sptmap arena -- known latent, fix with the vm_swap/units pass),
 # 0x52238 (checkpage/pageout -- read before touching, pageout barely runs at 16MB),
 # 0x599be (main as_map 0x800 for icode/u -- works, p0/p1 layout risk), 0x5c1e2 (pathname
-# buffer), 0xaa9ae/0xaaaa4/0xaaaae (segu u-area 2KB chunks -- u-area is 2x4KB, works,
-# needs its own analysis), 0xb4936/0xb53e0/0xb543e (stock 030 hat_unload/hat_dup -- dead
+# buffer), 0xb4936/0xb53e0/0xb543e (stock 030 hat_unload/hat_dup -- dead
 # code in our build, superseded by hat040/stub).
 # NOTE: ppcopy 0xaf230 / pagecopy 0xaf268 pea-800s were ALREADY patched (entries above);
 # elfexec auxv AT_PAGESZ 2048->4096 likewise (0xb842c) -- userland saw 4096 all along.

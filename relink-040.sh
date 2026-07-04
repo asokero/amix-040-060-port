@@ -36,6 +36,9 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/vtop040.s"      -o "$HERE/build/
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/wb040.s"        -o "$HERE/build/wb040.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ptest040.s"     -o "$HERE/build/ptest040.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/uvatosde040.s"  -o "$HERE/build/uvatosde040.o"
+#     prumap040    = lazy kvsegu slot-0 (proc 0 u-area) alias into kptr040 -- p0init's
+#                    030 st_top1 writes are inert on 040; fixes the prgetpsinfo panic
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/prumap040.s"    -o "$HERE/build/prumap040.o"
 
 echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
 cp "$STOCK" "$HERE/build/unix-stage1"
@@ -70,6 +73,7 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol hat_ptfree \
 	--weaken-symbol hat_chgprot \
 	--weaken-symbol ptest \
+	--weaken-symbol prumap \
 	"$HERE/build/unix-stage1"
 
 # Genuine 040 trap/fault runtime overrides (getfault040/userspace040/vtop040/wb040).
@@ -94,11 +98,11 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/hat_chgprot040.o" \
 	"$HERE/build/getfault040.o" "$HERE/build/userspace040.o" \
 	"$HERE/build/vtop040.o" "$HERE/build/wb040.o" "$HERE/build/ptest040.o" \
-	"$HERE/build/uvatosde040.o"
+	"$HERE/build/uvatosde040.o" "$HERE/build/prumap040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
