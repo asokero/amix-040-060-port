@@ -483,6 +483,13 @@ P = [
  (0xadd62, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "anon_zero:page_get size"),
  (0xb1124, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "page_delmem:page_get size"),
  (0xb6974, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "hat_ptalloc:page_get size (hat040 leaf/ptr tables)"),
+ # hardbus (0x5b3c2, found 2026-07-04 chasing the date fault loop): computes the PHYSICAL
+ # probe address from the leaf PTE with 2KB masks -- `(*ptep & 0xFFFFF800) + (addr & 0x7FF)`.
+ # On Model B the PTE phys base is bits 31:12 and the page offset is addr & 0xFFF; the old
+ # mask even leaks PTE bit 11 (a non-address bit on 040) into the "phys" -> bprobe tests a
+ # garbage address -> wrong hard-error verdicts both ways (spurious kills OR eternal retries).
+ (0x5b3cc, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "hardbus:PTE->phys mask ~0x7FF -> ~0xFFF"),
+ (0x5b3d4, b"\x02\x81\x00\x00\x07\xff", b"\x02\x81\x00\x00\x0f\xff", "hardbus:page offset mask 0x7FF -> 0xFFF"),
  # REVERTED 2026-07-03 NIGHT (boot-7 clock-sampler verdict): the seg-family fault-len flips
  # are WITHDRAWN pending individual analysis.  Boot 5/6 hung deterministically at date
  # (pid 24) in an infinite unresolvable-fault loop (samples: u_trap -> usrxmemflt ->

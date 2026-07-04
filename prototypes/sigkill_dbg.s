@@ -242,5 +242,61 @@ Lcs_pgo:
 	addqw	&4,%sp
 Lcs_out:
 	rts
+
+| ---------------------------------------------------------------------------
+| hardbus WRAPPER (2026-07-04, the date fault loop).  Boot-10/11 evidence: the loop calls
+| NEITHER as_fault NOR sigtoproc -- usrxmemflt's tail routes the fault to hardbus (samples
+| at 0x5B110-0x5B13E = the hardbus call site), and hardbus returns 0 ("phys probes OK, not
+| a hard error, just retry") -> u_trap returns to user -> same fault -> forever.  Log what
+| lands here: fault addr, the leaf PTE VALUE (*ptep -- 0 = software walk found INVALID =
+| tree/URP mismatch; valid = CPU-vs-software tree divergence), hardbus's ret, and the user
+| PC.  First 8 + every 512th (the loop repeats).  hardbus GLOBAL T 0x5b3c2 ->
+| --weaken-symbol hardbus + hardbus_orig (relink-040-dbg.sh).
+
+	.data
+	.even
+Lhb_n:
+	.long	0
+Lhb_msg:
+	.asciz	"DBG hardbus pid=%d addr=%x pte=%x ret=%x upc=%x n=%x"
+	.even
+
+	.text
+	.globl	hardbus
+hardbus:
+	linkw	%fp,&0
+	moveml	%d2-%d3,%sp@-
+	movel	%fp@(12),%sp@-		| ptep
+	movel	%fp@(8),%sp@-		| addr
+	jsr	hardbus_orig
+	addqw	&8,%sp
+	movel	%d0,%d2			| ret
+	addql	&1,Lhb_n
+	movel	Lhb_n,%d3
+	cmpil	&8,%d3
+	blsw	Lhb_log			| first 8 -> log
+	movel	%d3,%d0
+	andil	&0x1ff,%d0
+	beqw	Lhb_log			| every 512th -> log
+	braw	Lhb_out
+Lhb_log:
+	movel	%d3,%sp@-		| n
+	moveal	u+0x864,%a0		| u_ar0
+	movel	%a0@(66),%sp@-		| user PC
+	movel	%d2,%sp@-		| ret
+	moveal	%fp@(12),%a0
+	movel	%a0@,%sp@-		| *ptep (leaf PTE value)
+	movel	%fp@(8),%sp@-		| addr
+	moveal	u+0x730,%a0
+	moveal	%a0@(264),%a0
+	movel	%a0@(4),%sp@-		| pid
+	pea	Lhb_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(32),%sp
+Lhb_out:
+	movel	%d2,%d0
+	moveml	%fp@(-8),%d2-%d3
+	unlk	%fp
+	rts
 	nop				| pad: keep the relinked .text a multiple of 4 (text/data contiguity)
-	nop
