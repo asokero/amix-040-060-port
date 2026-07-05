@@ -65,6 +65,11 @@ Lpa_n:
 Lpa_msg:
 	.asciz	"DBG page_abort crash pp=%x p_mapping=%x caller=%x (0=>SKIPs hat_pageunload, PTE stays)"
 	.even
+Lpa_ln:
+	.long	0
+Lpa_lmsg:
+	.asciz	"DBG LIVEABORT pp=%x pmap=%x keep=%x vp=%x off=%x caller=%x"
+	.even
 Lsu_n:
 	.long	0
 Lsu_msg:
@@ -132,6 +137,37 @@ page_abort:
 	moveml	%d2/%a2,%sp@-
 	moveal	%fp@(8),%a2		| pp
 	movel	%a2,%d2
+| --- ISSUE-7 TRIPWIRE (LIVEABORT): aborting a page that is still hat-mapped (p_mapping!=0)
+|     or keepcnt-held is the exact corruption moment behind the zeroed-u-area crashes:
+|     PREEMPT2/3 proved the fixed VA maps the RIGHT phys whose HEAD got zeroed under a live
+|     proc -- the page was aborted out of the hash, re-handed-out and bzero'd while still
+|     mapped.  Legitimate aborts come AFTER hat_unload (p_mapping==0, keepcnt==0 -- the
+|     cap-40 log below shows exactly that), so any hit here is an anomaly.  Prime suspect:
+|     segu_get's page_enter-retry (caller ret-addr 0xaa5fa) aborting another proc's live
+|     u-page when a double-allocated anon slot collides.  Cap 8. ---
+	tstl	%a2@(32)		| p_mapping set?
+	bnew	Lpa_live
+	tstw	%a2@(2)			| p_keepcnt held?
+	beqw	Lpa_norm
+Lpa_live:
+	movel	Lpa_ln,%d0
+	cmpil	&8,%d0
+	bccw	Lpa_norm
+	addql	&1,%d0
+	movel	%d0,Lpa_ln
+	movel	%fp@(4),%sp@-		| caller
+	movel	%a2@(8),%sp@-		| p_offset (identity)
+	movel	%a2@(4),%sp@-		| p_vnode  (identity)
+	moveq	&0,%d0
+	movew	%a2@(2),%d0
+	movel	%d0,%sp@-		| keepcnt
+	movel	%a2@(32),%sp@-		| p_mapping
+	movel	%d2,%sp@-		| pp
+	pea	Lpa_lmsg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(32),%sp
+Lpa_norm:
 | --- UNGATED: log EVERY page_abort (pp, p_mapping, caller) capped 40, so we can find the FREE of the
 |     crash page struct (this boot: 0x40069BF8) that sets p_free WHILE the live child still maps it
 |     -- that free happens BEFORE g_shdatapp tracks it, so the gated probe missed it.  Correlate the
