@@ -22,28 +22,40 @@
 | project fixed) -- this is the third, never-audited site of it, this time in the kernel's own
 | shutdown path rather than the Amiga-side loader.
 |
-| FIX: branch on SysBase->AttnFlags exactly like copyit.s's proven pattern: 68030 keeps the
-| original pmove sequence verbatim; 68040/68060 use `movec` to clear TC + ITT0/1 + DTT0/1 and
-| `pflusha` to flush the ATC (crp/srp have no 040 equivalent load -- clearing TC's enable bit
-| alone turns off translation, so nothing else is needed there).
+| FIX (v3, UNCONDITIONAL): disable the MMU with the 68040/68060 sequence only -- `movec` to
+| clear TC + ITT0/1 + DTT0/1 and `pflusha` to flush the ATC (crp/srp have no 040 equivalent
+| load -- clearing TC's enable bit alone turns off translation, so nothing else is needed).
+|
+| WHY NO AttnFlags GUARD (fix v2 had one; it FAILED on the real 040 with an F-line trap,
+| vector 0xB, at the 030 `pmove %a0@,%tc`):
+|   (a) This is an 040/060-ONLY kernel binary: pstart040, hat040, kvm040 etc. all emit
+|       movec/pflusha unconditionally, so it fundamentally cannot run on an 030.  Runtime
+|       CPU detection in the shutdown path is therefore unnecessary.
+|   (b) It is also FRAGILE here: the guard read `moveal 4,%a1` (AmigaOS SysBase pointer)
+|       and `btst #3/#7,%a1@(0x129)` (AFB_68040/AFB_68060) -- but at Unix reboot time,
+|       under the LIVE Unix MMU, low-memory address 4 / SysBase+0x129 no longer yield the
+|       AmigaOS AttnFlags byte.  Both btsts read 0 and control fell through to the 68030
+|       pmove path, an illegal F-line instruction on the 040 = the observed reboot panic.
+|   copyit.s uses the SAME guard successfully only because it runs PRE-MMU during the
+|   loader handoff, when AmigaOS SysBase is still directly accessible; that reasoning does
+|   NOT transfer to this in-kernel shutdown path.  The 030 pmove block is deleted outright,
+|   removing the only pmove bytes from the function.
 |
 | WHY THE WHOLE FUNCTION IS TRANSCRIBED (not just the 3 pmove instructions patched in place):
 | haltsys is the ONLY global symbol in its source cluster -- `nm` shows nomsg/halt/reboot/
 | new_funky_reboot as file-LOCAL 't' in the same object as haltsys, so they cannot be
 | individually overridden by symbol name from another object file.  A --weaken-symbol haltsys
 | override must therefore reimplement the entire original control flow (conditional haltmsg
-| printf -> AttnFlags-guarded MMU disable -> cacr clear -> hardware bset -> halt-spin-loop or
-| reboot-jump dispatch) inline, under our own local labels.
+| printf -> MMU disable -> cacr clear -> hardware bset -> halt-spin-loop or reboot-jump
+| dispatch) inline, under our own local labels.
 |
-| LOCAL DATA (haltmsg/nullrp/zero): duplicated here rather than globalizing three more local
-| symbols from vanilla/stand/unix -- the content is trivial (a string + two constants) so a
-| byte-identical local copy carries far less relink-mechanism risk than a 3-symbol
-| globalize-then-weaken chain for data no other file needs.  Verified byte-for-byte against
-| `objdump -s -j .text --start-address=0x18e70 --stop-address=0x18eb0 vanilla/stand/unix`:
-|     nullrp = 0x7fff0001 (a do-nothing MMU root pointer; the .long that follows it is the
-|              "zero" TC-disable descriptor, both consumed together by the 030 pmove path)
-|     zero   = 0x00000000
+| LOCAL DATA (haltmsg): duplicated here rather than globalizing another local symbol from
+| vanilla/stand/unix -- a byte-identical local copy carries far less relink-mechanism risk
+| than a globalize-then-weaken chain for data no other file needs.  Verified byte-for-byte
+| against `objdump -s vanilla/stand/unix`:
 |     haltmsg = "The system is halted; you may reboot or turn off power.\0"  (56 bytes incl NUL)
+| (The original's nullrp/zero pmove descriptors were only consumed by the deleted 030 path
+| and are gone with it.)
 |
 | boot_arg0: checked via `nm vanilla/stand/unix` -- GLOBAL 'D' at 0x4780 already, so it is
 | referenced directly by name below; no globalize/weaken needed for it.
@@ -59,11 +71,6 @@
 | memory-indirect ROM-vector jump both assemble via plain mnemonics with this toolchain
 | (empirically verified byte-identical to the original's 4e7b 0002 / 4ef0 01f1 00f8 0028).
 
-	.set	ABSEXECBASE,4		| low mem: SysBase pointer
-	.set	ATTNFLAGS,0x129		| low byte of SysBase->AttnFlags (UWORD @ 0x128)
-	.set	AFB_68040,3
-	.set	AFB_68060,7
-
 	.text
 	.globl	rtnfirm
 rtnfirm:
@@ -78,24 +85,9 @@ haltsys:
 
 Lhs_nomsg:
 	movew	&0x2700,%sr		| interrupts off, supervisor (verbatim original)
+	| falls straight into the 040/060 MMU disable -- no CPU guard (see header)
 
-	movel	ABSEXECBASE,%a1		| a1 = SysBase
-	btst	&AFB_68040,%a1@(ATTNFLAGS)
-	bnew	Lhs_mmu040
-	btst	&AFB_68060,%a1@(ATTNFLAGS)
-	bnew	Lhs_mmu040
-
-| ---- 68030 (or 68020+68851): original PMMU disable, VERBATIM (dead code on a real 040 boot,
-| kept correct for an eventual 030 boot of the same binary) ----
-Lhs_mmu030:
-	lea	Lhs_zero,%a0
-	pmove	%a0@,%tc		| Turn off MMU
-	lea	Lhs_nullrp,%a0
-	pmove	%a0@,%crp		| Turn off MMU some more
-	pmove	%a0@,%srp		| Really, really, turn off MMU
-	braw	Lhs_mmudone
-
-| ---- 68040 / 68060: MOVEC-based MMU disable (the actual fix, mirrors copyit.s) ----
+| ---- 68040 / 68060: MOVEC-based MMU disable, UNCONDITIONAL (mirrors copyit.s's 040 leg) ----
 Lhs_mmu040:
 	moveq	&0,%d0
 	.word	0x4e7b,0x0003		| movec %d0,%tc    -> paged MMU off (clears TCR E)
@@ -137,8 +129,3 @@ Lhs_newfunky:
 	.even
 Lhs_haltmsg:
 	.ascii	"The system is halted; you may reboot or turn off power.\0"
-	.even
-Lhs_nullrp:
-	.long	0x7fff0001
-Lhs_zero:
-	.long	0
