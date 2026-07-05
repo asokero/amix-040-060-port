@@ -68,7 +68,7 @@ Lpa_msg:
 Lpa_ln:
 	.long	0
 Lpa_lmsg:
-	.asciz	"DBG LIVEABORT pp=%x pmap=%x keep=%x vp=%x off=%x caller=%x"
+	.asciz	"DBG LIVEABORT pp=%x pmap=%x keep=%x vp=%x off=%x c=%x gc=%x ggc=%x"
 	.even
 Lsu_n:
 	.long	0
@@ -151,10 +151,33 @@ page_abort:
 	beqw	Lpa_norm
 Lpa_live:
 	movel	Lpa_ln,%d0
-	cmpil	&8,%d0
+	cmpil	&12,%d0
 	bccw	Lpa_norm
 	addql	&1,%d0
 	movel	%d0,Lpa_ln
+| frame walk two levels up (all 8 LIVEABORTs came from anon_decref+0x42 -- we need WHO
+| called anon_decref and who called THAT): gc = (*(fp))@4, ggc = (*(*(fp)))@4, guarded.
+	moveal	%fp@(0),%a0		| a0 = caller's frame (e.g. anon_decref_orig's fp)
+	movel	%a0,%d0
+	beqw	Lpa_g0
+	btst	&0,%d0
+	bnew	Lpa_g0
+	moveal	%a0@(0),%a1		| a1 = grandcaller's frame
+	movel	%a1,%d0
+	beqw	Lpa_g1
+	btst	&0,%d0
+	bnew	Lpa_g1
+	movel	%a1@(4),%sp@-		| ggc
+	movel	%a0@(4),%sp@-		| gc
+	braw	Lpa_gdone
+Lpa_g1:
+	clrl	%sp@-			| ggc unavailable
+	movel	%a0@(4),%sp@-		| gc
+	braw	Lpa_gdone
+Lpa_g0:
+	clrl	%sp@-
+	clrl	%sp@-
+Lpa_gdone:
 	movel	%fp@(4),%sp@-		| caller
 	movel	%a2@(8),%sp@-		| p_offset (identity)
 	movel	%a2@(4),%sp@-		| p_vnode  (identity)
@@ -166,7 +189,7 @@ Lpa_live:
 	pea	Lpa_lmsg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(32),%sp
+	lea	%sp@(40),%sp
 Lpa_norm:
 | --- UNGATED: log EVERY page_abort (pp, p_mapping, caller) capped 40, so we can find the FREE of the
 |     crash page struct (this boot: 0x40069BF8) that sets p_free WHILE the live child still maps it
