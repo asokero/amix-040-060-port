@@ -108,8 +108,33 @@ descs, va>>25/>>18/>>12 indices).  This is the main thing standing between "dbg 
 hat_exec (exec stack move — currently neutered by the hat_free040/hat_chgprot040 garbage-slot
 guards), uvirtophys/uvatosde (user SW page-table walkers).  Full batch list: RESUME-HERE.md.
 
-## ISSUE-5: `haltsys` (reboot/halt path) still runs unguarded 030 `pmove` — KERNEL PANIC on `reboot`
-**Status:** FIX v2 BUILT (rtnfirm override added), NOT YET BOOT-TESTED (2026-07-05).
+## ISSUE-5: `haltsys` (reboot/halt path) ran unguarded 030 `pmove` — KERNEL PANIC on `reboot`
+**Status: RESOLVED (2026-07-05, fix v3, boot-confirmed).** Final fix = `haltsys040.s`
+makes the reboot/halt MMU-disable UNCONDITIONALLY use the 040 `movec`+`pflusha` path
+(commit ded2e58), after v1 (guarded `haltsys`) and v2 (`rtnfirm` override, commit 23a3532)
+turned out necessary but insufficient. Reboot now completes: a dirty-disk boot ran
+`fsck` → rebooted → reached login cleanly.
+
+**IMPORTANT CORRECTION — `pc=0x4000001E` was MISATTRIBUTED to this issue.** The recurring
+`PANIC: KERNEL FAULT pc=0x4000001E vector=0x4` is a SEPARATE, still-open bug (an IPL-3
+wild jump into the u-area during the ctx-switch/interrupt path — see **ISSUE-7** below),
+NOT the reboot pmove. The three fixes below (v1/v2/v3) were all REAL reboot-path bugs, but
+none of them was the 0x4000001E crash. v3 fixed the actual reboot symptom (an F-line
+trap, vector 0xB, at the 030 `pmove` in the shutdown MMU-disable — see the v3 detail).
+
+**FIX v3 (2026-07-05, the real fix):** with v1+v2 in place, `reboot` still panicked — but
+now with an F-line trap (vector 0xB) at `pmove %a0@,%tc` inside our OWN haltsys040 030
+branch (`Lhs_mmu030`). Cause: the AttnFlags CPU-detection guard (`moveal 4,%a1` = AmigaOS
+SysBase, `btst #3/#7,%a1@(0x129)`) misfires at Unix reboot time — under the live Unix MMU,
+low-mem addr 4 / SysBase+0x129 no longer yield the AmigaOS AttnFlags, so both btsts read 0
+and control fell through to the illegal 030 `pmove`. (copyit.s uses the same guard safely
+only because it runs PRE-MMU during loader handoff.) Since this is an 040/060-ONLY binary,
+v3 removes the guard entirely and always takes the 040 path. Verified: 0 `pmove` in the
+haltsys/rtnfirm region of both binaries; `Lhs_nomsg` falls straight into `movec` tc/itt0/
+itt1/dtt0/dtt1 + `pflusha`.
+
+---
+(historical detail from the v1→v2 investigation follows)
 
 **FIX v1 was insufficient (2026-07-05):** the `haltsys` override alone NEVER EXECUTED on the
 reboot path. Disassembly of `mdboot` (0x5637a) proves it calls `haltsys(0)` ONLY for fcn==0
@@ -201,3 +226,58 @@ be in the list (a real bug in hat_pteload's Lwleaf insert, or a corrupted list),
 silently leave a stale reverse-map entry → trouble during page reclamation (which needs
 the reverse-map, and only kicks in under memory pressure — not yet exercised at boot).
 If page-reclaim bugs appear later, re-audit hat_pteload's reverse-map insert + this skip.
+
+## ISSUE-6: `fsck` on a dirty UFS panicked `segvn_softunlock` (raw-device physio softlock)
+**Status: RESOLVED (2026-07-05, two commits).** Booting a corrupt/dirty filesystem ran
+boot-`fsck` (`/sbin/fsck -F ufs -y /dev/rdsk/…`), which raw-reads the device into an anon
+buffer; the kernel F_SOFTLOCKs the buffer pages for the physio transfer and `segvn_softunlock`
+panicked. Root-caused with the `segvn_softunlock_dbg` diagnostic wrapper (dbg build) which
+replicated the per-page page_hash find and dumped the failing page's state. TWO distinct
+bugs, both leftover 2KB/4KB Model-B conversion errors in the VM layer:
+
+1. **`swap_xlate`/`swap_anon` used a 2KB pagesize shift** (commit faa1ace). They translate
+   anon-slot-index ↔ swap-vnode byte-offset with `<<11`/`>>11` (×2048) — byte-identical to
+   the 2KB vanilla, missed in the Model-B pass even though the anon/swap ACCOUNTING was
+   already 4KB. Result: anon `p_offset` came out 2KB-aligned (e.g. 0x1F800 = 63×2048), not
+   4KB-aligned — a swap-slot-overlap corruption and mishandled by 4KB-aligning code. Fix:
+   `moveq #11→#12` at both sites (patch_modelb.py). This was real but NOT the panic trigger.
+
+2. **`segvn_softunlock`'s inlined PAGE_HASHFUNC was patched to `>>12` while the other 7
+   inlined hash sites stayed `>>11`** (commit 61dd64e — the actual fix). patch_modelb.py had
+   a tuple at 0xabdae mislabeled "page idx >>11"; that shift is the `off>>PGSHIFT` term of
+   the hash, not a page index. `page_hashin` (the ENTER side), `page_find`, `page_exists`,
+   `page_hashout`, `xpage_find`, `findpage`, `segmap_unlock` all kept stock `>>11`. A hash
+   only needs CONSISTENCY, so patching one site made softunlock search a different bucket
+   than the page was filed into → `pp==NULL` → panic. Proven by the dbg dump: the "missing"
+   page was alive, `keepcnt=1`, correct (vp,off), `p_hash=0` (alone in its bucket). Only
+   fsck hit it because the FAULT path finds anon pages via the `an_page` hint (no hash walk);
+   only multi-page raw-physio softunlock walks the hash with anon pages. Fix: REMOVE the
+   0xabdae tuple (revert to stock `>>11`). **Lesson: before patching a `>>11` near page code,
+   determine if it's a PAGE INDEX (→`>>12`) or an inlined PAGE_HASHFUNC term (stays `>>11`
+   for consistency across all 8 sites — enumerate them via the `page_hashsz` relocs).**
+
+Boot-confirmed: dirty FS now runs fsck to completion and the next boot reaches login.
+Diagnostic wrappers (`segvn_softunlock_dbg`, `kmem_validate`, `ktrap_latch`) remain wired
+into `relink-040-dbg.sh` only (base build unaffected); useful for ISSUE-7.
+
+## ISSUE-7: recurring `PANIC pc=0x4000001E vector=0x4` — IPL-3 wild jump into the u-area (OPEN)
+**Status: OPEN (2026-07-05) — the primary remaining login-path crash; next target.**
+The recurring `PANIC: KERNEL FAULT psw=0x2311, pc=0x4000001E, fmt=0x0, vector=0x4 (Illegal
+Instruction)` (previously misfiled under ISSUE-5). Triggered after a `login` → `ls -alR | wc`
++ `uname -a` → `reboot` sequence (either during it or at the next boot's login). Facts
+established via the `ktrap_latch` first-fault dbg wrapper:
+- Fault context: `proc 0`, **SR=0x2311 → supervisor, IPL 3** (a level-3 / VBLANK-class
+  interrupt). PC=0x4000001E = u-area base (0x40000000) + 0x1E — a DETERMINISTIC jump into
+  the u-area (same value every crash), not random garbage.
+- Saved regs at fault: A2=0x40000000 (u-area base), A1=0x00F80C1E (Kickstart ROM), A0
+  garbage. Interrupted stack held `preempt`/`u_trap` return addrs + Kickstart ROM + fast-RAM
+  physical addrs.
+- RULED OUT: kmem free-list corruption (`kmem_validate` never fired across a full run);
+  interrupt dispatch tables `vbinttab`/`int2_tbl` (latch dumped them intact). `resume`'s
+  own `jmp (a1)` is likely not the immediate cause (a1 at fault ≠ 0x4000001E).
+- Live theories: (T1) something transfers control to the u-area base and the CPU executes
+  the pcb/regsave header bytes until the first illegal opcode at +0x1E; (T2) a corrupted
+  exception/autovector (VBR=M68Kvec; level-3 autovector VBR+0x6C, or the vec-4 slot) points
+  into the u-area — IPL 3 fits. This is the long-standing 040 ctx-switch / exception-frame
+  frontier. NOTE: the swap_xlate/hash fixes (ISSUE-6) removed real memory-corruption-class
+  bugs — RE-TEST the 0x4000001E repro first; it may have changed or gone.
