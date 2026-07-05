@@ -746,11 +746,23 @@ Lhl_aok:
 	andil	&0xfffffe00,%d0		| Btable = Adesc & ~0x1ff
 | V2.2 guard (mirror of hat_chgprot040 + hat_free040 Lf_badleaf): a garbage descriptor with
 | UDT set (FFFFFFFF relics) passes the UDT check and derefs an unbacked base -> KERNEL FAULT.
-| Validate the table frame against [pages_base, pages_end); bad slot = treat as ABSENT.
+| V2.3 (ISSUE-7 root fix): lower bound is the KERNEL IMAGE base (_start>>12), NOT pages_base.
+| The kernel's A-level pointer tables are the STATIC kptr040 array inside the kernel image
+| (pstart040 mmu040_buf, .data) whose frames lie BELOW pages_base -- the old [pages_base,
+| pages_end) test rejected them, making hat_unload a SILENT NO-OP for ALL kernel VAs
+| (kvseg/kvsegmap/kvsegu).  segu_release's hat_unload therefore never cleared window PTEs /
+| reverse-maps: pages were freed still-mapped (LIVEABORT evidence: p_mapping set at
+| anon_decref's page_abort), recycled while old window PTEs still pointed at them ->
+| zeroed live u-areas -> the recurring pc=0x4000001E / zeroed-u crash family.  The relaxed
+| bound still rejects the V2.2 garbage (0 / small ints / FFFFFE00: below kernel base or
+| >= pages_end).
 	movel	%d0,%d1
 	moveq	&12,%d5
 	lsrl	%d5,%d1
-	cmpl	pages_base,%d1
+	movel	&_start,%d5
+	lsrl	&8,%d5
+	lsrl	&4,%d5			| d5 = kernel base frame (_start>>12)
+	cmpl	%d5,%d1
 	bcsw	Lhl_nextAreg
 	cmpl	pages_end,%d1
 	bccw	Lhl_nextAreg
@@ -774,11 +786,15 @@ Lhl_nextBreg:
 	braw	Lhl_chkmore
 Lhl_bok:
 	andil	&0xffffff00,%d1		| leaf base = Bdesc & ~0xff
-| same guard for the leaf base (garbage Bdesc FFFFFFFF -> FFFFFF00 deref)
+| same guard for the leaf base (garbage Bdesc FFFFFFFF -> FFFFFF00 deref); V2.3: kernel-image
+| lower bound here too -- some kernel leaves (early kvm_init/sptalloc tables) are also static.
 	movel	%d1,%d0
 	moveq	&12,%d5
 	lsrl	%d5,%d0
-	cmpl	pages_base,%d0
+	movel	&_start,%d5
+	lsrl	&8,%d5
+	lsrl	&4,%d5			| d5 = kernel base frame (_start>>12)
+	cmpl	%d5,%d0
 	bcsw	Lhl_nextBreg
 	cmpl	pages_end,%d0
 	bccw	Lhl_nextBreg
