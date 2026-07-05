@@ -101,10 +101,14 @@ Lsv_vnode:
 	addl	%a5@(12),%d0		| + svd->offset
 	movel	%d0,%fp@(-12)		| off
 Lsv_find:
-| --- PAGE_HASHFUNC: ((off>>12) + (vp>>6)) & (page_hashsz-1); pp = page_hash[h] ---
+| --- PAGE_HASHFUNC: ((off>>11) + (vp>>6)) & (page_hashsz-1); pp = page_hash[h] ---
+| NOTE: >>11 (stock), NOT >>12: ALL other inlined PAGE_HASHFUNC sites (page_hashin/
+| page_find/page_exists/page_hashout/xpage_find/findpage/segmap_unlock) kept the stock
+| >>11 -- consistency is the only hash requirement.  The 0xabdae >>12 byte patch that
+| this replica originally copied was the BUG (removed from patch_modelb.py).
 	movel	%fp@(-12),%d0
-	moveq	&12,%d6
-	lsrl	%d6,%d0			| off >> 12 (logical, as orig)
+	moveq	&11,%d6
+	lsrl	%d6,%d0			| off >> 11 (stock hash, matches page_hashin)
 	movel	%fp@(-4),%d1
 	asrl	&6,%d1			| vp >> 6 (arith, as orig)
 	addl	%d1,%d0

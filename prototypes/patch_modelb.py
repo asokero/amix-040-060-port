@@ -220,7 +220,19 @@ P = [
  (0xabb94, b"\x72\x0b", b"\x72\x0c", "segvn_free:anon array npages >>11"),
  (0xabd2e, b"\x7c\x0b", b"\x7c\x0c", "segvn_softunlock:page idx >>11"),
  (0xabd56, b"\x7c\x0b", b"\x7c\x0c", "segvn_softunlock:page idx >>11"),
- (0xabdae, b"\x7c\x0b", b"\x7c\x0c", "segvn_softunlock:page idx >>11"),
+ # 0xabdae REMOVED (was patched 7c0b->7c0c as "page idx" -- WRONG): that shift is the
+ # off>>PGSHIFT term INSIDE the inlined PAGE_HASHFUNC, not a page-index computation.  ALL
+ # other 7 inlined PAGE_HASHFUNC sites (page_hashin 0xb0322 = the ENTER side, page_find
+ # 0xaf636, page_exists 0xaf6e8, page_hashout 0xb03fc, xpage_find 0xb15a6, findpage
+ # 0xb1664, segmap_unlock 0xa901e) kept the stock >>11 -- a hash only needs CONSISTENCY,
+ # and >>11 is a valid (slightly denser) hash for 4KB-aligned offsets.  Patching only this
+ # one site made segvn_softunlock look in a DIFFERENT bucket than page_hashin filed the
+ # page into -> pp==NULL -> "PANIC: segvn_softunlock" on fsck raw-device reads (physio
+ # softlock), while the fault path kept working via the anon an_page hint (no hash walk).
+ # Proven by SVUNLOCK forensics: the "missing" page existed, healthy, keepcnt=1, correct
+ # (vp,off) identity, p_hash==0 (alone in its -- other -- bucket).  See also the
+ # patch_modelb_pager.py:152 NOTE which already documented the consistency rule for the
+ # 0xa901e hash site.
  (0xabee0, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "segvn_softunlock:loop bound step"),
  (0xabf2e, b"\x06\x80\x00\x00\x08\x00", b"\x06\x80\x00\x00\x10\x00", "non_anon:next-page step"),
  (0xabf4e, b"\x06\x80\x00\x00\x08\x00", b"\x06\x80\x00\x00\x10\x00", "non_anon:next-page step"),
