@@ -174,7 +174,7 @@ Lsv_dump:				| a2 = plausible pp with p_pagein/p_free set
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(20),%sp
-	braw	Lsv_args
+	braw	Lsv_anon
 Lsv_dump0:				| pp NULL or garbage link: dump value + missed (vp,off)
 	movel	Lsv_n,%d0
 	addql	&1,%d0
@@ -187,6 +187,73 @@ Lsv_dump0:				| pp NULL or garbage link: dump value + missed (vp,off)
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(24),%sp
+| ================= anon-slot forensics (shared by both dump paths) =================
+| The hash lookup failed/flagged, but the anon slot's an_page HINT (anon@4) still points at
+| the page struct the slot believes it owns -- so we can inspect the page's ACTUAL identity
+| and state even though it is gone from page_hash.  Distinguishes: paged-out / freed /
+| re-identified (double-use) / hashout'ed.  struct anon (16B): an_refcnt@0, an_page@4,
+| an_bap@8, an_flag+an_use@12.  page struct extras: p_next@16, p_lckcnt@36(w), p_cowcnt@38(w).
+Lsv_anon:
+	movel	%a4,%d0			| app
+	beqw	Lsv_args		| vnode branch / no amp: nothing anon to show
+	andil	&3,%d0
+	bnew	Lsv_args
+	moveal	%a4@,%a3		| a3 = anon = *app
+	movel	%a3,%d0
+	beqw	Lsv_an0			| empty slot: dump app + zeros
+	andil	&3,%d0
+	bnew	Lsv_an0			| garbage anon ptr: dump raw value, no deref
+	movel	%a3@(12),%sp@-		| an_flag/an_use
+	movel	%a3@(8),%sp@-		| an_bap
+	movel	%a3@(0),%sp@-		| an_refcnt
+	movel	%a3,%sp@-		| anon
+	movel	%a4,%sp@-		| app
+	pea	Lsv_m4
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(28),%sp
+	moveal	%a3@(4),%a3		| a3 = an_page (hint; cmn_err preserves a2-a5)
+	movel	%a3,%d0
+	beqw	Lsv_args		| no hint page
+	andil	&3,%d0
+	bnew	Lsv_args
+	movel	%a3@(32),%sp@-		| hint page: p_mapping
+	moveq	&0,%d0
+	movew	%a3@(0),%d0
+	movel	%d0,%sp@-		| flags word (byte0: bit5=p_free, bit0=p_pagein)
+	movel	%a3@(8),%sp@-		| p_offset (its ACTUAL identity)
+	movel	%a3@(4),%sp@-		| p_vnode  (its ACTUAL identity)
+	movel	%a3,%sp@-		| an_page
+	pea	Lsv_m5
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(28),%sp
+	movel	%a3@(16),%sp@-		| p_next (free/intrans list linkage)
+	movel	%a3@(12),%sp@-		| p_hash
+	moveq	&0,%d0
+	movew	%a3@(38),%d0
+	movel	%d0,%sp@-		| p_cowcnt
+	moveq	&0,%d0
+	movew	%a3@(36),%d0
+	movel	%d0,%sp@-		| p_lckcnt
+	moveq	&0,%d0
+	movew	%a3@(2),%d0
+	movel	%d0,%sp@-		| p_keepcnt
+	pea	Lsv_m6
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(28),%sp
+	braw	Lsv_args
+Lsv_an0:
+	clrl	%sp@-			| flg=0
+	clrl	%sp@-			| bap=0
+	clrl	%sp@-			| ref=0
+	movel	%a3,%sp@-		| anon raw value (0 or garbage)
+	movel	%a4,%sp@-		| app
+	pea	Lsv_m4
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(28),%sp
 Lsv_args:
 	movel	%fp@(4),%sp@-		| caller (return address)
 	movel	%fp@(20),%sp@-		| rw
@@ -202,6 +269,7 @@ Lsv_tail:
 	moveml	%fp@(-52),%d2-%d6/%a2-%a5
 	unlk	%fp			| sp -> [ret][seg][addr][len][rw]: original call state
 	jmp	segvn_softunlock_orig
+	nop				| pad .text to a multiple of 4 (relink contiguity)
 
 	.data
 	.even
@@ -213,6 +281,15 @@ Lsv_m2:
 	.even
 Lsv_m3:
 	.asciz	"DBG SVUNLOCK seg=%x addr=%x len=%x rw=%x caller=%x"
+	.even
+Lsv_m4:
+	.asciz	"DBG SVUNLOCK2 app=%x anon=%x ref=%x bap=%x flg=%x"
+	.even
+Lsv_m5:
+	.asciz	"DBG SVUNLOCK3 anpg=%x pvn=%x poff=%x pflg=%x pmap=%x"
+	.even
+Lsv_m6:
+	.asciz	"DBG SVUNLOCK4 keep=%x lck=%x cow=%x hash=%x next=%x"
 	.even
 Lsv_n:
 	.long	0
