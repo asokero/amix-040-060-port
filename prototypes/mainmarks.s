@@ -260,7 +260,17 @@ Lidw_skip:
 | FIX: read the saved context from the STABLE kvsegu VA (curproc@252 + 0x318), always live in
 | kptr040.  The uarea_pt remap (+cpusha) is still done so the CHILD's stack (fixed VA
 | 0x40000000) works after transfer, but the jmp target no longer depends on the remap's timing.
-| u_va==0 (proc 0 / early): no remap, read from the fixed VA (arg1) as stock resume did.
+| u_va==0 (proc 0): REMAP VIA PATH U (p_ubptbl) -- ISSUE-7 fix.  The original port skipped
+| the remap here claiming "as stock resume did"; the vanilla disasm (resume @0x9c) DISPROVES
+| that: stock writes *ublksde = arg2 UNCONDITIONALLY, every resume, proc 0 included.  The
+| skip left the fixed VA mapping the PREVIOUS proc's u-pages; proc 0's save/resume pair
+| stayed self-consistent through that stale mapping (same page both ways), so it "worked" --
+| until the previous proc EXITED: swtch's szombflag path segu_release'd those u-pages, they
+| were reused (file data), and the next user-mode preempt read u.u_procp via u+0x730 from
+| the reused page -> garbage p_clfuncs -> `jsr ([44,clfuncs])` -> the recurring
+| PANIC pc=0x4000001E (ktrap_latch-captured stack: preempt+0x18 / u_trap+0x104).
+| Only if p_ubptbl[0] is ALSO empty (pre-p0init early boot, where pstart040's static
+| uarea_pt mapping is live and correct) is skipping still safe.
 | Both serial markers fire on the SAFE (caller / proc 0) stack -- BEFORE the context-restoring
 | movem -- so serdbg_mark never touches the (suspect) new stack.
 | --weaken-symbol resume.  globals: curproc (C), kptr040 (D).
@@ -272,7 +282,18 @@ resume:
 	movew	%sr,%d0			| d0 = sr (preserved to the end; serdbg_mark keeps d0)
 	movew	&0x2700,%sr		| mask interrupts for the remap
 	tstl	%d1
-	beqw	Lr_rest			| u_va==0 -> no remap, read from fixed VA (stock behaviour)
+	bnew	Lr_remap		| u_va!=0 -> forked/kvsegu proc: remap (path U/V dispatch)
+| u_va==0 (proc 0): must STILL remap (see header) -- via path U from p_ubptbl.  Guard: if
+| p_ubptbl[0]==0 too (pre-p0init), skip like before; also prevents path V's kptr040 walk
+| with u_va=0 (a negative table index).
+	moveal	curproc,%a3
+	movel	%a3,%d3
+	addil	&95,%d3
+	andil	&0xfffffff0,%d3
+	moveal	%d3,%a3			| a3 = &p_ubptbl = (proc+95)&~15 (same calc as path U)
+	tstl	%a3@
+	beqw	Lr_rest			| no u_va AND no p_ubptbl: early boot, old behaviour safe
+Lr_remap:
 |	--- remap: make the FIXED-VA u-area (uarea_pt[0..1]) point at the NEW proc's u-area pages ---
 |	DUAL SOURCE -- on this 040 port a proc's u-area lives in ONE of two places:
 |	  path U: curproc->p_ubptbl (proc+80) = the embedded 2KB-granular page table; FILLED for proc 0
