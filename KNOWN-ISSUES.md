@@ -108,6 +108,114 @@ descs, va>>25/>>18/>>12 indices).  This is the main thing standing between "dbg 
 hat_exec (exec stack move — currently neutered by the hat_free040/hat_chgprot040 garbage-slot
 guards), uvirtophys/uvatosde (user SW page-table walkers).  Full batch list: RESUME-HERE.md.
 
+## ISSUE-5: `haltsys` (reboot/halt path) ran unguarded 030 `pmove` — KERNEL PANIC on `reboot`
+**Status: RESOLVED (2026-07-05, fix v3, boot-confirmed).** Final fix = `haltsys040.s`
+makes the reboot/halt MMU-disable UNCONDITIONALLY use the 040 `movec`+`pflusha` path
+(commit ded2e58), after v1 (guarded `haltsys`) and v2 (`rtnfirm` override, commit 23a3532)
+turned out necessary but insufficient. Reboot now completes: a dirty-disk boot ran
+`fsck` → rebooted → reached login cleanly.
+
+**IMPORTANT CORRECTION — `pc=0x4000001E` was MISATTRIBUTED to this issue.** The recurring
+`PANIC: KERNEL FAULT pc=0x4000001E vector=0x4` is a SEPARATE, still-open bug (an IPL-3
+wild jump into the u-area during the ctx-switch/interrupt path — see **ISSUE-7** below),
+NOT the reboot pmove. The three fixes below (v1/v2/v3) were all REAL reboot-path bugs, but
+none of them was the 0x4000001E crash. v3 fixed the actual reboot symptom (an F-line
+trap, vector 0xB, at the 030 `pmove` in the shutdown MMU-disable — see the v3 detail).
+
+**FIX v3 (2026-07-05, the real fix):** with v1+v2 in place, `reboot` still panicked — but
+now with an F-line trap (vector 0xB) at `pmove %a0@,%tc` inside our OWN haltsys040 030
+branch (`Lhs_mmu030`). Cause: the AttnFlags CPU-detection guard (`moveal 4,%a1` = AmigaOS
+SysBase, `btst #3/#7,%a1@(0x129)`) misfires at Unix reboot time — under the live Unix MMU,
+low-mem addr 4 / SysBase+0x129 no longer yield the AmigaOS AttnFlags, so both btsts read 0
+and control fell through to the illegal 030 `pmove`. (copyit.s uses the same guard safely
+only because it runs PRE-MMU during loader handoff.) Since this is an 040/060-ONLY binary,
+v3 removes the guard entirely and always takes the 040 path. Verified: 0 `pmove` in the
+haltsys/rtnfirm region of both binaries; `Lhs_nomsg` falls straight into `movec` tc/itt0/
+itt1/dtt0/dtt1 + `pflusha`.
+
+---
+(historical detail from the v1→v2 investigation follows)
+
+**FIX v1 was insufficient (2026-07-05):** the `haltsys` override alone NEVER EXECUTED on the
+reboot path. Disassembly of `mdboot` (0x5637a) proves it calls `haltsys(0)` ONLY for fcn==0
+(halt); for fcn>=1 — i.e. every actual `reboot` — it calls **`rtnfirm`** (0x18eb0, GLOBAL T)
+instead. `rtnfirm` is a second entry point 8 bytes BEFORE `haltsys` in the same object: it does
+`movel #1,%sp@(4)` (forces msg=1) and FALLS THROUGH into the `haltsys` body → `nomsg` → the old
+MMU-disable block. In the patched binary that block's three 030 `pmove`s are already NOP'd by the
+byte-patch scripts, so the old `rtnfirm` path left the MMU ENABLED when it jumped to the ROM
+reboot vector — the ROM then ran/trampled memory with kernel translation still live → recursive
+trap cascade → the observed `PANIC: KERNEL FAULT pc=0x4000001E vector=0x4`. FIX v2: haltsys040.s
+now also defines a global `rtnfirm` immediately before its `haltsys:` (byte-identical layout,
+`2f7c 0000 0001 0004`, falls through), and `relink-040.sh` adds `--weaken-symbol rtnfirm`.
+`rtnfirm` has 5 caller reloc sites (0xd60, 0x3e6b4, 0x3e886, 0x3e898, 0x563ca=mdboot) — the
+symbol override fixes all of them at once. Verified: both builds clean, `check_relink_relocs.py`
+0 complaints each, single strong `T rtnfirm` at 0xd89bc / `T haltsys` at 0xd89c4 in both
+binaries, new rtnfirm encodes `2f7c 0000 0001 0004` and falls through into the AttnFlags-guarded
+haltsys, old cluster at 0x18eb0 no longer owns the symbol (remains as unreachable bytes).
+
+**FIX v1 (superseded, retained below for the RE details):** `prototypes/haltsys040.s` reimplements the
+whole `haltsys` function (it's the only GLOBAL symbol in its cluster) with an AttnFlags-guarded
+MMU disable mirroring `copyit.s`'s proven pattern: 68030 keeps the verbatim original `pmove
+tc/crp/srp`; 68040/68060 use `movec` (tc/itt0/itt1/dtt0/dtt1) + `pflusha` instead. `haltmsg`/
+`nullrp`/`zero` are DUPLICATED locally (byte-identical, verified via `objdump -s` against the
+original) rather than globalizing three more local symbols — lower relink risk for such trivial
+content. `boot_arg0` is GLOBAL `D` already (0x4780) so it's referenced directly, no globalize
+needed. Wired into `relink-040.sh` (assemble + `--weaken-symbol haltsys` + link + nm-report);
+`relink-040-dbg.sh` needs no changes since it inherits `haltsys` as a strong def from
+`build/unix-040` (same pattern as `hat_chgprot040.o`). Verified: standalone assemble clean; both
+`relink-040.sh` and `relink-040-dbg.sh` build clean; `check_relink_relocs.py` reports 0 complaints
+for both; `nm` shows a single strong `T haltsys` at the same address (0xd89bc) in both binaries;
+disassembly of the final linked `haltsys` in both binaries confirms the 040/060 branch skips the
+`Lhs_mmu030` block entirely — no `pmove` reachable on the 68040 path (the 030 `pmove` bytes remain
+as correct dead code for an eventual 030 boot of the same binary). NOT boot-tested on fs-uae/HW —
+that remains for a human.
+**Symptom:** running `reboot` on `unix-040`/`unix-040-dbg` (fs-uae, boot-verified 2026-07-04/05)
+reliably panics: native kernel strings (confirmed in `vanilla/stand/unix`'s own string table, not
+our instrumentation) `"kstack 0x%x!"` print a recursive-trap unwind, ending in
+`PANIC: KERNEL FAULT psw=0x2311, pc=0x4000001E, fmt=0x0, vector=0x4 (Illegal Instruction)`. Happens
+either right after issuing `reboot` or, once, at the next boot's login prompt (same signature).
+Serial-log correlation (2026-07-05 capture): system goes fully IDLE (proc 0, healthy repeating
+`C00000000:070D96FA:00002000` idle-PC samples, hundreds of them — NOT a spin on a changing PC) for
+a long stretch before the panic, and the last `hat_dup040 ENTER` markers logged are far earlier
+(getty/login forks) — this is NOT a fork-in-flight crash, it's unrelated to the `hat_dup040` port
+on branch `040-hat-dup-port`. `getdents LOOP` markers (pid 172, likely the shutdown sequence
+scanning `/proc` to signal remaining processes) precede the idle stretch — consistent with a normal
+`reboot`/`uadmin` shutdown sequence, not a hang.
+
+**Root cause (RE'd from `vanilla/stand/unix`, 2026-07-05):** `uadmin` (0x467d6) → `mdboot` (0x5637a)
+→ `haltsys` (0x18eb8, **GLOBAL T**) → falls straight into the local label `nomsg` (0x18ece, always
+reached regardless of the message argument):
+```
+18ece: movew  #9984,%sr        ; interrupts off
+18ed2: lea    zero,%a0
+18ed8: pmove  %a0@,%tc         ; *** 68030-ONLY, illegal on 68040 (vector 4) ***
+18edc: lea    nullrp,%a0
+18ee2: pmove  %a0@,%crp        ; *** same ***
+18ee6: pmove  %a0@,%srp        ; *** same ***
+18eea: moveq  #0,%d0
+18eec: movec  %d0,%cacr        ; already CPU-agnostic, no change needed
+18ef0: bset   #7,0xde0002      ; hardware bit, CPU-agnostic, no change needed
+18ef8: tstl   %d2
+18efa: bnel   reboot           ; -> new_funky_reboot (reset+jmp) or a ROM ktrap jmp
+```
+This is the **exact same bug class** as the very first issue this project ever fixed
+(`prototypes/copyit.s`'s original unguarded `pmove tc/crp/srp` in the Amiga-side MMU-disable code,
+see that file's header comment) — just a third, never-audited site: the kernel's own shutdown path.
+`copyit.s` already has a proven, boot-verified fix for the identical instructions (AttnFlags bit
+`AFB_68040` check, `movec` substitutes for `tc`/`itt0`/`itt1`/`dtt0`/`dtt1`, `pflusha` to flush the
+ATC — `crp`/`srp` have no 040 equivalent load needed since clearing `tc`'s enable bit alone turns
+off translation). `haltsys` is the only GLOBAL symbol in this cluster (`nomsg`/`halt`/`reboot`/
+`new_funky_reboot` are all local `t` symbols in the same object) — so the fix is a `--weaken-symbol
+haltsys` override that transcribes the WHOLE function (conditional `haltmsg` printf, AttnFlags-
+guarded MMU-disable, the hardware `bset`, then the halt-spin-loop or reboot-jump dispatch depending
+on the original message-arg), following the identical AttnFlags/movec pattern `copyit.s` already
+proved. Low complexity, high confidence — unlike the HAT layer, this is ~20 instructions with a
+direct working reference to crib from.
+
+**Plan:** branch `040-haltsys-reboot-fix` (off master, independent of `040-hat-dup-port` — this bug
+predates and is unrelated to the hat_dup work). Implementation delegated to a Fable subagent per
+this project's Sonnet-plans/Fable-executes workflow.
+
 ## ISSUE-3: hat_unload reverse-map findmap is a bounded skip (verify later)
 **Status:** OPEN (2026-06-22), defensive — works, but confirm correctness under memory
 pressure.  hat_unload's `Lhl_findmap` walks pages[pfn]'s reverse-map list (head @(32),
@@ -118,3 +226,58 @@ be in the list (a real bug in hat_pteload's Lwleaf insert, or a corrupted list),
 silently leave a stale reverse-map entry → trouble during page reclamation (which needs
 the reverse-map, and only kicks in under memory pressure — not yet exercised at boot).
 If page-reclaim bugs appear later, re-audit hat_pteload's reverse-map insert + this skip.
+
+## ISSUE-6: `fsck` on a dirty UFS panicked `segvn_softunlock` (raw-device physio softlock)
+**Status: RESOLVED (2026-07-05, two commits).** Booting a corrupt/dirty filesystem ran
+boot-`fsck` (`/sbin/fsck -F ufs -y /dev/rdsk/…`), which raw-reads the device into an anon
+buffer; the kernel F_SOFTLOCKs the buffer pages for the physio transfer and `segvn_softunlock`
+panicked. Root-caused with the `segvn_softunlock_dbg` diagnostic wrapper (dbg build) which
+replicated the per-page page_hash find and dumped the failing page's state. TWO distinct
+bugs, both leftover 2KB/4KB Model-B conversion errors in the VM layer:
+
+1. **`swap_xlate`/`swap_anon` used a 2KB pagesize shift** (commit faa1ace). They translate
+   anon-slot-index ↔ swap-vnode byte-offset with `<<11`/`>>11` (×2048) — byte-identical to
+   the 2KB vanilla, missed in the Model-B pass even though the anon/swap ACCOUNTING was
+   already 4KB. Result: anon `p_offset` came out 2KB-aligned (e.g. 0x1F800 = 63×2048), not
+   4KB-aligned — a swap-slot-overlap corruption and mishandled by 4KB-aligning code. Fix:
+   `moveq #11→#12` at both sites (patch_modelb.py). This was real but NOT the panic trigger.
+
+2. **`segvn_softunlock`'s inlined PAGE_HASHFUNC was patched to `>>12` while the other 7
+   inlined hash sites stayed `>>11`** (commit 61dd64e — the actual fix). patch_modelb.py had
+   a tuple at 0xabdae mislabeled "page idx >>11"; that shift is the `off>>PGSHIFT` term of
+   the hash, not a page index. `page_hashin` (the ENTER side), `page_find`, `page_exists`,
+   `page_hashout`, `xpage_find`, `findpage`, `segmap_unlock` all kept stock `>>11`. A hash
+   only needs CONSISTENCY, so patching one site made softunlock search a different bucket
+   than the page was filed into → `pp==NULL` → panic. Proven by the dbg dump: the "missing"
+   page was alive, `keepcnt=1`, correct (vp,off), `p_hash=0` (alone in its bucket). Only
+   fsck hit it because the FAULT path finds anon pages via the `an_page` hint (no hash walk);
+   only multi-page raw-physio softunlock walks the hash with anon pages. Fix: REMOVE the
+   0xabdae tuple (revert to stock `>>11`). **Lesson: before patching a `>>11` near page code,
+   determine if it's a PAGE INDEX (→`>>12`) or an inlined PAGE_HASHFUNC term (stays `>>11`
+   for consistency across all 8 sites — enumerate them via the `page_hashsz` relocs).**
+
+Boot-confirmed: dirty FS now runs fsck to completion and the next boot reaches login.
+Diagnostic wrappers (`segvn_softunlock_dbg`, `kmem_validate`, `ktrap_latch`) remain wired
+into `relink-040-dbg.sh` only (base build unaffected); useful for ISSUE-7.
+
+## ISSUE-7: recurring `PANIC pc=0x4000001E vector=0x4` — IPL-3 wild jump into the u-area (OPEN)
+**Status: OPEN (2026-07-05) — the primary remaining login-path crash; next target.**
+The recurring `PANIC: KERNEL FAULT psw=0x2311, pc=0x4000001E, fmt=0x0, vector=0x4 (Illegal
+Instruction)` (previously misfiled under ISSUE-5). Triggered after a `login` → `ls -alR | wc`
++ `uname -a` → `reboot` sequence (either during it or at the next boot's login). Facts
+established via the `ktrap_latch` first-fault dbg wrapper:
+- Fault context: `proc 0`, **SR=0x2311 → supervisor, IPL 3** (a level-3 / VBLANK-class
+  interrupt). PC=0x4000001E = u-area base (0x40000000) + 0x1E — a DETERMINISTIC jump into
+  the u-area (same value every crash), not random garbage.
+- Saved regs at fault: A2=0x40000000 (u-area base), A1=0x00F80C1E (Kickstart ROM), A0
+  garbage. Interrupted stack held `preempt`/`u_trap` return addrs + Kickstart ROM + fast-RAM
+  physical addrs.
+- RULED OUT: kmem free-list corruption (`kmem_validate` never fired across a full run);
+  interrupt dispatch tables `vbinttab`/`int2_tbl` (latch dumped them intact). `resume`'s
+  own `jmp (a1)` is likely not the immediate cause (a1 at fault ≠ 0x4000001E).
+- Live theories: (T1) something transfers control to the u-area base and the CPU executes
+  the pcb/regsave header bytes until the first illegal opcode at +0x1E; (T2) a corrupted
+  exception/autovector (VBR=M68Kvec; level-3 autovector VBR+0x6C, or the vec-4 slot) points
+  into the u-area — IPL 3 fits. This is the long-standing 040 ctx-switch / exception-frame
+  frontier. NOTE: the swap_xlate/hash fixes (ISSUE-6) removed real memory-corruption-class
+  bugs — RE-TEST the 0x4000001E repro first; it may have changed or gone.

@@ -113,6 +113,21 @@ P = [
  (0xad6ae, b"\x74\x0b", b"\x74\x0c", "anon_resv:size>>11 shift count (#11->#12)"),
  (0xad736, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "anon_unresv:size round +2047->+4095"),
  (0xad73c, b"\x72\x0b", b"\x72\x0c", "anon_unresv:size>>11 shift count (#11->#12)"),
+ # swap_xlate / swap_anon: anon-slot-index <-> swap-vnode-byte-offset translation.  These convert
+ # (anon_ptr - si_base)>>4 (= slot index) to a byte offset by << PGSHIFT (swap_xlate) and the
+ # inverse >> PGSHIFT (swap_anon).  The swap/anon ACCOUNTING (anon_resv/availsmem/anoninfo above)
+ # was already converted to 4KB clicks, but these two offset shifts stayed at 2KB (<<11 / >>11) --
+ # byte-identical to the 2KB vanilla, missed in the original Model-B pass.  Result: an anon page's
+ # p_offset came out 2KB-aligned (e.g. slot 63 -> 0x1F800 = 63*2048), NOT 4KB-aligned.  In a 4KB
+ # kernel every resident page's p_offset MUST be 4KB-aligned, so 4KB-page-aligning code in the raw
+ # physio softlock/reclaim path mishandled it -> the softlocked buffer page went missing from
+ # page_hash -> "PANIC: segvn_softunlock" on `fsck` of a corrupt UFS (raw-device read; ISSUE-5).
+ # anon_zero (page enter) and anon_getpage / segvn_softunlock (lookup) ALL go through this pair, so
+ # converting both keeps them mutually consistent AND 4KB-aligned (consistent with the 4KB swap
+ # accounting).  Single moveq #11->#12 each (drives the << / >> by the register shift count).
+ # (Dead sibling `sxlate` @0xb3f86 has the same 2KB idiom but has NO callers -- left unpatched.)
+ (0xb2b28, b"\x72\x0b", b"\x72\x0c", "swap_xlate:slot-index<<11 -> <<12 (4KB swap offset)"),
+ (0xb2b98, b"\x74\x0b", b"\x74\x0c", "swap_anon:swap-offset>>11 -> >>12 (4KB slot index)"),
  # execmap bss handling (0x57c0e..0x57c80): the zero-fill (bss) part of a data segment is
  # mapped by as_map starting at the first WHOLE page after the file content.  The 030 code
  # rounded that bss start UP to a 2KB boundary (d2 = (vaddr+filesz+2047)>>11<<11).  On Model B
@@ -205,7 +220,19 @@ P = [
  (0xabb94, b"\x72\x0b", b"\x72\x0c", "segvn_free:anon array npages >>11"),
  (0xabd2e, b"\x7c\x0b", b"\x7c\x0c", "segvn_softunlock:page idx >>11"),
  (0xabd56, b"\x7c\x0b", b"\x7c\x0c", "segvn_softunlock:page idx >>11"),
- (0xabdae, b"\x7c\x0b", b"\x7c\x0c", "segvn_softunlock:page idx >>11"),
+ # 0xabdae REMOVED (was patched 7c0b->7c0c as "page idx" -- WRONG): that shift is the
+ # off>>PGSHIFT term INSIDE the inlined PAGE_HASHFUNC, not a page-index computation.  ALL
+ # other 7 inlined PAGE_HASHFUNC sites (page_hashin 0xb0322 = the ENTER side, page_find
+ # 0xaf636, page_exists 0xaf6e8, page_hashout 0xb03fc, xpage_find 0xb15a6, findpage
+ # 0xb1664, segmap_unlock 0xa901e) kept the stock >>11 -- a hash only needs CONSISTENCY,
+ # and >>11 is a valid (slightly denser) hash for 4KB-aligned offsets.  Patching only this
+ # one site made segvn_softunlock look in a DIFFERENT bucket than page_hashin filed the
+ # page into -> pp==NULL -> "PANIC: segvn_softunlock" on fsck raw-device reads (physio
+ # softlock), while the fault path kept working via the anon an_page hint (no hash walk).
+ # Proven by SVUNLOCK forensics: the "missing" page existed, healthy, keepcnt=1, correct
+ # (vp,off) identity, p_hash==0 (alone in its -- other -- bucket).  See also the
+ # patch_modelb_pager.py:152 NOTE which already documented the consistency rule for the
+ # 0xa901e hash site.
  (0xabee0, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "segvn_softunlock:loop bound step"),
  (0xabf2e, b"\x06\x80\x00\x00\x08\x00", b"\x06\x80\x00\x00\x10\x00", "non_anon:next-page step"),
  (0xabf4e, b"\x06\x80\x00\x00\x08\x00", b"\x06\x80\x00\x00\x10\x00", "non_anon:next-page step"),
