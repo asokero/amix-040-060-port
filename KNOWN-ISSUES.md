@@ -333,18 +333,19 @@ self-pointer → the crashing proc is in a sleep/longjmp context), `p_segu`≈0x
 7. **segu slot free-list double-alloc** — Codex verified usd_free pop/push (0xaa47c/
    0xaa7b8) is a clean LIFO; a slot only reaches a new proc after a real segu_release.
 
-### NEW CANDIDATE (2026-07-07, fix applied, NOT yet boot-tested — see ISSUE-4)
+### 8. hat_unload missing post-clear cpusha bc/pflusha (2026-07-07, RULED OUT — fix landed, bug still reproduces)
 Codex's `HAT-UNLOAD-COHERENCY-AUDIT.md` found that `hat_unload`'s normal exit was missing a
 post-clear `cpusha bc; pflusha` — every OTHER 040 HAT writer (hat_pteload/hat_chgprot/
 hat_pageunload/resume) ends with that pair, but hat_unload clears PTEs and returns with only
-a *pre*-clear pflusha. A cleared PTE can sit in copyback data cache while the hardware table
-walker still sees the old valid descriptor. `hat_unload` is called directly by `segu_release`
-and `segu_softunload_orig` — i.e. exactly the u-area teardown paths this issue centers on. Fix
-applied in `hat040.s` (unconditional cpusha bc/pflusha on the non-rootnull exit) alongside the
-ISSUE-4 hat_dup040 merge. **This was NOT on the "ruled out" list above** — it's a genuinely
-new mechanism, not a re-test of something already disproven. Still unproven: `hat_unload` is
-called from many paths unrelated to ISSUE-7, so a clean boot-test result narrows but does not
-by itself confirm this was THE cause.
+a *pre*-clear pflusha. Fix applied in `hat040.s` (unconditional cpusha bc/pflusha on the
+non-rootnull exit) alongside the ISSUE-4 hat_dup040 merge (commit 302b588). **User boot-tested
+2026-07-07: bug reproduces identically** — same PREEMPT1-5 signature (`uprocp=0
+curproc=4011AC00 psegu=48466000`, `u318=40736000` matching the established `0x4073X000`
+pattern, `wproc=0` via the PERMANENT p_segu window confirming the page genuinely lacks
+u_procp, not a mapping bug), same kstack recursion cascade, same terminal
+`PANIC pc=0x7096226 (rcopyout+0x28) fmt=0x7 vector=0x2`. The fix is harmless (a coherency
+correctness improvement, keep it) but is CONFIRMED NOT the ISSUE-7 root cause. Do not re-chase
+this mechanism.
 
 ### FIXED ALONG THE WAY (real adjacent bugs found while hunting ISSUE-7, all on master)
 - ISSUE-5 reboot pmove (haltsys/rtnfirm v1/v2/v3 → unconditional 040 movec).
@@ -375,13 +376,27 @@ markers), `hatalloc_dbg` LIVEABORT (narrowed to keepcnt!=0), and the `UTRAP` u_p
 entry probe in execmark.s. Serial capture via serdbg (SERIAL-DEBUG.md).
 
 ### RESUME POINTS (next measurements to try)
-- **First, just re-run the ISSUE-7 repro (contaminate image B, boot, reboot, boot again)
-  against the hat_unload cpusha fix above** — cheapest possible test, might just be fixed.
-- Instrument `setuctxt` EXIT + the kmem_alloc(KM_SLEEP) window (0x41978): read
-  `*(cp->p_segu+0x730)` after the write and after the sleep — does the page/u_procp survive
-  the sleep?  (Codex timing hypothesis #1.)
+- **DONE, awaiting boot test (2026-07-07):** `prototypes/setuctxt_dbg.s` — Codex timing
+  hypothesis #1. `setuctxt(childproc, up)` writes `up+0x730=childproc` as its first act
+  (0x41954), then loops calling `kmem_alloc(0x7c, 0)` (0x41972-0x419a4) to duplicate a
+  124-byte per-proc record list; that `kmem_alloc` can legitimately SLEEP (block on kernel
+  heap memory), letting other procs run via `swtch` DURING setuctxt's own execution. The
+  wrapper checks `up+0x730 == childproc` immediately when `setuctxt` returns — if the
+  corruption happens inside one of those sleep windows, this fires the FIRST time it can
+  possibly be observed (setuctxt never re-asserts the write after the initial one, so a
+  post-return mismatch pins the corruption to this specific function's execution). Verified
+  correctly wired: `setuctxt` was FILE-LOCAL in the original object (`globalize-symbol`
+  needed before `weaken-symbol`, easy to get wrong silently — confirmed via disassembly that
+  `procdup`'s call now binds to the wrapper and the wrapper's internal call reaches
+  `setuctxt_orig`). Log line: `"DBG setuctxt POST-RETURN u_procp MISMATCH up=%x
+  expected=%x got=%x n=%x"` — its ABSENCE before the panic rules this hypothesis out just as
+  informatively as its presence confirms it (grep the log either way).
 - Add a `segu_softload` marker (only softunload was instrumented) + a `segu_get` per-proc
   (cp→p_segu→page pfn) marker to trace the u-area PAGE lifecycle and catch when p_segu's
-  backing page becomes a fresh-zero page.
+  backing page becomes a fresh-zero page. LOWER PRIORITY than it once was: ruled-out items
+  5 and 6 above establish the swap daemon AND segu_softunload are not even reached on the
+  crash path, so a swap-lifecycle probe is chasing a subsystem already shown to be
+  uninvolved — the setuctxt probe (non-swap, proc-creation-time) is the better-motivated
+  next data point.
 - Codex to statically analyze the segu/u-area page lifecycle + a whole-kernel-vs-source
   audit (analysis/ dir) — likely the fastest path given how resistant this is to probing.
