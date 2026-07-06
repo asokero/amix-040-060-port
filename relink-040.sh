@@ -44,6 +44,12 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/prumap040.s"    -o "$HERE/build/
 #                    Overrides rtnfirm TOO: mdboot calls rtnfirm (not haltsys) for fcn>=1,
 #                    i.e. on every real reboot (ISSUE-5 fix v2)
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/haltsys040.s"   -o "$HERE/build/haltsys040.o"
+#     segu_lockfix = segu_get wrapper restoring SEGU_LOCKED in su_flags (ISSUE-7 root
+#                    fix) -- the Model-B loop-bound patch (patch_modelb_pager.py:226)
+#                    shared d5 as loop bound AND su_flags source, dropping the LOCKED
+#                    bit, so segu_release never passed HAT_UNLOCK|HAT_RELEPP and the
+#                    u-page keepcnt hold leaked -> page_abort freed live u-pages.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segu_lockfix.s" -o "$HERE/build/segu_lockfix.o"
 
 echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
 cp "$STOCK" "$HERE/build/unix-stage1"
@@ -96,6 +102,8 @@ m68k-linux-gnu-objcopy \
 	--add-symbol usrxmemflt_orig=.text:0x5aede,function,global \
 	--weaken-symbol krnxmemflt \
 	--add-symbol krnxmemflt_orig=.text:0x5b140,function,global \
+	--weaken-symbol segu_get \
+	--add-symbol segu_get_orig=.text:0x000aa466,function,global \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -105,11 +113,12 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/hat_chgprot040.o" \
 	"$HERE/build/getfault040.o" "$HERE/build/userspace040.o" \
 	"$HERE/build/vtop040.o" "$HERE/build/wb040.o" "$HERE/build/ptest040.o" \
-	"$HERE/build/uvatosde040.o" "$HERE/build/prumap040.o" "$HERE/build/haltsys040.o"
+	"$HERE/build/uvatosde040.o" "$HERE/build/prumap040.o" "$HERE/build/haltsys040.o" \
+	"$HERE/build/segu_lockfix.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys rtnfirm; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_orig; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
