@@ -96,6 +96,27 @@ P = [
  (0xb6484, b"\x7a\x0b", b"\x7a\x0c", "hat_sdtalloc:page_get size d3<<11"),
  (0xb6524, b"\x7a\x0b", b"\x7a\x0c", "hat_sdtalloc:pfn<<11 (new node base)"),
  (0xb5e1c, b"\x78\x0b", b"\x78\x0c", "hat_pt2ptdat:pt>>11 (page-frame index)"),
+ # hat_sdtfree (2026-07-07, Codex HAT-GROWSDT-AUDIT.md finding, independently verified via
+ # disassembly): the free side of hat_sdtalloc was MISSED by the Model B pfn-shift patches
+ # above -- hat_sdtalloc's 3 sites (pfn<<11 -> table base) were fixed, but hat_sdtfree's
+ # OWN 2 sites (table>>11 -> pfn, to find the backing page_t) were not, so alloc and free
+ # are no longer inverse: a 4KB-aligned table address computes a pfn ~2x too large here.
+ # If that wrong pfn lands in [pages_base,pages_end) (verified: it derives pages+(pfn-
+ # pages_base)*60 exactly like every other page_t lookup in this kernel, then at 0xb6670
+ # does `andl %d0,%a2@(32)` -- CLEARING BITS IN AN UNRELATED LIVE PAGE'S p_sdtbits, which
+ # ALIASES p_mapping (the reverse-map head) at the same offset 32.  This is the same
+ # offset-32 union-collision failure CLASS already fixed once for hat_ptfree (see the
+ # comment above) and is structurally the ISSUE-5/6 "stale metadata -> physical double-
+ # use" pattern.  Active current callers: hat_swapout (shrink path), hat_map (segment
+ # growth crossing a 32-unit/8-SDE boundary), hat_exec_orig (table replace during growth)
+ # -- i.e. a real exec()/mmap-growth/swapout-time corruption risk, not a dead/unreachable
+ # path.  Flagged as a plausible (unconfirmed) ISSUE-7 contributor: corrupts page_t
+ # metadata rather than directly zeroing a u-area, so an extra step (the corrupted page
+ # later freed/reused while still mapped) would be needed to reach a zeroed u_procp --
+ # narrower probing needed to confirm the causal chain, but this is a genuine independent
+ # bug worth fixing regardless of ISSUE-7.
+ (0xb65e4, b"\x72\x0b", b"\x72\x0c", "hat_sdtfree:pfn>>11 (pages bounds chk, d1 reused for both lower+upper)"),
+ (0xb6610, b"\x72\x0b", b"\x72\x0c", "hat_sdtfree:pfn>>11 (pages[] index)"),
  # hat_ptfree: pages[] index is the 4KB pfn (>>12, matching hat_pt2ptdat) -- the 030
  # >>11 gave pages[2*pfn] -> garbage page struct -> garbage a2@(32) -> bad free-list
  # pointer -> bus error in the unlink (0xb6ecc).  ONLY the two pfn shifts change; the
