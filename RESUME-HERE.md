@@ -1,6 +1,40 @@
-# RESUME HERE — AMIX 68040 port status (2026-07-04)
+# RESUME HERE — AMIX 68040 port status (2026-07-06)
 
-## ►►► MILESTONE 2026-07-04: INTERACTIVE 040 LOGIN WORKS — ls / ls -al / uname -a all run ◄◄◄
+## ►►► UPDATE 2026-07-06: reboot + fsck FIXED; clean boot→login→ls -alR→reboot cycle works ◄◄◄
+Since the 07-04 login milestone, driving real workloads surfaced and fixed a chain of bugs
+(all on **master** now; patch_modelb.py = **235 sites**).  **Full detail: KNOWN-ISSUES.md.**
+- **ISSUE-5 (reboot) FIXED:** `reboot` ran an illegal 030 `pmove` (haltsys, reached via `rtnfirm`
+  for fcn>=1) → now an unconditional 040 `movec`/`pflusha` MMU-disable (this is an 040-only
+  binary; the AttnFlags guard misfired under the live Unix MMU).  v1/v2/v3 = commits 16fb98d/
+  23a3532/ded2e58.
+- **ISSUE-6 (fsck) FIXED:** `fsck` on a dirty UFS panicked `segvn_softunlock`; two Model-B misses —
+  `swap_xlate`/`swap_anon` still ×2048 (2KB) → non-4KB-aligned anon `p_offset`; and a MISLABELED
+  byte-patch at 0xabdae had made segvn_softunlock's inlined PAGE_HASHFUNC `>>12` while the other 7
+  hash sites stayed `>>11` (a hash needs only consistency).  Commits faa1ace + 61dd64e.
+- **Also fixed:** `hat_unload040` V2.3 (its table-frame guard rejected the kernel-image static
+  kptr040 tables → it was a SILENT NO-OP for ALL kernel VAs; lower bound now `_start>>12`,
+  commit 49c9c23); `segu_get` SEGU_LOCKED (the Model-B loop-bound patch `moveq #3→#1` also dropped
+  the flag stored from the same register → segu_release passed hat_unload flags=0, keepcnt never
+  released; `segu_lockfix` wrapper, commit 6efba29).
+
+**OPEN — ISSUE-7 (the current frontier, KNOWN-ISSUES.md):** a SECOND boot from a kernel-
+contaminated disk panics at the login prompt; a process's u-area has **`u_procp=0`** (a fresh-zero
+page, via a NON-swap mechanism — 7 hypotheses ruled out by runtime probes: kmem free-list,
+interrupt tables, remap-read, u_procp-at-trap-entry, swap daemon, segu_softunload, segu slot
+double-alloc).  Root NOT yet found.  Deterministic repro: contaminate image B (boot+reboot once),
+its next boot crashes; restore pristine image A → clean.  System stays USABLE for clean cycles.
+Rich dbg diagnostic infra in place (ktrap_latch / preempt_dbg+tourniquet / kmem_validate /
+segvn_softunlock_dbg / segu_swap_dbg / hatalloc_dbg LIVEABORT / execmark UTRAP).
+
+**NEXT options (pick per session):** (a) continue ISSUE-7 with the resume-point probes in
+KNOWN-ISSUES; (b) get BASE `unix-040` bootable standalone — migrate the dbg-only genuine fixes
+(resume040 in mainmarks.s + real hat_dup040 from branch `040-hat-dup-port` = ISSUE-4) and strip
+diagnostics; a "quiet" serial-capable variant is planned for real-HW testing (MAIN debug line
+stays the full dbg build on the emulator); (c) real-HW testing (USB-serial adapter incoming);
+(d) let the parallel Codex `analysis/` project map the whole kernel vs the source tree first.
+
+---
+## (historical) MILESTONE 2026-07-04: INTERACTIVE 040 LOGIN WORKS — ls / ls -al / uname -a all run
 Boot (`unix_boot unix-040-dbg`) runs with **0 panics / 0 BUS errors** to a `root` login on the
 040 kernel; `ls`, `ls -al`, `uname -a` all work at the shell.  patch_modelb.py = **234 sites**.
 This is the first genuinely usable interactive 040 boot.

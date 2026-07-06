@@ -1,22 +1,35 @@
 # Project Plan — 68040 (then 68060) support for Amiga Unix
 
-## ★ CURRENT STATUS (2026-07-04) — Phase 2 (single-user) essentially REACHED on the emulator
-The 040 kernel boots with **0 panics / 0 BUS errors to an interactive `root` login**; `ls`,
-`ls -al`, `uname -a` all run at the shell (fs-uae, `unix_boot unix-040-dbg`).  Everything up to
-and through this point works: Phase 1 (MMU-on), the whole VM/HAT format port, swap config, the
-040 context switch (resume040 dual-path remap), root fs mount, init + rc scripts, getty/ttymon
-respawn, login, and basic user commands.  patch_modelb.py = **234 sites**.
-**Solved since the 06-22 note (all committed on 040-switch-trace, boot-verified):** context
-switch, first fork/exec, brk/grow 2KB roundups, the seg_vn per-page-array +99 sweep, hat040 table
-freeing, the date/hardbus page-crossing hang, the "Killed"/rtld-SIGKILL (anon_zero ZFOD
-half-zero), the segu /proc window (VOP lens + prumap040), and the sptmap arena free-side.
-**Remaining for a clean multi-user base:** port **hat_dup** (BASE unix-040 still has stock-030
-hat_dup — only the dbg build stubs it, so the BASE kernel is not yet fork-safe), **hat_chgprot ×6**
-(fork COW), **hat_exec** (exec stack move, currently neutered by guards), **uvirtophys/uvatosde**
-user walkers, **vm_swap 2KB units**.  Method going forward = drive real workloads and read the
-serial log; each remaining bug surfaces on a specific path, not by blind auditing.
-**Canonical detail: RESUME-HERE.md** (milestone + fix chain + BATCH PLAN).  Source map in memory
-kernel-source-vs-binary.md.  Real-HW line still PAUSED (RESUME-HERE-040-HARDWARE.md).
+## ★ CURRENT STATUS (2026-07-06) — Phase 2 (single-user) usable on the emulator; reboot + fsck now work
+The 040 kernel boots to an interactive `root` login and runs `ls -alR | wc`, `uname -a`, etc.
+(fs-uae, `unix_boot unix-040-dbg`).  A full **clean boot → login → `ls -alR` → reboot cycle now
+succeeds cleanly.**  Everything up to and through login works: Phase 1 (MMU-on), the whole VM/HAT
+format port, swap config, the 040 context switch (resume040 dual-path remap), root fs mount,
+init + rc scripts, getty/ttymon respawn, login, and basic user commands.  patch_modelb.py = **235
+sites** (Model-B byte patches).
+**Fixed 2026-07-05/06 (all on master — see KNOWN-ISSUES.md ISSUE-5/6):** the `reboot` path
+(haltsys/rtnfirm ran an illegal 030 pmove → now unconditional 040 movec MMU-disable); `fsck` on a
+dirty UFS (`swap_xlate`/`swap_anon` 2KB→4KB + reverted a mislabeled PAGE_HASHFUNC byte-patch);
+`hat_unload040` V2.3 (guard had made it a silent no-op for all kernel VAs); `segu_get` SEGU_LOCKED
+(Model-B loop-bound patch dropped the flag).
+**Prior wins (06-22..07-04, boot-verified):** context switch, first fork/exec, brk/grow 2KB
+roundups, the seg_vn per-page-array +99 sweep, hat040 table freeing, the date/hardbus page-crossing
+hang, the "Killed"/rtld-SIGKILL (anon_zero ZFOD half-zero), the segu /proc window (VOP lens +
+prumap040), and the sptmap arena free-side.
+**Known OPEN — ISSUE-7 (KNOWN-ISSUES.md):** a SECOND boot from a kernel-contaminated disk panics
+at the login prompt — a process's u-area has `u_procp=0` (fresh-zero page, non-swap mechanism);
+extensively narrowed (7 hypotheses ruled out by runtime probes) but ROOT not yet found.  System
+stays USABLE for clean cycles.  Full diagnostic infra + resume points documented in ISSUE-7.
+**Remaining for a clean multi-user BASE (unix-040, no dbg overlay):** port **hat_dup** (BASE still
+links stock-030 hat_dup — only the dbg build stubs it; real `hat_dup040` is on branch
+`040-hat-dup-port`, ISSUE-4), **hat_chgprot ×6** (fork COW), **hat_exec** (exec stack move,
+currently neutered by guards), **uvirtophys/uvatosde** user walkers, **vm_swap 2KB units**.  Also
+pending: migrate the dbg-only genuine fixes (resume040 etc.) into the base + strip diagnostics so
+`unix-040` boots standalone (a "quiet" serial-capable variant is planned for real-HW testing).
+**Canonical detail: RESUME-HERE.md** (milestone + fix chain + BATCH PLAN) and KNOWN-ISSUES.md.
+Source map in memory kernel-source-vs-binary.md.  Real-HW line: a USB-serial adapter is incoming,
+so real-HW testing is becoming feasible again (see RESUME-HERE-040-HARDWARE.md + SERIAL-DEBUG.md).
+A parallel Codex analysis project (analysis/) is mapping the whole kernel against the source tree.
 
 ## Goal
 Make the AMIX SVR4 kernel boot and run on 68040, then 68060, on an Amiga 3000.
