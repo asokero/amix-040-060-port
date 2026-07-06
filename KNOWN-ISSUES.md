@@ -375,22 +375,40 @@ a TOURNIQUET that re-runs preempt via the curproc global so the machine survives
 markers), `hatalloc_dbg` LIVEABORT (narrowed to keepcnt!=0), and the `UTRAP` u_procp-at-
 entry probe in execmark.s. Serial capture via serdbg (SERIAL-DEBUG.md).
 
+### 9. setuctxt kmem_alloc(KM_SLEEP) window (2026-07-07, RULED OUT — probe never fired)
+Codex timing hypothesis #1 (`prototypes/setuctxt_dbg.s`, commit `c0b78c5`): does `u_procp`
+survive `setuctxt`'s own internal `kmem_alloc(KM_SLEEP)` loop? **User boot-tested 2026-07-07:
+`grep -a "DBG setuctxt POST-RETURN" /tmp/amix-boot.log` printed nothing** — the wrapper is
+confirmed correctly wired (verified via disassembly pre-test: `setuctxt` was file-local,
+needed `--globalize-symbol` before `--weaken-symbol`, `procdup`'s call now binds to the
+wrapper) and it simply never observed a mismatch. **This means the corruption does NOT
+happen inside setuctxt's own execution window.** Bug still reproduces, this time terminating
+in a WORSE cascade than before: `PANIC: KERNEL FAULT psw=0x2100, pc=0x0, fmt=0x0, vector=0x0
+(Reset: Stack Pointer)` (previously `pc=0x7096226 rcopyout+0x28 vector=0x2 Bus Error`) —
+consistent with "recursive kstack unwind, exact terminal PC/vector varies" already documented,
+not a new mechanism. Also newly observed this run: `curproc=40258400` (a 4th distinct value
+alongside `4011AC00`/`40248400`/`40256400`), `caller=0` in PREEMPT1 (vs. a real return address
+before), and an `as_fault STREAM pid=162 ...` sampler line moments before the cascade — the
+STREAM sampler is a periodic (every-128th-call) `as_fault` address sampler unrelated to any
+specific proc, its proximity to the crash is very likely coincidental timing, not causal;
+do not chase it without independent corroboration.
+
+**Narrowing takeaway (2026-07-07): both a proc-creation-time hypothesis (setuctxt) and a
+coherency-omission hypothesis (hat_unload cpusha) are now ruled out. The corruption mechanism
+is neither of those.** Given `u+0x318` (survives) is written by `save()` on ordinary context
+switch-out, the victim proc most likely reaches this state as an ALREADY-RUNNING (not
+freshly-created) proc — so the next probe should watch procs across repeated dispatches, not
+proc creation.
+
 ### RESUME POINTS (next measurements to try)
-- **DONE, awaiting boot test (2026-07-07):** `prototypes/setuctxt_dbg.s` — Codex timing
-  hypothesis #1. `setuctxt(childproc, up)` writes `up+0x730=childproc` as its first act
-  (0x41954), then loops calling `kmem_alloc(0x7c, 0)` (0x41972-0x419a4) to duplicate a
-  124-byte per-proc record list; that `kmem_alloc` can legitimately SLEEP (block on kernel
-  heap memory), letting other procs run via `swtch` DURING setuctxt's own execution. The
-  wrapper checks `up+0x730 == childproc` immediately when `setuctxt` returns — if the
-  corruption happens inside one of those sleep windows, this fires the FIRST time it can
-  possibly be observed (setuctxt never re-asserts the write after the initial one, so a
-  post-return mismatch pins the corruption to this specific function's execution). Verified
-  correctly wired: `setuctxt` was FILE-LOCAL in the original object (`globalize-symbol`
-  needed before `weaken-symbol`, easy to get wrong silently — confirmed via disassembly that
-  `procdup`'s call now binds to the wrapper and the wrapper's internal call reaches
-  `setuctxt_orig`). Log line: `"DBG setuctxt POST-RETURN u_procp MISMATCH up=%x
-  expected=%x got=%x n=%x"` — its ABSENCE before the panic rules this hypothesis out just as
-  informatively as its presence confirms it (grep the log either way).
+- **Multi-proc watermark scan in `preempt_dbg.s` (planned, lower-risk than hooking `resume`
+  or `swtch` directly):** when Lpd_div already fires (the existing, proven-safe divergence
+  path — no new hook point, no risk to the hot dispatch path), additionally walk `practive`
+  (same pattern as `mainmarks.s`'s idle proc-table dump) and read `u_procp` via each live
+  proc's OWN p_segu window (same guarded read PREEMPT5 already uses for the one proc). This
+  tells us: is the corruption isolated to ONE proc (supports a per-allocation race) or does
+  it hit SEVERAL procs at once (would suggest a shared/global structure got clobbered
+  instead)? Zero risk to `resume`/`swtch` — purely additive to an already-firing diagnostic.
 - Add a `segu_softload` marker (only softunload was instrumented) + a `segu_get` per-proc
   (cp→p_segu→page pfn) marker to trace the u-area PAGE lifecycle and catch when p_segu's
   backing page becomes a fresh-zero page. LOWER PRIORITY than it once was: ruled-out items

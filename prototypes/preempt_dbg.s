@@ -190,6 +190,67 @@ Lpd_m5p:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(24),%sp
+| --- PREEMPT6 (2026-07-07, ISSUE-7): multi-proc watermark scan -- is the corruption
+| isolated to ONE proc or does it hit several at once?  Walk practive (same idiom as
+| mainmarks.s's idle proc-table dump: p_next@276, p_pidp@264, pid_id@+4), read u_procp via
+| EACH live proc's OWN p_segu window (same guarded read PREEMPT5 already uses for curproc
+| alone: p_segu@252 must be nonzero, 4-aligned, inside kvsegu [0x48440000,0x48480000)).
+| ZERO risk to the hot dispatch path or resume/swtch -- this is purely additive to the
+| ALREADY-firing Lpd_div divergence path (only reached once ISSUE-7 has already triggered);
+| d2-d5/a2-a4 are restored fresh from the entry save at Lpd_fix regardless of what this scan
+| does with them, and Lpd_fix re-derives curproc/clfuncs itself rather than relying on
+| anything left over here.  d2=checked count, d3=zero-u_procp count, d4/d5=first/second
+| offending pid (0 = none found yet OR that pid happens to be 0 -- an accepted imprecision,
+| proc 0 is not a plausible ISSUE-7 victim).  Bounded 40 procs (mainmarks.s's cap).
+	clrl	%d2			| checked
+	clrl	%d3			| zero-count
+	clrl	%d4			| first bad pid
+	clrl	%d5			| second bad pid
+	moveal	practive,%a2
+	moveq	&39,%d0			| bound: max 40 procs
+Lpd_scan_loop:
+	movel	%a2,%d1
+	beqw	Lpd_scan_done		| end of list
+	addql	&1,%d2			| checked++
+	movel	%a2@(252),%d1		| p_segu
+	beqw	Lpd_scan_next		| no p_segu -> can't check, skip (not counted as zero)
+	andil	&3,%d1
+	bnew	Lpd_scan_next		| not 4-aligned -> skip
+	movel	%a2@(252),%d1
+	cmpil	&0x48440000,%d1
+	bcsw	Lpd_scan_next		| below kvsegu -> skip
+	cmpil	&0x48480000,%d1
+	bccw	Lpd_scan_next		| above kvsegu -> skip
+	moveal	%d1,%a3
+	tstl	%a3@(0x730)
+	bnew	Lpd_scan_next		| nonzero -> healthy, next proc
+	addql	&1,%d3			| zero-count++
+	tstl	%d4
+	bnew	Lpd_scan_b2
+	moveal	%a2@(264),%a3		| p_pidp
+	movel	%a3,%d1
+	beqw	Lpd_scan_next		| half-built proc, no pid -> leave first-bad slot open
+	movel	%a3@(4),%d4		| first bad pid
+	braw	Lpd_scan_next
+Lpd_scan_b2:
+	tstl	%d5
+	bnew	Lpd_scan_next
+	moveal	%a2@(264),%a3
+	movel	%a3,%d1
+	beqw	Lpd_scan_next
+	movel	%a3@(4),%d5		| second bad pid
+Lpd_scan_next:
+	moveal	%a2@(276),%a2		| p_next
+	dbra	%d0,Lpd_scan_loop
+Lpd_scan_done:
+	movel	%d5,%sp@-		| pid2
+	movel	%d4,%sp@-		| pid1
+	movel	%d3,%sp@-		| zerocount
+	movel	%d2,%sp@-		| scanned
+	pea	Lpd_s6
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
 | ===================== tourniquet: original body via the curproc GLOBAL =====================
 Lpd_fix:
 	moveml	%fp@(-28),%d2-%d5/%a2-%a4
@@ -228,6 +289,7 @@ Lpd_orig:
 	nop				| pad .text to a multiple of 4 (relink contiguity)
 	nop
 	nop				| pad (PREEMPT5 addition changed size by 2 mod 4)
+	nop				| pad (PREEMPT6 addition changed size by 2 mod 4 again)
 
 	.data
 	.even
@@ -245,6 +307,9 @@ Lpd_s4:
 	.even
 Lpd_s5:
 	.asciz	"DBG PREEMPT5 wproc=%x wctx=%x pubt0=%x pubt2=%x"
+	.even
+Lpd_s6:
+	.asciz	"DBG PREEMPT6 scanned=%x zerocount=%x pid1=%x pid2=%x"
 	.even
 Lpd_n:
 	.long	0
