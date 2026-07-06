@@ -418,6 +418,46 @@ u_trap:
 	lea	%sp@(16),%sp
 	moveml	%sp@+,%d0-%d3/%a0-%a2	| restore; sp back to entry value
 Lcr2_skip:
+| --- ISSUE-7 TIMING PROBE (2026-07-06): is curproc->u_procp already 0 AT TRAP ENTRY? ---
+| Codex reasoning: u_procp is correct at first resume (else newproc+0x3b4 would crash), so it
+| is zeroed LATER.  Read u_procp via the STABLE p_segu kvsegu window (curproc@252 + 0x730) at
+| every user-trap entry; if 0, the zeroing happened BEFORE this trap (during the run / a prior
+| kernel op) -- vs preempt_dbg (later) which already shows 0.  Brackets the trap path.
+| Process context, sp at entry value, balanced (no reg saved -- uses d0/d1/a0 which u_trap_orig
+| recomputes from its args).  Guards: curproc nonzero+even; p_segu in kvsegu [0x48440000,
+| 0x48480000).  cmn_err safe here.  Cap 12 (Lupz_n).
+	movel	Lupz_n,%d0
+	cmpil	&12,%d0
+	bccw	Lupz_done
+	moveal	curproc,%a0
+	movel	%a0,%d1
+	beqw	Lupz_done
+	btst	&0,%d1
+	bnew	Lupz_done
+	movel	%a0@(252),%d1		| p_segu
+	beqw	Lupz_done
+	andil	&3,%d1
+	bnew	Lupz_done
+	movel	%a0@(252),%d1
+	cmpil	&0x48440000,%d1
+	bcsw	Lupz_done
+	cmpil	&0x48480000,%d1
+	bccw	Lupz_done
+	moveal	%d1,%a0
+	movel	%a0@(0x730),%d0		| u_procp via the stable p_segu window
+	bnew	Lupz_done		| nonzero -> fine, no log
+	movel	Lupz_n,%d0
+	addql	&1,%d0
+	movel	%d0,Lupz_n
+	movel	%sp@(70),%sp@-		| trap PC
+	movel	%d1,%sp@-		| p_segu
+	moveal	curproc,%a0
+	movel	%a0,%sp@-		| curproc
+	pea	Lupz_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
+Lupz_done:
 	movel	%sp@(70),%d0		| saved trap PC
 	cmpil	&0x80000000,%d0
 	bcsw	Lut_go			| kernel-space trap -> skip
@@ -795,6 +835,12 @@ Lci_n:
 	.long	0
 Lut_n:
 	.long	0
+Lupz_n:
+	.long	0
+	.even
+Lupz_msg:
+	.asciz	"DBG UTRAP uprocp0 curproc=%x psegu=%x pc=%x"
+	.even
 Lh_n:
 	.long	0
 Lcr2_n:
