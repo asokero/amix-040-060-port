@@ -25,15 +25,23 @@ Acted on the actionable ones this session (full detail: KNOWN-ISSUES.md ISSUE-4,
   unaffected (boot "didn't seem worse than before" per the user).
 - Also merged: a doc-only update to `analysis/runtime-tests/README.md` noting the temporary
   `unix-040-hatdup-test` acceptance-test kernel is now superseded by master's own builds.
-- **NEW probe added (commit c0b78c5, awaiting boot test):** `prototypes/setuctxt_dbg.s` —
-  Codex timing hypothesis #1. Checks whether `u_procp` survives `setuctxt`'s OWN internal
-  `kmem_alloc(KM_SLEEP)` loop (a proc-creation-time race window, NOT swap-related — swap is
-  already ruled out via items 5/6). Full detail: KNOWN-ISSUES.md RESUME POINTS. `unix-040-dbg`
-  rebuilt clean; `unix-040`/`unix-040-quiet` unaffected (dbg-only diagnostic).
+- **setuctxt probe — RULED OUT (2026-07-07, user boot-tested):** `"DBG setuctxt POST-RETURN"`
+  never appeared in the log. Confirms the corruption does NOT happen inside setuctxt's own
+  `kmem_alloc(KM_SLEEP)` execution window (ruled-out item 9). This run's panic terminated in a
+  *different* cascade tail (`Reset: Stack Pointer`, pc=0/vector=0) than the previous run's
+  (`rcopyout` Bus Error) — consistent with the already-documented "terminal PC/vector varies
+  per recursive kstack unwind", not a new mechanism.
+- **NEW probe added (commit 959194f, awaiting boot test): PREEMPT6 in `preempt_dbg.s`** —
+  when the existing divergence path already fires, additionally walk `practive` and check
+  `u_procp` via EVERY live proc's own `p_segu` window (not just the crashing one), reporting
+  how many procs are affected. Answers isolated-vs-systemic. Zero new hook points — purely
+  additive to a path that only runs after ISSUE-7 has already triggered, so no risk to
+  `resume`/`swtch`. Full detail + reasoning: KNOWN-ISSUES.md RESUME POINTS.
 
-**Boot-tested (2026-07-07):** `unix-040-dbg` with the ISSUE-4 merge — no regression, but
-ISSUE-7 still reproduces (see above). The 2026-07-07 `setuctxt_dbg.s` probe is NOT yet
-boot-tested — that is the next thing to do.
+**Boot-tested (2026-07-07, two rounds):** `unix-040-dbg` with the ISSUE-4 merge (no
+regression) and then with the setuctxt probe (ruled out, item 9) — ISSUE-7 still reproduces
+both times. The PREEMPT6 scan (commit 959194f) is NOT yet boot-tested — that is the next
+thing to do; read its output alongside the usual PREEMPT1-5 lines.
 
 ## ►►► UPDATE 2026-07-06: reboot + fsck FIXED; clean boot→login→ls -alR→reboot cycle works ◄◄◄
 Since the 07-04 login milestone, driving real workloads surfaced and fixed a chain of bugs
@@ -54,24 +62,26 @@ Since the 07-04 login milestone, driving real workloads surfaced and fixed a cha
 
 **OPEN — ISSUE-7 (the current frontier, KNOWN-ISSUES.md):** a SECOND boot from a kernel-
 contaminated disk panics at the login prompt; a process's u-area has **`u_procp=0`** (a fresh-zero
-page, via a NON-swap mechanism — 8 hypotheses ruled out by runtime probes: kmem free-list,
+page, via a NON-swap mechanism — 9 hypotheses ruled out by runtime probes: kmem free-list,
 interrupt tables, remap-read, u_procp-at-trap-entry, swap daemon, segu_softunload, segu slot
-double-alloc, and (2026-07-07) hat_unload's missing post-clear cpusha).  Root NOT yet found.
+double-alloc, (2026-07-07) hat_unload's missing post-clear cpusha, and (2026-07-07)
+setuctxt's internal kmem_alloc sleep window).  Root NOT yet found.
 Deterministic repro: contaminate image B (boot+reboot once), its next boot crashes; restore
 pristine image A → clean.  System stays USABLE for clean cycles. Rich dbg diagnostic infra in
-place (ktrap_latch / preempt_dbg+tourniquet / kmem_validate / segvn_softunlock_dbg /
-segu_swap_dbg / hatalloc_dbg LIVEABORT / execmark UTRAP / setuctxt_dbg).
+place (ktrap_latch / preempt_dbg+tourniquet [now incl. PREEMPT6 multi-proc scan] /
+kmem_validate / segvn_softunlock_dbg / segu_swap_dbg / hatalloc_dbg LIVEABORT / execmark
+UTRAP / setuctxt_dbg [ruled out, kept for regression visibility]).
 
-**NEXT options (pick per session):** (a) continue ISSUE-7 — boot-test the new `setuctxt_dbg.s`
-probe (commit c0b78c5, grep the log for "DBG setuctxt POST-RETURN"), then fall back to the
-remaining resume-point probes in KNOWN-ISSUES if it doesn't fire; (b) ~~get BASE `unix-040`
-bootable standalone~~ — hat_dup040 (ISSUE-4) is now merged; the base still needs the dbg-only
-diagnostics stripped for a fully quiet standalone boot (see the QUIET variant below, which
-already does this for a serial line); (c) real-HW testing (USB-serial adapter incoming); (d)
-let the parallel Codex `analysis/` project continue mapping the kernel — its audits already
-paid off once this session (ISSUE-4 hardening, even though the ISSUE-7 lead it inspired was
-ruled out); (e) run the `analysis/runtime-tests/hat_dup_cow` fork/COW
-acceptance test (built, never actually run) against the freshly-merged `unix-040-dbg`.
+**NEXT options (pick per session):** (a) continue ISSUE-7 — boot-test the new PREEMPT6
+multi-proc scan (commit 959194f) and read whether `zerocount` is 1 (isolated, supports a
+per-allocation race) or >1 (systemic, a shared/global structure got clobbered); (b) ~~get
+BASE `unix-040` bootable standalone~~ — hat_dup040 (ISSUE-4) is now merged; the base still
+needs the dbg-only diagnostics stripped for a fully quiet standalone boot (see the QUIET
+variant below, which already does this for a serial line); (c) real-HW testing (USB-serial
+adapter incoming); (d) let the parallel Codex `analysis/` project continue mapping the
+kernel — its audits already paid off once this session (ISSUE-4 hardening, even though the
+ISSUE-7 leads it inspired were both ruled out); (e) run the `analysis/runtime-tests/hat_dup_cow`
+fork/COW acceptance test (built, never actually run) against the freshly-merged `unix-040-dbg`.
 
 **QUIET variant BUILT (2026-07-06, BOOT-CONFIRMED 2026-07-07 — NetHack runs):** `sh
 relink-040-quiet.sh` → `build/unix-040-quiet` — the serial-capable quiet twin of the dbg build
