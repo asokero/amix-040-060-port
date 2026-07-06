@@ -21,6 +21,13 @@
 |   PREEMPT3 u-area fingerprint: longs at u+0, u+4, u+0x318, u+0x31C (zeros => zfod page;
 |            regsave/ctx junk => a real-but-wrong u-area)
 |   PREEMPT4 curproc's p_clfuncs + its cl_preempt slot (the CORRECT call target)
+|   PREEMPT5 the ISSUE-7 remap-vs-creation DECIDER: read u_procp (+0x730) and the saved-ctx
+|            first long (+0x318) via the PERMANENT p_segu kvsegu window (curproc@252) --
+|            the window proc creation WROTE u_procp through -- plus the proc's embedded
+|            u-block page table p_ubptbl[0]/[2] ((curproc+95)&~15; 2KB-indexed, so [2] =
+|            2nd 4KB page).  p_segu-window u_procp correct + fixed-VA u_procp 0 => the
+|            fixed-VA remap maps a DIFFERENT phys page than p_segu (resume/remap bug);
+|            both 0 => the page genuinely lacks u_procp (creation/swap bug).
 | then TOURNIQUET: re-execute the original preempt body using the CURPROC GLOBAL instead
 | of the fixed-VA read (validated: clfuncs in kernel data range, target in text range),
 | so the system survives where it used to panic -- surviving IS the diagnosis check.
@@ -122,9 +129,9 @@ Lpd_gotexp:
 	lea	%sp@(24),%sp
 | --- PREEMPT4: the CORRECT class pointers from the curproc global ---
 	movel	%a3,%d0
-	beqw	Lpd_fix
+	beqw	Lpd_m5			| curproc unusable: skip PREEMPT4, PREEMPT5 prints 0s
 	btst	&0,%d0
-	bnew	Lpd_fix
+	bnew	Lpd_m5
 	moveal	%a3@(236),%a0		| clf = p_clfuncs
 	movel	%a0,%d0
 	btst	&0,%d0
@@ -144,6 +151,45 @@ Lpd_m4p:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(16),%sp
+| --- PREEMPT5: u_procp/ctx via the PERMANENT p_segu window + p_ubptbl[0]/[2] ---
+| Every deref guarded: p_segu (d2, from PREEMPT1) must be nonzero, 4-aligned and inside
+| kvsegu [0x48440000,0x48480000); curproc (a3) nonzero+even before (curproc+95)&~15.
+| Guard failure => the affected field(s) print 0 (never fault: we run moments pre-panic).
+Lpd_m5:
+	moveq	&0,%d3			| d3 = wproc (u_procp via p_segu window)
+	moveq	&0,%d4			| d4 = wctx  (saved-ctx first long via window)
+	movel	%d2,%d0			| p_segu (0 if curproc was unusable)
+	beqw	Lpd_m5u
+	andil	&3,%d0
+	bnew	Lpd_m5u			| not 4-aligned
+	cmpil	&0x48440000,%d2
+	bcsw	Lpd_m5u			| below kvsegu
+	cmpil	&0x48480000,%d2
+	bccw	Lpd_m5u			| above kvsegu
+	moveal	%d2,%a0
+	movel	%a0@(0x730),%d3		| wproc = u_procp through the p_segu window
+	movel	%a0@(0x318),%d4		| wctx = saved-ctx first long through the window
+Lpd_m5u:
+	moveq	&0,%d5			| d5 = pubt0
+	moveq	&0,%d1			| d1 = pubt2
+	movel	%a3,%d0
+	beqw	Lpd_m5p
+	btst	&0,%d0
+	bnew	Lpd_m5p
+	addil	&95,%d0			| p_ubptbl = (curproc + 95) & ~15
+	andil	&0xfffffff0,%d0
+	moveal	%d0,%a0
+	movel	%a0@(0),%d5		| pubt0 = p_ubptbl[0]
+	movel	%a0@(8),%d1		| pubt2 = p_ubptbl[2] (2KB-indexed => byte off 8)
+Lpd_m5p:
+	movel	%d1,%sp@-		| pubt2
+	movel	%d5,%sp@-		| pubt0
+	movel	%d4,%sp@-		| wctx
+	movel	%d3,%sp@-		| wproc
+	pea	Lpd_s5
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
 | ===================== tourniquet: original body via the curproc GLOBAL =====================
 Lpd_fix:
 	moveml	%fp@(-28),%d2-%d5/%a2-%a4
@@ -181,6 +227,7 @@ Lpd_orig:
 	jmp	preempt_orig
 	nop				| pad .text to a multiple of 4 (relink contiguity)
 	nop
+	nop				| pad (PREEMPT5 addition changed size by 2 mod 4)
 
 	.data
 	.even
@@ -195,6 +242,9 @@ Lpd_s3:
 	.even
 Lpd_s4:
 	.asciz	"DBG PREEMPT4 clf=%x clpre=%x"
+	.even
+Lpd_s5:
+	.asciz	"DBG PREEMPT5 wproc=%x wctx=%x pubt0=%x pubt2=%x"
 	.even
 Lpd_n:
 	.long	0

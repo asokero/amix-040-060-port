@@ -137,19 +137,16 @@ page_abort:
 	moveml	%d2/%a2,%sp@-
 	moveal	%fp@(8),%a2		| pp
 	movel	%a2,%d2
-| --- ISSUE-7 TRIPWIRE (LIVEABORT): aborting a page that is still hat-mapped (p_mapping!=0)
-|     or keepcnt-held is the exact corruption moment behind the zeroed-u-area crashes:
-|     PREEMPT2/3 proved the fixed VA maps the RIGHT phys whose HEAD got zeroed under a live
-|     proc -- the page was aborted out of the hash, re-handed-out and bzero'd while still
-|     mapped.  Legitimate aborts come AFTER hat_unload (p_mapping==0, keepcnt==0 -- the
-|     cap-40 log below shows exactly that), so any hit here is an anomaly.  Prime suspect:
+| --- ISSUE-7 TRIPWIRE (LIVEABORT), NARROWED 2026-07-06: fires ONLY on p_keepcnt != 0.
+|     Codex static analysis established that page_abort on a page with p_mapping!=0 &&
+|     p_keepcnt==0 is NORMAL contract (page_abort itself calls hat_pageunload then
+|     page_free), so the old `p_mapping!=0 OR keepcnt!=0` gate yielded benign false
+|     positives from pvn_vptrunc -- p_mapping alone is NOT corruption.  The real anomaly
+|     (the segu-class bug) is aborting a still-HELD page: keepcnt != 0.  Prime suspect:
 |     segu_get's page_enter-retry (caller ret-addr 0xaa5fa) aborting another proc's live
 |     u-page when a double-allocated anon slot collides.  Cap 8. ---
-	tstl	%a2@(32)		| p_mapping set?
-	bnew	Lpa_live
-	tstw	%a2@(2)			| p_keepcnt held?
+	tstw	%a2@(2)			| p_keepcnt held? (the only anomaly gate now)
 	beqw	Lpa_norm
-Lpa_live:
 	movel	Lpa_ln,%d0
 	cmpil	&12,%d0
 	bccw	Lpa_norm
