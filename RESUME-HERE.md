@@ -29,9 +29,18 @@ segvn_softunlock_dbg / segu_swap_dbg / hatalloc_dbg LIVEABORT / execmark UTRAP).
 **NEXT options (pick per session):** (a) continue ISSUE-7 with the resume-point probes in
 KNOWN-ISSUES; (b) get BASE `unix-040` bootable standalone — migrate the dbg-only genuine fixes
 (resume040 in mainmarks.s + real hat_dup040 from branch `040-hat-dup-port` = ISSUE-4) and strip
-diagnostics; a "quiet" serial-capable variant is planned for real-HW testing (MAIN debug line
-stays the full dbg build on the emulator); (c) real-HW testing (USB-serial adapter incoming);
+diagnostics; (c) real-HW testing (USB-serial adapter incoming);
 (d) let the parallel Codex `analysis/` project map the whole kernel vs the source tree first.
+
+**QUIET variant BUILT (2026-07-06, boot test pending):** `sh relink-040-quiet.sh` →
+`build/unix-040-quiet` — the serial-capable quiet twin of the dbg build for real-HW testing.
+Overlay = `prototypes/quiet040.s` (sched loop / schedpaging skip / idle / resume040 verbatim
+[byte-compared identical to the dbg build] / hat_dup stub / hardbus page-crossing fix — the
+dbg overlay's load-bearing parts with ALL probe output removed) + `serdbg.s` (conputc serial
+mirror: banner/cmn_err/panics still go to serial).  All pure diagnostics omitted — NOTE this
+includes the preempt_dbg ISSUE-7 tourniquet, so a contaminated-disk second boot panics raw
+here.  MAIN debug line stays `unix-040-dbg` on the emulator; keep quiet040.s in sync with
+mainmarks.s/forkdbg.s/sigkill_dbg.s when their genuine parts change (map in its header).
 
 ---
 ## (historical) MILESTONE 2026-07-04: INTERACTIVE 040 LOGIN WORKS — ls / ls -al / uname -a all run
