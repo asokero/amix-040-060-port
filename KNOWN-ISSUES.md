@@ -260,24 +260,80 @@ Boot-confirmed: dirty FS now runs fsck to completion and the next boot reaches l
 Diagnostic wrappers (`segvn_softunlock_dbg`, `kmem_validate`, `ktrap_latch`) remain wired
 into `relink-040-dbg.sh` only (base build unaffected); useful for ISSUE-7.
 
-## ISSUE-7: recurring `PANIC pc=0x4000001E vector=0x4` — IPL-3 wild jump into the u-area (OPEN)
-**Status: OPEN (2026-07-05) — the primary remaining login-path crash; next target.**
-The recurring `PANIC: KERNEL FAULT psw=0x2311, pc=0x4000001E, fmt=0x0, vector=0x4 (Illegal
-Instruction)` (previously misfiled under ISSUE-5). Triggered after a `login` → `ls -alR | wc`
-+ `uname -a` → `reboot` sequence (either during it or at the next boot's login). Facts
-established via the `ktrap_latch` first-fault dbg wrapper:
-- Fault context: `proc 0`, **SR=0x2311 → supervisor, IPL 3** (a level-3 / VBLANK-class
-  interrupt). PC=0x4000001E = u-area base (0x40000000) + 0x1E — a DETERMINISTIC jump into
-  the u-area (same value every crash), not random garbage.
-- Saved regs at fault: A2=0x40000000 (u-area base), A1=0x00F80C1E (Kickstart ROM), A0
-  garbage. Interrupted stack held `preempt`/`u_trap` return addrs + Kickstart ROM + fast-RAM
-  physical addrs.
-- RULED OUT: kmem free-list corruption (`kmem_validate` never fired across a full run);
-  interrupt dispatch tables `vbinttab`/`int2_tbl` (latch dumped them intact). `resume`'s
-  own `jmp (a1)` is likely not the immediate cause (a1 at fault ≠ 0x4000001E).
-- Live theories: (T1) something transfers control to the u-area base and the CPU executes
-  the pcb/regsave header bytes until the first illegal opcode at +0x1E; (T2) a corrupted
-  exception/autovector (VBR=M68Kvec; level-3 autovector VBR+0x6C, or the vec-4 slot) points
-  into the u-area — IPL 3 fits. This is the long-standing 040 ctx-switch / exception-frame
-  frontier. NOTE: the swap_xlate/hash fixes (ISSUE-6) removed real memory-corruption-class
-  bugs — RE-TEST the 0x4000001E repro first; it may have changed or gone.
+## ISSUE-7: u-area corruption at login-after-reboot — `u_procp=0` → wild jump / bus-error (OPEN, deeply characterized)
+**Status: OPEN (2026-07-06), extensively narrowed but ROOT NOT YET FOUND. Documented for
+resume; the system is USABLE (a clean boot + login + `ls -alR` + reboot succeeds; only a
+SECOND boot from a kernel-contaminated disk crashes at the login prompt).**
+
+### Symptom
+`PANIC: KERNEL FAULT pc=0x4000001E vector=0x4 (Illegal Instruction)` OR
+`pc=0x7096226 (rcopyout+0x28) fmt=0x7 vector=0x2 (Bus Error)`, preceded by a recursive
+`kstack 0x40000Cxx!` unwind. Both are the SAME bug: a process's u-area (mapped at the
+fixed VA 0x40000000 and via its kvsegu `p_segu` window) has **`u_procp` (u+0x730) == 0**
+while the saved-context area `u_rsav` (u+0x318) is live. `copyout` reads `p_sysid` off the
+null `u_procp` → wrong RFS path → `rcopyout` deref → bus error; OR preempt's
+`jsr ([44,p_clfuncs])` with a null u_procp jumps wild → 0x4000001E. The recursive cascade
+is because the kernel stack lives IN the corrupt u-area, so every nested trap re-faults.
+
+### Reproduction (DETERMINISTIC — keep a contaminated image for testing)
+Pristine disk image A boots + logs in + reboots cleanly. Take a copy B, boot it once with
+the 040 kernel and reboot → the NEXT boot of B panics at the login prompt, every time.
+Restore A over B → clean again. NO fsck needed; ordinary boot+shutdown disk writes change
+the login-time process/I-O pattern enough to hit it. Fixed-ish values every crash:
+`u+0x318=0x4073X000` (kvsegmap addr), `u+0x31C=0x40000378` (= &u+0x378, a u_qsav-style
+self-pointer → the crashing proc is in a sleep/longjmp context), `p_segu`≈0x48466000/
+0x48468000 (kvsegu slot ~19/20), curproc varies (0x4011AC00/0x40248400/0x40256400).
+
+### RULED OUT by runtime measurement (do NOT re-chase these)
+1. **kmem free-list corruption** — `kmem_validate` (9-bin integrity check on every
+   kmem_alloc) NEVER fired across a full run.
+2. **Interrupt dispatch tables** — `ktrap_latch` dumped `vbinttab`/`int2_tbl` INTACT.
+3. **Fixed-VA remap reads wrong page** — `PREEMPT5` reads u_procp via BOTH the fixed VA
+   AND the stable p_segu window; both == 0, `wctx==u318`, `apt==exp` (uarea_pt leaf ==
+   kptr040-walked p_segu leaf). Mapping is CORRECT; the page genuinely has u_procp=0.
+4. **u_procp 0 at trap entry** — the `UTRAP` probe (reads u_procp via p_segu window at
+   every user-trap ENTRY) NEVER fired → u_procp is FINE at entry, zeroed mid-trap.
+5. **Swap daemon (swapinub/swapoutub)** — `SWAPOUTUB`/`SWAPINUB` markers NEVER fired.
+6. **segu_softunload skipping VOP_PUTPAGE** (Codex's strong theory: it finds pages via
+   p_ubptbl, which is 0 on 040, so it skips the swap-out → softload restores stale) —
+   the `SOFTUNLOAD` marker NEVER fired; segu_softunload is not even called on this path.
+7. **segu slot free-list double-alloc** — Codex verified usd_free pop/push (0xaa47c/
+   0xaa7b8) is a clean LIFO; a slot only reaches a new proc after a real segu_release.
+
+### FIXED ALONG THE WAY (real adjacent bugs found while hunting ISSUE-7, all on master)
+- ISSUE-5 reboot pmove (haltsys/rtnfirm v1/v2/v3 → unconditional 040 movec).
+- ISSUE-6 fsck (swap_xlate/swap_anon 2KB→4KB + revert mislabeled 0xabdae hash patch).
+- hat_unload040 V2.3 (guard rejected kernel-image static kptr040 tables → hat_unload was a
+  silent no-op for ALL kernel VAs; lower bound now `_start>>12`).
+- segu_get SEGU_LOCKED (Model-B loop-bound patch `moveq #3→#1` also dropped the flag stored
+  from the same reg d5 → segu_release passed hat_unload flags=0 → keepcnt never released;
+  restored via the `segu_lockfix` wrapper).
+
+### CURRENT BEST THEORY (unproven)
+The u-area page mapped at `p_segu` is a FRESH ZERO page (all zero except the save-area at
++0x318, which a later `save()` wrote), i.e. the proc's real u-area was replaced/reused by
+a NON-swap mechanism. u_procp is correct at creation (setuctxt @0x41954 writes
+`childproc → p_segu+0x730`, then kmem_alloc(KM_SLEEP) @0x41978 — a sleep window) and at
+trap entry, but 0 by the trap-return preempt (`u_trap_orig+0x104`). Codex's remaining
+angle: a slot is `segu_release`d before the old u-area mapping/page is truly detached
+(040 HAT/keepcnt path), so the next `segu_get` hands the same slot+a fresh page to a new
+proc while the old page-state still lives → double-use. But the narrowed `LIVEABORT`
+tripwire (fires only on page_abort of a keepcnt!=0 page) has been SILENT in recent runs,
+which argues AGAINST "freed while held". So the exact zeroing mechanism is still open.
+
+### DIAGNOSTIC INFRASTRUCTURE IN PLACE (dbg build only, relink-040-dbg.sh)
+`ktrap_latch` (first-fault frame dump), `preempt_dbg` (u_procp check + PREEMPT1-5 dump +
+a TOURNIQUET that re-runs preempt via the curproc global so the machine survives),
+`kmem_validate`, `segvn_softunlock_dbg`, `segu_swap_dbg` (swapinub/swapoutub/segu_softunload
+markers), `hatalloc_dbg` LIVEABORT (narrowed to keepcnt!=0), and the `UTRAP` u_procp-at-
+entry probe in execmark.s. Serial capture via serdbg (SERIAL-DEBUG.md).
+
+### RESUME POINTS (next measurements to try)
+- Instrument `setuctxt` EXIT + the kmem_alloc(KM_SLEEP) window (0x41978): read
+  `*(cp->p_segu+0x730)` after the write and after the sleep — does the page/u_procp survive
+  the sleep?  (Codex timing hypothesis #1.)
+- Add a `segu_softload` marker (only softunload was instrumented) + a `segu_get` per-proc
+  (cp→p_segu→page pfn) marker to trace the u-area PAGE lifecycle and catch when p_segu's
+  backing page becomes a fresh-zero page.
+- Codex to statically analyze the segu/u-area page lifecycle + a whole-kernel-vs-source
+  audit (analysis/ dir) — likely the fastest path given how resistant this is to probing.
