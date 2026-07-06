@@ -190,7 +190,14 @@ Lrd_no:
 | the sdtalloc carves could never be page-freed (shared/offset carve).  This was 17
 | hat_sdtalloc calls/exec = the bulk of the ~26-page/exec kernel-heap drain behind
 | 'ldterm: out of blocks'.  hat_ptalloc preserves d2(va)/a2(pp) (callee-saved regs).
-	pea	1			| one table
+| flags=3 (2026-07-07, Codex HAT-PTALLOC-AUDIT.md): HAT_CANWAIT(1)|HAT_NOSTEAL(2), not bare
+| HAT_CANWAIT(1).  HAT_CANWAIT alone still permits hat_ptalloc_orig's STEAL path on the
+| normal-alloc-failure branch, and that path is unported 030-format tree code (8-byte
+| descriptors, 21-bit PFNs, 2KB VA stride) -- reachable only under real memory pressure,
+| which no test workload so far has hit, but active corruption (not a bounded leak) if it
+| ever fires.  HAT_NOSTEAL forces the fallback straight to sleep-and-retry instead.  No
+| effect on the (currently always-taken) success path.
+	pea	3			| one table
 	movel	%fp,%d0
 	subil	&48,%d0
 	movel	%d0,%sp@-		| &out -- receives the PTDAT DESCRIPTOR (not the table!)
@@ -228,20 +235,22 @@ Lrootok:
 	bne	Lbhave			| Bdesc valid -> walk to existing leaf
 
 | --- Bdesc invalid: allocate a leaf page table ---
+| flags=3 (2026-07-07, see the root-alloc comment above): HAT_CANWAIT|HAT_NOSTEAL, not bare
+| HAT_CANWAIT -- same steal-path hardening, same no-effect-on-success-path reasoning.
 	tstl	%a2			| pp != 0 ?
 	beq	Lballoc0
 	addqw	&1,%a2@(2)		| pp hold++
-	pea	1
+	pea	3
 	movel	%fp,%d0
 	subql	&4,%d0
 	movel	%d0,%sp@-
-	jsr	hat_ptalloc		| hat_ptalloc(&ptdat, 1)
+	jsr	hat_ptalloc		| hat_ptalloc(&ptdat, 3)
 	moveal	%a0,%a4			| a4 = new page table
 	subqw	&1,%a2@(2)		| pp hold--
 	addqw	&8,%sp
 	bra	Lbfill
 Lballoc0:
-	pea	1
+	pea	3
 	movel	%fp,%d0
 	subql	&4,%d0
 	movel	%d0,%sp@-
@@ -1032,6 +1041,19 @@ Lhl_freego:
 Lhl_chkmore:
 	cmpl	%d2,%d3
 	bccw	Lhl_leafwalk		| d3 >= va -> more to unmap
+| 040 coherency fix (2026-07-07, Codex HAT-UNLOAD-COHERENCY-AUDIT.md): every OTHER 040 HAT
+| writer (hat_pteload/hat_chgprot/hat_pageunload/resume) ends with cpusha bc; pflusha before
+| returning; hat_unload was the outlier -- it clrl's each PTE (Lhl_clear, above) but returned
+| with no post-clear cache push.  A cleared PTE can sit in copyback data cache while the
+| hardware table walker still sees the old valid descriptor -- if the caller then frees/
+| reuses the page (segu_release, segu_softunload, segmap_release, anon_private all do exactly
+| this), the stale mapping can still translate to the recycled page.  This is a plausible NEW
+| root cause for ISSUE-7 (u_procp=0 corruption on a second/dirty boot) that was not on the
+| prior "ruled out" list.  Unconditional on every non-rootnull exit (simplest safe fix per the
+| audit's own recommendation -- avoids adding a dirty-flag variable to an already delicate
+| routine; the extra flush is a no-op cost when nothing was cleared).
+	.word	0xf4f8			| cpusha bc
+	.word	0xf518			| pflusha
 	moveml	%fp@(-116),%d2-%d5/%a2-%a4
 	moveal	%d0,%a0
 	unlk	%fp

@@ -1,4 +1,34 @@
-# RESUME HERE — AMIX 68040 port status (2026-07-06)
+# RESUME HERE — AMIX 68040 port status (2026-07-07)
+
+## ►►► UPDATE 2026-07-07: ISSUE-4 (hat_dup) MERGED to master + 2 hardening fixes — AWAITING BOOT TEST ◄◄◄
+`unix-040-quiet` boot-confirmed working since the last update (log much calmer than dbg, as
+designed) and **NetHack runs** on it — the first real fork/exec/terminal/timer-heavy workload
+tested, a stronger signal than the earlier ls/uname smoke tests.
+
+Codex's parallel `analysis/vm-map/` project produced 10 new per-function "HAT contract" audits.
+Acted on the actionable ones this session (full detail: KNOWN-ISSUES.md ISSUE-4, memory
+`amix-codex-hat-audit-findings`):
+- **hat_dup040 merged (ISSUE-4 CLOSED pending boot test):** the real fork/COW port (already
+  boot-verified on branch `040-hat-dup-port`, incl. the fork-without-exec COW subshell test) is
+  now in `prototypes/hat_dup040.s` on master, wired into `relink-040.sh` on top of every newer
+  fix (haltsys/fsck/hat_unload V2.3/segu_lockfix). `unix-040` and `unix-040-dbg` both link it at
+  the same address — confirmed single strong override, not a re-stub. The old `forkdbg.s` stub
+  is no longer linked anywhere (incl. `quiet040.s`, which also dropped its own hat_dup stub).
+- **HAT_CANWAIT→HAT_CANWAIT|HAT_NOSTEAL hardening** (3 sites: hat_pteload root+leaf in
+  `hat040.s`, hat_dup040 root): bare CANWAIT didn't disable `hat_ptalloc_orig`'s unported
+  030-format steal path on allocation failure. No effect on any currently-tested workload
+  (failure path never exercised yet); pure hardening.
+- **hat_unload cpusha fix — NEW ISSUE-7 LEAD:** `hat_unload`'s normal exit was the only 040 HAT
+  writer missing the post-clear `cpusha bc; pflusha` pair. `hat_unload` is called directly by
+  `segu_release`/`segu_softunload` — exactly ISSUE-7's u-area teardown paths. Not confirmed, but
+  genuinely new (not on ISSUE-7's prior ruled-out list) — cheapest next test is just re-running
+  the ISSUE-7 repro against this build.
+- Also merged: a doc-only update to `analysis/runtime-tests/README.md` noting the temporary
+  `unix-040-hatdup-test` acceptance-test kernel is now superseded by master's own builds.
+
+**NOT boot-tested by me (cannot run the kernel) — this is the next thing to do.** All three
+kernels (`unix-040`, `unix-040-dbg`, `unix-040-quiet`) rebuilt clean (0 reloc complaints, single
+strong def per overridden symbol, text/data contiguous) but unverified at runtime.
 
 ## ►►► UPDATE 2026-07-06: reboot + fsck FIXED; clean boot→login→ls -alR→reboot cycle works ◄◄◄
 Since the 07-04 login milestone, driving real workloads surfaced and fixed a chain of bugs
@@ -24,20 +54,27 @@ interrupt tables, remap-read, u_procp-at-trap-entry, swap daemon, segu_softunloa
 double-alloc).  Root NOT yet found.  Deterministic repro: contaminate image B (boot+reboot once),
 its next boot crashes; restore pristine image A → clean.  System stays USABLE for clean cycles.
 Rich dbg diagnostic infra in place (ktrap_latch / preempt_dbg+tourniquet / kmem_validate /
-segvn_softunlock_dbg / segu_swap_dbg / hatalloc_dbg LIVEABORT / execmark UTRAP).
+segvn_softunlock_dbg / segu_swap_dbg / hatalloc_dbg LIVEABORT / execmark UTRAP).  **2026-07-07: a
+plausible new (not previously ruled-out) candidate mechanism found and fixed — see the top
+update block above and KNOWN-ISSUES.md "NEW CANDIDATE" — re-run the repro against it first.**
 
-**NEXT options (pick per session):** (a) continue ISSUE-7 with the resume-point probes in
-KNOWN-ISSUES; (b) get BASE `unix-040` bootable standalone — migrate the dbg-only genuine fixes
-(resume040 in mainmarks.s + real hat_dup040 from branch `040-hat-dup-port` = ISSUE-4) and strip
-diagnostics; (c) real-HW testing (USB-serial adapter incoming);
-(d) let the parallel Codex `analysis/` project map the whole kernel vs the source tree first.
+**NEXT options (pick per session):** (a) continue ISSUE-7 — first just re-test the repro
+against the 2026-07-07 hat_unload fix, then fall back to the resume-point probes in
+KNOWN-ISSUES if it still reproduces; (b) ~~get BASE `unix-040` bootable standalone~~ — hat_dup040
+(ISSUE-4) is now merged; the base still needs the dbg-only diagnostics stripped for a fully
+quiet standalone boot (see the QUIET variant below, which already does this for a serial line);
+(c) real-HW testing (USB-serial adapter incoming); (d) let the parallel Codex `analysis/`
+project continue mapping the kernel — its audits already paid off once this session (ISSUE-4
+hardening + the new ISSUE-7 lead); (e) run the `analysis/runtime-tests/hat_dup_cow` fork/COW
+acceptance test (built, never actually run) against the freshly-merged `unix-040-dbg`.
 
-**QUIET variant BUILT (2026-07-06, boot test pending):** `sh relink-040-quiet.sh` →
-`build/unix-040-quiet` — the serial-capable quiet twin of the dbg build for real-HW testing.
-Overlay = `prototypes/quiet040.s` (sched loop / schedpaging skip / idle / resume040 verbatim
-[byte-compared identical to the dbg build] / hat_dup stub / hardbus page-crossing fix — the
-dbg overlay's load-bearing parts with ALL probe output removed) + `serdbg.s` (conputc serial
-mirror: banner/cmn_err/panics still go to serial).  All pure diagnostics omitted — NOTE this
+**QUIET variant BUILT (2026-07-06, BOOT-CONFIRMED 2026-07-07 — NetHack runs):** `sh
+relink-040-quiet.sh` → `build/unix-040-quiet` — the serial-capable quiet twin of the dbg build
+for real-HW testing. Overlay = `prototypes/quiet040.s` (sched loop / schedpaging skip / idle /
+resume040 verbatim [byte-compared identical to the dbg build] / hardbus page-crossing fix — the
+dbg overlay's load-bearing parts with ALL probe output removed; hat_dup is no longer stubbed
+here either, it inherits the real port from the base build) + `serdbg.s` (conputc serial mirror:
+banner/cmn_err/panics still go to serial).  All pure diagnostics omitted — NOTE this
 includes the preempt_dbg ISSUE-7 tourniquet, so a contaminated-disk second boot panics raw
 here.  MAIN debug line stays `unix-040-dbg` on the emulator; keep quiet040.s in sync with
 mainmarks.s/forkdbg.s/sigkill_dbg.s when their genuine parts change (map in its header).

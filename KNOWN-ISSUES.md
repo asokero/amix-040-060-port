@@ -99,14 +99,47 @@ make a "quiet-dbg" overlay that keeps only the serial `conputc` hook.  ALWAYS re
 with `grep -a` — it contains NUL bytes and plain grep silently matches nothing.
 
 ## ISSUE-4: BASE unix-040 still has stock-030 hat_dup (fork not yet safe in the base build)
-**Status:** OPEN (2026-07-04).  Only `build/unix-040-dbg` stubs hat_dup (via relink-040-dbg.sh);
-the BASE `build/unix-040` links the stock 030 hat_dup, whose 8-byte-descriptor tree walk is
-garbage on 040.  Interactive login works on the *dbg* build because the stub avoids it, but any
-real fork COW / user-fork path needs a proper `hat_dup040` (mirror hat_pteload/hat_free040: 4-byte
-descs, va>>25/>>18/>>12 indices).  This is the main thing standing between "dbg build logs in" and
-"clean base multi-user boot".  Related pending 040 ports: hat_chgprot ×6 (COW write-protect),
-hat_exec (exec stack move — currently neutered by the hat_free040/hat_chgprot040 garbage-slot
-guards), uvirtophys/uvatosde (user SW page-table walkers).  Full batch list: RESUME-HERE.md.
+**Status:** MERGED into master 2026-07-07, AWAITING BOOT TEST (was OPEN since 2026-07-04).
+`hat_dup040.s` (branch `040-hat-dup-port`, already boot-verified there including the
+fork-without-exec COW subshell test — see memory `amix-040-hat-dup-port`) is now merged into
+`prototypes/` and wired into `relink-040.sh` on top of ALL newer master fixes (haltsys/fsck/
+hat_unload V2.3/segu_lockfix/quiet040). `build/unix-040` and `build/unix-040-dbg` both now link
+the real port at the same address (`hat_dup` is a single strong override in both, confirmed via
+`nm` — no re-stubbing). `forkdbg.s`'s old no-op stub is no longer linked into any build.
+
+**Two additional hardening fixes went in alongside the merge**, both from Codex's parallel
+`analysis/vm-map/` audits (see memory `amix-codex-hat-audit-findings`):
+1. **HAT_CANWAIT/HAT_NOSTEAL** (`HAT-PTALLOC-AUDIT.md`): `hat_ptalloc`'s root-table-allocation
+   call sites (`hat_pteload`'s root+leaf allocations in `hat040.s`, and `hat_dup040`'s root
+   allocation) were passing bare `HAT_CANWAIT` (1), which does NOT disable `hat_ptalloc_orig`'s
+   steal path on allocation failure — and that path is unported 030-format tree code (8-byte
+   descriptors, 21-bit PFNs), active memory corruption if it ever fires under real memory
+   pressure. Changed to `HAT_CANWAIT|HAT_NOSTEAL` (3) at all three sites; no test workload so
+   far has exercised the failure path, so this has zero effect on current behavior and is a
+   pure hardening fix. `hat_dup040`'s leaf allocation already correctly used `HAT_NOSTEAL` (2)
+   (mirrors the original 030 give-up-on-failure semantics) and was left unchanged.
+2. **hat_unload missing post-clear flush** (`HAT-UNLOAD-COHERENCY-AUDIT.md`): every other 040
+   HAT writer (hat_pteload/hat_chgprot/hat_pageunload/resume) ends with `cpusha bc; pflusha`
+   before returning; `hat_unload` cleared PTEs but returned with no post-clear cache push, so a
+   cleared PTE could sit in copyback cache while the hardware table walker still saw the old
+   valid descriptor. Added unconditionally on `hat_unload`'s normal (non-rootnull) exit. This is
+   a **plausible new lead for ISSUE-7** below (not on its prior "ruled out" list) — NOT a
+   confirmed fix for it, since `hat_unload` is also called from plenty of paths unrelated to
+   ISSUE-7's u_procp corruption.
+
+**Not yet done:** none of this has been boot-tested. Related pending 040 ports (unchanged):
+hat_chgprot ×6 caller sites (the routine itself is confirmed structurally correct — audited),
+hat_exec (exec stack move — still fully unported, and per `HAT-PTFREE-AUDIT.md` its
+`hat_ptfree` call passes an old-format table pointer that `hat_ptfree`'s guard cannot
+distinguish from a real 040 table), uvirtophys/uvatosde (user SW page-table walkers).
+Full batch list: RESUME-HERE.md.
+
+**Also flagged but NOT fixed this session** (deferred, needs more RE + can't be verified
+without a boot): `hat_ptfree` frees the physical table page but never retires its `ptdat`
+record from `active_pts`/`free_pts`, calls `hat_sdtfree`, or wakes `pt_waiting` — the stale
+`active_pts` record can be reused by `hat_ptalloc_orig`'s (already-hardened-against, but not
+eliminated for `hat_exec_orig`) steal path. Not an observed bug yet (steal path currently
+unreachable from the CANWAIT sites above); full detail in `HAT-PTFREE-AUDIT.md`.
 
 ## ISSUE-5: `haltsys` (reboot/halt path) ran unguarded 030 `pmove` — KERNEL PANIC on `reboot`
 **Status: RESOLVED (2026-07-05, fix v3, boot-confirmed).** Final fix = `haltsys040.s`
@@ -300,6 +333,19 @@ self-pointer → the crashing proc is in a sleep/longjmp context), `p_segu`≈0x
 7. **segu slot free-list double-alloc** — Codex verified usd_free pop/push (0xaa47c/
    0xaa7b8) is a clean LIFO; a slot only reaches a new proc after a real segu_release.
 
+### NEW CANDIDATE (2026-07-07, fix applied, NOT yet boot-tested — see ISSUE-4)
+Codex's `HAT-UNLOAD-COHERENCY-AUDIT.md` found that `hat_unload`'s normal exit was missing a
+post-clear `cpusha bc; pflusha` — every OTHER 040 HAT writer (hat_pteload/hat_chgprot/
+hat_pageunload/resume) ends with that pair, but hat_unload clears PTEs and returns with only
+a *pre*-clear pflusha. A cleared PTE can sit in copyback data cache while the hardware table
+walker still sees the old valid descriptor. `hat_unload` is called directly by `segu_release`
+and `segu_softunload_orig` — i.e. exactly the u-area teardown paths this issue centers on. Fix
+applied in `hat040.s` (unconditional cpusha bc/pflusha on the non-rootnull exit) alongside the
+ISSUE-4 hat_dup040 merge. **This was NOT on the "ruled out" list above** — it's a genuinely
+new mechanism, not a re-test of something already disproven. Still unproven: `hat_unload` is
+called from many paths unrelated to ISSUE-7, so a clean boot-test result narrows but does not
+by itself confirm this was THE cause.
+
 ### FIXED ALONG THE WAY (real adjacent bugs found while hunting ISSUE-7, all on master)
 - ISSUE-5 reboot pmove (haltsys/rtnfirm v1/v2/v3 → unconditional 040 movec).
 - ISSUE-6 fsck (swap_xlate/swap_anon 2KB→4KB + revert mislabeled 0xabdae hash patch).
@@ -329,6 +375,8 @@ markers), `hatalloc_dbg` LIVEABORT (narrowed to keepcnt!=0), and the `UTRAP` u_p
 entry probe in execmark.s. Serial capture via serdbg (SERIAL-DEBUG.md).
 
 ### RESUME POINTS (next measurements to try)
+- **First, just re-run the ISSUE-7 repro (contaminate image B, boot, reboot, boot again)
+  against the hat_unload cpusha fix above** — cheapest possible test, might just be fixed.
 - Instrument `setuctxt` EXIT + the kmem_alloc(KM_SLEEP) window (0x41978): read
   `*(cp->p_segu+0x730)` after the write and after the sleep — does the page/u_procp survive
   the sleep?  (Codex timing hypothesis #1.)

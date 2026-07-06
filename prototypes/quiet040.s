@@ -10,7 +10,6 @@
 |
 | Source of truth for each override (keep in sync when those change):
 |   sched / schedpaging / idle / resume  <- prototypes/mainmarks.s   (minus markers/W-dump)
-|   hat_dup stub                         <- prototypes/forkdbg.s     (minus one-shot cmn_err)
 |   hardbus page-crossing fix            <- prototypes/sigkill_dbg.s (minus all logging;
 |                                           clock_sampler / sigtoproc / getdents NOT taken --
 |                                           they are pure diagnostics)
@@ -18,6 +17,10 @@
 | ktrap_latch kmem_validate segvn_softunlock_dbg preempt_dbg(+tourniquet) segu_swap_dbg.
 | NOTE: dropping preempt_dbg also drops the ISSUE-7 tourniquet -- a boot from a kernel-
 | contaminated disk may hit the raw pc=0x4000001E panic here that the dbg build masks.
+| NOTE (2026-07-07): hat_dup is NO LONGER overridden here -- the real hat_dup040 port
+| (ISSUE-4) is now a finalized strong override in the base build/unix-040 this overlay
+| links against; re-weakening it here would just re-open it to being shadowed by
+| something else, which we don't want (same reasoning as relink-040-dbg.sh).
 
 	.text
 | ---------------------------------------------------------------------------
@@ -44,16 +47,6 @@ schedpaging:
 	.globl	idle
 idle:
 	stop	&0x2000
-	rts
-
-| ---------------------------------------------------------------------------
-| hat_dup STUB (forkdbg.s minus the one-shot cmn_err) -- return 0 = success, copy
-| nothing; the child's mappings rebuild via faults.  NOT a real fix (the real 040 port
-| = hat_dup040.s on branch 040-hat-dup-port, ISSUE-4); kept identical to the dbg build.
-	.globl	hat_dup
-hat_dup:
-	clrl	%d0
-	moveal	%d0,%a0
 	rts
 
 | ---------------------------------------------------------------------------

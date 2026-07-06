@@ -1,6 +1,20 @@
 # Project Plan — 68040 (then 68060) support for Amiga Unix
 
-## ★ CURRENT STATUS (2026-07-06) — Phase 2 (single-user) usable on the emulator; reboot + fsck now work
+## ★ CURRENT STATUS (2026-07-07) — Phase 2 (single-user) usable; hat_dup040 MERGED, awaiting boot test
+`unix-040-quiet` (the serial-capable quiet build) is now boot-confirmed and runs **NetHack** — the
+first real fork/exec/terminal/timer-heavy workload tested, beyond the earlier ls/uname smoke tests.
+Codex's parallel `analysis/vm-map/` project produced 10 new HAT-layer audits; acted on them this
+session (all on master, NOT YET boot-tested): **ISSUE-4 (hat_dup) is MERGED** — the real
+`hat_dup040` fork/COW port (already boot-verified on branch `040-hat-dup-port`) now lives in
+`prototypes/` and is wired into `relink-040.sh` on top of every newer master fix; `unix-040` and
+`unix-040-dbg` both link it as a single strong override. Two hardening/candidate fixes went in
+alongside it: `hat_ptalloc`'s CANWAIT-without-NOSTEAL steal-path exposure (3 sites, no effect on
+tested workloads) and a missing post-clear `cpusha bc`/`pflusha` in `hat_unload` (a new, unproven
+candidate for ISSUE-7, since `hat_unload` is exactly what `segu_release`/`segu_softunload` call).
+Full detail: KNOWN-ISSUES.md ISSUE-4/ISSUE-7, RESUME-HERE.md, memory
+`amix-codex-hat-audit-findings`.
+
+## (2026-07-06) Phase 2 (single-user) usable on the emulator; reboot + fsck now work
 The 040 kernel boots to an interactive `root` login and runs `ls -alR | wc`, `uname -a`, etc.
 (fs-uae, `unix_boot unix-040-dbg`).  A full **clean boot → login → `ls -alR` → reboot cycle now
 succeeds cleanly.**  Everything up to and through login works: Phase 1 (MMU-on), the whole VM/HAT
@@ -20,12 +34,17 @@ prumap040), and the sptmap arena free-side.
 at the login prompt — a process's u-area has `u_procp=0` (fresh-zero page, non-swap mechanism);
 extensively narrowed (7 hypotheses ruled out by runtime probes) but ROOT not yet found.  System
 stays USABLE for clean cycles.  Full diagnostic infra + resume points documented in ISSUE-7.
-**Remaining for a clean multi-user BASE (unix-040, no dbg overlay):** port **hat_dup** (BASE still
-links stock-030 hat_dup — only the dbg build stubs it; real `hat_dup040` is on branch
-`040-hat-dup-port`, ISSUE-4), **hat_chgprot ×6** (fork COW), **hat_exec** (exec stack move,
-currently neutered by guards), **uvirtophys/uvatosde** user walkers, **vm_swap 2KB units**.  Also
+**Remaining for a clean multi-user BASE (unix-040, no dbg overlay):** ~~port hat_dup~~ MERGED
+2026-07-07 (ISSUE-4, awaiting boot test); **hat_chgprot ×6 caller sites** (fork COW — the routine
+itself is now confirmed structurally correct by audit), **hat_exec** (exec stack move, currently
+neutered by guards — also confirmed unported by audit, with a sharper risk: its `hat_ptfree` call
+passes an old-format table pointer that the guard can't distinguish from a real 040 table),
+**uvirtophys/uvatosde** user walkers, **vm_swap 2KB units**, and a newly-audited-but-deferred item:
+`hat_ptfree` doesn't retire its `ptdat` from `active_pts`/`free_pts` on free (not yet an observed
+bug; full detail in `analysis/vm-map/HAT-PTFREE-AUDIT.md`).  Also
 pending: migrate the dbg-only genuine fixes (resume040 etc.) into the base + strip diagnostics so
-`unix-040` boots standalone (a "quiet" serial-capable variant is planned for real-HW testing).
+`unix-040` boots standalone (a "quiet" serial-capable variant — `unix-040-quiet` — is BUILT and
+boot-confirmed for real-HW testing, see RESUME-HERE.md).
 **Canonical detail: RESUME-HERE.md** (milestone + fix chain + BATCH PLAN) and KNOWN-ISSUES.md.
 Source map in memory kernel-source-vs-binary.md.  Real-HW line: a USB-serial adapter is incoming,
 so real-HW testing is becoming feasible again (see RESUME-HERE-040-HARDWARE.md + SERIAL-DEBUG.md).
