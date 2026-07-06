@@ -1,5 +1,22 @@
 # RESUME HERE — AMIX 68040 port status (2026-07-07)
 
+## ►►► UPDATE 2026-07-07 (later): PREEMPT6 confirms ISSUE-7 isolated to 1 proc; hat_sdtfree Model-B fix landed, NOT yet boot-tested ◄◄◄
+PREEMPT6 (commit 959194f) fired: `scanned=16 zerocount=1` — the corruption is confirmed
+isolated to exactly one proc, not systemic. Codex produced 3 more HAT audits
+(HAT-EXEC-AUDIT.md, HAT-MAP-AUDIT.md, HAT-GROWSDT-AUDIT.md) plus updates to
+HAT-LIFETIME-CONTRACT.md/HAT-SWAPOUT-AUDIT.md. The GROWSDT one surfaced a genuine, live,
+previously-undocumented bug — **independently verified via disassembly, not just trusted**:
+`hat_sdtalloc`'s 3 Model-B pfn-shift patches were never mirrored on the free side
+(`hat_sdtfree`, 2 sites), so freeing an SDT carve computes a pfn ~2x too large and can
+corrupt an unrelated live page's `p_sdtbits`/`p_mapping` (offset-32 alias) — the same failure
+class as the already-fixed ISSUE-5/6 and hat_ptfree bugs. Reachable from `hat_swapout`,
+`hat_map` (segment growth), and `hat_exec_orig` (table replace) — live paths, not dead code.
+Fixed in `patch_modelb.py` (commit `b8f9cd3`), all three kernels rebuilt clean. **Plausible
+but unconfirmed as ISSUE-7's cause — this is the next thing to boot-test.** Full detail:
+KNOWN-ISSUES.md ISSUE-7 section, memory `amix-codex-hat-audit-findings`.
+hat_exec's port path also got clearer thanks to HAT-EXEC-AUDIT.md (see that memory entry) —
+relevant for after ISSUE-7, not before.
+
 ## ►►► UPDATE 2026-07-07: ISSUE-4 (hat_dup) MERGED to master + 2 hardening fixes — AWAITING BOOT TEST ◄◄◄
 `unix-040-quiet` boot-confirmed working since the last update (log much calmer than dbg, as
 designed) and **NetHack runs** on it — the first real fork/exec/terminal/timer-heavy workload

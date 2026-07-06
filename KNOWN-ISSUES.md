@@ -400,15 +400,42 @@ switch-out, the victim proc most likely reaches this state as an ALREADY-RUNNING
 freshly-created) proc — so the next probe should watch procs across repeated dispatches, not
 proc creation.
 
+### PREEMPT6 result (2026-07-07, DONE — boot-tested): isolated to one proc
+`prototypes/preempt_dbg.s`'s multi-proc watermark scan (commit `959194f`) fired on the
+2026-07-07 crash: `scanned=16 zerocount=1 pid1=9F`. **Confirms the corruption is ISOLATED to
+exactly one proc**, not systemic — of 16 live procs checked, only 1 (pid `0x9F`=159) had
+`u_procp==0`. This supports a per-allocation/per-proc race (e.g. in HAT table or page
+lifecycle) over a shared/global structure being clobbered, and rules out the "whole class of
+procs corrupted at once" alternative. (Separately, an `as_fault STREAM` sampler line showed
+`pid=162` moments before the cascade — a different, close-but-not-matching pid; that sampler
+fires on an unrelated periodic schedule and its proximity to the crash is very likely
+coincidental, not causal — do not chase it without independent corroboration.)
+
+### hat_sdtfree Model-B fix (2026-07-07, landed, UNCONFIRMED for ISSUE-7 — see commit `b8f9cd3`)
+Codex's `analysis/vm-map/HAT-GROWSDT-AUDIT.md` found (independently verified via disassembly)
+that `hat_sdtalloc`'s 3 Model-B pfn-shift patches (`<<11`→`<<12`) were not mirrored on the
+free side: `hat_sdtfree`'s 2 sites (`table>>11`→ pfn, to find the backing `page_t`) were still
+2KB-shifted, computing a pfn ~2x too large. If that wrong pfn lands in a live page's range —
+plausible given typical memory sizes — `hat_sdtfree` does `andl %d0,%a2@(32)`, corrupting an
+UNRELATED page's `p_sdtbits`/`p_mapping` (offset-32 union alias) reverse-map head. This is the
+exact "stale metadata → physical double-use" failure class already fixed once for ISSUE-5/6
+and for `hat_ptfree`'s own analogous bug, and is reachable from **live, non-swap paths**:
+`hat_swapout`'s shrink call, `hat_map`'s segment-growth boundary crossing, and
+`hat_exec_orig`'s table-replace-during-growth — i.e. ordinary exec()/mmap-growth activity, not
+an edge case. This is a genuine bug worth having fixed regardless of ISSUE-7, and it corrupts
+*page metadata* rather than directly a u-area's content, so an extra step (the corrupted page
+later freed/reused while still mapped elsewhere) would be needed to actually reach a zeroed
+`u_procp` — **plausible but unconfirmed as ISSUE-7's cause.** Fixed in `patch_modelb.py`
+(2 new entries, mirrors the existing `hat_sdtalloc` pattern); all three kernels rebuilt clean.
+**This is the next thing to boot-test** — if ISSUE-7 clears, this was very likely it; if not,
+it's still a correctness win to keep.
+
 ### RESUME POINTS (next measurements to try)
-- **Multi-proc watermark scan in `preempt_dbg.s` (planned, lower-risk than hooking `resume`
-  or `swtch` directly):** when Lpd_div already fires (the existing, proven-safe divergence
-  path — no new hook point, no risk to the hot dispatch path), additionally walk `practive`
-  (same pattern as `mainmarks.s`'s idle proc-table dump) and read `u_procp` via each live
-  proc's OWN p_segu window (same guarded read PREEMPT5 already uses for the one proc). This
-  tells us: is the corruption isolated to ONE proc (supports a per-allocation race) or does
-  it hit SEVERAL procs at once (would suggest a shared/global structure got clobbered
-  instead)? Zero risk to `resume`/`swtch` — purely additive to an already-firing diagnostic.
+- **First, just re-run the ISSUE-7 repro against the hat_sdtfree fix above** — the most
+  promising lead found so far, and the cheapest possible test.
+- If it still reproduces: a targeted probe logging every `hat_sdtfree` call's computed pfn vs.
+  `hat_sdtalloc`'s originally-allocated pfn during a repro run would directly confirm or rule
+  out this mechanism (Codex's own suggested probe).
 - Add a `segu_softload` marker (only softunload was instrumented) + a `segu_get` per-proc
   (cp→p_segu→page pfn) marker to trace the u-area PAGE lifecycle and catch when p_segu's
   backing page becomes a fresh-zero page. LOWER PRIORITY than it once was: ruled-out items
