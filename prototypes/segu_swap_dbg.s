@@ -103,6 +103,35 @@ Lssi_ret:
 	unlk	%fp
 	rts
 
+
+| ---- segu_softunload: minimal "called" marker (Codex-recommended confirmation) ----
+| Codex + disasm proved segu_softunload (0xaa870) finds u-area pages via p_ubptbl and SKIPS
+| the VOP_PUTPAGE when the entry is invalid; PREEMPT5 proved p_ubptbl==0 on the 040 -> it
+| skips ALL pages -> the u-area is never written to swap -> segu_softload later restores
+| stale/zero -> u_procp=0.  This marker confirms segu_softunload is actually EXERCISED on
+| the crash path (the swapinub/swapoutub probe fired 0 times -> softunload must be reached
+| via segu_fault, 0xaa314, not the swap daemon).  If DBG SOFTUNLOAD appears before the
+| panic, the root cause is confirmed and the fix (page source su_swaddr->swap_xlate->
+| page_find, like segu_softload/segu_get, instead of p_ubptbl) follows.  static t ->
+| --globalize + _orig + --weaken.  Tail-call (args re-read from stack).  Cap 16.
+	.globl	segu_softunload
+segu_softunload:
+	linkw	%fp,&0
+	movel	Lssu_n,%d0
+	cmpil	&16,%d0
+	bccw	Lssu_call
+	addql	&1,%d0
+	movel	%d0,Lssu_n
+	movel	%fp@(20),%sp@-		| slot index
+	movel	%fp@(16),%sp@-		| len
+	movel	%fp@(12),%sp@-		| va base
+	pea	Lssu_smsg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
+Lssu_call:
+	unlk	%fp
+	jmp	segu_softunload_orig
 	nop				| pad .text to a multiple of 4 (relink contiguity)
 
 	.data
@@ -116,4 +145,9 @@ Lsso_msg:
 	.even
 Lssi_msg:
 	.asciz	"DBG SWAPINUB proc=%x psegu=%x uprocp_after=%x"
+	.even
+Lssu_n:
+	.long	0
+Lssu_smsg:
+	.asciz	"DBG SOFTUNLOAD called va=%x len=%x slotidx=%x"
 	.even
