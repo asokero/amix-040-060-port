@@ -52,6 +52,13 @@ P = [
  (0x48b20, b"\x76\x0b", b"\x76\x0c", "mlset:maxclick >>11/<<11"),
  (0x48b5e, b"\x76\x0b", b"\x76\x0c", "mlset:sptmap base syssegs>>11"),
  (0x48b64, b"\x48\x78\x08\x00", b"\x48\x78\x04\x00", "mlset:sptmap size 2048->1024 clicks"),
+ # --- p0init STORE B neuter (ISSUE-8 PROBE, 2026-07-07 -- NOT a confirmed fix; easy to remove).
+ #     0x49120 `movel %d0,%a0@` writes a PTE into the inert 030-tree leaf at st_top1[seg].word2
+ #     (= d5<<11 raw phys).  Dead on the live 040 path (kptr040 + p_ubptbl via the KEPT STORE A
+ #     @0x490f6 carry the real u-area mapping); on real HW word2 lands in the unmapped RAM hole
+ #     (0x038A7000) -> bus error.  Neuter to nop so proc 0 boots past p0init.  segu_get's
+ #     equivalent (0xaa6f8) is a READ and is left alone (self-contained, only runs at fork). ---
+ (0x49120, b"\x20\x80", b"\x4e\x71", "p0init:neuter STORE B inert-030-tree PTE write (ISSUE-8 PROBE)"),
  # --- kvm_init: page_hash region size (clicks) ---
  (0x48e64, b"\x06\x83\x00\x00\x07\xff", b"\x06\x83\x00\x00\x0f\xff", "kvm:page_hash round +2047"),
  (0x48e6a, b"\x7c\x0b", b"\x7c\x0c", "kvm:page_hash region >>11"),

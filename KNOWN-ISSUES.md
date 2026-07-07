@@ -500,8 +500,25 @@ usable from a pristine disk image in the meantime.
   audit (the `../amix-kernel-analysis/` sibling repo) — likely the fastest path given how
   resistant this is to probing.
 
-## ISSUE-8: REAL-HW (Mercury 040) boot panics in p0init — kvm_init writes st_top1 SDE word2 with a Model-B-missed `click<<11` (ROOT CAUSE FOUND, fix pending)
-**Status:** OPEN, root cause binary-verified 2026-07-07. Photo evidence: user booted
+## ISSUE-8: REAL-HW (Mercury 040) boot panics in p0init — p0init STORE B (st_top1 word2) bus-errors (OPEN; a mid-day "click<<11" root cause was DISPROVEN)
+
+> **⚠ CORRECTION (2026-07-07 PM): the "kvm_init Model-B-missed `click<<11`" root cause below is
+> DISPROVEN.** The proposed fix (`<<11`→`<<12` at 0x48d28/0x48ddc) BROKE the emulator boot
+> (red screen right after unix_boot, no serial) and was reverted. Empirically `<<11` boots,
+> `<<12` corrupts → the 030 leaf table genuinely lives at `d5<<11`; p0init WRITES it (STORE B,
+> 0x49120) and segu_get READS it back (0xaa6f8 `movel %a0@,%a1@`) — a consistent producer/
+> consumer pair, so word2 is neither dead nor halved. **Revised understanding:** `word2 = d5<<11`
+> is a RAW identity phys (no base add); for d5=0x714E → **0x038A7000**, which is real RAM on the
+> emulator (low memory) but an **unmapped hole on the real A3000** (chip ends 0x200000, RAM at
+> 0x07/0x08000000) → the store bus-errors on real HW only. So the defect is that kvm_init's
+> leaf-table allocation produces a click whose `<<11` identity address lands in the real-HW RAM
+> hole — an allocation/addressing-base problem, NOT a shift. NEXT = real-HW serial diagnosis
+> (STORE A vs B markers, print word2/fault addr; test neutering STORE B) BEFORE any patch — do
+> not patch from analysis alone again. Everything below the line is the (partly wrong) original
+> writeup, kept for the correct facts (the faulting store, the fault address, the boot pattern).
+> ⚠
+
+**Status:** OPEN, faulting store identified; "click<<11" root cause DISPROVEN + reverted 2026-07-07 PM. Photo evidence: user booted
 `unix-040-dbg` (the ~07-05 build) on the real A3000 + PPS Mercury 68040 — first real-HW
 attempt with a current-generation kernel. Photo: `testimages/040-boot-a3000-mercury.jpg`
 (untracked comms dir).

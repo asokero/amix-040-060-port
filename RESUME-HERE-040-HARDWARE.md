@@ -1,5 +1,20 @@
 # RESUME HERE — AMIX 68040 REAL-HARDWARE line (paused 2026-06-19)
 
+> ## ⚠ STILL OPEN (2026-07-07 PM) — a mid-day "root cause" (ISSUE-8 click<<11) was DISPROVEN
+> Hypothesis #2 below (the p0init STORE B into `st_top1[seg].word2`) IS the faulting store — that
+> much holds. On 2026-07-07 it was mis-diagnosed as a Model-B-missed `leafclick<<11` in kvm_init
+> (0x48d28/0x48ddc) and "fixed" by `<<11`→`<<12`; **that fix BROKE the emulator boot (red screen)
+> and was reverted.** Empirically `<<11` boots and `<<12` corrupts → the 030 leaf table genuinely
+> lives at `d5<<11` (p0init writes it, segu_get at 0xaa6f8 READS it back — a consistent pair), so
+> word2 is neither dead nor halved. **Revised hypothesis:** `word2 = d5<<11` is a RAW identity
+> phys; for d5=0x714E that is 0x038A7000, which is REAL RAM on the emulator (low memory) but an
+> **unmapped hole on the real A3000** (chip ends 0x200000, RAM at 0x07/0x08000000) → the store
+> bus-errors only on real HW. So this is an allocation/addressing-base problem, not a shift.
+> Hypotheses #1/#3 (cache coherency) remain unlikely (040 caches are OFF per phase-4).
+> **Current source of truth: `KNOWN-ISSUES.md` ISSUE-8 (revised) + the NEXT ACTION banner atop
+> `RESUME-HERE.md`.** The "next markers to add" guidance at the bottom of THIS file is the right
+> next step — real-HW serial diagnosis before any further patch.
+
 Status: **paused** while the dev continues the EMULATOR + SCSI/root-mount line on a
 laptop (real A3000 not available for a couple of days).  The 040 VM port works on
 emulators (boots to root-fs mount); on REAL silicon it gets further-verified but hits a

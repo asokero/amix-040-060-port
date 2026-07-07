@@ -1,23 +1,42 @@
 # RESUME HERE — AMIX 68040 port status (2026-07-07)
 
-> ## ▶ NEXT ACTION (paused mid-task 2026-07-07, resume here) — apply the ISSUE-8 fix
-> Real-HW Mercury-040 boot is blocked by **ISSUE-8** (KNOWN-ISSUES.md), root cause fully found
-> + binary-verified + real-HW-timing-confirmed. **The fix is a 2-byte-patch job, ready to
-> implement — coding to be done by FABLE** (per [[feedback-delegate-coding-to-fable]]; user is
-> switching to a Claude account with Fable tokens to do exactly this):
-> 1. In `prototypes/patch_modelb.py`, add two entries flipping `moveq #11`→`#12`
->    (`7?0b`→`7?0c`): at **0x48d28** (kvm_init kvsegmap SDE-fill leaf `click<<11`) and
->    **0x48ddc** (kvm_init kvsegu SDE-fill leaf `click<<11`). These halve the st_top1 word2
->    leaf-table address under Model B → p0init's/segu_get's inert 030-tree store posted-writes
->    to a bogus phys → real 040 bus errors (fs-uae silently swallows it).
-> 2. **Before touching 0x48d54** (ksegmappt/eksegmappt globals, same missed shift): scope-check
->    who consumes those on the live path — do NOT change blind (risks the working emulator boot).
-> 3. Build all three kernels (`sh relink-040.sh` → `-dbg` → `-quiet`), verify the two sites read
->    `#12` in the binary, 0 reloc complaints, **emulator boot MUST stay clean**, then real-HW retest.
-> 4. Optional belt-and-braces (phase-4's plan): also neuter p0init STORE B (0x49120 `2080`→`4e71`).
-> Full chain + rationale: KNOWN-ISSUES.md ISSUE-8; memory `amix-040-realhw-p0init-buserror`.
-> Separately, the 1st-boot AmigaOS guru is a DISTINCT loader-level issue (not ISSUE-8) — capture
-> its guru code + serial log next real-HW session.
+> ## ▶ NEXT ACTION (2026-07-07 PM) — ISSUE-8 shift "fix" was WRONG and is REVERTED
+> **The `<<11`→`<<12` fix (0x48d28 + 0x48ddc) BROKE the emulator boot HARD** (red screen right
+> after unix_boot, nothing on serial) and has been **REVERTED** — `patch_modelb.py` is back to
+> known-good, all three kernels rebuilt clean, both sites back to `moveq #11,%d6`. The emulator
+> build is restored to the working (boots-to-root-mount) state; please re-confirm it boots.
+>
+> **Why the fix was wrong (empirical):** `<<11` boots, `<<12` corrupts → the 030 leaf table
+> genuinely lives at `d5<<11`, and p0init (writes) + segu_get (READS, 0xaa6f8 `movel %a0@,%a1@`)
+> are a **self-consistent producer/consumer pair** through `word2 = d5<<11`. So word2 is NOT an
+> inert/dead value, and it is NOT halved — `d5<<11` is the intended address. My "click<<11
+> Model-B miss" root cause is **DISPROVEN**.
+>
+> **What the real-HW bus error actually is (revised hypothesis, needs HW confirmation):** the
+> leaf-table address `word2 = d5<<11` is a RAW identity phys (no base add). For d5=0x714E that is
+> **0x038A7000**, which on the real A3000 falls in the **unmapped RAM hole** (chip ends 0x200000,
+> motherboard RAM starts 0x07000000, Mercury at 0x08000000) → the p0init store bus-errors. On the
+> emulator low RAM covers 0x038A7000 → no error. So the issue is that kvm_init's leaf-table
+> allocation yields a click whose `<<11` identity address is valid on the emulator's low RAM but
+> in a hole on real HW — an ALLOCATION/addressing-base problem, NOT a shift.
+>
+> **PROBE — EMULATOR PASSED, REAL-HW PENDING (2026-07-07 PM):** `patch_modelb.py` carries ONE
+> probe entry `p0init:neuter STORE B` (0x49120 `2080`→`4e71` = nop), all three kernels rebuilt
+> clean (0 reloc complaints; STORE A @0x490f6 `movel %d0,%a1@` preserved). Removes the inert-030-
+> tree write that bus-errors on real HW, keeps STORE A (the live u-area mapping).
+> - ✅ EMULATOR: **BOOTED to root mount + NetHack runs** (user, 2026-07-07 PM). NetHack = forks
+>   happen → segu_get ran and DID NOT depend on proc 0's STORE B write → neuter is safe
+>   end-to-end (no regression, fork path intact). This confirms the 030-tree STORE B is genuinely
+>   dead on the live 040 path — the good case from the test matrix.
+> - ⏳ REAL HW (next visit): expect it to get PAST the p0init panic (pc=0x7049130). Capture with
+>   SERIAL. Only real HW can confirm the FIX (the bus error only ever occurred there). If it
+>   panics later (first fork / segu_get / SCSI), that's a predicted follow-on frontier, not a
+>   regression of this change.
+> If real HW fails, `git checkout prototypes/patch_modelb.py` reverts the probe (only non-doc
+> change). Emulator PASS confirms SAFETY; real-HW PASS confirms the FIX — hold the commit for the
+> latter (or commit now as an honest emulator-validated checkpoint, per user's call).
+> Full revised analysis: KNOWN-ISSUES.md ISSUE-8; memory `amix-040-realhw-p0init-buserror`.
+> Separately, the 1st-boot AmigaOS guru is a DISTINCT loader-level issue (not ISSUE-8).
 
 > **ORIENTATION (2026-07-07): the Codex analysis project MOVED out of this repo.** It is now a
 > SEPARATE sibling git repo at `~/kehitys/amix-playground/amix-kernel-analysis/` (moved to keep
