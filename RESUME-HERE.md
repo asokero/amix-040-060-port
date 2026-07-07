@@ -1,5 +1,13 @@
 # RESUME HERE — AMIX 68040 port status (2026-07-07)
 
+> **ORIENTATION (2026-07-07): the Codex analysis project MOVED out of this repo.** It is now a
+> SEPARATE sibling git repo at `~/kehitys/amix-playground/amix-kernel-analysis/` (moved to keep
+> copyright-sensitive RE material in its own version control, out of the shareable kernelsupport
+> repo). Everywhere these docs say `amix-kernel-analysis/vm-map/...` or
+> `amix-kernel-analysis/runtime-tests/...`, that path is relative to `~/kehitys/amix-playground/`
+> (i.e. `../amix-kernel-analysis/...` from this repo root). The `hat_dup_cow` acceptance test and
+> all `*-AUDIT.md` / `HAT-*-DESIGN.md` memos live there now, NOT under a local `analysis/` dir.
+
 ## ►►► UPDATE 2026-07-07 (latest): hat_map fix BOOT-TESTED OK (no regression); hat_pagesync gap found but LATENT (D-cache off) ◄◄◄
 - **hat_map phantom-preload disable (commit 9b7f00c) — boot-tested, no regression.** User ran
   3 boots: login/fsck/basic ops all fine. The demand-fault path (which now does 100% of the
@@ -19,6 +27,19 @@
 - **ISSUE-7 unchanged** across the 3 boots: PREEMPT6 again `zerocount=1` (`scanned=A pid1=B2`
   and `scanned=16 pid1=9F`) — a 3rd/4th confirmation the corruption is isolated to one proc.
   Hunting stays paused per the earlier decision.
+
+**NEXT STEP DEFERRED (2026-07-07, network blocker):** the `hat_dup_cow` fork/COW acceptance
+test (`amix-kernel-analysis/runtime-tests/`, Codex-authored, built + verified ready) is the highest-value
+next action — it stress-validates the merged hat_dup040 (fork-without-exec COW, boundary
+crossing, stress loops) which login/fsck do NOT exercise. **But the user currently has no
+working network to the emulator, and the test's transfer method (tftp over fs-uae SLIRP,
+`get hat_dup_cow`) needs it — so the test is DEFERRED until networking/file-transfer is
+sorted.** When picked up: `python3 amix-kernel-analysis/runtime-tests/tftp_server.py` on the host, then in
+AMIX `tftp 10.0.2.2 1069` → `binary` → `get hat_dup_cow` → `chmod 755` → `./hat_dup_cow 1`
+then `32` then `256`; expect `RESULT PASS`. (Alternative transfer if SLIRP stays broken: mount
+the disk image on Linux and copy the binary in directly, or bake it into the image.) After
+that: heavier workloads (`ps -ef`, a compile, `ls -R /`, multi-process scripts) to surface the
+next real bug — audit-driven work has hit diminishing returns for urgent fixes.
 
 ## ►►► UPDATE 2026-07-07: hat_sdtfree fix RULED OUT too — ISSUE-7 hunting PAUSED by user decision ◄◄◄
 User boot-tested the `hat_sdtfree` fix (below): **ISSUE-7 still reproduces.** Same
@@ -56,7 +77,7 @@ relevant for after ISSUE-7 is resumed, not before.
 designed) and **NetHack runs** on it — the first real fork/exec/terminal/timer-heavy workload
 tested, a stronger signal than the earlier ls/uname smoke tests.
 
-Codex's parallel `analysis/vm-map/` project produced 10 new per-function "HAT contract" audits.
+Codex's parallel `amix-kernel-analysis/vm-map/` project produced 10 new per-function "HAT contract" audits.
 Acted on the actionable ones this session (full detail: KNOWN-ISSUES.md ISSUE-4, memory
 `amix-codex-hat-audit-findings`):
 - **hat_dup040 merged (ISSUE-4 CLOSED pending boot test):** the real fork/COW port (already
@@ -74,7 +95,7 @@ Acted on the actionable ones this session (full detail: KNOWN-ISSUES.md ISSUE-4,
   real coherency correctness improvement, kept) but is confirmed NOT the ISSUE-7 root cause —
   see KNOWN-ISSUES.md ruled-out item 8. `hat_dup040` and the CANWAIT/NOSTEAL hardening appear
   unaffected (boot "didn't seem worse than before" per the user).
-- Also merged: a doc-only update to `analysis/runtime-tests/README.md` noting the temporary
+- Also merged: a doc-only update to `amix-kernel-analysis/runtime-tests/README.md` noting the temporary
   `unix-040-hatdup-test` acceptance-test kernel is now superseded by master's own builds.
 - **setuctxt probe — RULED OUT (2026-07-07, user boot-tested):** `"DBG setuctxt POST-RETURN"`
   never appeared in the log. Confirms the corruption does NOT happen inside setuctxt's own
@@ -89,10 +110,10 @@ Acted on the actionable ones this session (full detail: KNOWN-ISSUES.md ISSUE-4,
   additive to a path that only runs after ISSUE-7 has already triggered, so no risk to
   `resume`/`swtch`. Full detail + reasoning: KNOWN-ISSUES.md RESUME POINTS.
 
-**Boot-tested (2026-07-07, two rounds):** `unix-040-dbg` with the ISSUE-4 merge (no
-regression) and then with the setuctxt probe (ruled out, item 9) — ISSUE-7 still reproduces
-both times. The PREEMPT6 scan (commit 959194f) is NOT yet boot-tested — that is the next
-thing to do; read its output alongside the usual PREEMPT1-5 lines.
+**Boot-tested (2026-07-07):** `unix-040-dbg` with the ISSUE-4 merge (no regression), the
+setuctxt probe (ruled out, item 9), the PREEMPT6 scan (fired: isolated-to-1-proc), the
+hat_sdtfree fix (ruled out, item 10), and the hat_map preload-disable (no regression). ISSUE-7
+reproduces through all of them. See the topmost update block for the consolidated result.
 
 ## ►►► UPDATE 2026-07-06: reboot + fsck FIXED; clean boot→login→ls -alR→reboot cycle works ◄◄◄
 Since the 07-04 login milestone, driving real workloads surfaced and fixed a chain of bugs
@@ -133,9 +154,9 @@ isolated-vs-systemic question twice (isolated, both times); (b) ~~get
 BASE `unix-040` bootable standalone~~ — hat_dup040 (ISSUE-4) is now merged; the base still
 needs the dbg-only diagnostics stripped for a fully quiet standalone boot (see the QUIET
 variant below, which already does this for a serial line); (c) real-HW testing (USB-serial
-adapter incoming); (d) let the parallel Codex `analysis/` project continue mapping the
+adapter incoming); (d) let the parallel Codex `../amix-kernel-analysis/` project continue mapping the
 kernel — its audits already paid off once this session (ISSUE-4 hardening, even though the
-ISSUE-7 leads it inspired were both ruled out); (e) run the `analysis/runtime-tests/hat_dup_cow`
+ISSUE-7 leads it inspired were both ruled out); (e) run the `amix-kernel-analysis/runtime-tests/hat_dup_cow`
 fork/COW acceptance test (built, never actually run) against the freshly-merged `unix-040-dbg`.
 
 **QUIET variant BUILT (2026-07-06, BOOT-CONFIRMED 2026-07-07 — NetHack runs):** `sh

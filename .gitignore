@@ -27,6 +27,10 @@ unix_boot/arp40_2/
 *.swp
 ghindra-unix/
 
+# --- Out-of-band comms channel (real-HW photos etc. shared with the assistant) ---
+# NOT version-controlled: temporary/ad-hoc, and photos may carry GPS EXIF.
+testimages/
+
 # Third-party reference sources (do NOT commit -- copyright/size)
 svr4-src-3b2/
 svr4-v4/

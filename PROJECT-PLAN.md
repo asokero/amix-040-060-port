@@ -1,20 +1,59 @@
 # Project Plan — 68040 (then 68060) support for Amiga Unix
 
-## ★ CURRENT STATUS (2026-07-07) — Phase 2 (single-user) usable; hat_dup040 MERGED, awaiting boot test
-`unix-040-quiet` (the serial-capable quiet build) is now boot-confirmed and runs **NetHack** — the
-first real fork/exec/terminal/timer-heavy workload tested, beyond the earlier ls/uname smoke tests.
-Codex's parallel `analysis/vm-map/` project produced 10 new HAT-layer audits; acted on them this
-session (all on master, NOT YET boot-tested): **ISSUE-4 (hat_dup) is MERGED** — the real
-`hat_dup040` fork/COW port (already boot-verified on branch `040-hat-dup-port`) now lives in
-`prototypes/` and is wired into `relink-040.sh` on top of every newer master fix; `unix-040` and
-`unix-040-dbg` both link it as a single strong override. Two hardening/candidate fixes went in
-alongside it: `hat_ptalloc`'s CANWAIT-without-NOSTEAL steal-path exposure (3 sites, no effect on
-tested workloads) and a missing post-clear `cpusha bc`/`pflusha` in `hat_unload` (a new, unproven
-candidate for ISSUE-7, since `hat_unload` is exactly what `segu_release`/`segu_softunload` call).
-Full detail: KNOWN-ISSUES.md ISSUE-4/ISSUE-7, RESUME-HERE.md, memory
+## ★ CURRENT STATUS (2026-07-07, end of session) — Phase 2 usable; fork/COW merged + boot-tested; ISSUE-7 hunt paused
+`unix-040-quiet` (serial-capable quiet build) boots and runs **NetHack** — the first real
+fork/exec/terminal/timer-heavy workload beyond ls/uname smoke tests. patch_modelb.py = **237
+sites**. Everything through login + `ls -alR` + reboot + fsck works on a clean disk image.
+
+**Merged + boot-tested (no regression) this session (all on master):**
+- **ISSUE-4 (hat_dup) CLOSED** — the real `hat_dup040` fork/COW port is merged into the base
+  (commit 302b588), single strong override in both `unix-040` and `unix-040-dbg`. Boot-tested:
+  no regression. (Direct fork-without-exec COW *stress* validation still pending — the
+  `amix-kernel-analysis/runtime-tests/hat_dup_cow` acceptance test is built but not yet run; see below.)
+- **hat_map phantom-PTE bug FIXED** (commit 9b7f00c) — retained stock hat_map was writing
+  legacy `pfn<<11` phantom PTEs into `pp->p_mapping` chains, mixing formats with the live
+  `pfn<<12` entries. A 1-byte preload-disable removes the phantom producer (chains are now
+  single-format from every producer); boot-tested, no regression. Plan:
+  `prototypes/hat-map-040-fix-plan.md`.
+- **hat_sdtfree Model-B pfn fix** (commit b8f9cd3) — its 2 free-side shifts were missed by the
+  2KB→4KB conversion (alloc side was done); could corrupt an unrelated page's offset-32
+  metadata. Real bug, fixed. (Was tested as an ISSUE-7 candidate — ruled out, see below.)
+- Two hat_ptalloc CANWAIT→CANWAIT|NOSTEAL hardening sites (no effect on tested workloads).
+
+**ISSUE-7 — OPEN, active hunting PAUSED by user decision.** The second-dirty-boot `u_procp=0`
+login-prompt crash is now **10 hypotheses ruled out** (incl. this session: hat_unload missing
+cpusha, setuctxt kmem_alloc sleep window, hat_sdtfree pfn — all boot-tested negative). New
+diagnostic **PREEMPT6** confirmed across multiple crashes that the corruption is **isolated to
+exactly one proc** (not systemic). Three well-motivated leads ruled out in one week → user
+paused the one-hypothesis-at-a-time hunt. System stays fully usable from a pristine image.
+Best remaining idea when resumed: a generic offset-32 (`p_mapping`/`p_sdtbits`/`p_ptdats`
+union) write-guard. Full detail: KNOWN-ISSUES.md ISSUE-7.
+
+**Remaining HAT items — all now audited + DEPRIORITIZED (none is an active bug):**
+- **hat_pagesync** — lacks the 040 `cpusha bc` after clearing ref/mod bits, BUT **latent**:
+  the 040 data cache is currently OFF (verified: live path pstart040 never enables CACR), so
+  it only bites once D-cache is enabled. `hat_pagesync040` plan noted; coding → Fable.
+- **hat_exec** — RE'd this session (`prototypes/hat-exec-040-fix-plan.md`): currently **inert +
+  defanged**, not "neutered by guards" as previously thought. Its fast path (the observed
+  hatflag=1 case) moves no live mapping; its false root descriptors are already rejected by
+  every ported walker's kernel-base guard. Cleanup value only; deprioritized.
+- **hat_ptfree** doesn't retire its `ptdat` from `active_pts`/`free_pts` (offset-32 suspect,
+  no observed bug); **hat_chgprot ×6 caller sites** (routine itself confirmed correct);
+  **uvirtophys/uvatosde**; **vm_swap 2KB units**.
+
+**Assessment:** audit-driven HAT work has largely hit diminishing returns for *urgent* fixes.
+Next real bugs are more likely found by DRIVING WORKLOADS (the project's proven method) than
+more static auditing. Immediate next step: run the `hat_dup_cow` acceptance test (deferred —
+see the network blocker note in RESUME-HERE.md), then heavier workloads.
+Canonical blow-by-blow: RESUME-HERE.md; bug detail: KNOWN-ISSUES.md; memory
 `amix-codex-hat-audit-findings`.
 
-## (2026-07-06) Phase 2 (single-user) usable on the emulator; reboot + fsck now work
+## (2026-07-06, HISTORICAL SNAPSHOT — superseded by the ★ block above; kept for the fix chain)
+> The "Remaining for a clean multi-user BASE" list in this block is STALE (hat_dup is now
+> merged+boot-tested; hat_exec re-characterized as inert). Use the ★ block above for current
+> status; this block's value is the historical fix-chain record. "235 sites" / "7 hypotheses"
+> here are the 07-06 numbers (now 237 / 10).
+
 The 040 kernel boots to an interactive `root` login and runs `ls -alR | wc`, `uname -a`, etc.
 (fs-uae, `unix_boot unix-040-dbg`).  A full **clean boot → login → `ls -alR` → reboot cycle now
 succeeds cleanly.**  Everything up to and through login works: Phase 1 (MMU-on), the whole VM/HAT
@@ -41,14 +80,16 @@ neutered by guards — also confirmed unported by audit, with a sharper risk: it
 passes an old-format table pointer that the guard can't distinguish from a real 040 table),
 **uvirtophys/uvatosde** user walkers, **vm_swap 2KB units**, and a newly-audited-but-deferred item:
 `hat_ptfree` doesn't retire its `ptdat` from `active_pts`/`free_pts` on free (not yet an observed
-bug; full detail in `analysis/vm-map/HAT-PTFREE-AUDIT.md`).  Also
+bug; full detail in `amix-kernel-analysis/vm-map/HAT-PTFREE-AUDIT.md`).  Also
 pending: migrate the dbg-only genuine fixes (resume040 etc.) into the base + strip diagnostics so
 `unix-040` boots standalone (a "quiet" serial-capable variant — `unix-040-quiet` — is BUILT and
 boot-confirmed for real-HW testing, see RESUME-HERE.md).
 **Canonical detail: RESUME-HERE.md** (milestone + fix chain + BATCH PLAN) and KNOWN-ISSUES.md.
 Source map in memory kernel-source-vs-binary.md.  Real-HW line: a USB-serial adapter is incoming,
 so real-HW testing is becoming feasible again (see RESUME-HERE-040-HARDWARE.md + SERIAL-DEBUG.md).
-A parallel Codex analysis project (analysis/) is mapping the whole kernel against the source tree.
+A parallel Codex analysis project (now a SEPARATE sibling repo `../amix-kernel-analysis/`, moved
+out of this repo 2026-07-07 to keep copyright-sensitive RE material in its own version control) is
+mapping the whole kernel against the source tree.
 
 ## Goal
 Make the AMIX SVR4 kernel boot and run on 68040, then 68060, on an Amiga 3000.

@@ -1,7 +1,7 @@
 # hat_exec 040 — RE findings + fix plan (2026-07-07)
 
 RE/scoping of the `hat_exec` port (the last major unported HAT function), prompted by
-Codex's `analysis/vm-map/HAT-EXEC-AUDIT.md`. **This is a plan + finding doc, not implemented.**
+Codex's `amix-kernel-analysis/vm-map/HAT-EXEC-AUDIT.md`. **This is a plan + finding doc, not implemented.**
 All claims below independently verified against `build/unix-040-dbg` disassembly.
 
 ## Headline finding: hat_exec is currently INERT + DEFANGED, not an active bug — DEPRIORITIZE

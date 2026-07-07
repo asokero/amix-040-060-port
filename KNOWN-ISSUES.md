@@ -108,7 +108,7 @@ the real port at the same address (`hat_dup` is a single strong override in both
 `nm` — no re-stubbing). `forkdbg.s`'s old no-op stub is no longer linked into any build.
 
 **Two additional hardening fixes went in alongside the merge**, both from Codex's parallel
-`analysis/vm-map/` audits (see memory `amix-codex-hat-audit-findings`):
+`amix-kernel-analysis/vm-map/` audits (see memory `amix-codex-hat-audit-findings`):
 1. **HAT_CANWAIT/HAT_NOSTEAL** (`HAT-PTALLOC-AUDIT.md`): `hat_ptalloc`'s root-table-allocation
    call sites (`hat_pteload`'s root+leaf allocations in `hat040.s`, and `hat_dup040`'s root
    allocation) were passing bare `HAT_CANWAIT` (1), which does NOT disable `hat_ptalloc_orig`'s
@@ -439,7 +439,7 @@ fires on an unrelated periodic schedule and its proximity to the crash is very l
 coincidental, not causal — do not chase it without independent corroboration.)
 
 ### 10. hat_sdtfree Model-B pfn fix (2026-07-07, RULED OUT for ISSUE-7 — fix stays, real bug, just not this one)
-Codex's `analysis/vm-map/HAT-GROWSDT-AUDIT.md` found (independently verified via disassembly)
+Codex's `amix-kernel-analysis/vm-map/HAT-GROWSDT-AUDIT.md` found (independently verified via disassembly)
 that `hat_sdtalloc`'s 3 Model-B pfn-shift patches (`<<11`→`<<12`) were not mirrored on the
 free side: `hat_sdtfree`'s 2 sites (`table>>11`→ pfn, to find the backing `page_t`) were still
 2KB-shifted, computing a pfn ~2x too large. If that wrong pfn lands in a live page's range —
@@ -497,4 +497,5 @@ usable from a pristine disk image in the meantime.
   genuine bug found and fixed, even though not this one) and cost nothing to keep running in
   parallel while ISSUE-7 hunting is paused.
 - Codex to statically analyze the segu/u-area page lifecycle + a whole-kernel-vs-source
-  audit (analysis/ dir) — likely the fastest path given how resistant this is to probing.
+  audit (the `../amix-kernel-analysis/` sibling repo) — likely the fastest path given how
+  resistant this is to probing.
