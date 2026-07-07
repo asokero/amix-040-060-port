@@ -63,6 +63,24 @@ PATCHES = [
     # `movec %a0,%urp` (4e7b 8806) -- 040 user-mode root.  The following pflusha (0xb58ca) is
     # already converted by patch_pflusha_040.py.  Same real 030->040 swap as the swtch site.
     (0xb58c6, b"\xf0\x11\x4c\x00", b"\x4e\x7b\x88\x06", "hat_map:pmove crp -> movec a0,urp"),
+    # hat_map (0xb58d2) -- DISABLE the vnode-preload loop (2026-07-07, Codex P-MAPPING-MATRIX.md
+    # + HAT-MAP-AUDIT.md, plan in prototypes/hat-map-040-fix-plan.md).  NOT a PMMU swap -- a
+    # control-flow neuter, kept here for locality with the hat_map urp patch above (all hat_map
+    # byte edits in one place).  The retained stock preload writes LEGACY pfn<<11 "phantom" PTEs
+    # into pp->p_mapping chains (shift @0xb5c10, chain link @0xb5c3e) while hat_pteload/hat_dup040
+    # write LIVE pfn<<12 PTEs into the SAME chains -- no consumer can tell the two formats apart,
+    # breaking the "one format per p_mapping chain" invariant (hat_pagesync/hat_swapout then
+    # misdecode; hat_unload/hat_free never find/retire the phantoms).  On 040 the preload builds
+    # NO usable hardware translation anyway (it never computes the A/B/C path), so user access
+    # faults regardless and hat_pteload builds the identical live mapping on demand -- disabling
+    # preload is functionally equivalent AND removes the phantom contamination + RSS/pt_inuse
+    # double-count + the cache-page reclaim-block.  The preload GATE at 0xb58ce is
+    # `tstl fp@(12); beqw 0xb58e6` (0xb58d2 = 6700 0012); flip beqw->braw (67->60) to skip the
+    # loop unconditionally and return success via 0xb58e6 (clrl d0; braw tail).  The load-bearing
+    # fork URP reload (0xb58c6, above) runs BEFORE this gate, so fork is unaffected; the preceding
+    # `tstl fp@(12)` becomes dead-but-harmless.  segdev_create already passes ppl=NULL+flags=0
+    # (takes this same no-preload exit today), so only segvn_create's file-backed preload changes.
+    (0xb58d2, b"\x67\x00\x00\x12", b"\x60\x00\x00\x12", "hat_map:disable phantom preload (beqw->braw)"),
     # hat_exec (0xb70ea) and hat_asload (0xb7472) -- the exec/address-space-load root loads on
     # the user-fork path (reached as proc 1 runs).  IDENTICAL pattern to hat_map: a0 =
     # svirtophys(as->root) (phys), stored to userroot+4; d0 reloaded with an fp offset.  Both
