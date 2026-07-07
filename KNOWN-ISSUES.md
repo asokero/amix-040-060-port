@@ -141,6 +141,33 @@ record from `active_pts`/`free_pts`, calls `hat_sdtfree`, or wakes `pt_waiting` 
 eliminated for `hat_exec_orig`) steal path. Not an observed bug yet (steal path currently
 unreachable from the CANWAIT sites above); full detail in `HAT-PTFREE-AUDIT.md`.
 
+**hat_map phantom-preload — FIXED + boot-tested 2026-07-07 (commit 9b7f00c).** Codex's
+`P-MAPPING-MATRIX.md`/`HAT-MAP-AUDIT.md` found retained `hat_map` writes legacy `pfn<<11`
+phantom PTEs into `pp->p_mapping` chains (mixing with live `pfn<<12` entries → breaks the
+one-format invariant). Fixed with a 1-byte preload-disable (0xb58d2 beqw→braw); investigation
++ why-Option-A in `prototypes/hat-map-040-fix-plan.md`. **User boot-tested (3 boots): login/
+fsck/basic ops all fine, no regression** — the demand-fault path (which now does 100% of the
+mapping work) is exercised constantly, so this is well-covered. `p_mapping` chains are now
+single-format from every producer.
+
+**hat_pagesync — LATENT ref/mod bug, deferred (Codex `REFMOD-PAGEOUT-CONTRACT.md` +
+`HAT-PAGESYNC-AUDIT.md`, 2026-07-07).** hat_pagesync (0xb4be8) is the periodic ref/mod
+sampler used by pageout `checkpage`, `fsflush`, `pvn_getdirty`, `pvn_done`. Confirmed via
+disasm: it copies+clears PTE U/M bits and calls `flushmmu` (global pflusha) but has **no
+`cpusha bc`** — so on 040 a cleared PTE U/M bit could linger in copyback cache while the
+table walker reloads stale state. **HOWEVER: this is LATENT, not a current bug — the 040
+DATA CACHE IS CURRENTLY OFF.** Verified: the live boot path is `_start → config → pstart040`
+(pstart @0xd71a8 = the appended override); pstart040 never writes a nonzero CACR, and the
+only nonzero-CACR-loading code (0x1038–0x1294) is the DEAD original pstart (weakened,
+unreferenced). Matches the prior real-HW observation (CACR 0x800 = caches off,
+`amix-040-phase4-hw-analysis`). So hat_pagesync's missing cpusha only bites once the D-cache
+is enabled (a future performance milestone), and is NOT an ISSUE-7 lead (ISSUE-7 reproduces
+with caches off). The mixed-format half of the hat_pagesync concern is already resolved by
+the hat_map fix above (chains are single-format now). **When implemented: a `hat_pagesync040`
+that walks the chain, harvests+clears live-040 U/M bits, and ends with `cpusha bc; pflusha` —
+delegate the coding to Fable** (Codex has a design sketch in `REFMOD-PAGEOUT-CONTRACT.md`
+step "Practical next step"). Low urgency until D-cache work begins.
+
 ## ISSUE-5: `haltsys` (reboot/halt path) ran unguarded 030 `pmove` — KERNEL PANIC on `reboot`
 **Status: RESOLVED (2026-07-05, fix v3, boot-confirmed).** Final fix = `haltsys040.s`
 makes the reboot/halt MMU-disable UNCONDITIONALLY use the 040 `movec`+`pflusha` path

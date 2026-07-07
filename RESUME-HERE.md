@@ -1,19 +1,24 @@
 # RESUME HERE — AMIX 68040 port status (2026-07-07)
 
-## ►►► UPDATE 2026-07-07 (latest): hat_map phantom-preload DISABLED (commit 9b7f00c), awaiting boot test ◄◄◄
-Acted on Codex's `P-MAPPING-MATRIX.md`/`HAT-MAP-AUDIT.md` finding (that retained stock
-`hat_map` writes legacy `pfn<<11` phantom PTEs into `pp->p_mapping` chains, mixing formats
-with the live `pfn<<12` entries and breaking the one-format-per-chain invariant). Investigated
-both fix directions (`prototypes/hat-map-040-fix-plan.md`) and implemented **Option A: a
-1-byte patch** (0xb58d2 `beqw`→`braw`, in `patch_pmmu_040.py`) that skips ONLY the
-vnode-preload loop while keeping the load-bearing fork URP reload (0xb58c6) intact.
-Functionally equivalent on 040 (preload built no usable translation anyway; demand-fault via
-`hat_pteload` builds the identical mapping), and removes the phantom contamination + RSS
-double-count + cache reclaim-block. `segdev_create` unaffected (already no-preload);
-`segvn_create`'s file-backed preload is the only site changed. All three kernels rebuilt
-clean, patch byte-verified. **Next: boot-test — the demand-fault path is exercised constantly
-so any regression surfaces immediately at login/exec.** (This is a correctness cleanup, NOT an
-ISSUE-7 fix attempt — ISSUE-7 hunting stays paused.)
+## ►►► UPDATE 2026-07-07 (latest): hat_map fix BOOT-TESTED OK (no regression); hat_pagesync gap found but LATENT (D-cache off) ◄◄◄
+- **hat_map phantom-preload disable (commit 9b7f00c) — boot-tested, no regression.** User ran
+  3 boots: login/fsck/basic ops all fine. The demand-fault path (which now does 100% of the
+  file-backed mapping work) is exercised constantly, so this is well-covered. `p_mapping`
+  chains are now single-format (live 040 only) from every producer. Investigation +
+  why-Option-A: `prototypes/hat-map-040-fix-plan.md`. ISSUE-7 unchanged (this was a correctness
+  cleanup, not an ISSUE-7 attempt — see below).
+- **hat_pagesync ref/mod gap (Codex `REFMOD-PAGEOUT-CONTRACT.md`) — real but LATENT, deferred.**
+  hat_pagesync (0xb4be8, the periodic ref/mod sampler for pageout/fsflush/pvn) copies+clears
+  PTE U/M bits but has no `cpusha bc` (confirmed via disasm). BUT the 040 **data cache is
+  currently OFF** (verified: live path = pstart040 @0xd71a8, which never enables CACR; the
+  nonzero-CACR block at 0x1038-0x1294 is the dead original pstart; matches the real-HW
+  CACR 0x800 observation). So this only bites once D-cache is enabled (future perf milestone),
+  is NOT an ISSUE-7 lead, and the mixed-format half is already resolved by the hat_map fix.
+  When implemented (`hat_pagesync040`: harvest+clear live U/M, end with cpusha bc; pflusha) —
+  **delegate the coding to Fable**. Full detail: KNOWN-ISSUES.md.
+- **ISSUE-7 unchanged** across the 3 boots: PREEMPT6 again `zerocount=1` (`scanned=A pid1=B2`
+  and `scanned=16 pid1=9F`) — a 3rd/4th confirmation the corruption is isolated to one proc.
+  Hunting stays paused per the earlier decision.
 
 ## ►►► UPDATE 2026-07-07: hat_sdtfree fix RULED OUT too — ISSUE-7 hunting PAUSED by user decision ◄◄◄
 User boot-tested the `hat_sdtfree` fix (below): **ISSUE-7 still reproduces.** Same
