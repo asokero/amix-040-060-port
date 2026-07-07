@@ -8,6 +8,20 @@
 > (i.e. `../amix-kernel-analysis/...` from this repo root). The `hat_dup_cow` acceptance test and
 > all `*-AUDIT.md` / `HAT-*-DESIGN.md` memos live there now, NOT under a local `analysis/` dir.
 
+## ►►► UPDATE 2026-07-07 (REAL HW): first Mercury-040 boot attempt — panics in p0init; ROOT CAUSE FOUND = kvm_init `click<<11` SDE fill (ISSUE-8) ◄◄◄
+User booted `unix-040-dbg` (~07-05 build) on the REAL A3000 + Mercury 68040 (photo:
+`testimages/040-boot-a3000-mercury.jpg`). **Major positive: the port runs on real silicon** —
+pstart040 MMU enable, deep startup through kvm_init, console, clean trap handling, getfault040
+frame decode all work. Panic: `KERNEL FAULT pc=0x7049130 fmt=0x7 vector=0x2` = **p0init's
+inert-030-tree STORE B posted-writing to phys 0x038A7000**, which is `pfn 0x714E << 11` — a
+**Model-B-MISSED shift in kvm_init's st_top1 SDE fill (0x48ddc `moveq #11` → should be #12)**
+halving the leaf-table address. fs-uae silently swallows the write to unmapped space (why the
+emulator never showed it); the real bus errors. NOT memory-map dependent (A3640 would panic
+identically); kernel age irrelevant (all involved sites are stock text, unchanged today).
+segu_get has the IDENTICAL inline walk (0xaa6c4+) = the predicted next blocker → fix the ROOT.
+Full chain + fix plan (2 byte-patches + optional phase-4 "STORE B neuter"): KNOWN-ISSUES.md
+**ISSUE-8**. Coding → Fable when approved. Confirms phase-4's "posted write to garbage phys".
+
 ## ►►► UPDATE 2026-07-07 (latest): hat_map fix BOOT-TESTED OK (no regression); hat_pagesync gap found but LATENT (D-cache off) ◄◄◄
 - **hat_map phantom-preload disable (commit 9b7f00c) — boot-tested, no regression.** User ran
   3 boots: login/fsck/basic ops all fine. The demand-fault path (which now does 100% of the

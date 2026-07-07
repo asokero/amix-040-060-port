@@ -499,3 +499,80 @@ usable from a pristine disk image in the meantime.
 - Codex to statically analyze the segu/u-area page lifecycle + a whole-kernel-vs-source
   audit (the `../amix-kernel-analysis/` sibling repo) — likely the fastest path given how
   resistant this is to probing.
+
+## ISSUE-8: REAL-HW (Mercury 040) boot panics in p0init — kvm_init writes st_top1 SDE word2 with a Model-B-missed `click<<11` (ROOT CAUSE FOUND, fix pending)
+**Status:** OPEN, root cause binary-verified 2026-07-07. Photo evidence: user booted
+`unix-040-dbg` (the ~07-05 build) on the real A3000 + PPS Mercury 68040 — first real-HW
+attempt with a current-generation kernel. Photo: `testimages/040-boot-a3000-mercury.jpg`
+(untracked comms dir).
+
+### What the screen shows
+```
+kstack 0x70DD178!
+WARNING: DBG ufault VA=38A7000
+TRAP  proc = 4007EC00 (pid 0, ) psw = 2700  pc = 7049130
+PANIC: KERNEL FAULT psw=0x2700, pc=0x7049130, fmt=0x7, vector=0x2 (Bus Error)
+DOUBLE PANIC: usrxmemflt: no as allocated.
+```
+
+### Decoded (every step verified against the binary)
+- `pc=0x7049130` = kernel offset **0x49130 = inside `p0init`** (0x48fcc–0x49140), the loop
+  tail. `kstack 0x70DD178` = pstack (startup stack) — proc 0, IPL7, early `main()`. The
+  `DBG ufault VA=38A7000` line is **getfault040.s** printing the 040 format-7 frame's fault
+  address: the faulting access hit phys **0x038A7000** (va<0x40000000 = DTT0 identity).
+- p0init's loop (verbatim 030 code, unpatched) maps proc 0's u-area 4×2KB clicks with TWO
+  stores per click: STORE A `0x490f6` into `p_ubptbl` (needed — resume040 path U reads it)
+  and **STORE B `0x49120`** — an inline 030-tree walk
+  `st_top1[(p0seguser>>17)&0x1fff].word2 + ((p0seguser>>11)&63)*4` and a PTE write through
+  it. For p0seguser=0x48440000 (kvsegu slot 0): SDE index 0x422, PTE index 0 → the store
+  target is **exactly `st_top1[0x422].word2`**.
+- **Who filled word2: `kvm_init`.** Its kvsegu-window SDE build loop
+  (0x48dc0–0x48e08) computes the leaf-table address as **`leafclick << 11`**
+  (`0x48ddc: moveq #11,%d6; asll %d6,%d1`) and stores it to SDE word2 (0x48df2).
+  Under Model B a click IS a 4KB pfn, so `<<11` HALVES the real address:
+  leaf page at pfn 0x714E (first free pages right after the kernel image + early tables)
+  → word2 = **0x038A7000** instead of 0x0714E000. `0x714E<<11 == 0x38A7000` exactly.
+  The identical missed shift exists for the kvsegmap window (0x48d28/0x48d3e) and for the
+  `ksegmappt`/`eksegmappt` globals (0x48d54).
+- **Why the emulator never showed this:** the 030 st_top1 tree is INERT on 040 (all walkers
+  ported to kptr040), so the halved word2 is never used for translation; p0init's STORE B
+  posted-writes into unpopulated address space at 0x038A7000, and **fs-uae silently swallows
+  accesses to unmapped space** — boots clean. The **real A3000 bus raises a bus error** on
+  the posted write → fmt=7 vector=2 panic, pc advanced to the loop tail (040 writeback-fault
+  imprecision). This CONFIRMS the phase-4 real-HW analysis prediction ("caches OFF → suspect
+  = posted write to garbage phys") and its already-identified fix shape ("p0init STORE B now
+  obsolete (prumap040) → 2-byte neuter") — same store, now with the full causal chain.
+- **NOT a Mercury-memory-map issue**: the halved address is wrong on ANY memory map; an
+  A3640 would hit the identical panic. The kernel's own base/console/MMU are fine.
+- **The 07-05 vs current kernel age is irrelevant**: kvm_init/p0init/segu_get are stock text,
+  byte-identical between that build and today's; this week's fixes are all post-login paths.
+  Today's build panics identically on real HW.
+
+### Predicted SECOND consumer (verified present): segu_get
+`segu_get_orig` has the IDENTICAL inline st_top1 walk + store (0xaa6c4–0xaa6e6+), executed
+for EVERY forked proc's u-area. Fixing p0init alone would move the real-HW panic to the
+first fork. Any fix must cover both consumers — which the root fix does automatically.
+
+### What the photo PROVES works on real 040 silicon (major milestone)
+unix_boot040 handoff, pstart040 movec/TTR MMU enable, deep startup (mlsetup, page_init,
+kmem_init, kvm_init all COMPLETED — p0init is far into main()), console output, trap
+handling (a clean panic, not a guru), getfault040's 040 frame decode (correct FA printed),
+and userspace040 routing (the double-panic message went through usrxmemflt). The port
+fundamentally runs on real silicon; the blocker is one missed byte-patch site + its two
+inert-store consumers.
+
+### Fix plan (small; CODING GOES TO FABLE when approved)
+1. **Root fix (preferred):** patch_modelb.py entries flipping `moveq #11→#12` at
+   **0x48d28** (kvsegmap SDE fill) and **0x48ddc** (kvsegu SDE fill) — word2 then points at
+   the REAL allocated leaf pages, so p0init's/segu_get's inert stores land in real dedicated
+   RAM (their 030 purpose) on emulator AND real HW. Before including **0x48d54**
+   (ksegmappt/eksegmappt) in the same change, scope-check who consumes those globals on the
+   live path (segmap Tier-2 patches may already compensate; changing it blind risks the
+   working emulator boot).
+2. **Belt-and-braces (phase-4's original plan):** additionally neuter p0init STORE B
+   (0x49120 `2080`→`4e71`) since prumap040 made it obsolete; consider the same for
+   segu_get's store after RE-ing whether anything reads those inert PTEs.
+3. Test order: rebuild → emulator boot MUST stay clean → real-HW retest (expect: past
+   p0init, past early forks, next unknown real-HW frontier — likely SCSI/a3091 DMA or
+   interrupts). Real-HW serial capture works (phase-4 note) and should be used for the
+   next attempt.
