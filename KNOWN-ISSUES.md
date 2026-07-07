@@ -411,7 +411,7 @@ procs corrupted at once" alternative. (Separately, an `as_fault STREAM` sampler 
 fires on an unrelated periodic schedule and its proximity to the crash is very likely
 coincidental, not causal — do not chase it without independent corroboration.)
 
-### hat_sdtfree Model-B fix (2026-07-07, landed, UNCONFIRMED for ISSUE-7 — see commit `b8f9cd3`)
+### 10. hat_sdtfree Model-B pfn fix (2026-07-07, RULED OUT for ISSUE-7 — fix stays, real bug, just not this one)
 Codex's `analysis/vm-map/HAT-GROWSDT-AUDIT.md` found (independently verified via disassembly)
 that `hat_sdtalloc`'s 3 Model-B pfn-shift patches (`<<11`→`<<12`) were not mirrored on the
 free side: `hat_sdtfree`'s 2 sites (`table>>11`→ pfn, to find the backing `page_t`) were still
@@ -425,23 +425,43 @@ and for `hat_ptfree`'s own analogous bug, and is reachable from **live, non-swap
 an edge case. This is a genuine bug worth having fixed regardless of ISSUE-7, and it corrupts
 *page metadata* rather than directly a u-area's content, so an extra step (the corrupted page
 later freed/reused while still mapped elsewhere) would be needed to actually reach a zeroed
-`u_procp` — **plausible but unconfirmed as ISSUE-7's cause.** Fixed in `patch_modelb.py`
-(2 new entries, mirrors the existing `hat_sdtalloc` pattern); all three kernels rebuilt clean.
-**This is the next thing to boot-test** — if ISSUE-7 clears, this was very likely it; if not,
-it's still a correctness win to keep.
+`u_procp`. Fixed in `patch_modelb.py` (2 new entries, mirrors the existing `hat_sdtalloc`
+pattern); all three kernels rebuilt clean. **User boot-tested 2026-07-07: ISSUE-7 still
+reproduces** — same PREEMPT1-5 signature (`u318=40734000` matching the established
+`0x4073X000` pattern), `PREEMPT6 scanned=C zerocount=1 pid1=B0` (still isolated to exactly
+one proc — consistent with all prior runs, just a different pid/count since fewer procs were
+live at this point), terminal cascade this time `PANIC: Unknown bootmethod 0x600FBFE/
+0x20000000` → `DOUBLE PANIC: Unknown bootmethod 0x600FBFE/0x40` (yet another distinct
+terminal signature — 4th one observed across sessions — confirming once more that the
+*terminal* PC/vector/message is just wherever the recursive kstack unwind happens to land,
+not diagnostic of the mechanism). **The fix itself stays** (it is a real, independently-
+disassembly-verified bug, worth having fixed on its own merits — see the description above)
+**but is confirmed NOT the ISSUE-7 root cause.**
 
-### RESUME POINTS (next measurements to try)
-- **First, just re-run the ISSUE-7 repro against the hat_sdtfree fix above** — the most
-  promising lead found so far, and the cheapest possible test.
-- If it still reproduces: a targeted probe logging every `hat_sdtfree` call's computed pfn vs.
-  `hat_sdtalloc`'s originally-allocated pfn during a repro run would directly confirm or rule
-  out this mechanism (Codex's own suggested probe).
+**Three hypotheses now ruled out this week alone** (hat_unload cpusha, setuctxt sleep
+window, hat_sdtfree pfn), all independently well-motivated and each requiring real RE work
+to test — none turned out to be it. User decision 2026-07-07: **pause active ISSUE-7 hunting
+for now** rather than continue speculative single-hypothesis probing; system remains fully
+usable from a pristine disk image in the meantime.
+
+### RESUME POINTS (next measurements to try, when resumed)
+- Codex's own suggested probe for hat_sdtfree (now moot, ruled out) — skip.
+- A targeted, DIRECT pfn-corruption detector might still be worth building generically (not
+  hat_sdtfree-specific): log every write to any `page_t`'s offset-32 field (`p_mapping`/
+  `p_sdtbits`/`p_ptdats` union) that doesn't originate from an expected caller, since this
+  offset has now caused THREE separate confirmed/plausible corruption classes in this
+  project (hat_ptfree's original bug, hat_sdtfree's bug just ruled out, and HAT-MAP-AUDIT's
+  documented "phantom PTE" double-entry risk) — even though none has been proven to BE
+  ISSUE-7, the offset itself is clearly fragile and worth watching generically rather than
+  chasing one caller at a time.
 - Add a `segu_softload` marker (only softunload was instrumented) + a `segu_get` per-proc
   (cp→p_segu→page pfn) marker to trace the u-area PAGE lifecycle and catch when p_segu's
   backing page becomes a fresh-zero page. LOWER PRIORITY than it once was: ruled-out items
   5 and 6 above establish the swap daemon AND segu_softunload are not even reached on the
   crash path, so a swap-lifecycle probe is chasing a subsystem already shown to be
-  uninvolved — the setuctxt probe (non-swap, proc-creation-time) is the better-motivated
-  next data point.
+  uninvolved.
+- Let Codex continue mapping the kernel — its audits have a good hit rate this week (one
+  genuine bug found and fixed, even though not this one) and cost nothing to keep running in
+  parallel while ISSUE-7 hunting is paused.
 - Codex to statically analyze the segu/u-area page lifecycle + a whole-kernel-vs-source
   audit (analysis/ dir) — likely the fastest path given how resistant this is to probing.

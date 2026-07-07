@@ -1,6 +1,20 @@
 # RESUME HERE — AMIX 68040 port status (2026-07-07)
 
-## ►►► UPDATE 2026-07-07 (later): PREEMPT6 confirms ISSUE-7 isolated to 1 proc; hat_sdtfree Model-B fix landed, NOT yet boot-tested ◄◄◄
+## ►►► UPDATE 2026-07-07 (latest): hat_sdtfree fix RULED OUT too — ISSUE-7 hunting PAUSED by user decision ◄◄◄
+User boot-tested the `hat_sdtfree` fix (below): **ISSUE-7 still reproduces.** Same
+PREEMPT1-5 signature, PREEMPT6 again confirms isolation to one proc (`scanned=C
+zerocount=1 pid1=B0` this run), a 4th distinct terminal panic signature this time
+(`PANIC: Unknown bootmethod 0x600FBFE/... → DOUBLE PANIC`). Three well-motivated hypotheses
+(hat_unload cpusha, setuctxt sleep window, hat_sdtfree pfn) all ruled out this week — each
+required real RE work, none was it. **User decision: pause active ISSUE-7 hunting for now**
+rather than continue one-hypothesis-at-a-time probing; see KNOWN-ISSUES.md ISSUE-7 "RESUME
+POINTS" for what's left to try when picked back up (a generic offset-32 write-guard is the
+most promising remaining idea, since that exact field has now caused 3 separate
+confirmed/plausible corruption classes across this project). System remains fully usable
+from a pristine disk image. The `hat_sdtfree` fix ITSELF stays — genuine, independently
+disassembly-verified bug, just not this one.
+
+## ►►► UPDATE 2026-07-07 (earlier): PREEMPT6 confirms ISSUE-7 isolated to 1 proc; hat_sdtfree Model-B fix landed ◄◄◄
 PREEMPT6 (commit 959194f) fired: `scanned=16 zerocount=1` — the corruption is confirmed
 isolated to exactly one proc, not systemic. Codex produced 3 more HAT audits
 (HAT-EXEC-AUDIT.md, HAT-MAP-AUDIT.md, HAT-GROWSDT-AUDIT.md) plus updates to
@@ -11,11 +25,11 @@ previously-undocumented bug — **independently verified via disassembly, not ju
 corrupt an unrelated live page's `p_sdtbits`/`p_mapping` (offset-32 alias) — the same failure
 class as the already-fixed ISSUE-5/6 and hat_ptfree bugs. Reachable from `hat_swapout`,
 `hat_map` (segment growth), and `hat_exec_orig` (table replace) — live paths, not dead code.
-Fixed in `patch_modelb.py` (commit `b8f9cd3`), all three kernels rebuilt clean. **Plausible
-but unconfirmed as ISSUE-7's cause — this is the next thing to boot-test.** Full detail:
+Fixed in `patch_modelb.py` (commit `b8f9cd3`), all three kernels rebuilt clean — **since
+ruled out for ISSUE-7, see the update above, but the fix stays.** Full detail:
 KNOWN-ISSUES.md ISSUE-7 section, memory `amix-codex-hat-audit-findings`.
 hat_exec's port path also got clearer thanks to HAT-EXEC-AUDIT.md (see that memory entry) —
-relevant for after ISSUE-7, not before.
+relevant for after ISSUE-7 is resumed, not before.
 
 ## ►►► UPDATE 2026-07-07: ISSUE-4 (hat_dup) MERGED to master + 2 hardening fixes — AWAITING BOOT TEST ◄◄◄
 `unix-040-quiet` boot-confirmed working since the last update (log much calmer than dbg, as
@@ -77,21 +91,25 @@ Since the 07-04 login milestone, driving real workloads surfaced and fixed a cha
   the flag stored from the same register → segu_release passed hat_unload flags=0, keepcnt never
   released; `segu_lockfix` wrapper, commit 6efba29).
 
-**OPEN — ISSUE-7 (the current frontier, KNOWN-ISSUES.md):** a SECOND boot from a kernel-
-contaminated disk panics at the login prompt; a process's u-area has **`u_procp=0`** (a fresh-zero
-page, via a NON-swap mechanism — 9 hypotheses ruled out by runtime probes: kmem free-list,
-interrupt tables, remap-read, u_procp-at-trap-entry, swap daemon, segu_softunload, segu slot
-double-alloc, (2026-07-07) hat_unload's missing post-clear cpusha, and (2026-07-07)
-setuctxt's internal kmem_alloc sleep window).  Root NOT yet found.
+**OPEN, HUNTING PAUSED BY USER 2026-07-07 — ISSUE-7 (KNOWN-ISSUES.md):** a SECOND boot from a
+kernel-contaminated disk panics at the login prompt; a process's u-area has **`u_procp=0`** (a
+fresh-zero page, via a NON-swap mechanism — 10 hypotheses ruled out by runtime probes: kmem
+free-list, interrupt tables, remap-read, u_procp-at-trap-entry, swap daemon, segu_softunload,
+segu slot double-alloc, (2026-07-07) hat_unload's missing post-clear cpusha, (2026-07-07)
+setuctxt's internal kmem_alloc sleep window, and (2026-07-07) hat_sdtfree's Model-B pfn bug).
+Root NOT yet found; PREEMPT6 has now confirmed across 2 separate crash instances that the
+corruption is isolated to exactly one proc, not systemic.
 Deterministic repro: contaminate image B (boot+reboot once), its next boot crashes; restore
 pristine image A → clean.  System stays USABLE for clean cycles. Rich dbg diagnostic infra in
 place (ktrap_latch / preempt_dbg+tourniquet [now incl. PREEMPT6 multi-proc scan] /
 kmem_validate / segvn_softunlock_dbg / segu_swap_dbg / hatalloc_dbg LIVEABORT / execmark
 UTRAP / setuctxt_dbg [ruled out, kept for regression visibility]).
 
-**NEXT options (pick per session):** (a) continue ISSUE-7 — boot-test the new PREEMPT6
-multi-proc scan (commit 959194f) and read whether `zerocount` is 1 (isolated, supports a
-per-allocation race) or >1 (systemic, a shared/global structure got clobbered); (b) ~~get
+**NEXT options (pick per session):** (a) RESUME ISSUE-7 when ready — KNOWN-ISSUES.md's
+RESUME POINTS now favors a generic offset-32 (`p_mapping`/`p_sdtbits`/`p_ptdats` union)
+write-guard over another single-caller hypothesis, since that field has now caused 3
+separate confirmed/plausible corruption classes, and PREEMPT6 has already answered the
+isolated-vs-systemic question twice (isolated, both times); (b) ~~get
 BASE `unix-040` bootable standalone~~ — hat_dup040 (ISSUE-4) is now merged; the base still
 needs the dbg-only diagnostics stripped for a fully quiet standalone boot (see the QUIET
 variant below, which already does this for a serial line); (c) real-HW testing (USB-serial
