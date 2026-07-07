@@ -506,6 +506,16 @@ usable from a pristine disk image in the meantime.
 attempt with a current-generation kernel. Photo: `testimages/040-boot-a3000-mercury.jpg`
 (untracked comms dir).
 
+**Observed boot pattern (user, real HW, repeated a few times):** FIRST boot with unix_boot040
+→ **AmigaOS guru** (an AmigaOS-side alert, before the kernel installs trap handlers — so a
+LOADER/handoff-level failure, NOT this kernel panic). SECOND boot → this p0init KERNEL PANIC,
+immediately (screen goes black after unix_boot, nothing else, then the panic). Pattern repeats.
+=> Treat as TWO separate phenomena: (a) the first-boot guru is a loader cold-start/handoff
+robustness issue (candidate causes: cold MMU/cache/CPU state the first run leaves different, or
+a loader path only the warm second run survives) — needs its own investigation, ideally with
+the AmigaOS guru code read off screen + serial capture; (b) the p0init panic below is the
+kernel frontier and is fully root-caused. Fixing (b) does not address (a); do not conflate them.
+
 ### What the screen shows
 ```
 kstack 0x70DD178!
@@ -517,7 +527,12 @@ DOUBLE PANIC: usrxmemflt: no as allocated.
 
 ### Decoded (every step verified against the binary)
 - `pc=0x7049130` = kernel offset **0x49130 = inside `p0init`** (0x48fcc–0x49140), the loop
-  tail. `kstack 0x70DD178` = pstack (startup stack) — proc 0, IPL7, early `main()`. The
+  tail. **`p0init` is called from `mlsetup` (0x48b8c), which runs in `pstart040`'s tail —
+  BEFORE `main()` and long before the banner** (the banner's `utsname`+7×`printf` block is at
+  0x59842, after `main`→`startup`→`vfs_mountroot`). `kstack 0x70DD178` = pstack (startup
+  stack), proc 0, IPL7. **Real-HW timing CONFIRMS this (user, 2026-07-07): the panic appears
+  immediately when the screen goes black after unix_boot, with NOTHING else on screen — i.e.
+  pre-banner, pre-main, right after MMU bring-up = exactly where mlsetup→p0init sits.** The
   `DBG ufault VA=38A7000` line is **getfault040.s** printing the 040 format-7 frame's fault
   address: the faulting access hit phys **0x038A7000** (va<0x40000000 = DTT0 identity).
 - p0init's loop (verbatim 030 code, unpatched) maps proc 0's u-area 4×2KB clicks with TWO
