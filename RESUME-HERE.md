@@ -1,5 +1,24 @@
 # RESUME HERE — AMIX 68040 port status (2026-07-07)
 
+> ## ▶ NEXT ACTION (paused mid-task 2026-07-07, resume here) — apply the ISSUE-8 fix
+> Real-HW Mercury-040 boot is blocked by **ISSUE-8** (KNOWN-ISSUES.md), root cause fully found
+> + binary-verified + real-HW-timing-confirmed. **The fix is a 2-byte-patch job, ready to
+> implement — coding to be done by FABLE** (per [[feedback-delegate-coding-to-fable]]; user is
+> switching to a Claude account with Fable tokens to do exactly this):
+> 1. In `prototypes/patch_modelb.py`, add two entries flipping `moveq #11`→`#12`
+>    (`7?0b`→`7?0c`): at **0x48d28** (kvm_init kvsegmap SDE-fill leaf `click<<11`) and
+>    **0x48ddc** (kvm_init kvsegu SDE-fill leaf `click<<11`). These halve the st_top1 word2
+>    leaf-table address under Model B → p0init's/segu_get's inert 030-tree store posted-writes
+>    to a bogus phys → real 040 bus errors (fs-uae silently swallows it).
+> 2. **Before touching 0x48d54** (ksegmappt/eksegmappt globals, same missed shift): scope-check
+>    who consumes those on the live path — do NOT change blind (risks the working emulator boot).
+> 3. Build all three kernels (`sh relink-040.sh` → `-dbg` → `-quiet`), verify the two sites read
+>    `#12` in the binary, 0 reloc complaints, **emulator boot MUST stay clean**, then real-HW retest.
+> 4. Optional belt-and-braces (phase-4's plan): also neuter p0init STORE B (0x49120 `2080`→`4e71`).
+> Full chain + rationale: KNOWN-ISSUES.md ISSUE-8; memory `amix-040-realhw-p0init-buserror`.
+> Separately, the 1st-boot AmigaOS guru is a DISTINCT loader-level issue (not ISSUE-8) — capture
+> its guru code + serial log next real-HW session.
+
 > **ORIENTATION (2026-07-07): the Codex analysis project MOVED out of this repo.** It is now a
 > SEPARATE sibling git repo at `~/kehitys/amix-playground/amix-kernel-analysis/` (moved to keep
 > copyright-sensitive RE material in its own version control, out of the shareable kernelsupport
