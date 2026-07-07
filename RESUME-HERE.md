@@ -1,6 +1,21 @@
 # RESUME HERE — AMIX 68040 port status (2026-07-07)
 
-## ►►► UPDATE 2026-07-07 (latest): hat_sdtfree fix RULED OUT too — ISSUE-7 hunting PAUSED by user decision ◄◄◄
+## ►►► UPDATE 2026-07-07 (latest): hat_map phantom-preload DISABLED (commit 9b7f00c), awaiting boot test ◄◄◄
+Acted on Codex's `P-MAPPING-MATRIX.md`/`HAT-MAP-AUDIT.md` finding (that retained stock
+`hat_map` writes legacy `pfn<<11` phantom PTEs into `pp->p_mapping` chains, mixing formats
+with the live `pfn<<12` entries and breaking the one-format-per-chain invariant). Investigated
+both fix directions (`prototypes/hat-map-040-fix-plan.md`) and implemented **Option A: a
+1-byte patch** (0xb58d2 `beqw`→`braw`, in `patch_pmmu_040.py`) that skips ONLY the
+vnode-preload loop while keeping the load-bearing fork URP reload (0xb58c6) intact.
+Functionally equivalent on 040 (preload built no usable translation anyway; demand-fault via
+`hat_pteload` builds the identical mapping), and removes the phantom contamination + RSS
+double-count + cache reclaim-block. `segdev_create` unaffected (already no-preload);
+`segvn_create`'s file-backed preload is the only site changed. All three kernels rebuilt
+clean, patch byte-verified. **Next: boot-test — the demand-fault path is exercised constantly
+so any regression surfaces immediately at login/exec.** (This is a correctness cleanup, NOT an
+ISSUE-7 fix attempt — ISSUE-7 hunting stays paused.)
+
+## ►►► UPDATE 2026-07-07: hat_sdtfree fix RULED OUT too — ISSUE-7 hunting PAUSED by user decision ◄◄◄
 User boot-tested the `hat_sdtfree` fix (below): **ISSUE-7 still reproduces.** Same
 PREEMPT1-5 signature, PREEMPT6 again confirms isolation to one proc (`scanned=C
 zerocount=1 pid1=B0` this run), a 4th distinct terminal panic signature this time

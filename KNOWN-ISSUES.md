@@ -451,9 +451,15 @@ usable from a pristine disk image in the meantime.
   `p_sdtbits`/`p_ptdats` union) that doesn't originate from an expected caller, since this
   offset has now caused THREE separate confirmed/plausible corruption classes in this
   project (hat_ptfree's original bug, hat_sdtfree's bug just ruled out, and HAT-MAP-AUDIT's
-  documented "phantom PTE" double-entry risk) — even though none has been proven to BE
-  ISSUE-7, the offset itself is clearly fragile and worth watching generically rather than
-  chasing one caller at a time.
+  documented "phantom PTE" double-entry risk — the last now FIXED, see below) — even though
+  none has been proven to BE ISSUE-7, the offset itself is clearly fragile and worth watching
+  generically rather than chasing one caller at a time.
+  NOTE (2026-07-07): the HAT-MAP phantom-PTE producer is now disabled (commit 9b7f00c,
+  hat_map preload skip) — so `pp->p_mapping` chains are single-format (live 040 only) from
+  every producer again. This is a correctness cleanup, NOT confirmed as ISSUE-7's cause, but
+  it does eliminate one of the three offset-32 corruption classes above; if ISSUE-7 is
+  resumed, that leaves hat_ptfree's active_pts/free_pts retirement gap as the main remaining
+  offset-32 suspect worth a generic write-guard.
 - Add a `segu_softload` marker (only softunload was instrumented) + a `segu_get` per-proc
   (cp→p_segu→page pfn) marker to trace the u-area PAGE lifecycle and catch when p_segu's
   backing page becomes a fresh-zero page. LOWER PRIORITY than it once was: ruled-out items

@@ -1,5 +1,9 @@
 # hat_map 040 fix — approach investigation (2026-07-07)
 
+> **STATUS: Option A IMPLEMENTED (commit 9b7f00c), awaiting boot test.** Patch added to
+> `patch_pmmu_040.py` at 0xb58d2 (`67`→`60`, beqw→braw); byte-verified present in all three
+> kernels; 0 reloc complaints. The rest of this doc is the original decision record.
+
 Investigation of how to fix the `hat_map` phantom-PTE bug that Codex's
 `analysis/vm-map/P-MAPPING-MATRIX.md` + `HAT-MAP-AUDIT.md` documented. **This is a
 decision/plan doc, not yet implemented.** All addresses/bytes below independently verified
