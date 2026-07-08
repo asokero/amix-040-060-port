@@ -62,6 +62,19 @@ P = [
  # --- kvm_init: page_hash region size (clicks) ---
  (0x48e64, b"\x06\x83\x00\x00\x07\xff", b"\x06\x83\x00\x00\x0f\xff", "kvm:page_hash round +2047"),
  (0x48e6a, b"\x7c\x0b", b"\x7c\x0c", "kvm:page_hash region >>11"),
+ # --- ISSUE-8 ROOT FIX (2026-07-07/08, real-HW Mercury-040 boot panic): kvsegmap/kvsegu
+ # leaf-table ctob(nextfree)/btoc(ptptr) sites were MISSED by the original Model-B pass,
+ # left at 2KB (<<11 / +2047 / >>11).  This halves the leaf-table address (word2 =
+ # nextfree<<11 = 0x038A7000, an unmapped hole on real HW/Amiberry) -> the kvm_init
+ # st_top1 SDE fill writes/reads garbage phys -> real bus error at p0init (STORE B) and
+ # an identical read at segu_get.  Fix: <<11->12, +2047->+4095, >>11->>>12, matching every
+ # other Model-B leaf-table builder (segkmem_alloc/segkmem_mapin above). ---
+ (0x48d28, b"\x7c\x0b", b"\x7c\x0c", "kvm:ISSUE-8 kvsegmap ptptr=ctob(nextfree) <<11->12"),
+ (0x48d54, b"\x7c\x0b", b"\x7c\x0c", "kvm:ISSUE-8 kvsegmap ksegmappt=ctob + nextfree=btoc (shared) <<11->12"),
+ (0x48d66, b"\x06\x85\x00\x00\x07\xff", b"\x06\x85\x00\x00\x0f\xff", "kvm:ISSUE-8 kvsegmap btoc round +2047->+4095"),
+ (0x48ddc, b"\x7c\x0b", b"\x7c\x0c", "kvm:ISSUE-8 kvsegu ptptr=ctob(nextfree) <<11->12"),
+ (0x48e08, b"\x7c\x0b", b"\x7c\x0c", "kvm:ISSUE-8 kvsegu ksegupt=ctob + nextfree=btoc (shared) <<11->12"),
+ (0x48e1a, b"\x06\x85\x00\x00\x07\xff", b"\x06\x85\x00\x00\x0f\xff", "kvm:ISSUE-8 kvsegu btoc round +2047->+4095"),
  # --- segkmem_alloc: leaf PTE builder (the Tier-0 blocker) ---
  (0xa8716, b"\x76\x0b", b"\x76\x0c", "ska:leaf index >>11"),
  (0xa8742, b"\xef\xee\x00\x15\xff\xf8", b"\xef\xee\x00\x14\xff\xf8", "ska:PTE pfn bfins {0:21}->{0:20}"),
