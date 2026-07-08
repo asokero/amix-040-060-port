@@ -54,6 +54,14 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/haltsys040.s"   -o "$HERE/build/
 #                    bit, so segu_release never passed HAT_UNLOCK|HAT_RELEPP and the
 #                    u-page keepcnt hold leaked -> page_abort freed live u-pages.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segu_lockfix.s" -o "$HERE/build/segu_lockfix.o"
+#     segu_ubptbl040 = post-fix wrappers rebuilding p_ubptbl from the live kptr040
+#                    tree after stock segu_get/swapinub run (their inline st_top1
+#                    walks are inert on 040 -> p_ubptbl was ZEROS; PREEMPT5).
+#                    Chain: segu_get(ubptbl) -> segu_get_lockfix -> segu_get_orig
+#                    (stock); the lockfix def is RENAMED below so each build keeps
+#                    exactly one strong segu_get.  swapinub(ubptbl) -> swapinub_stock.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segu_ubptbl040.s" -o "$HERE/build/segu_ubptbl040.o"
+m68k-linux-gnu-objcopy --redefine-sym segu_get=segu_get_lockfix "$HERE/build/segu_lockfix.o"
 
 echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
 cp "$STOCK" "$HERE/build/unix-stage1"
@@ -109,6 +117,8 @@ m68k-linux-gnu-objcopy \
 	--add-symbol krnxmemflt_orig=.text:0x5b140,function,global \
 	--weaken-symbol segu_get \
 	--add-symbol segu_get_orig=.text:0x000aa466,function,global \
+	--weaken-symbol swapinub \
+	--add-symbol swapinub_stock=.text:0x000a9e5c,function,global \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -119,11 +129,11 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/getfault040.o" "$HERE/build/userspace040.o" \
 	"$HERE/build/vtop040.o" "$HERE/build/wb040.o" "$HERE/build/ptest040.o" \
 	"$HERE/build/uvatosde040.o" "$HERE/build/prumap040.o" "$HERE/build/haltsys040.o" \
-	"$HERE/build/segu_lockfix.o"
+	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_orig; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
