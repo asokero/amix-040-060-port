@@ -65,4 +65,7 @@ if [ "$1" = "$2" ]; then echo "[OK] text/data contiguous."
 else echo "[FAIL] text/data NOT contiguous: text_end=0x$(printf %x $1) data_off=0x$(printf %x $2)"; exit 1; fi
 
 echo
+echo "[*] stamping build id -> utsname.machine tag (inherits inituname040 from unix-040)"
+python3 "$HERE/prototypes/stamp_buildid.py" "$OUT"
+
 echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-quiet"

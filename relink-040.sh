@@ -61,6 +61,8 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segu_lockfix.s" -o "$HERE/build/
 #                    (stock); the lockfix def is RENAMED below so each build keeps
 #                    exactly one strong segu_get.  swapinub(ubptbl) -> swapinub_stock.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segu_ubptbl040.s" -o "$HERE/build/segu_ubptbl040.o"
+# inituname040 = wrapper appending " 68040-<buildid>" to utsname.machine (banner + uname -m)
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/inituname040.s" -o "$HERE/build/inituname040.o"
 m68k-linux-gnu-objcopy --redefine-sym segu_get=segu_get_lockfix "$HERE/build/segu_lockfix.o"
 
 echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
@@ -119,6 +121,8 @@ m68k-linux-gnu-objcopy \
 	--add-symbol segu_get_orig=.text:0x000aa466,function,global \
 	--weaken-symbol swapinub \
 	--add-symbol swapinub_stock=.text:0x000a9e5c,function,global \
+	--weaken-symbol inituname \
+	--add-symbol inituname_orig=.text:0x00049140,function,global \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -129,7 +133,8 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/getfault040.o" "$HERE/build/userspace040.o" \
 	"$HERE/build/vtop040.o" "$HERE/build/wb040.o" "$HERE/build/ptest040.o" \
 	"$HERE/build/uvatosde040.o" "$HERE/build/prumap040.o" "$HERE/build/haltsys040.o" \
-	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o"
+	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o" \
+	"$HERE/build/inituname040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
@@ -168,4 +173,7 @@ echo "[*] reloc validation:"
 ( cd "$HERE" && python3 prototypes/check_relink_relocs.py | tail -1 )
 
 echo
+echo "[*] stamping build id -> utsname.machine tag (banner + uname -m)"
+python3 "$HERE/prototypes/stamp_buildid.py" "$OUT"
+
 echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040"
