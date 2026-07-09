@@ -23,6 +23,21 @@
 | other than Lkl_n; cmn_err clobbers d0/d1/a0/a1 only (fine -- k_trap is a C function and
 | the frame contents are untouched).
 |
+| === KSTKCHAIN (ISSUE-7, 2026-07-08): kernel-stack-depth return-address chain probe ===
+| A kernel-fault RECURSION (~220 bytes/level) eats the u-area kernel stack (VA
+| 0x40000000-0x40001FFF) downward until it overwrites the u struct front (u_procp=0)
+| -> panic.  The native kernel's per-level "kstack 0xXXXXXXXX!" prints were seen
+| descending 0x40000C54 -> 0x400002E0.  This probe fires when k_trap runs critically
+| deep (fp < 0x40000C00, frames still intact), latches after 2 firings (Lks_n, no
+| per-level stack pressure), and prints (a) sp / fmt-vec word (frame+70) / fault PC
+| (frame+66) / 040 fault address (frame+84), then (b) up to 16 return addresses from
+| the frame-pointer chain rooted at the faulting code's saved A6 (frame+60):
+| RA = fp@(4), next fp = fp@(0); each fp must be long-aligned, inside
+| [0x40000000, 0x40001FF8) (so fp@(4) dereference stays inside the 8KB u-area), and
+| strictly GREATER than the previous fp (stack grows down: caller fp > callee fp).
+| RAs collected into a static buffer FIRST (zero-padded, no extra stack), then printed
+| 4 per line.  Extra register cost: d2 saved/restored (cmn_err preserves d2-d7/a2-a6).
+|
 | Mechanism: objcopy --add-symbol k_trap_orig=.text:0x5a0e8 + --weaken-symbol k_trap; this
 | strong wrapper dumps then TAIL-JMPs to k_trap_orig with the stack restored to the original
 | `jsr k_trap` state, so k_trap_orig's rts + d0 reach ktraps unchanged.
@@ -33,7 +48,109 @@ k_trap:
 	linkw	%fp,&0
 	movel	%a2,%sp@-		| save a2 (cmn_err preserves a2-a6, so frame survives)
 	movel	%a3,%sp@-		| save a3 (parity with ktrap_dbg.s discipline)
+	movel	%d2,%sp@-		| save d2 (KSTKCHAIN walk/line counter)
 	lea	%fp@(8),%a2		| a2 = frame pointer (&USP slot)
+| ======================= KSTKCHAIN probe (ISSUE-7) =======================
+| trigger: this k_trap entry runs critically deep in the u-area kernel stack
+	movel	%fp,%d0			| d0 = current depth (fp = entry sp - 4)
+	cmpil	&0x40000000,%d0
+	bcsw	Lks_skip		| below u-area -> not ours
+	cmpil	&0x40000C00,%d0
+	bccw	Lks_skip		| not critically deep -> skip
+| latch: at most 2 firings total
+	movel	Lks_n,%d1
+	cmpil	&2,%d1
+	bccw	Lks_skip
+	addql	&1,%d1
+	movel	%d1,Lks_n
+| --- line 1: sp / format-vector word / fault PC / 040 fault address ---
+	movel	%a2@(84),%sp@-		| 040 fault address (userspace040 convention)
+	movel	%a2@(66),%sp@-		| exception-frame PC (unaligned long: legal on 040)
+	moveq	&0,%d1
+	movew	%a2@(70),%d1		| format/vector word
+	movel	%d1,%sp@-
+	movel	%d0,%sp@-		| sp (wrapper fp)
+	pea	Lks_m1
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
+| --- zero the RA buffer (16 longs) so unwalked slots print as 0 ---
+	lea	Lks_buf,%a3
+	moveq	&15,%d1
+Lks_z:
+	clrl	%a3@+
+	subql	&1,%d1
+	bccw	Lks_z
+| --- walk the frame-pointer chain into Lks_buf ---
+	lea	Lks_buf,%a3		| a3 = store pointer
+	moveal	%a2@(60),%a0		| a0 = fp0 = faulting code's saved A6 (frame+60)
+	moveq	&0,%d0			| d0 = previous fp (0 = none yet)
+	moveq	&0,%d2			| d2 = RA count
+Lks_walk:
+	movel	%a0,%d1
+	btst	&0,%d1			| fp long-aligned?
+	bnew	Lks_wend
+	btst	&1,%d1
+	bnew	Lks_wend
+	cmpil	&0x40000000,%d1		| fp inside the u-area stack?
+	bcsw	Lks_wend
+	cmpil	&0x40001FF8,%d1		| upper bound keeps fp@(4) inside 0x40002000
+	bccw	Lks_wend
+	cmpl	%d0,%d1			| strictly increasing vs previous fp?
+	blsw	Lks_wend		| fp <= prev -> chain broken, stop
+	movel	%d1,%d0			| prev = current
+	movel	%a0@(4),%a3@+		| collect return address = fp@(4)
+	moveal	%a0@,%a0		| next fp = fp@(0)
+	addql	&1,%d2
+	cmpil	&16,%d2
+	bcsw	Lks_walk
+Lks_wend:
+| --- print the 16 collected / zero-padded RAs, 4 per cmn_err line ---
+	lea	Lks_buf,%a3
+	moveq	&4,%d2			| 4 lines (cmn_err preserves d2-d7/a2-a6)
+Lks_pline:
+	movel	%a3@(12),%sp@-
+	movel	%a3@(8),%sp@-
+	movel	%a3@(4),%sp@-
+	movel	%a3@,%sp@-
+	pea	Lks_m2
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
+	lea	%a3@(16),%a3
+	subql	&1,%d2
+	bnew	Lks_pline
+| --- KSTKWB (ISSUE-7 wb040 diagnosis): 040 format-7 write-back frame fields ---
+| Offsets per prototypes/wb040.s header (relative to a2 = frame arg):
+|   SSW@+72  WB1S@+82 WB1A@+104 WB1D@+108  WB2S@+80  WB3S@+78 WB3A@+88 WB3D@+92
+| line 1: ssw / WB1S / WB2S / WB3S (zero-extended words)
+	moveq	&0,%d1
+	movew	%a2@(78),%d1		| WB3S
+	movel	%d1,%sp@-
+	moveq	&0,%d1
+	movew	%a2@(80),%d1		| WB2S
+	movel	%d1,%sp@-
+	moveq	&0,%d1
+	movew	%a2@(82),%d1		| WB1S
+	movel	%d1,%sp@-
+	moveq	&0,%d1
+	movew	%a2@(72),%d1		| SSW
+	movel	%d1,%sp@-
+	pea	Lks_m3
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
+| line 2: WB1A / WB1D / WB3A / WB3D (WB2 addr/data usually unused; WB3 = known live slot)
+	movel	%a2@(92),%sp@-		| WB3D
+	movel	%a2@(88),%sp@-		| WB3A
+	movel	%a2@(108),%sp@-		| WB1D
+	movel	%a2@(104),%sp@-		| WB1A
+	pea	Lks_m4
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
+Lks_skip:
+| ================== end KSTKCHAIN; original ISSUE-5 latch below ==================
 | --- gate: frame PC inside [0x40000000, 0x4C000000)? ---
 	movel	%a2@(66),%d0		| exception-frame PC (unaligned long: legal on 040)
 	cmpil	&0x40000000,%d0
@@ -101,6 +218,7 @@ k_trap:
 	jsr	cmn_err
 	lea	%sp@(24),%sp
 Lkl_done:
+	movel	%sp@+,%d2		| restore d2
 	moveal	%sp@+,%a3		| restore a3
 	moveal	%sp@+,%a2		| restore a2
 	unlk	%fp			| sp -> [retaddr][USP arg]: original jsr k_trap state
@@ -128,3 +246,21 @@ Lkl_m6:
 	.even
 Lkl_n:
 	.long	0
+	.even
+Lks_m1:
+	.asciz	"DBG KSTKCHAIN sp=%x fv=%x pc=%x fa=%x"
+	.even
+Lks_m2:
+	.asciz	"DBG KSTKCHAIN RA %x %x %x %x"
+	.even
+Lks_m3:
+	.asciz	"DBG KSTKWB ssw=%x w1s=%x w2s=%x w3s=%x"
+	.even
+Lks_m4:
+	.asciz	"DBG KSTKWB w1a=%x w1d=%x w3a=%x w3d=%x"
+	.even
+Lks_n:
+	.long	0
+Lks_buf:
+	.long	0,0,0,0,0,0,0,0
+	.long	0,0,0,0,0,0,0,0
