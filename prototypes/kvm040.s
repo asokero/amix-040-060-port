@@ -117,3 +117,4 @@ vatopte:
 	rts
 	nop			| pad .text to a 4-byte multiple (loader copies text+data as one block)
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

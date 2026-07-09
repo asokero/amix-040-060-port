@@ -35,6 +35,7 @@ Lsd_scr:
 	rts
 	nop
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.globl	conputc
 conputc:
@@ -42,3 +43,4 @@ conputc:
 Lser_init:
 	.word	0
 	.even
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

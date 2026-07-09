@@ -899,6 +899,7 @@ Lrx_go:
 	jmp	rexit_orig
 	nop				| pad appended .text to keep text/data contiguous
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lsg_msg:
@@ -972,3 +973,4 @@ Lcrash_n:
 	.even
 Lam_msg:
 	.asciz	"DBG as_map as=%x addr=%x size=%x ret=%x"
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

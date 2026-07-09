@@ -777,6 +777,7 @@ Lhd_out:
 	rts
 	nop				| pad .text to a 4-byte multiple (adjust as needed)
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lhd_msg:
@@ -789,3 +790,4 @@ Lhd_n:
 	.long	0
 Lhd_cn:
 	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

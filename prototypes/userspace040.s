@@ -69,7 +69,9 @@ Lus_ret:
 	unlk	%fp
 	rts
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lus_msg:
 	.asciz	"userspace called for non-bus error exception"
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

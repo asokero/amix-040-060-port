@@ -93,6 +93,7 @@ Lgf_nodbg:
 	unlk	%fp
 	rts
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lgf_msg:
@@ -102,3 +103,4 @@ Lgf_n:
 	.long	0
 Lgf_save:
 	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

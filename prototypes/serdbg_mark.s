@@ -71,8 +71,10 @@ Lhx_after:
 	unlk	%fp
 	rts
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lmk_init:
 	.word	0
 	.even
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

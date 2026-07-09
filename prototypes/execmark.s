@@ -524,6 +524,7 @@ Lg_go:
 Lgx_skip:
 	jmp	gexec_orig
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lgx_n:
@@ -531,6 +532,7 @@ Lgx_n:
 Lgx_msg:
 	.asciz	"DBG gexec pid=%d by psargs=%s"
 	.even
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.text
 
 	.globl	elfexec
@@ -569,6 +571,7 @@ Lv_go:
 | -> the PLT[0] `jmp *GOT[2]` wild-jumps into the program (observed PC 0x800024FE).
 | Capped at 5 execs (init + first children).  lfuword (moves SFC=user) reads user VA safely
 | (faults caught by onfault -> returns -1, never crashes the kernel).
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lxf_n:
@@ -576,6 +579,7 @@ Lxf_n:
 Lxf_msg:
 	.asciz	"DBG setregs FAIL ret=%d psargs-uva=%x nc=%x -> exece sends silent SIGKILL"
 	.even
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.text
 	.globl	setregs
 setregs:
@@ -805,6 +809,7 @@ Lh_go:
 	nop
 	nop
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lex_n:
@@ -851,3 +856,4 @@ Lcr2_msg:
 	.even
 g_inexec:
 	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

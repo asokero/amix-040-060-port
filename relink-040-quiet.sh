@@ -64,6 +64,18 @@ set -- $CONTIG
 if [ "$1" = "$2" ]; then echo "[OK] text/data contiguous."
 else echo "[FAIL] text/data NOT contiguous: text_end=0x$(printf %x $1) data_off=0x$(printf %x $2)"; exit 1; fi
 
+# HARD CHECK (2026-07-09): final .data size MUST be a 4-byte multiple. The loader
+# (rel.c bindsections) places .bss at data_addr+data_size with NO alignment, so a
+# misaligned .data total shifts the ENTIRE kernel .bss -- CPU tolerates it (68020+)
+# but the SDMAC 32-bit DMA engine has no A[1:0] bits: a misaligned DMA buffer (e.g.
+# sdpart.c `block`) reads the RDB into the wrong offset -> 'RDSK' scan fails ->
+# root mount ENXIO. This is exactly the quiet-on-Amiberry root-mount regression.
+DSZ=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print strtonum("0x"$6)}')
+if [ $((DSZ % 4)) -ne 0 ]; then
+	echo "[FAIL] .data size 0x$(printf %x $DSZ) not a 4-byte multiple -> .bss misaligned at runtime (add .balign 4 to the offending .s)"; exit 1
+fi
+echo "[OK] .data size 0x$(printf %x $DSZ) is 4-aligned (bss placement safe)."
+
 echo
 echo "[*] stamping build id -> utsname.machine tag (inherits inituname040 from unix-040)"
 python3 "$HERE/prototypes/stamp_buildid.py" "$OUT"

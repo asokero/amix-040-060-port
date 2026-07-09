@@ -58,6 +58,7 @@ Lvt_done:
 	rts
 	nop				| pad .text to a 4-byte multiple
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lvt_n:
@@ -65,3 +66,4 @@ Lvt_n:
 Lvt_msg:
 	.asciz	"DBG vtop pool phys=%x va=%x proc=%x caller=%x"
 	.even
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

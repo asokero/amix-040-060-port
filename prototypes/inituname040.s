@@ -19,6 +19,7 @@
 
 	.set	UTS_MACHINE, 0x404	| utsname.machine = 4 * SYS_NMLN (SYS_NMLN = 257)
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.text
 	.globl	inituname
 inituname:
@@ -35,8 +36,10 @@ Liu_cpy:
 	rts
 	nop				| pad .text to a 4-byte multiple (36 bytes)
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 	.globl	buildid
 buildid:
 	.asciz	" 68040-000000-00"	| 16 chars + NUL; stamped post-link
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

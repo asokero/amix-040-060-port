@@ -291,6 +291,7 @@ Lpd_orig:
 	nop				| pad (PREEMPT5 addition changed size by 2 mod 4)
 	nop				| pad (PREEMPT6 addition changed size by 2 mod 4 again)
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lpd_s1:
@@ -313,3 +314,4 @@ Lpd_s6:
 	.even
 Lpd_n:
 	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

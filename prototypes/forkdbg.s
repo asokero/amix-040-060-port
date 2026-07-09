@@ -37,9 +37,11 @@ Lhd_ret:
 | "anon: reservations below zero???" on every teardown unresv.  Using the real one
 | balances the books.  hat_dup stays stubbed (the real fork-COW port is still TODO).
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 Lhd_msg:
 	.asciz	"DBG hat_dup: STUBBED (returns 0, copies nothing) -- diagnostic"
 	.even
 Lhd_n:
 	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

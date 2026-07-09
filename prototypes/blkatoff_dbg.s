@@ -181,6 +181,7 @@ Lba_done:
 	nop
 	nop
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 Lba_efmt:
 	.asciz	"DBG blkatoff ENTER off=%x isize=%x"
@@ -206,3 +207,4 @@ Lba_fn:
 	.long	0
 Lba_dn:
 	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

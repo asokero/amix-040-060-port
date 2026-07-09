@@ -148,3 +148,4 @@ Lrb_next:
 	dbf	%d5,Lrb_page
 	rts
 	nop				| pad .text to a multiple of 4 (relink contiguity)
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

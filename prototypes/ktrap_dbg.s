@@ -75,6 +75,7 @@ Lkt_done:
 	unlk	%fp			| sp -> [retaddr][USP arg]: original jsr k_trap state
 	jmp	k_trap_orig		| tail-call: k_trap_orig's rts + d0 reach ktraps
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lkt_mA:
@@ -88,3 +89,4 @@ Lkt_mC:
 	.even
 Lkt_n:
 	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

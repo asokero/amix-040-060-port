@@ -357,6 +357,7 @@ Lpepi:
 	nop
 	nop			| pad .text to a 4-byte multiple (loader copies text+data as one block)
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 | kptr040: the 040 pointer-table region base (root entries 32..63, the kvseg 1GB),
@@ -381,3 +382,4 @@ kroot040:
 | Size: 4KB align slack + 8KB uarea + 512 root + 16KB kptr + 256 uarea_pt ~= 30 KB.
 mmu040_buf:
 	.space	32768
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

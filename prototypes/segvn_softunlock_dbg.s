@@ -275,6 +275,7 @@ Lsv_tail:
 	jmp	segvn_softunlock_orig
 	nop				| pad .text to a multiple of 4 (relink contiguity)
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lsv_m1:
@@ -297,3 +298,4 @@ Lsv_m6:
 	.even
 Lsv_n:
 	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

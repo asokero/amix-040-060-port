@@ -49,6 +49,7 @@ Lap_done:
 	rts
 	nop				| pad .text to keep text/data contiguous
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lap_msg:
@@ -56,3 +57,4 @@ Lap_msg:
 	.even
 Lap_n:
 	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

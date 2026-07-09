@@ -134,6 +134,7 @@ Lssu_call:
 	jmp	segu_softunload_orig
 	nop				| pad .text to a multiple of 4 (relink contiguity)
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lsso_n:
@@ -151,3 +152,4 @@ Lssu_n:
 Lssu_smsg:
 	.asciz	"DBG SOFTUNLOAD called va=%x len=%x slotidx=%x"
 	.even
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

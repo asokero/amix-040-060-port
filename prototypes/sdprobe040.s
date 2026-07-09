@@ -78,6 +78,7 @@ Lsp_done:
 	rts
 	nop				| pad .text to keep text/data contiguous
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lprobe:
@@ -85,3 +86,4 @@ Lprobe:
 	.even
 Lsvp:
 	.asciz	"DBG SVP svirtophys(&block)=%x  blockVA=%x"
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

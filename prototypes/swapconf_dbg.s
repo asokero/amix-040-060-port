@@ -113,6 +113,7 @@ swapconf:
 	rts
 	nop				| pad .text to a 4-byte multiple
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 Lrootfmt:
 	.asciz	"DBG namei-probe: rootfstype=%s"
@@ -138,3 +139,4 @@ Lpath2:
 Lpath3:
 	.asciz	"/dev/dsk/c6d0s2"
 	.even
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

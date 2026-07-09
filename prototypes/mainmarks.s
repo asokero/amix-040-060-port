@@ -175,12 +175,14 @@ Lsp_ret:
 | Reading: stat 1=SSLEEP (wchan names WHAT it waits on -- map the address offline),
 | 2=SRUN, 4=SSTOP, 5=SIDL, 6=SONPROC.  NO W-dumps during a hang = the CPU never idles
 | = some process is SPINNING (equally diagnostic).
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lidw_cnt:
 	.long	0
 Lidw_dumps:
 	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.text
 	.globl	idle
 idle:
@@ -376,6 +378,7 @@ Lr_rest:
 	moveq	&1,%d0
 	jmp	%a1@
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 Lsch_msg:
 	.asciz	"DBG sched ENTRY maxrunpri=%x"
@@ -392,3 +395,4 @@ Lr_n:
 Lmk_init:
 	.word	0
 	.even
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

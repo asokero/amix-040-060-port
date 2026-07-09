@@ -50,3 +50,4 @@ Lpt_ret:
 	movel	%d1,%d0				| return 030-form PSR in d0 (stock calling convention)
 	rts
 	nop					| pad .text to keep text/data contiguous
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

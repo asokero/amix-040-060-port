@@ -100,6 +100,7 @@ Lkv_done:
 	unlk	%fp			| sp -> [retaddr][size][flags]: original jsr state
 	jmp	kmem_alloc_orig		| tail-call: original runs as if called directly
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lkv_m1:
@@ -107,3 +108,4 @@ Lkv_m1:
 	.even
 Lkv_n:
 	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

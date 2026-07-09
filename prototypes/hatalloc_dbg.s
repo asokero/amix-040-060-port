@@ -92,6 +92,7 @@ Lgr_rmsg:
 	.asciz	"DBG grow EXIT ret=%x (1=grown, 0=FAIL->SIGSEGV/BUS)"
 	.even
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.text
 | segvn_unmap (0xab63c) wrapper -- log (seg, seg->s_as, addr, len) for every unmap, capped 16, so
 | we can see WHICH segment's teardown reaches anon_free->anon_decref->page_abort(crash page).  The
@@ -467,6 +468,7 @@ Lhpa_done:
 	unlk	%fp
 	rts
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lhx_n:
@@ -479,6 +481,7 @@ Lhx_xmsg:
 	.asciz	"DBG hat_exec EXIT ret=%x shd@e48=%x"
 	.even
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.text
 | hat_exec (0xb6f20) wrapper -- hat_exec is the exec-time STACK MOVE (3B2 vm_hat.c:2723): it moves
 | the new-image stack pages from the old AS to the new AS by DIRECT 030 SDE/PTE-table writes and
@@ -607,3 +610,4 @@ Lgr_done:
 	nop
 	nop
 	nop
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

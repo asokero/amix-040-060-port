@@ -97,6 +97,8 @@ Lpm_ret:
 	rts
 	nop			| pad .text to a 4-byte multiple (loader copies text+data as one block)
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 Lpm_done:
 	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

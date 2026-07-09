@@ -64,8 +64,10 @@ Lret:
 	rts
 	nop				| pad .text to a 4-byte multiple
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 Lfmt1:
 	.asciz	"DBG getrdb=%x block0=%x rdb_PartitionList=%x"
 Lfmt2:
 	.asciz	"DBG getpb(blk=%x)=%x block0=%x (PART=0x50415254)"
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

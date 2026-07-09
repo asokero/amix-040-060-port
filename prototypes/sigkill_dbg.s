@@ -39,6 +39,7 @@ Lsk_msg:
 | Cap 64: the sac/listen respawn population self-kills every cycle and ate the old cap 24
 | before login; their uret is equally interesting (same site as ls = one bug family).
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.text
 	.globl	sigtoproc
 sigtoproc:
@@ -115,6 +116,7 @@ Lsk_done:
 | getdents(uap, rvp) GLOBAL T 0x5e520: uap@0=fd, @4=buf, @8=count; *rvp = bytes returned;
 | d0 = errno.  -> --weaken-symbol getdents + getdents_orig=0x5e520 (relink-040-dbg.sh).
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lgd_lastpid:
@@ -127,6 +129,7 @@ Lgd_msg:
 	.asciz	"DBG getdents LOOP pid=%d fd=%x err=%x nb=%x n=%x"
 	.even
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.text
 	.globl	getdents
 getdents:
@@ -186,6 +189,7 @@ Lgd_out:
 | is named: kernel PC -> map via nm; user PC (SR S-bit clear) -> 0x80000000=program /
 | 0xC1000000=libc.so.1 offset.  Interrupt-level safe: only d0/a0 + balanced stack.
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 	.globl	clock_hook
@@ -196,6 +200,7 @@ Lcs_tick:
 Lcs_n:
 	.long	0
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.text
 clock_sampler:
 	addql	&1,Lcs_tick
@@ -253,6 +258,7 @@ Lcs_out:
 | PC.  First 8 + every 512th (the loop repeats).  hardbus GLOBAL T 0x5b3c2 ->
 | --weaken-symbol hardbus + hardbus_orig (relink-040-dbg.sh).
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lhb_n:
@@ -285,6 +291,7 @@ Lhbx_msg:
 | forever).  The proper long-term fix = port usrxmemflt's tail dispatch to 040 frame/SSW
 | semantics (MA bit) -- noted for the base-build sync.
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.text
 	.globl	hardbus
 hardbus:
@@ -379,3 +386,4 @@ Lhb_out:
 	unlk	%fp
 	rts
 	nop				| pad: keep the relinked .text a multiple of 4 (text/data contiguity)
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

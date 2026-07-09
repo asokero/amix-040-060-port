@@ -28,6 +28,7 @@ Lsu_msg:
 	.asciz	"DBG setuctxt POST-RETURN u_procp MISMATCH up=%x expected=%x got=%x n=%x"
 	.even
 
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.text
 	.globl	setuctxt
 setuctxt:
@@ -57,3 +58,4 @@ Lsu_ok:
 	unlk	%fp
 	rts
 	nop				| pad .text to a 4-byte multiple (relink contiguity)
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

@@ -18,3 +18,4 @@ pstart:
 				| 4 bytes so ld doesn't insert alignment padding
 				| between merged .text and .data (unix_boot/copyit
 				| require text and data contiguous in the file).
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

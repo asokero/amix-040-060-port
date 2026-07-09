@@ -143,3 +143,4 @@ Lwb_loop:
 	bnew	Lwb_loop
 	rts
 	nop				| pad .text to a multiple of 4 to keep text/data contiguous
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

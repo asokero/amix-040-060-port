@@ -66,3 +66,4 @@ uvatosde:
 	unlk	%fp
 	rts
 	nop				| pad .text to a 4-byte multiple
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
