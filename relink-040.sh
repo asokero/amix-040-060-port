@@ -168,7 +168,4 @@ echo "[*] reloc validation:"
 ( cd "$HERE" && python3 prototypes/check_relink_relocs.py | tail -1 )
 
 echo
-echo "[*] stamping build id into utsname.version (banner + uname -v)"
-python3 "$HERE/prototypes/stamp_version.py" "$OUT" 040
-
 echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040"

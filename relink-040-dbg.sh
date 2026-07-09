@@ -102,7 +102,4 @@ echo "[*] sched is now a --weaken-symbol OVERRIDE (no detour patch -- detour-jmp
 echo "    into relinked code Line-F-crashes on this 040; jsr-override entry works)."
 
 echo
-echo "[*] stamping build id into utsname.version (banner + uname -v)"
-python3 "$HERE/prototypes/stamp_version.py" "$OUT" 040d
-
 echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-dbg"
