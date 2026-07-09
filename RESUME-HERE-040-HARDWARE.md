@@ -22,6 +22,19 @@
 > **Current source of truth: `KNOWN-ISSUES.md` ISSUE-8 + the MILESTONE banner atop `RESUME-HERE.md`.**
 > The STORE A/B markers + `cpusha` test at the bottom of THIS file remain the right HW-debug moves
 > if p0init still faults.
+>
+> **★ 2026-07-09 PM — TAKE THE NEW LOADER TO THE HW VISIT (cold-boot flakiness fixed).** The
+> Amiberry cold-boot flakiness was root-caused the same day: `AllocMem(MEMF_FAST)` put the
+> loader's ELF buffer ~0.94 MB above the fast-RAM base, the ~0.96 MB image OVERLAPPED it by
+> ~25 KB, and copyit's INVERTED copy-direction choice corrupted the first 25 KB of the copied
+> kernel (including `_start`) → wild execution at handoff. **The real-A3000 "1st boot → AmigaOS
+> guru, 2nd boot → kernel runs" pattern is very likely THIS SAME BUG** (same loader, same AmigaOS
+> allocation geometry; the 2nd boot's residue shifts the buffer past the overlap — exactly the
+> emulator's `ed`-warm-up effect). Fixed in `unix_boot/src` (overlap-safe copy directions +
+> `MEMF_REVERSE` top-of-RAM buffer + a permanent copyit checksum verify); deployed as
+> `build/unix_boot040`. **On real HW: use the new loader; if the screen ever flashes white/red
+> at handoff, the copied image failed its checksum (transit corruption — report it, don't
+> guess).** Verified on Amiberry: multiple cold boots through AMIX reboot cycles, zero warm-up.
 
 Status: **paused** while the dev continues the EMULATOR + SCSI/root-mount line on a
 laptop (real A3000 not available for a couple of days).  The 040 VM port works on

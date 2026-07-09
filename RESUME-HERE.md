@@ -32,12 +32,26 @@
 >    but this is UNTESTED on silicon. Retest on the real A3000 + capture serial. Cache-coherency
 >    hypothesis #1 (STORE A / stale page-table lines) in the HW doc may still bite; if so, that's
 >    the next frontier, not a regression.
-> 2. **Cold-boot flakiness — eliminate the `ed`/`more` warm-up** on Amiberry/WinUAE. Root
->    (2026-07-08 Amiberry.log compare): `Gary timeout 06fffffc R PC=07004a9a` inside `srvioc` —
->    a read of RAM_base-4 with the MMU still OFF from a WILD PC, because cold uninitialized memory
->    sends boot execution astray; `ed`/`more` first leaves that memory benign. This is separate
->    from ISSUE-7/8 (fs-uae masks it entirely). Goal: make cold boot deterministic so no warm-up
->    is needed — find why the pre-MMU handoff path reads/jumps into uninitialized memory.
+> 2. ~~**Cold-boot flakiness — eliminate the `ed`/`more` warm-up**~~ **✅ RESOLVED 2026-07-09 PM
+>    (same day). ROOT CAUSE: loader buffer/destination OVERLAP + copyit's inverted copy
+>    direction — NOT uninitialized memory.** `AllocMem(MEMF_FAST)` placed the ELF buffer
+>    ~0.94 MB above the fast-RAM base; the relocated ~0.96 MB text+data image overlapped the
+>    buffer head by ~25 KB (measured live: `image=080ef5b0 copysrc=080ef5e4..081e4c84
+>    dest=08000000..080f56a0`), and copyit's direction choice was INVERTED for overlapping
+>    ranges (dest<src copied descending), so the copy shifted data-section bytes over the first
+>    25 KB of kernel text **including `_start`** → instant wild execution at handoff (the
+>    `PC=07004a9a` Gary read was wild-execution fallout, not a real srvioc call; the earlier
+>    "uninitialized memory" hypothesis was wrong). The `ed`/`dir` warm-up only worked by pushing
+>    the buffer past the 25 KB overlap. **Proven with a copyit-side checksum verify** (loader
+>    sums the image pre-handoff, copyit re-sums the DEST post-copy, mismatch = white/red screen
+>    flash — it flashed on a cold boot). **Fixes (unix_boot/src, committed): (a) copyit.s
+>    overlap-safe memmove directions + size+1 off-by-one fixed (the stray byte at dest-1 is
+>    gone too); (b) unix_boot.c allocates the buffer MEMF_FAST|MEMF_REVERSE (top of RAM, no
+>    overlap at all); (c) the checksum verify stays as a permanent transit guard.**
+>    VERIFIED: multiple cold Amiberry boots through AMIX reboot cycles, zero warm-up, boots
+>    every time. **Real-HW note: the "1st boot → AmigaOS guru, 2nd boot → works" pattern on the
+>    real A3000 is very likely THIS SAME BUG (same loader, same alloc geometry) — retest on
+>    silicon with the fixed loader.**
 >
 > **Also deferred: ISSUE-9 (idle-time Bus Error loop)** — a booted machine left idle a while came
 > back to an endless Bus Error loop (a periodic/idle path, NOT ISSUE-7's signature). Capture
