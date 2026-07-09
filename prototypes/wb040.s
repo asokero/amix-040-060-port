@@ -96,7 +96,15 @@ Lwr_3:
 Lwr_ret:
 	rts
 
-| Lwb_do: d3 = WBxS, a3 = target address, d2 = data.  Set DFC = WBxS&7, moves.<size> d2 -> (a3).
+| Lwb_do: d3 = WBxS, a3 = target address, d2 = data.  Set DFC = WBxS&7, then replay the store
+| BYTE-WISE (most-significant byte first), NOT with one wide moves.  A single wide moves on an
+| UNALIGNED store that crosses a page boundary re-faults with FA = the NEAR address; as_fault
+| resolves only the near (already-present) page, the far page never resolves, and the replay
+| re-crosses forever -> infinite kernel-fault recursion eating the u-area stack (ISSUE-7,
+| measured: WB3 FC=5 SIZE=long addr=0x40736FFE).  Per-byte moves.b gives each byte its OWN
+| access: a byte in a not-yet-resident page faults with the CORRECT per-byte FA, as_fault
+| resolves exactly that page, and the nested fault+replay converges (<=1 nested fault per page
+| spanned).  Same bytes at the same addresses as the old wide moves for the aligned case.
 | pflusha FIRST: when the faulting write was a write-PROTECT fault on a PRESENT page (do_reloc
 | relocating libc.so.1's GOT, which it had just READ -> the page was resident read-only), as_fault
 | COW'd it to a fresh writable page, but the 68040 ATC still holds the OLD read-only translation
@@ -109,19 +117,29 @@ Lwb_do:
 	moveq	&7,%d0
 	andl	%d3,%d0			| FC = WBxS & 7
 	.word	0x4e7b,0x0001		| movec %d0,%dfc
+	movel	%d2,%d1			| d1 = data, to be left-justified -- BEFORE the size decode: movel
+					| sets the CCs, and it must not clobber the Z flag between the
+					| andil (Z = size==0) and the beqw that tests it
 	movel	%d3,%d0
 	lsrl	&5,%d0
-	andil	&3,%d0			| SIZE: 0=long, 1=byte, 2=word
+	andil	&3,%d0			| SIZE: 0=long, 1=byte, 2=word; Z = (size==0), tested by the next insn
 	beqw	Lwb_long
 	cmpil	&1,%d0
 	beqw	Lwb_byte
-	.word	0x0e53,0x2800		| moves.w %d2,%a3@
-	rts
+	swap	%d1			| word: d1 = d2<<16
+	moveq	&2,%d0			| 2 bytes
+	braw	Lwb_loop
 Lwb_byte:
-	.word	0x0e13,0x2800		| moves.b %d2,%a3@
-	rts
+	swap	%d1
+	lsll	&8,%d1			| byte: d1 = d2<<24
+	moveq	&1,%d0			| 1 byte
+	braw	Lwb_loop
 Lwb_long:
-	.word	0x0e93,0x2800		| moves.l %d2,%a3@
+	moveq	&4,%d0			| long: d1 = d2 as-is, 4 bytes
+Lwb_loop:
+	roll	&8,%d1			| rotate next MSB down into bits 7..0
+	.word	0x0e1b,0x1800		| moves.b %d1,%a3@+  (per-byte access -> correct per-byte FA on fault)
+	subql	&1,%d0
+	bnew	Lwb_loop
 	rts
-	nop				| pad .text to keep text/data contiguous (pflusha +2 -> 2 nops, net same)
-	nop
+	nop				| pad .text to a multiple of 4 to keep text/data contiguous
