@@ -1,6 +1,31 @@
 # Project Plan — 68040 (then 68060) support for Amiga Unix
 
-## ★ CURRENT STATUS (2026-07-07, end of session) — Phase 2 usable; fork/COW merged + boot-tested; ISSUE-7 hunt paused
+## ★ CURRENT STATUS (2026-07-09) — ISSUE-7 AND ISSUE-8 RESOLVED; 040 boots to login, survives workload + reboots
+**Milestone (2026-07-09):** the 040 kernel now **boots to login on fs-uae, runs `ls -alR`, and
+survives 7 reboot cycles with ZERO panics** — the weeks-long ISSUE-7 is fixed. Verified from
+serial (no `PANIC`/`Bus Error`, no `kstack`/`KSTKCHAIN`/`PREEMPT1 uprocp=0` recursion signature,
+clean `haltsys`).
+
+**Fix chain this session (all committed to master, all boot-tested):**
+- **ISSUE-8 RESOLVED** (commit `998737f`) — `kvm_init` leaf-table `ctob`/`btoc` left at 2 KB in the
+  Model-B conversion → halved `word2` leaf phys (0x038A7000, a real-HW hole). 6-patch source-backed
+  fix. The earlier "click<<11 DISPROVEN" verdict was itself wrong (fs-uae masked the halved read;
+  only 2 of 6 sites had been patched). Emulators now behave identically.
+- **ubptbl wrappers** (commit `df82ef8`) — `segu_get`/`swapinub` rebuild `p_ubptbl` from the live
+  kptr040 tree (same halved-leaf exposure, closed for the fork path).
+- **ISSUE-7 RESOLVED** (commit `51cdbc7`) — ROOT was `wb040`: its write-back replay re-issued the
+  faulted store with one wide `moves`, so an UNALIGNED PAGE-CROSSING store (KSTKWB: long "xres"
+  @0x40736FFE) had only its near page resolved → infinite re-cross/re-fault → the recursion ate the
+  u-area kernel stack → `u_procp=0`. Fix = replay BYTE-WISE. **Never a HAT bug** — which is why the
+  10 HAT hypotheses all missed. Diagnostic probes: commit `24a54cf`.
+
+**Next-session frontier (see RESUME-HERE.md + RESUME-HERE-040-HARDWARE.md):** (1) **real-HW retest**
+of the ISSUE-8 fix on the Mercury-040 (expected past the p0init panic; untested on silicon);
+(2) **cold-boot flakiness** — eliminate the `ed`/`more` warm-up on Amiberry/WinUAE (the
+`06fffffc R` srvioc cold-uninitialized-memory bug). Deferred: **ISSUE-9** idle-time Bus Error loop.
+
+<details><summary>Prior status (2026-07-07) — Phase 2 usable, ISSUE-7 hunt paused (historical)</summary>
+
 `unix-040-quiet` (serial-capable quiet build) boots and runs **NetHack** — the first real
 fork/exec/terminal/timer-heavy workload beyond ls/uname smoke tests. patch_modelb.py = **237
 sites**. Everything through login + `ls -alR` + reboot + fsck works on a clean disk image.
@@ -28,6 +53,8 @@ exactly one proc** (not systemic). Three well-motivated leads ruled out in one w
 paused the one-hypothesis-at-a-time hunt. System stays fully usable from a pristine image.
 Best remaining idea when resumed: a generic offset-32 (`p_mapping`/`p_sdtbits`/`p_ptdats`
 union) write-guard. Full detail: KNOWN-ISSUES.md ISSUE-7.
+
+</details>
 
 **Remaining HAT items — all now audited + DEPRIORITIZED (none is an active bug):**
 - **hat_pagesync** — lacks the 040 `cpusha bc` after clearing ref/mod bits, BUT **latent**:

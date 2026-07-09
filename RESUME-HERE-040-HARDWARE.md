@@ -1,19 +1,27 @@
-# RESUME HERE — AMIX 68040 REAL-HARDWARE line (paused 2026-06-19)
+# RESUME HERE — AMIX 68040 REAL-HARDWARE line (next: retest with ISSUE-8 fixed)
 
-> ## ⚠ STILL OPEN (2026-07-07 PM) — a mid-day "root cause" (ISSUE-8 click<<11) was DISPROVEN
-> Hypothesis #2 below (the p0init STORE B into `st_top1[seg].word2`) IS the faulting store — that
-> much holds. On 2026-07-07 it was mis-diagnosed as a Model-B-missed `leafclick<<11` in kvm_init
-> (0x48d28/0x48ddc) and "fixed" by `<<11`→`<<12`; **that fix BROKE the emulator boot (red screen)
-> and was reverted.** Empirically `<<11` boots and `<<12` corrupts → the 030 leaf table genuinely
-> lives at `d5<<11` (p0init writes it, segu_get at 0xaa6f8 READS it back — a consistent pair), so
-> word2 is neither dead nor halved. **Revised hypothesis:** `word2 = d5<<11` is a RAW identity
-> phys; for d5=0x714E that is 0x038A7000, which is REAL RAM on the emulator (low memory) but an
-> **unmapped hole on the real A3000** (chip ends 0x200000, RAM at 0x07/0x08000000) → the store
-> bus-errors only on real HW. So this is an allocation/addressing-base problem, not a shift.
-> Hypotheses #1/#3 (cache coherency) remain unlikely (040 caches are OFF per phase-4).
-> **Current source of truth: `KNOWN-ISSUES.md` ISSUE-8 (revised) + the NEXT ACTION banner atop
-> `RESUME-HERE.md`.** The "next markers to add" guidance at the bottom of THIS file is the right
-> next step — real-HW serial diagnosis before any further patch.
+> ## ▶ NEXT VISIT (2026-07-09) — ISSUE-8 is FIXED on the emulator; RETEST on real silicon
+> **The real-HW p0init bus error was ISSUE-8's halved leaf-table address** — now root-caused and
+> fixed (commit `998737f`, 2026-07-09). `kvm_init`'s leaf-table `ctob`/`btoc` were left at 2 KB in
+> the Model-B conversion, so `word2` = the leaf phys was HALVED: `d5=0x714E` → `0x038A7000`, which
+> is real RAM on the emulator's low memory but an **unmapped hole on the real A3000** (chip ends
+> 0x200000, RAM at 0x07/0x08000000). p0init's STORE B wrote it and `segu_get` (0xaa6f8) read it
+> back — both hit the hole on real silicon → the bus error. The 2026-07-08 Amiberry.log compare
+> nailed it (`Gary timeout 038a78XX R PC=070aa6f8` = segu_get reading the halved address). Fix =
+> convert all 6 `ctob`/`btoc` sites to 4 KB. The earlier "click<<11 DISPROVEN" verdict was wrong
+> (fs-uae masked the halved read, and only 2 of 6 sites had been patched — see KNOWN-ISSUES.md
+> ISSUE-8).
+>
+> **So on the next real-HW visit: boot `unix-040-dbg` (current master) and capture serial. EXPECT
+> it to get PAST the p0init panic (pc≈0x7049130).** If it does, the next real-HW frontier is
+> whatever comes after (early fork / SCSI-a3091 DMA / interrupts). If it STILL faults in p0init,
+> the live candidate is **hypothesis #1 below (STORE A / stale page-table cache lines)** — a real-
+> silicon cache-coherency effect the emulator doesn't model; try the `cpusha`-after-segkmem-PTE-
+> writes fix. The emulator line has since reached full login + `ls -alR` + reboot cycles (ISSUE-7
+> also fixed, commit `51cdbc7`), so the emulator is a solid regression baseline before each HW try.
+> **Current source of truth: `KNOWN-ISSUES.md` ISSUE-8 + the MILESTONE banner atop `RESUME-HERE.md`.**
+> The STORE A/B markers + `cpusha` test at the bottom of THIS file remain the right HW-debug moves
+> if p0init still faults.
 
 Status: **paused** while the dev continues the EMULATOR + SCSI/root-mount line on a
 laptop (real A3000 not available for a couple of days).  The 040 VM port works on

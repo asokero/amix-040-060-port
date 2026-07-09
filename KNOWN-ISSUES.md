@@ -320,10 +320,27 @@ Boot-confirmed: dirty FS now runs fsck to completion and the next boot reaches l
 Diagnostic wrappers (`segvn_softunlock_dbg`, `kmem_validate`, `ktrap_latch`) remain wired
 into `relink-040-dbg.sh` only (base build unaffected); useful for ISSUE-7.
 
-## ISSUE-7: u-area corruption at login-after-reboot — `u_procp=0` → wild jump / bus-error (OPEN, deeply characterized)
-**Status: OPEN (2026-07-06), extensively narrowed but ROOT NOT YET FOUND. Documented for
-resume; the system is USABLE (a clean boot + login + `ls -alR` + reboot succeeds; only a
-SECOND boot from a kernel-contaminated disk crashes at the login prompt).**
+## ISSUE-7: u-area corruption at login-after-reboot — `u_procp=0` → wild jump / bus-error (✅ RESOLVED 2026-07-09)
+**Status: RESOLVED (2026-07-09), commit `51cdbc7`. Verified: fs-uae boots to login, runs
+`ls -alR`, survives 7 reboot cycles with ZERO panics and ZERO recursion signatures
+(`kstack`/`KSTKCHAIN`/`PREEMPT1 uprocp=0` all absent), clean `haltsys`.**
+
+**ROOT CAUSE (finally): `wb040` write-back replay could not handle an UNALIGNED PAGE-CROSSING
+store.** The 040 access-error handler re-issues the faulted store from the write-back frame with
+one wide `moves`. Measured via the new KSTKWB probe (commit `24a54cf`): a supervisor long store
+of "xres" to `0x40736FFE` (offset 0xFFE) crosses into the next page; the 040 reported FA = the
+NEAR address, `as_fault` resolved only that (already-present) page, and the single wide `moves`
+re-crossed the boundary and re-faulted **forever**. The infinite kernel-fault recursion ate the
+u-area kernel stack down over the u struct front, zeroing `u_procp` → the `pc=0x4000001E` /
+`rcopyout` bus-error symptoms below. **Fix: replay BYTE-WISE** (MSB-first `rol.l #8` +
+`moves.b (a3)+` for `size` bytes) so each byte is an independent access that faults with its own
+correct FA and converges. This is why every HAT hypothesis in this file missed — the bug was in
+write-back replay, never in HAT. (First cut also had a 68k CC-clobber: `movel %d2,%d1` between
+`andil` and `beqw Lwb_long` made the long-branch test data-zero not size-long → corrupt icode →
+init exec failed; fixed by reordering.) The adjacent bugs found while hunting (below) were all
+real and stay fixed. Historical characterization retained below for reference.
+
+<details><summary>Historical (pre-resolution) characterization — OPEN status, kept for reference</summary>
 
 ### Symptom
 `PANIC: KERNEL FAULT pc=0x4000001E vector=0x4 (Illegal Instruction)` OR
@@ -500,25 +517,34 @@ usable from a pristine disk image in the meantime.
   audit (the `../amix-kernel-analysis/` sibling repo) — likely the fastest path given how
   resistant this is to probing.
 
-## ISSUE-8: REAL-HW (Mercury 040) boot panics in p0init — p0init STORE B (st_top1 word2) bus-errors (OPEN; a mid-day "click<<11" root cause was DISPROVEN)
+</details>
 
-> **⚠ CORRECTION (2026-07-07 PM): the "kvm_init Model-B-missed `click<<11`" root cause below is
-> DISPROVEN.** The proposed fix (`<<11`→`<<12` at 0x48d28/0x48ddc) BROKE the emulator boot
-> (red screen right after unix_boot, no serial) and was reverted. Empirically `<<11` boots,
-> `<<12` corrupts → the 030 leaf table genuinely lives at `d5<<11`; p0init WRITES it (STORE B,
-> 0x49120) and segu_get READS it back (0xaa6f8 `movel %a0@,%a1@`) — a consistent producer/
-> consumer pair, so word2 is neither dead nor halved. **Revised understanding:** `word2 = d5<<11`
-> is a RAW identity phys (no base add); for d5=0x714E → **0x038A7000**, which is real RAM on the
-> emulator (low memory) but an **unmapped hole on the real A3000** (chip ends 0x200000, RAM at
-> 0x07/0x08000000) → the store bus-errors on real HW only. So the defect is that kvm_init's
-> leaf-table allocation produces a click whose `<<11` identity address lands in the real-HW RAM
-> hole — an allocation/addressing-base problem, NOT a shift. NEXT = real-HW serial diagnosis
-> (STORE A vs B markers, print word2/fault addr; test neutering STORE B) BEFORE any patch — do
-> not patch from analysis alone again. Everything below the line is the (partly wrong) original
-> writeup, kept for the correct facts (the faulting store, the fault address, the boot pattern).
-> ⚠
+## ISSUE-8: REAL-HW (Mercury 040) boot panics in p0init — kvm_init leaf-table `ctob`/`btoc` left at 2 KB in Model-B (✅ RESOLVED 2026-07-09)
 
-**Status:** OPEN, faulting store identified; "click<<11" root cause DISPROVEN + reverted 2026-07-07 PM. Photo evidence: user booted
+> **✅ RESOLVED (2026-07-09), commit `998737f`.** The `click<<11` intuition was RIGHT after all —
+> the 2026-07-07 "DISPROVEN" verdict was itself wrong, for two reasons: (1) fs-uae SILENTLY MASKS
+> the halved read (so "`<<11` boots" proved nothing — the 2026-07-08 Amiberry.log compare later
+> showed `Gary timeout 038a78XX R` at segu_get, confirming the halved address IS wrong on an
+> accurate emulator), and (2) the earlier attempt patched only 2 of 6 sites (the ptptr `ctob` at
+> 0x48d28/0x48ddc), leaving `ksegmappt`/`nextfree` (the shared `moveq #11` at 0x48d54/0x48e08)
+> and the `+2047` roundings at `<<11` — an INCONSISTENT mix that corrupted downstream. **Root
+> cause: `kvm_init`'s leaf-table `ctob(nextfree)`/`btoc(ptptr)` were never converted to Model-B
+> (4 KB), so `word2` (the leaf-table phys) was HALVED** (0x714E-click → 0x038A7000, real RAM on
+> the emulator's low memory but an unmapped hole on the real A3000). 3B2 `startup.c` proved the
+> shape (`sptr->wd2.address = ptptr`, `ptptr = ctob(nextfree)`, `ksegmappt = ctob(nextfree)`,
+> `nextfree = btoc(ptptr)`). **Fix = convert ALL 6 `ctob`/`btoc` sites together** (`<<11`→`<<12`,
+> `+2047`→`+4095`); the `#512` SDE strides are Model-B-invariant and untouched. The `segu_get`/
+> `swapinub` ubptbl wrappers (commit `df82ef8`) rebuild `p_ubptbl` from the live kptr040 tree,
+> closing the same halved-leaf exposure on the fork path. Emulators now behave identically.
+>
+> **Real-HW status: UNTESTED with this fix.** The real-A3000 p0init bus error was this halved
+> address (segu_get read 0x038A7xxx in the RAM hole); the fix should clear it, but it has NOT been
+> retested on silicon. That is next-session goal #1 — see `RESUME-HERE-040-HARDWARE.md`. The
+> historical writeup below (STORE A/B, cache-coherency hypotheses) predates the fix; hypothesis #1
+> (STORE A / stale page-table lines) may still be a real-HW frontier if p0init still faults after
+> the leaf address is corrected.
+
+**Status (historical, pre-fix):** the faulting store and boot pattern below are correct facts. Photo evidence: user booted
 `unix-040-dbg` (the ~07-05 build) on the real A3000 + PPS Mercury 68040 — first real-HW
 attempt with a current-generation kernel. Photo: `testimages/040-boot-a3000-mercury.jpg`
 (untracked comms dir).
@@ -608,3 +634,26 @@ inert-store consumers.
    p0init, past early forks, next unknown real-HW frontier — likely SCSI/a3091 DMA or
    interrupts). Real-HW serial capture works (phase-4 note) and should be used for the
    next attempt.
+
+---
+
+## ISSUE-9: idle-time infinite Bus Error loop (OPEN, uncaptured — separate from ISSUE-7)
+
+**Status: OPEN, deferred (2026-07-09).** After ISSUE-7 was fixed, the user left a successfully
+booted 040 machine idle for a longer period and returned to find an **endless BUS ERROR loop on
+screen**. Not yet captured to serial; not present in the 7-reboot ISSUE-7 verification log (that
+run ended in a clean `haltsys`).
+
+**Why it is NOT ISSUE-7:** the ISSUE-7 recursion signature (`kstack`/`KSTKCHAIN`/
+`PREEMPT1 uprocp=0`, the wb040 write-back path) is completely absent from healthy runs now, and
+this triggers on IDLE — a different code path. Most likely a **periodic/idle path**: `fsflush`,
+`sched`/`pageout` daemon, or the clock/callout handler faulting after some time or on a periodic
+wakeup. Could be a slow resource leak (page-table / kmem), a timer-driven fault, or a stale
+mapping that only a long-lived idle process touches.
+
+**Next step (do NOT chase blindly — capture first):** reproduce with SERIAL capture running
+(see `SERIAL-DEBUG.md` / memory `amix-serial-debug-capture`) and let it sit idle until the loop
+starts, to get the fault PC + type + faulting address. Then map the PC to the daemon/handler.
+Only after that decide on a fix. Per the standing "pause elusive-bug hunting; record and redirect"
+guidance, this is recorded and deferred — not the immediate frontier (real-HW retest + cold-boot
+flakiness come first).
