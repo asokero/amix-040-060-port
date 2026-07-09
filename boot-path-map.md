@@ -61,6 +61,20 @@ runs**. The TT-register block is already guarded by `AFB_68030`, but the MMU-dis
 above is not. For 040/060 this must become a `movec`-based MMU disable
 (`movec #0,TC`; clear `URP/SRP`; `movec #0,ITT0/ITT1/DTT0/DTT1`), selected by AttnFlags
 (AFB_68040 = bit 3, AFB_68060 = bit 7).
+**→ FIXED in our `unix_boot/src/copyit.s` (AttnFlags-guarded 040/060 `movec` path).**
+
+**⚠️ Second stock defect — the copy itself (FIXED 2026-07-09, commit `a70e8df`).** The
+stock copy loop had its direction choice INVERTED for overlapping ranges (dest<src copied
+descending, dest>=src ascending — each clobbers unread source bytes) and copied size+1
+bytes (one stray byte below the destination). With `AllocMem(MEMF_FAST)` placing the ELF
+buffer ~0.94 MB above the fast-RAM base, the ~0.96 MB image overlapped it by ~25 KB and
+the copy corrupted the first 25 KB of the copied kernel including `_start` → wild
+execution at handoff. This was the cold-boot flakiness / `ed`-warm-up mystery, and very
+likely the real-A3000 first-boot guru. Our copyit.s now: overlap-safe directions, exact
+size, and a **checksum verify** (loader pre-sums the image into `ci_cksum`; copyit
+re-sums the copied destination and flashes color0 white/red forever on mismatch instead
+of jumping into a corrupt kernel). The buffer is also allocated `MEMF_REVERSE` (top of
+RAM) so overlap cannot arise in the first place.
 
 **Handoff state to the kernel:** supervisor mode, interrupts masked (`sr=0x2700`),
 MMU **off**, `d0 = 3 (EXEC1)`, `d1 = bootinfo *`.

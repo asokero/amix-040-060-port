@@ -19,10 +19,18 @@ clean `haltsys`).
   u-area kernel stack → `u_procp=0`. Fix = replay BYTE-WISE. **Never a HAT bug** — which is why the
   10 HAT hypotheses all missed. Diagnostic probes: commit `24a54cf`.
 
+- **Cold-boot flakiness RESOLVED** (commit `a70e8df`, 2026-07-09 PM) — the `ed`/`more` warm-up
+  requirement was a LOADER bug, not kernel or uninitialized memory: `AllocMem(MEMF_FAST)` placed
+  the ELF buffer where the ~0.96 MB image OVERLAPPED it by ~25 KB, and `copyit`'s inverted
+  copy-direction choice corrupted the first 25 KB of the copied kernel (incl. `_start`) → wild
+  execution at handoff. Proven live with a copyit checksum verify (white/red flash on mismatch).
+  Fixes: overlap-safe copy directions + `MEMF_REVERSE` top-of-RAM buffer + the checksum verify
+  kept as a permanent guard. Verified: repeated cold Amiberry boots, zero warm-up. The real-A3000
+  "1st boot → guru" pattern is very likely the same bug.
+
 **Next-session frontier (see RESUME-HERE.md + RESUME-HERE-040-HARDWARE.md):** (1) **real-HW retest**
-of the ISSUE-8 fix on the Mercury-040 (expected past the p0init panic; untested on silicon);
-(2) **cold-boot flakiness** — eliminate the `ed`/`more` warm-up on Amiberry/WinUAE (the
-`06fffffc R` srvioc cold-uninitialized-memory bug). Deferred: **ISSUE-9** idle-time Bus Error loop.
+on the Mercury-040 with the fixed kernel AND the fixed loader (expected: past the p0init panic and
+no first-boot guru; untested on silicon). Deferred: **ISSUE-9** idle-time Bus Error loop.
 
 <details><summary>Prior status (2026-07-07) — Phase 2 usable, ISSUE-7 hunt paused (historical)</summary>
 

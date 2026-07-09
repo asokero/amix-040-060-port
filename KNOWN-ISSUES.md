@@ -554,10 +554,14 @@ attempt with a current-generation kernel. Photo: `testimages/040-boot-a3000-merc
 LOADER/handoff-level failure, NOT this kernel panic). SECOND boot → this p0init KERNEL PANIC,
 immediately (screen goes black after unix_boot, nothing else, then the panic). Pattern repeats.
 => Treat as TWO separate phenomena: (a) the first-boot guru is a loader cold-start/handoff
-robustness issue (candidate causes: cold MMU/cache/CPU state the first run leaves different, or
-a loader path only the warm second run survives) — needs its own investigation, ideally with
-the AmigaOS guru code read off screen + serial capture; (b) the p0init panic below is the
-kernel frontier and is fully root-caused. Fixing (b) does not address (a); do not conflate them.
+robustness issue — **UPDATE 2026-07-09: almost certainly the cold-boot flakiness bug, since
+ROOT-CAUSED AND FIXED (commit `a70e8df`): the loader's ELF buffer overlapped the copy
+destination by ~25 KB and copyit's inverted copy-direction choice corrupted the copied kernel
+head (incl. `_start`) → wild execution → guru; a 2nd boot's AmigaOS allocation residue shifted
+the buffer past the overlap, which is why the second boot got further. Fixed loader
+(overlap-safe copyit + MEMF_REVERSE buffer + permanent checksum verify; white/red screen flash
+at handoff = corrupt copy) must be used on the next HW visit** — (b) the p0init panic below is
+the kernel frontier and is fully root-caused (ISSUE-8 fix). Both fixes go to the same retest.
 
 ### What the screen shows
 ```
