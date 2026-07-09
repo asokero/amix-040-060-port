@@ -53,6 +53,17 @@
 >    real A3000 is very likely THIS SAME BUG (same loader, same alloc geometry) — retest on
 >    silicon with the fixed loader.**
 >
+> 3. **BONUS same evening: quiet root-mount ENXIO regression RESOLVED (commit `cd5b15a`,
+>    boot-verified quiet+dbg on Amiberry).** Root = kernel-wide **.bss misalignment**: the
+>    loader places .bss at data_end UNALIGNED, so any override .o with a non-mult-4 .data
+>    shifts the whole kernel .bss — harmless to the CPU, fatal to the SDMAC 32-bit DMA
+>    (sdpart.c `block` 2 bytes off → 'RDSK' scan fails → VOP_OPEN error 6). fs-uae masked it
+>    (no SDMAC on its virtual-disk path); the real A3000 would have failed identically.
+>    NEW DURABLE RULE: every section of every override .s ends with `.balign 4`; the relink
+>    scripts now HARD-FAIL if the final .data isn't 4-aligned. Also added the same evening:
+>    build-id in banner + uname (`inituname040.s` + `stamp_buildid.py`, e.g. "Amiga
+>    (Unlimited) 68040-260709-08") — verify the booted kernel with `uname -m`.
+>
 > **Also deferred: ISSUE-9 (idle-time Bus Error loop)** — a booted machine left idle a while came
 > back to an endless Bus Error loop (a periodic/idle path, NOT ISSUE-7's signature). Capture
 > serial next time it happens. See KNOWN-ISSUES.md ISSUE-9.
