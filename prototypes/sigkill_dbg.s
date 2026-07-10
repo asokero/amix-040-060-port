@@ -28,7 +28,7 @@ Lsk_msg:
 Lsg_n:
 	.long	0
 Lsg_msg:
-	.asciz	"DBG SEGVCTX a0=%x a1=%x pte=%x uva=%x"
+	.asciz	"DBG SEGVCTX a0=%x a1=%x pte=%x cell=%x uva=%x"
 	.even
 
 | v3 (2026-07-03): the killer is USERLAND self-kill (kill(2), sender==target, fu=1) -- the SVR4
@@ -69,10 +69,16 @@ sigtoproc:
 	bccw	Lsg_skip
 	addql	&1,%d0
 	movel	%d0,Lsg_n
-	moveal	u+0x730,%a0
-	movel	%a0@(252),%sp@-		| uva
+| v2 (2026-07-10): CORRECT frame layout from ttrap.s source: the trap prologue does
+| `movm.l &0xfffe,-(%sp)` (= d0-d7/a0-a6, 15 regs) then pushes USP, so u_ar0 points at:
+| USP@0, d0-d7@4..32, a0-a6@36..60, SR@64, PC@66.  (v1 read +32/+36 = d7/a0 by mistake --
+| its "+36 = 800120C0, changes per retry" output = the live malloc arena walk pointer,
+| which is how the layout was confirmed.)  Also NEW: read the corrupt CELL's live content
+| through the identity-mapped phys (leaf pte & ~0xFFF | a0 & 0xFFF) -- gated on a resident
+| leaf with phys < 0x10000000 so an invalid walk can't fault the kernel.
 	moveal	u+0x864,%a1		| u_ar0 = saved trap regs
-	movel	%a1@(32),%d3		| d3 = saved a0 (heap cell)
+	movel	%a1@(36),%d3		| d3 = saved a0 (heap cell address)
+	movel	%a1@(40),%d2		| d2 = saved a1 (the bad link value; expect 4AFC0000)
 	.word	0x4e7a,0x0806		| movec %urp,%d0 -- live user root (phys, identity)
 	moveal	%d0,%a0
 	movel	%d3,%d0			| RI = VA[31:25]
@@ -107,14 +113,31 @@ sigtoproc:
 	addal	%d0,%a0
 	movel	%a0@,%d0		| leaf PTE
 Lsg_pte:
-	movel	%d0,%sp@-		| pte
-	moveal	u+0x864,%a1
-	movel	%a1@(36),%sp@-		| saved a1 (the bad link value)
+	movel	%d0,%d1			| d1 = pte (or the invalid descriptor from a bailed walk)
+	andil	&0xf0000001,%d0
+	cmpil	&1,%d0			| resident leaf AND phys < 0x10000000?
+	bnew	Lsg_nc
+	movel	%d1,%d0
+	andil	&0xfffff000,%d0
+	moveal	%d0,%a0
+	movel	%d3,%d0
+	andil	&0xfff,%d0
+	addal	%d0,%a0
+	movel	%a0@,%d0		| live cell content via the identity-mapped phys
+	braw	Lsg_cell
+Lsg_nc:
+	movel	&0xdeaddead,%d0		| walk failed / phys out of range -> marker
+Lsg_cell:
+	moveal	u+0x730,%a0
+	movel	%a0@(252),%sp@-		| uva = curproc->u_va
+	movel	%d0,%sp@-		| cell content
+	movel	%d1,%sp@-		| pte
+	movel	%d2,%sp@-		| saved a1 (bad link)
 	movel	%d3,%sp@-		| saved a0 (heap cell address)
 	pea	Lsg_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(24),%sp
+	lea	%sp@(28),%sp
 Lsg_skip:
 	movel	%fp@(12),%d0		| sig
 	moveq	&9,%d1
