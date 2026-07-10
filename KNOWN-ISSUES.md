@@ -763,3 +763,69 @@ the malloc-head page content DEGRADES at runtime between boot and the interactiv
 run. Suspicion back on page-cache / phys-reuse corruption (a dead proc's page left hashed
 in the vnode cache, or phys double-use). SEGVCTX v3 (dbg 260710-19) dumps a 6-long content
 signature of the corrupt phys page to identify its previous owner.
+
+**ISSUE-10 FULL STATE DUMP + PAUSE (2026-07-10 night, user decision — same protocol as the
+ISSUE-7 pause: record + redirect; may resolve via another route.)**
+
+*Symptom & repro:* `/usr/amiga/bin/amixadm` (a plain `#!/bin/sh` script) → endless
+`User BUS ERROR` flood (sh catches SIGSEGV, sbrk-retries forever; eventually self-recovers
+with "no space"). Deterministic on the 68040 on BOTH emulators; 68060 clean on both
+(believed layout luck, not a CPU mechanism). Reproduced ~8 times across builds -14..-23;
+the corrupt phys shifts with kernel layout (095AE/095AC/095AF...) but the VICTIM is always
+sh's first heap page (VA 0x80011000) + the arena head page (head @0x80010f08 reads a
+beyond-brk garbage link 0x800120C0 every time).
+
+*Evidence chain (probe by probe, all in serial logs /tmp/amix-issue10*.log):*
+1. SEGVCTX v2: corrupt cell = VA 80011CC0, live content 4AFC0000, pte resident+valid.
+2. SEGVDMP v3: foreign content is DISK-FLAVORED and varies per run: an s5 DIRECTORY
+   dirent ("amixdate", /usr/amiga/bin) one run, the amixadm PATH string the next —
+   1KB-buffer granularity at page offset 0xC00 (page start zeros).
+3. SEGVPP v4: the page's page_t: flg=0x600 (mod+ref, NOT free), vn=400B6604,
+   off VARIES per run (0x127000/0x2B0000/0x2D4000 — too large for the tiny dir file =>
+   vn is most plausibly the swap/anon vnode and the page is sh's LEGIT anon page);
+   p_mapping = 095A0044 = leaf entry 0x11*4 => VA 0x80011000 = sh's own mapping ✓.
+   p_uown=0 (never a u-page).
+4. PGALIAS (page_get wrapper): SILENT — page_get NEVER hands out a page with live
+   p_mapping => free-list double-allocation RULED OUT.
+5. VTOPALIAS (vtop DMA-target check, kernel buffers only): SILENT — no kernel-buffer
+   DMA ever targets a mapped page (at/after mapping time) => the corrupting write
+   happens BEFORE sh maps the page, or bypasses vtop.
+6. Static audits during the hunt, all clean/ruled out: pagezero (lsll #12 ✓),
+   page_numtouserpp/okpp ((pfn-base)*60 ✓), anon_zero (pea 0x1000 ✓), binit/getblk/
+   geteblk/sptalloc (no 2KB idioms), wb040 WB1/WB2 replay (emulator never sets them),
+   TAS/FSLW (fixed, was the 060 issue), kernel fault handling at crash time (correct:
+   demand path → FLTBOUNDS → SIGSEGV; sh's own retry makes the flood).
+
+*Fixes landed during the hunt (kept, genuine, but not the corruptor):*
+- s5getapage ×23 + spec_getapage ×12 Model-B conversion (903210c) — real file-tail
+  half-read/half-zero bugs on the s5 root fs.
+- wb060_sswsynth + wb060_xpage (060 fixes, merged with 060-B).
+
+*The surviving picture:* sh's anon heap page is legitimate in every VM structure, but its
+CONTENT matches a recently-read disk block (dir block or file page) at 1KB granularity.
+The write lands before/around sh's startup and evades the vtop and page_get chokepoints.
+Remaining suspect classes, in order: (a) a pagein/buffer path whose IDENTITY-VA target
+math is wrong for HIGH-BANK pfns only (0x08000000+ pool pages — would explain late-onset:
+early-boot procs get low-bank pages; rc-time sh instances never crashed), checked pagezero
+but NOT every pfntokv/pptonum INLINE copy in the pagein/buffer/segmap paths; (b) segmap
+window PTE pointing at a stale/wrong phys during fbread of the script/dir; (c) something
+entirely outside the audited set.
+
+*Resume recipe (in order of decisiveness):*
+1. **Amiberry write-watchpoint** — phys is deterministic per build: boot unix-040-dbg
+   (-23), log pte from the SEGVCTX line of a crash run, then re-boot, BEFORE amixadm open
+   the debugger and `w 1 <physpage+CC0> 4 w 4AFC0000` (or without the value filter), `g`,
+   run amixadm → the breaking PC names the writer. If it never fires but the crash comes,
+   the write predates login → set the watch progressively earlier.
+2. Static hunt (a): disassemble every pagein/segmap/buffer path that computes an identity
+   VA from a pfn/pp (INLINE copies of pfntokv/page_pptonum — search for `/60`(divsll #60)
+   + shift patterns kernel-wide) and check the shift is 12 and the base handles the
+   0x07000000/0x08000000 two-bank pool.
+3. The probe arsenal stays in the dbg build (SEGVCTX/DMP/PP in sigkill_dbg.s, PGALIAS in
+   hatalloc_dbg.s, VTOPALIAS in vtop040.s — all capped, near-zero noise). Any future
+   corruption fault auto-documents itself in serial.
+
+*Priority note:* amixadm itself is a sysadmin menu (workaroundable); the underlying
+corruption class is the real concern — but it has ONLY ever manifested on this one
+binary's heap geometry so far. Normal workloads (boot, login, NetHack, ls -alR, reboot
+cycles) are unaffected. Severity: medium, deferred.
