@@ -697,3 +697,39 @@ hardbus probe now also prints `uva=` = curproc->u_va), run amixadm, capture seri
 the flood (which page got mapped where). Also worth one control: does plain interactive
 `/sbin/sh` (typing a few commands) crash too, or only the amixadm script pattern
 (fork-heavy menu loop)?
+
+**ISSUE-10 progress log (2026-07-10):**
+- Repro matrix so far: 040 fs-uae CRASH, 040 Amiberry CRASH (deterministic, same
+  4AFC0003), 060 fs-uae NO crash (amixadm runs), 060 Amiberry UNTESTED. The earlier
+  "fs-uae doesn't reproduce" was a mislabeled 060 run.
+- sh eventually RECOVERS by itself: the catch-SIGSEGV/sbrk/retry loop finally
+  exhausts and sh prints "/usr/amiga/bin/amixadm: no space"; the session stays alive.
+- Serial capture (040 dbg): the fault takes the DEMAND path (as_fault fails on the
+  wild kernel VA -> FLTBOUNDS -> SIGSEGV loop, `DBG SIG sig=11 stat=6` repeats);
+  hardbus never runs. Kernel-side handling at fault time is CORRECT; the corruption
+  happened earlier. pid's only trace before death = one successful segmap read fault.
+- Emulator writeback facts (WinUAE/Amiberry source, newcpu.cpp fmt7 build +
+  cpummu.cpp): **the emulator NEVER sets WB1S/WB2S valid** (wb1 fields don't exist;
+  wb2 only for MOVE16 line writes) and always pushes WB3A == FA == EA, WB3D = plain
+  register-style value. So wb040.s's WB1/WB2 replay paths have never executed on any
+  emulator -> not the corruptor. SEGVCTX probe data (dbg 260710-14) still pending.
+
+## ISSUE-11: wb040.s WB1 replay uses wrong data alignment — REAL-HW landmine (latent, emulator never triggers it)
+
+**Status: OPEN (2026-07-10), latent — fix before the next real-HW visit.**
+Found while investigating ISSUE-10 against reference implementations:
+- **NetBSD** (`m68k_trap.c m68040_writeback`): WB1D is **memory/bus-lane aligned** —
+  software must reposition it before writing: `off = (wb1a & 3) * 8`; LONG: rotate
+  left by off; BYTE: `wb1d >>= (24 - off)`; WORD: rotate left by `(off+16) % 32`.
+  WB2D/WB3D are plain right-justified values (written as-is).
+- **Linux** (`traps.c do_040writebacks`): never replays WB1 at all (`#if 0 "cannot
+  handle 1st writeback"`), and skips WB2 when its size is LINE (MOVE16 residue).
+- **Our `wb040.s`** replays WB1 with WB2/WB3 semantics (right-justified) — on REAL
+  68040 hardware a valid WB1 with (wb1a&3, size) != trivial would write the WRONG
+  BYTES to the right address (e.g. an aligned WORD store's data sits in WB1D bits
+  31-16; we'd write the low word = zeros). The emulator masks this completely
+  (WB1S never valid — see ISSUE-10 notes), so all emulator testing passes.
+**Fix plan:** add the NetBSD realignment to the WB1 dispatch in `wb040_replay`
+(rotate/shift WB1D per size + wb1a&3 before `Lwb_do`), plus skip WB2 when
+SIZE==LINE (0b11: currently mis-replayed as a word write). Both changes are
+inert on emulators (paths never taken) — verify on real HW.
