@@ -753,3 +753,13 @@ patch_modelb_pager.py (all 2KB idioms: cmpil/addil #2047, andiw #-2048, movel #2
 addil +/-2048, PAGESHIFT moveq #11->12; the mulsl %a1@ fs-bsize multiplies LEFT alone).
 Also fixes silent file-data corruption for any mmap/exec of s5 files with tails in
 (0x800,0x1000) -- a much broader latent bug than amixadm.
+
+**ISSUE-10 correction (2026-07-10 evening): the s5gp/specgp fix did NOT cure the crash**
+(build -17 reproduces with the identical signature; phys shifted 095AE000->095AC000 with
+the new kernel layout = layout-deterministic, not fixed). The s5/spec Model-B patches stay
+(genuine conversion gaps -- boot/login/bash all still work on -17), but they were not the
+corruptor. KEY REALIZATION: the SAME sh binary ran dozens of rc scripts at boot cleanly --
+the malloc-head page content DEGRADES at runtime between boot and the interactive amixadm
+run. Suspicion back on page-cache / phys-reuse corruption (a dead proc's page left hashed
+in the vnode cache, or phys double-use). SEGVCTX v3 (dbg 260710-19) dumps a 6-long content
+signature of the corrupt phys page to identify its previous owner.
