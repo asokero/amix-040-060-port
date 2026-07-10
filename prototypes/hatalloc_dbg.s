@@ -385,14 +385,59 @@ Lad_call:
 	moveml	%fp@(-8),%d2/%a2
 	unlk	%fp
 	rts
-| page_get (0xaffa4) wrapper -- just count calls so hat_sdtalloc can tell whether the DOUBLE page
-| came from page_get (delta>0 = the page free-list double-handed it) or from hat_sdtalloc's own
-| sdtfreelist (delta==0 = a user page was freed onto the SDT free list).  Register/CCR-transparent
-| tail-jmp (addql to memory only).
+| page_get (0xaffa4) wrapper -- counts calls (for hat_sdtalloc's double-page discrimination)
+| AND -- ISSUE-10 v5 (2026-07-10) -- catches the FREE-LIST DOUBLE-ALLOCATION in the act:
+| SEGVPP proved the corrupt phys page is simultaneously a live file page (vn/off set,
+| mod+ref) AND still carries sh's heap PTE in p_mapping (leaf entry 0x11*4 = VA 0x80011000,
+| math-verified).  A page handed out by page_get with p_mapping != 0 is that exact bug
+| firing (a MAPPED page must never be on the free list).  Log the first 8 with the caller.
+| page_get(size, flags) RETURNS THE PAGE IN %a0 (callers do `movel %a0,...`); d0 mirrored.
 	.globl	page_get
 page_get:
 	addql	&1,g_pageget_n
-	jmp	page_get_orig
+	linkw	%fp,&0
+	movel	%a2,%sp@-
+	movel	%fp@(12),%sp@-
+	movel	%fp@(8),%sp@-
+	jsr	page_get_orig
+	addqw	&8,%sp
+	moveal	%a0,%a2			| a2 = returned pp
+	movel	%a0,%d0
+	cmpil	&0x40000000,%d0		| NULL / non-kvseg -> done
+	bcsw	Lpg_out
+	tstl	%a2@(32)		| p_mapping on a freshly allocated page?!
+	beqw	Lpg_out
+	movel	Lpg_n,%d0
+	cmpil	&8,%d0
+	bccw	Lpg_out
+	addql	&1,%d0
+	movel	%d0,Lpg_n
+	movel	%fp@(4),%sp@-		| caller (return address)
+	movel	%a2@(8),%sp@-		| p_offset
+	movel	%a2@(4),%sp@-		| p_vnode
+	movel	%a2@(32),%sp@-		| p_mapping (the ghost PTE pointer)
+	movel	%a2,%sp@-		| pp
+	pea	Lpg_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(28),%sp
+Lpg_out:
+	moveal	%a2,%a0			| restore the return value (a0 + d0 mirror)
+	movel	%a2,%d0
+	moveal	%sp@+,%a2
+	unlk	%fp
+	rts
+
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
+	.data
+	.even
+Lpg_n:
+	.long	0
+Lpg_msg:
+	.asciz	"DBG PGALIAS pp=%x map=%x vn=%x off=%x caller=%x (MAPPED page handed out by page_get!)"
+	.even
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
+	.text
 | hat_sdtalloc(&out, count): *out = allocated table base (identity phys).  Compare base page to
 | g_shdatabase.
 	.globl	hat_sdtalloc
