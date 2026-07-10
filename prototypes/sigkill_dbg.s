@@ -25,6 +25,11 @@ Lsf_n:
 Lsk_msg:
 	.asciz	"DBG SIG sig=%d pid=%d stat=%x psargs=%s uret=%x uarg2=%x kcaller=%x fu=%x"
 	.even
+Lsg_n:
+	.long	0
+Lsg_msg:
+	.asciz	"DBG SEGVCTX a0=%x a1=%x pte=%x uva=%x"
+	.even
 
 | v3 (2026-07-03): the killer is USERLAND self-kill (kill(2), sender==target, fu=1) -- the SVR4
 | rtld convention: ld.so (inside libc.so.1 @C1000000) does _kill(_getpid(),SIGKILL) on EVERY
@@ -45,6 +50,72 @@ Lsk_msg:
 sigtoproc:
 	linkw	%fp,&0
 	moveml	%d2-%d3/%a2,%sp@-
+| ISSUE-10 probe (2026-07-10): on SIGSEGV dump the faulting USER context straight from
+| the saved trap regs (u_ar0; fault frames: d0-d7 @0, a0-a7 @32, SR @64, PC @66 -- the
+| PC@66 read is empirically proven by the hardbus logger).  For the sh malloc-walk crash
+| (`moveal %a0@,%a1; btst #0,%a1@(3)`):
+|   a0  = the heap CELL whose link was followed        (expect sh heap ~0x8001xxxx)
+|   a1  = the bad link value                            (expect 0x4AFC0000 -- self-validating)
+|   pte = leaf PTE of a0's page via a live URP walk    -> the PHYS page holding the corrupt
+|         cell; cross-reference that phys against vtop/segmap/hat traces in the same log
+|   uva = curproc->u_va                                (own-u-page double-use test)
+| Cap 4 (the sh fault-retry flood repeats identical state).  Clobbers d0/d1/d3/a0/a1 only
+| (d3 is reloaded by the Lsk_log path before use).
+	movel	%fp@(12),%d0
+	cmpil	&11,%d0
+	bnew	Lsg_skip
+	movel	Lsg_n,%d0
+	cmpil	&4,%d0
+	bccw	Lsg_skip
+	addql	&1,%d0
+	movel	%d0,Lsg_n
+	moveal	u+0x730,%a0
+	movel	%a0@(252),%sp@-		| uva
+	moveal	u+0x864,%a1		| u_ar0 = saved trap regs
+	movel	%a1@(32),%d3		| d3 = saved a0 (heap cell)
+	.word	0x4e7a,0x0806		| movec %urp,%d0 -- live user root (phys, identity)
+	moveal	%d0,%a0
+	movel	%d3,%d0			| RI = VA[31:25]
+	swap	%d0
+	andil	&0xffff,%d0
+	lsrl	&8,%d0
+	lsrl	&1,%d0
+	lsll	&2,%d0
+	addal	%d0,%a0
+	movel	%a0@,%d0		| root descriptor
+	btst	&1,%d0
+	beqw	Lsg_pte			| invalid -> print the raw descriptor
+	andil	&0xfffffe00,%d0
+	moveal	%d0,%a0
+	movel	%d3,%d0			| PI = VA[24:18]
+	swap	%d0
+	andil	&0xffff,%d0
+	lsrl	&2,%d0
+	andil	&0x7f,%d0
+	lsll	&2,%d0
+	addal	%d0,%a0
+	movel	%a0@,%d0		| pointer descriptor
+	btst	&1,%d0
+	beqw	Lsg_pte
+	andil	&0xffffff00,%d0
+	moveal	%d0,%a0
+	movel	%d3,%d0			| PGI = VA[17:12]
+	lsrl	&8,%d0
+	lsrl	&4,%d0
+	andil	&0x3f,%d0
+	lsll	&2,%d0
+	addal	%d0,%a0
+	movel	%a0@,%d0		| leaf PTE
+Lsg_pte:
+	movel	%d0,%sp@-		| pte
+	moveal	u+0x864,%a1
+	movel	%a1@(36),%sp@-		| saved a1 (the bad link value)
+	movel	%d3,%sp@-		| saved a0 (heap cell address)
+	pea	Lsg_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
+Lsg_skip:
 	movel	%fp@(12),%d0		| sig
 	moveq	&9,%d1
 	cmpl	%d0,%d1
