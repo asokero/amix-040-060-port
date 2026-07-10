@@ -23,6 +23,11 @@
 |
 | The 030 paths are reproduced verbatim (read FC from frame+72); only the format-7 case is
 | added.  GLOBAL T -> --weaken-symbol userspace makes k_trap's `jsr userspace` resolve here.
+|
+| 2026-07-10 (060-B): added the 68060 format-4 access-error case.  The 060 pushes an 8-word
+| frame: FA at CPU+8 (frame+72), FSLW at CPU+12 (frame+76).  The FSLW TM field (bits 18-16)
+| carries the same user/supervisor function-code encoding (1=user data, 2=user code, 5/6 =
+| super), so after extraction the shared classifier below applies unchanged.
 
 	.text
 	.globl	userspace
@@ -38,6 +43,8 @@ userspace:
 	beqw	Lus_ssw030
 	cmpiw	&7,%d0			| 040 format 7 (access error)  -- NEW
 	beqw	Lus_ssw040
+	cmpiw	&4,%d0			| 060 format 4 (access error, FSLW)  -- NEW 2026-07-10
+	beqw	Lus_fslw060
 	braw	Lus_complain
 Lus_ssw030:
 	moveq	&7,%d1
@@ -47,6 +54,11 @@ Lus_ssw040:
 	moveq	&0,%d1
 	movew	%a0@(76),%d1		| 040 SSW word
 	andl	&7,%d1			| TM = function code (bits 2-0)
+	braw	Lus_fc
+Lus_fslw060:
+	movel	%a0@(76),%d1		| 060 FSLW long (CPU+0x0C = frame+76)
+	swap	%d1			| TM = FSLW bits 18-16 -> low-word bits 2-0
+	andl	&7,%d1			| same user/super encoding as the 030/040 FC
 Lus_fc:
 	movel	%d1,%fp@(-4)
 	cmpil	&1,%d1			| FC=1 user data

@@ -24,6 +24,15 @@
 	.globl	inituname
 inituname:
 	jsr	inituname_orig		| stock setup: machine = "Amiga (Unlimited)"
+	| 060-B (2026-07-10): pick the CPU digit from the cputype global (cputype060.s;
+	| 40 default, 60 poked by unix_boot from AttnFlags).  The stamped string is
+	| " 68040-YYMMDD-NN"; on a 68060 flip its '4' (buildid+4) to '6' in place, so
+	| the banner and `uname -m` read " 68060-YYMMDD-NN".  .data is writable here
+	| (identity-mapped kernel RAM); idempotent -- inituname runs once at boot anyway.
+	cmpil	&60,cputype
+	bnew	Liu_040
+	moveb	&0x36,buildid+4		| '6': " 68040-..." -> " 68060-..."
+Liu_040:
 	movel	&utsname+UTS_MACHINE,%a0	| a0 -> utsname.machine
 Liu_end:
 	tstb	%a0@+

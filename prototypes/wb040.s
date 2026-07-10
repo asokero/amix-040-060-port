@@ -28,6 +28,8 @@
 usrxmemflt:
 	linkw	%fp,&0
 	moveml	%d2-%d4/%a2-%a3,%sp@-
+	moveal	%fp@(8),%a2		| 060-B: fmt-4 frame? synthesize an 040-style
+	bsrw	wb060_sswsynth		| SSW at +76 BEFORE the stock classifier reads it
 	movel	%fp@(12),%sp@-		| arg2 (fault info)
 	movel	%fp@(8),%sp@-		| arg1 = trap frame
 	jsr	usrxmemflt_orig
@@ -37,6 +39,9 @@ usrxmemflt:
 	bnew	Lu_done
 	moveal	%fp@(8),%a2		| a2 = frame
 	bsrw	wb040_replay
+	moveal	u+0x730,%a0		| 060-B: fmt-4 page-crossing completion
+	moveal	%a0@(124),%a1		| a1 = as = curproc->p_as
+	bsrw	wb060_xpage
 Lu_done:
 	movel	%d4,%d0			| restore usrxmemflt's return value
 	moveml	%fp@(-20),%d2-%d4/%a2-%a3
@@ -47,6 +52,8 @@ Lu_done:
 krnxmemflt:
 	linkw	%fp,&0
 	moveml	%d2-%d4/%a2-%a3,%sp@-
+	moveal	%fp@(8),%a2		| 060-B: same fmt-4 SSW synthesis (uniform frame
+	bsrw	wb060_sswsynth		| semantics; krnx reads other fields, harmless)
 	movel	%fp@(8),%sp@-		| arg1 = trap frame (krnxmemflt takes ONE arg)
 	jsr	krnxmemflt_orig
 	addqw	&4,%sp
@@ -55,10 +62,87 @@ krnxmemflt:
 	bnew	Lk_done
 	moveal	%fp@(8),%a2		| a2 = frame
 	bsrw	wb040_replay
+	lea	kas,%a1			| 060-B: fmt-4 page-crossing completion, as = &kas
+	bsrw	wb060_xpage
 Lk_done:
 	movel	%d4,%d0			| restore krnxmemflt's return value
 	moveml	%fp@(-20),%d2-%d4/%a2-%a3
 	unlk	%fp
+	rts
+
+| wb060_sswsynth (060-B, 2026-07-10): a2 = trap frame; clobbers d0/d1 only.
+| The 68060 fmt-4 frame carries an FSLW (long @+76) instead of the 040 SSW (word @+76).
+| The STOCK memflt classifiers read byte@+76 bit0 as the "read access" flag (040 SSW RW,
+| CPU+0xC in the fmt-7 frame).  On a fmt-4 frame that bit is FSLW bit24 = RW-read, which
+| the 060 sets ALSO for locked read-modify-write (TAS/CAS: RW field = 11) -- the 040 SSW
+| reports those as WRITES.  Result without this: a user TAS hitting a COW page (libc's
+| lock word, PTE W=1) classified as "READ of a write-protected resident page" -> routed
+| to hardbus -> hardbus finds the phys present, returns 0 -> the 060 restarts the TAS ->
+| same fault forever (the observed pid-5 boot hang, n>340000 iterations).
+| Fix: when the frame is format 4, synthesize an 040-style SSW word IN PLACE at +76:
+|     ATC (bit10) | read (bit8, ONLY for pure FSLW RW==10) | TM (bits 2-0, same encoding)
+| RW==01 (write) and ==11 (RMW) both become "write" -- COW/unprotect is the correct
+| resolution for both halves of a locked access.  Pure reads must STAY reads: rw=S_WRITE
+| on a text-page read would fail segvn's protection check -> spurious SIGSEGV.
+| FA (@+72) is NOT touched -- get_fault's fmt-4 branch reads it after this runs.
+| Overwriting the FSLW upper word is safe: RTE ignores FSLW content, wb040_replay is
+| fmt-7-gated, userspace()'s own fmt-4 decode runs BEFORE the memflt wrappers (k_trap),
+| and u_trap reads no SSW at all.  Runs identically-harmless on 030/040 (fmt != 4).
+wb060_sswsynth:
+	moveq	&0,%d0
+	moveb	%a2@(70),%d0		| format/vector high byte
+	lsrb	&4,%d0
+	cmpiw	&4,%d0			| 060 format-4 access error?
+	bnew	Lws_ret
+	movel	%a2@(76),%d1		| d1 = FSLW
+	movel	%d1,%d0
+	swap	%d0
+	andil	&7,%d0			| TM (FSLW bits 18-16) -> bits 2-0
+	oriw	&0x0400,%d0		| ATC bit (it IS an MMU fault)
+	andil	&0x01800000,%d1		| FSLW RW field (bits 24-23)
+	cmpil	&0x01000000,%d1		| == 10 (pure read)?
+	bnew	Lws_wr
+	oriw	&0x0100,%d0		| read -> 040 SSW RW bit (bit8)
+Lws_wr:
+	movew	%d0,%a2@(76)		| replace FSLW upper word with the synthetic SSW
+Lws_ret:
+	rts
+
+| wb060_xpage (060-B, 2026-07-10): the 060 fmt-4 counterpart of wb040_replay's byte-wise
+| page-crossing handling (the ISSUE-7 class).  The 060 has no write-backs -- it RESTARTS
+| the faulted instruction -- but for a misaligned access that CROSSES a page boundary it
+| reports FA = the access's START address (MA set in FSLW) even when the missing page is
+| the NEXT one.  as_fault then resolves the (already-present) near page, ret=0, the
+| restart re-faults identically -> infinite loop (observed boot test 2: pid=159
+| addr=40734FFE, an unaligned kernel u-stack store 2 bytes before page end; Linux/m68k
+| handles the same 060 property with `if (fslw & MA) addr = (addr + 7) & -8`).
+| After a SUCCESSFUL *_orig (ret==0), if the frame is fmt-4 and FA lies in the LAST 8
+| BYTES of its page, also resolve the NEXT page (read, F_INVAL) -- the proven hardbus-
+| XPAGE recipe.  Gated on fmt-4: on the 040 the byte-wise replay already covers this.
+| In: a2 = frame, a1 = as (user: curproc->p_as, kernel: &kas).  Preserves d2-d7/a2-a3
+| (as_fault is ABI-conformant); the wrapper's d4 (orig ret) is untouched.
+wb060_xpage:
+	moveq	&0,%d0
+	moveb	%a2@(70),%d0		| format/vector high byte
+	lsrb	&4,%d0
+	cmpiw	&4,%d0			| 060 format-4 frame?
+	bnew	Lwx_ret
+	movel	%a2@(72),%d0		| FA
+	movel	%d0,%d1
+	andil	&0xfff,%d1
+	cmpil	&0xff8,%d1
+	bcsw	Lwx_ret			| not within 8 bytes of page end -> no crossing
+	andil	&0xfffff000,%d0
+	addil	&0x1000,%d0		| next page base
+	pea	1			| rw = S_READ
+	clrl	%sp@-			| type = F_INVAL
+	pea	4			| len
+	movel	%d0,%sp@-		| addr = next page
+	movel	%a1,%sp@-		| as
+	jsr	as_fault
+	lea	%sp@(20),%sp		| ret ignored: if the next page is genuinely
+					| unmappable the re-fault surfaces as a real error
+Lwx_ret:
 	rts
 
 | wb040_replay: a2 = trap frame.  If it is an 040 format-7 access-error frame, re-issue every

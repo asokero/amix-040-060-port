@@ -27,10 +27,26 @@
 | The assembler does not know the 040 PMMU mnemonics, so ptestr / movec MMUSR are emitted as .word
 | (same technique as wb040.s's pflusha).  Wired via relink-040.sh: --weaken-symbol ptest (it is a
 | GLOBAL 'T' symbol -> a plain weaken lets this strong def win for every caller).
+|
+| 2026-07-10 (060-B): the 68060 REMOVED PTEST and MMUSR entirely (it only has PLPA, which
+| yields a physical address but no protection bits).  When cputype==60 (loader-poked global,
+| see cputype060.s) this routine instead walks the live URP tree in SOFTWARE and fabricates
+| the same 030-form PSR.  The walk mirrors what the 040 hardware table walker does for an
+| FC=1 (user data) access: URP -> root descriptor (RI = VA[31:25]) -> pointer descriptor
+| (PI = VA[24:18]) -> page descriptor (PGI = VA[17:12]), 4KB pages.  Table entries hold
+| PHYSICAL addresses; kernel phys RAM is < 0x40000000 = identity-mapped through DTT0, so
+| plain loads read them (the same trick segu_ubptbl040.s uses to walk the kptr040 tree).
+| Descriptor validity: upper levels UDT bit1 (x0=invalid); leaf PDT bits1-0 (00=invalid,
+| 10=indirect -> follow one level, indirect-to-indirect = invalid per the 040/060 UM).
+| W = descriptor bit2 -> 030 W (0x800, the COW path); resident+writable -> 0; else 0x400.
+| The 040 path below is byte-for-byte the proven original -- cputype==40 never reaches the walk.
 
 	.text
 	.globl	ptest
 ptest:
+	movel	cputype,%d0
+	cmpil	&60,%d0
+	beqw	Lpt_060				| 68060: no PTEST -> software URP walk below
 	moveq	&1,%d0
 	movec	%d0,%dfc			| FC = 1 (user data) -- 040 PTEST reads DFC
 	movec	%d0,%sfc			| harmless; in case of DFC/SFC ambiguity on real HW
@@ -45,9 +61,68 @@ ptest:
 	movew	&0x0800,%d1			|   R==1 && W==1 -> 030 W (write-protect) -> COW
 	braw	Lpt_ret
 Lpt_np:
+	moveq	&0,%d1				| clear the WHOLE reg: the 060 walk enters here
+						| with d1 = VA (movew alone would leave VA bits
+						| 31-16 in the returned PSR)
 	movew	&0x0400,%d1			| 030 I (invalid / not present) -> F_INVAL demand
 Lpt_ret:
 	movel	%d1,%d0				| return 030-form PSR in d0 (stock calling convention)
 	rts
-	nop					| pad .text to keep text/data contiguous
+
+| ---- 68060 software table walk (d0/d1/a0/a1 are scratch in this ABI) ----
+Lpt_060:
+	moveal	%sp@(4),%a0			| a0 = fault VA (mirror the 040/stock path's a0)
+	movel	%a0,%d1				| d1 = fault VA
+	.word	0x4e7a,0x0806			| movec %urp,%d0  -- active user root (phys, identity)
+	moveal	%d0,%a1
+	movel	%d1,%d0				| root index RI = VA[31:25]
+	swap	%d0
+	andil	&0xffff,%d0			| d0 = VA>>16
+	lsrl	&8,%d0
+	lsrl	&1,%d0				| d0 = VA>>25  (0..127)
+	lsll	&2,%d0				| *4 (descriptor = 4 bytes)
+	addal	%d0,%a1
+	movel	%a1@,%d0			| root descriptor
+	btst	&1,%d0				| UDT resident?
+	beqw	Lpt_np				|   invalid -> 030 I (demand path)
+	andil	&0xfffffe00,%d0			| pointer-table base (512-byte aligned)
+	moveal	%d0,%a1
+	movel	%d1,%d0				| pointer index PI = VA[24:18]
+	swap	%d0
+	andil	&0xffff,%d0			| d0 = VA>>16
+	lsrl	&2,%d0				| d0 = VA>>18
+	andil	&0x7f,%d0
+	lsll	&2,%d0
+	addal	%d0,%a1
+	movel	%a1@,%d0			| pointer descriptor
+	btst	&1,%d0				| UDT resident?
+	beqw	Lpt_np
+	andil	&0xffffff00,%d0			| page-table base (256-byte aligned)
+	moveal	%d0,%a1
+	movel	%d1,%d0				| page index PGI = VA[17:12]
+	lsrl	&8,%d0
+	lsrl	&4,%d0				| d0 = VA>>12
+	andil	&0x3f,%d0
+	lsll	&2,%d0
+	addal	%d0,%a1
+	movel	%a1@,%d0			| page descriptor (PTE)
+	moveq	&3,%d1
+	andl	%d0,%d1				| PDT field
+	beqw	Lpt_np				| 00 = invalid -> 030 I
+	cmpib	&2,%d1
+	bnew	Lpt_pte				| 01/11 = resident
+	andil	&0xfffffffc,%d0			| 10 = indirect: follow the pointer (long-aligned)
+	moveal	%d0,%a1
+	movel	%a1@,%d0
+	moveq	&3,%d1
+	andl	%d0,%d1
+	beqw	Lpt_np
+	cmpib	&2,%d1
+	beqw	Lpt_np				| indirect-to-indirect = invalid (040/060 UM)
+Lpt_pte:
+	moveq	&0,%d1
+	btst	&2,%d0				| W (write-protected)?
+	beqw	Lpt_ret				|   resident+writable -> 0 (no fault bits)
+	movew	&0x0800,%d1			|   write-protected -> 030 W (COW path)
+	braw	Lpt_ret
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
