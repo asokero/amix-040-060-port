@@ -1,4 +1,25 @@
-# RESUME HERE — AMIX 68040 port status (2026-07-09)
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-10)
+
+> ## ✅ MILESTONE 2026-07-10 — DUAL-CPU KERNEL: 68060 SUPPORT MERGED (branch `060-prestudy` → master, merge `60f17f4`)
+> **One kernel binary now boots to login on BOTH the 68040 and the 68060** — verified on
+> fs-uae AND Amiberry (NetHack runs, clean shutdown, 040 regression clean). `uname -m` /
+> the boot banner show which CPU+build is running (` 68040-YYMMDD-NN` / ` 68060-…`; the
+> loader pokes the new `cputype` kernel global from AttnFlags — REBUILD/REDEPLOY the
+> loader too: `build/unix_boot040`). Full story, census, and the phased plan in
+> **`68060-prestudy.md`** (pre-study §1–6, implementation + three boot-test rounds §7).
+> Two genuine 060 deltas were found at runtime and fixed in `wb040.s` — both would have
+> hit real 060 hardware too:
+> - **wb060_sswsynth** (`c0f13bf`): fmt-4 FSLW marks locked RMW (TAS/CAS) as read+write;
+>   the stock memflt classifiers read frame+76 bit0 as "read" → a user TAS on a COW page
+>   looped in hardbus forever. Fix: synthesize an 040-style SSW in place before the
+>   classifiers run. (RE note: `u_trap` calls `usrxmemflt` DIRECTLY, bypassing
+>   `userspace()` — the wb040.s wrappers are the only choke point covering both routes.)
+> - **wb060_xpage** (`ed8e8be`): the 060 restart model reports FA = the access's START on
+>   an unaligned page-crossing (the ISSUE-7 class; no write-backs on the 060) → as_fault
+>   no-ops on the near page forever. Fix: after a successful memflt with FA in a page's
+>   last 8 bytes, also fault the next page (Linux/m68k: `if (fslw & MA) addr=(addr+7)&-8`).
+> Deferred 060 leftovers: `cpuinfo` userland tool, vector-61 emulator-leniency probe, and
+> the shared caches-on / FPU (040 FPSP + 060SP) / real-060-HW phases.
 
 > ## ✅ MILESTONE 2026-07-09 — ISSUE-7 AND ISSUE-8 BOTH RESOLVED (committed); 040 boots to login and survives workload + reboots
 > The 040 kernel now **boots to login on fs-uae, runs `ls -alR`, and survives 7 reboot cycles
