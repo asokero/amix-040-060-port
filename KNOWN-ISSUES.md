@@ -661,3 +661,39 @@ starts, to get the fault PC + type + faulting address. Then map the PC to the da
 Only after that decide on a fix. Per the standing "pause elusive-bug hunting; record and redirect"
 guidance, this is recorded and deferred — not the immediate frontier (real-HW retest + cold-boot
 flakiness come first).
+
+## ISSUE-10: `/bin/sh` heap contains a kvsegu-range pointer → SIGBUS fault-retry flood (amixadm repro)
+
+**Status: OPEN (2026-07-10). Deterministic repro on the 68040** (reproduced at least twice;
+first seen right after the 060 merge but confirmed on 040 → NOT an 060 regression).
+
+**Symptom:** running `/usr/amiga/bin/amixadm` floods the console with
+`NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:<n> CMD:amixadm`, forever.
+
+**Decoded facts (all from disassembly of vanilla `/sbin/sh` + the kernel):**
+- `amixadm` is a plain `#!/bin/sh` script — the crasher is **sh itself** (CMD shows the
+  script name).
+- PC `0x800023FC` = sh's **own malloc free-list walk**: `moveal %a0@,%a1` then
+  `btst #0,%a1@(3)`. Fault addr `4AFC0003` = a1+3 → **the free-list link read from sh's
+  heap is 0x4AFC0000 — inside the kernel's kvsegu u-area region** (kvsegu = 0x48440000;
+  offset 0x2B80000). A user anon/heap page contains kernel-u-area-flavored data where a
+  malloc link should be.
+- The endless flood is the historic Bourne-sh behavior: sh catches SIGSEGV/SIGBUS itself,
+  sbrk()s more memory, and RETURNS to retry the faulting instruction — a kernel-range
+  garbage pointer never heals → infinite fault/retry.
+- `FAULT:6` = FLTBOUNDS from `hardbus` (u_trap print): the kernel correctly refuses the
+  user access to a kernel VA; the loop is sh's retry, not a kernel fault loop.
+- The malloc list head lives at `0x80010f08` in **sh's .bss page 0x80010000 — the very
+  page investigated 2026-06-27 in the disk-DMA / phys double-use diagnostics**
+  (vtop040.s header; assegat_dbg.s "sh's data page 0x80010000" probes). Suspect classes,
+  in order: (1) phys double-use (a user page that is/was also a kernel u-page — the
+  ISSUE-5/6 family), (2) ZFOD dirt (anon page not zeroed — one instance already fixed in
+  44ebf05, `pagezero(pp,0,0x800)` half-zero), (3) buffer-cache/DMA into a user phys page.
+
+**Next data (cheap, deterministic repro!):** boot `unix-040-dbg` (build ≥ 260710-13, the
+hardbus probe now also prints `uva=` = curproc->u_va), run amixadm, capture serial. Read:
+(a) `pte=` for 0x4AFC0000 (what the tables say about the bad target), (b) `uva=` — is
+0x4AFC0000 sh's OWN u-area?, (c) the hat/as_fault/segu serial trace in the seconds before
+the flood (which page got mapped where). Also worth one control: does plain interactive
+`/sbin/sh` (typing a few commands) crash too, or only the amixadm script pattern
+(fork-heavy menu loop)?

@@ -264,7 +264,7 @@ Lcs_out:
 Lhb_n:
 	.long	0
 Lhb_msg:
-	.asciz	"DBG hardbus pid=%d addr=%x pte=%x ret=%x upc=%x n=%x"
+	.asciz	"DBG hardbus pid=%d addr=%x pte=%x ret=%x upc=%x uva=%x n=%x"
 	.even
 Lhbx_n:
 	.long	0
@@ -367,6 +367,8 @@ Lhb_norm:
 	braw	Lhb_out
 Lhb_log:
 	movel	%d3,%sp@-		| n
+	moveal	u+0x730,%a0		| ISSUE-10 (2026-07-10): also print curproc->u_va --
+	movel	%a0@(252),%sp@-		| is the bad kvsegu-range pointer THIS proc's own u-area?
 	moveal	u+0x864,%a0		| u_ar0
 	movel	%a0@(66),%sp@-		| user PC
 	movel	%d2,%sp@-		| ret
@@ -379,7 +381,7 @@ Lhb_log:
 	pea	Lhb_msg
 	pea	2
 	jsr	cmn_err
-	lea	%sp@(32),%sp
+	lea	%sp@(36),%sp		| 9 args now (uva added)
 Lhb_out:
 	movel	%d2,%d0
 	moveml	%fp@(-8),%d2-%d3
