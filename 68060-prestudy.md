@@ -1,6 +1,8 @@
 # 68060 Port Pre-Study
 
-**Status: pre-study only — no implementation.** Branch `060-prestudy`, 2026-07-09.
+**Status: Phase 060-B IMPLEMENTED on this branch (2026-07-10) — statically validated,
+AWAITING BOOT TEST.** See §7 for what was built and how to test it. The pre-study
+below (2026-07-09) is the plan it implements.
 
 This document maps what adding 68060 support to the AMIX kernel would take,
 **building on the completed 68040 port** (interactive login works, cold boot
@@ -256,3 +258,47 @@ fpu_present consumers: 17 (runtime-optional FPU confirmed)
 cputype-style global: none exists -> add one (loader-poke)
 Loader: unix_boot.c:265-277 already prints AttnFlags 040/060 bits, shared movec path
 ```
+
+---
+
+## 7. Phase 060-B implementation (2026-07-10, this branch)
+
+All six §6/060-B work items implemented overnight; every kernel remains a **single
+dual-CPU binary** (unchanged 040 behavior, runtime 060 dispatch). Statically
+validated; NOT yet booted.
+
+| Item | Where | Mechanism |
+|------|-------|-----------|
+| fmt-4 fault address | `prototypes/getfault040.s` | new `cmpiw &4` branch: FA at frame+72 (CPU+8) |
+| fmt-4 user/kernel classify | `prototypes/userspace040.s` | new branch: FSLW at frame+76, TM = bits 18-16 (same FC encoding) |
+| write-back replay | `prototypes/wb040.s` | **no change needed** — replay was already format-7-gated, inert on 060 |
+| ptest on 060 | `prototypes/ptest040.s` | `cputype==60` → software URP walk (RI/PI/PGI, 4KB, indirect-desc support), fabricates the same 030-form PSR; 040 path byte-identical. Also fixed a latent bug found in review: `Lpt_np` now clears all of d1 (walk entered it with VA in the high word) |
+| lmul (64-bit muls.l traps on 060) | `prototypes/lmul060.s` | portable mulu.w-halves + sign-adjust rewrite, used on BOTH CPUs; algorithm validated vs a muls.l model, 202 500 cases, 0 diffs |
+| cputype global | `prototypes/cputype060.s` | `.data long`, default 40 |
+| CPU detect | `unix_boot/src/rel.c` `pokesymlong()` + `unix_boot.c` | loader writes 40/60 (AttnFlags AFB_68060) into the kernel image via the ELF symtab, after relocation, before the transit checksum; prints `kernel cputype set to NN` |
+| banner / uname | `prototypes/inituname040.s` | `cputype==60` flips the buildid digit in place → ` 68060-YYMMDD-NN` |
+| framesz[4] = 16 | `prototypes/patch_framesz060.py` (called from `relink-040.sh`) | signature-checked one-byte patch; inert on 030/040 |
+
+Builds (all `[OK]`, 0 reloc complaints, .data 4-aligned, framesz verified in binary):
+`unix-040` = **260710-04**, `unix-040-dbg` = **-05**, `unix-040-quiet` = **-06**.
+New loader deployed to `build/unix_boot040` (poke simulated on Linux: symbol found
+in .data @file 0xf1a44, value 40).
+
+Static census of the final binary: the only 060-illegal instructions are the
+`ptestr`+`movec %mmusr` pair, now behind the `cputype==60` gate; the three 64-bit
+`muls.l` remain only in the DEAD stock lmul body (symbol re-bound to the override).
+
+### Boot-test plan (user, next session)
+
+1. **040 regression** (current Amiberry config): boot `unix-040` — expect identical
+   behavior to yesterday, banner tag ` 68040-260710-04`, loader prints
+   `kernel cputype set to 40`. Note: the portable lmul is now live on the 040 too
+   (hrt timer scaling) — watch for anything odd around timers/alarms.
+2. **68060 boot**: same disk/config but CPU model = 68060 (Amiberry: keep MMU
+   enabled, JIT off, "More compatible" on; FPU = internal/default). Boot
+   `unix_boot040 unix-040`. Expect: loader `kernel cputype set to 60` → banner
+   `... 68060-260710-04` → login. `uname -m` confirms.
+3. If the 060 boot fails: re-run with `unix-040-quiet` (-06) + serial capture; the
+   first suspects are FPU probing (try FPU off/soft if the config allows) and
+   emulator leniency (Amiberry may execute 060-unimplemented ops instead of
+   trapping — then the lmul/ptest paths are NOT actually being exercised).

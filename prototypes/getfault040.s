@@ -16,6 +16,10 @@
 | reproduces the stock 030 paths exactly (the SSW bit-8 early-out at +80, the bit-15 "-2" PC
 | adjustment) so non-040 frames behave identically, and adds the format-7 case.  get_fault is
 | GLOBAL T -> --weaken-symbol get_fault makes u_trap's `jsr get_fault` resolve here.
+|
+| 2026-07-10 (060-B): added the 68060 format-4 access-error case (8-word frame, FA at CPU+8
+| = frame+72).  The 060 uses an instruction-RESTART model (no write-backs), so returning the
+| FA for as_fault is the whole job; wb040's replay is format-7-gated and stays inert on 060.
 
 	.text
 	.globl	get_fault
@@ -26,8 +30,13 @@ get_fault:
 	moveb	%a0@(70),%d0		| high byte of format&vector word
 	lsrb	&4,%d0			| d0 = exception frame format nibble (top 4 bits)
 	cmpiw	&7,%d0
-	bnew	Lgf_030
+	bnew	Lgf_not7
 	movel	%a0@(84),%d0		| 040 format 7: FA at CPU+0x14 = frame+84 -> return it
+	braw	Lgf_ret
+Lgf_not7:
+	cmpiw	&4,%d0			| 060 format 4 (access error, FSLW model)  -- NEW 2026-07-10
+	bnew	Lgf_030
+	movel	%a0@(72),%d0		| 060 format 4: FA at CPU+0x08 = frame+72 -> return it
 	braw	Lgf_ret
 Lgf_030:
 	movel	%a0@(72),%d0		| 030 early-out: SSW (at +72) bit 8 -> fault addr at +80

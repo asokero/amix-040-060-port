@@ -63,6 +63,11 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segu_lockfix.s" -o "$HERE/build/
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segu_ubptbl040.s" -o "$HERE/build/segu_ubptbl040.o"
 # inituname040 = wrapper appending " 68040-<buildid>" to utsname.machine (banner + uname -m)
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/inituname040.s" -o "$HERE/build/inituname040.o"
+# 060-B (2026-07-10): dual-CPU support objects (see 68060-prestudy.md).
+#   cputype060 = the `cputype` global (40 default; unix_boot pokes 60 from AttnFlags)
+#   lmul060    = portable lmul (stock's 64-bit muls.l forms trap on the 68060)
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/cputype060.s" -o "$HERE/build/cputype060.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/lmul060.s"    -o "$HERE/build/lmul060.o"
 m68k-linux-gnu-objcopy --redefine-sym segu_get=segu_get_lockfix "$HERE/build/segu_lockfix.o"
 
 echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
@@ -123,6 +128,7 @@ m68k-linux-gnu-objcopy \
 	--add-symbol swapinub_stock=.text:0x000a9e5c,function,global \
 	--weaken-symbol inituname \
 	--add-symbol inituname_orig=.text:0x00049140,function,global \
+	--weaken-symbol lmul \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -134,11 +140,12 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/vtop040.o" "$HERE/build/wb040.o" "$HERE/build/ptest040.o" \
 	"$HERE/build/uvatosde040.o" "$HERE/build/prumap040.o" "$HERE/build/haltsys040.o" \
 	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o" \
-	"$HERE/build/inituname040.o"
+	"$HERE/build/inituname040.o" \
+	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
@@ -179,6 +186,9 @@ python3 "$HERE/prototypes/patch_modelb.py" "$OUT" | tail -3
 
 echo "[*] Model B Tier-2 pager/fs page-I/O (dir-read chain) byte patches"
 python3 "$HERE/prototypes/patch_modelb_pager.py" "$OUT" | tail -3
+
+echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
+python3 "$HERE/prototypes/patch_framesz060.py" "$OUT"
 
 echo
 echo "[*] reloc validation:"
