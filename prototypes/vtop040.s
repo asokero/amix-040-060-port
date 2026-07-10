@@ -51,6 +51,44 @@ Lvt_log:
 	jsr	cmn_err
 	lea	%sp@(24),%sp
 Lvt_done:
+| ISSUE-10 v6 (2026-07-10): vtop computes every disk-DMA target (alien/dd.c).  PGALIAS
+| proved page_get never hands out mapped pages, and SEGVPP showed sh's page is (most
+| plausibly) a LEGIT anon page whose CONTENT gets overwritten with 1KB-buffer-granular
+| directory/file bytes -> the writer is a DMA aimed at the wrong phys.  Chokepoint check:
+| translate the DMA target phys -> page_t (page_numtouserpp) and if that page has a LIVE
+| MAPPING (p_mapping != 0), the DMA is about to overwrite somebody's mapped page -> log
+| va/phys/map/caller (cap 16).  Normal traffic stays silent: buffer-pool pages are
+| unmapped kernel identity pages, and pagein DMA happens BEFORE hat_pteload registers.
+	tstl	%fp@(12)		| proc != 0 = raw/physio user I/O -> mapped target is LEGIT
+	bnew	Lvt_ret
+	movel	%d2,%d0
+	andil	&0xfffff000,%d0
+	moveq	&12,%d1
+	lsrl	%d1,%d0			| pfn of the DMA target
+	movel	%d0,%sp@-
+	jsr	page_numtouserpp
+	addqw	&4,%sp
+	movel	%d0,%d1
+	andil	&0xf0000000,%d1
+	cmpil	&0x40000000,%d1		| pp must be kvseg to deref
+	bnew	Lvt_ret
+	moveal	%d0,%a0
+	tstl	%a0@(32)		| p_mapping live?
+	beqw	Lvt_ret
+	movel	Lva_n,%d0
+	cmpil	&16,%d0
+	bccw	Lvt_ret
+	addql	&1,%d0
+	movel	%d0,Lva_n
+	movel	%fp@(4),%sp@-		| caller
+	movel	%a0@(32),%sp@-		| p_mapping (whose PTE the DMA is about to shoot)
+	movel	%d2,%sp@-		| phys (DMA target)
+	movel	%fp@(8),%sp@-		| va (buffer)
+	pea	Lva_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
+Lvt_ret:
 	movel	%d2,%d0			| return paddr in d0
 	moveal	%d2,%a0			| and a0 (vtop returns both)
 	movel	%fp@(-4),%d2		| restore d2
@@ -65,5 +103,10 @@ Lvt_n:
 	.long	0
 Lvt_msg:
 	.asciz	"DBG vtop pool phys=%x va=%x proc=%x caller=%x"
+	.even
+Lva_n:
+	.long	0
+Lva_msg:
+	.asciz	"DBG VTOPALIAS va=%x phys=%x map=%x caller=%x (DMA target page has a LIVE mapping!)"
 	.even
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
