@@ -239,6 +239,21 @@ Lwb_do:
 	movel	%d2,%d1			| d1 = data, to be left-justified -- BEFORE the size decode: movel
 					| sets the CCs, and it must not clobber the Z flag between the
 					| andil (Z = size==0) and the beqw that tests it
+| --- u_nofault guard (2026-07-11, real-HW pid-12 sed panic): a moves fault here enters
+|     k_trap in SUPERVISOR mode.  Stock k_trap resolves a supervisor fault on a USER
+|     address ONLY when u+0x374 (the u_nofault landing pad, copyin/copyout convention)
+|     is armed: armed -> userspace() -> usrxmemflt -> as_fault(p_as) -> ret 0 -> rte
+|     re-executes the moves (converges); NOT armed -> krnxmemflt -> as_segat(&kas,
+|     userVA) = NULL -> ret 1 -> krnlflt -> PANIC "KERNEL FAULT".  The emulators never
+|     hit this (after as_fault+pflusha the WB target was always resident); real silicon
+|     fills WB2/WB3 with the PREVIOUS instruction's pending store, which can aim at a
+|     page as_fault never touched (first real-HW hit: pid 12 sed, WB target page just
+|     hat_unload-FREELEAFed, pc=Lwb_loop movesb, fmt=7 vec=2, build -28 2026-07-10).
+|     Arm the pad around the loop; on an UNRESOLVABLE fault k_trap restores u+0x374 and
+|     rte's to Lwb_fail (frame PC := the armed value) with the trap-time registers.
+|     d2 is free here (its data is already copied to d1); it survives the nested trap.
+	movel	u+0x374,%d2		| save the outer u_nofault value
+	movel	&Lwb_fail,u+0x374	| arm: unresolved nested fault lands at Lwb_fail
 	movel	%d3,%d0
 	lsrl	&5,%d0
 	andil	&3,%d0			| SIZE: 0=long, 1=byte, 2=word; Z = (size==0), tested by the next insn
@@ -260,6 +275,37 @@ Lwb_loop:
 	.word	0x0e1b,0x1800		| moves.b %d1,%a3@+  (per-byte access -> correct per-byte FA on fault)
 	subql	&1,%d0
 	bnew	Lwb_loop
+	movel	%d2,u+0x374		| disarm: restore the outer u_nofault value
+	rts
+| Lwb_fail: u_nofault landing pad -- k_trap could NOT resolve a fault taken by the moves
+| loop above (as_fault failed for the WB target: e.g. a WB aimed at a range a racing
+| hat_unload just removed, or a garbage WB address).  Registers are the trap-time loop
+| registers (a3 = the failing byte address, d3 = WBxS untouched by Lwb_do).  Restore
+| u_nofault, log it (capped), SKIP the rest of this write-back and continue with the
+| next one -- a lost user store beats a kernel panic; the process re-faults on its own
+| if the address matters.
+Lwb_fail:
+	movel	%d2,u+0x374		| restore the outer u_nofault value FIRST
+	movel	Lwbf_n,%d0
+	cmpil	&8,%d0
+	bccw	Lwbf_q			| capped -> skip silently
+	addql	&1,%d0
+	movel	%d0,Lwbf_n
+	movel	%d3,%sp@-		| WBxS (identifies which WB + its FC/size)
+	movel	%a3,%sp@-		| failing byte address
+	pea	Lwbf_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(16),%sp
+Lwbf_q:
 	rts
 	nop				| pad .text to a multiple of 4 to keep text/data contiguous
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
+	.data
+	.even
+Lwbf_msg:
+	.asciz	"DBG wb040 replay UNRESOLVED addr=%x wbs=%x (wb skipped)"
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
+Lwbf_n:
+	.long	0
+	.balign 4
