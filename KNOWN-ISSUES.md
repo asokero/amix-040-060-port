@@ -836,3 +836,33 @@ rol off / WORD rol (off+16)%32 / BYTE >>(24-off)) before the byte-wise replay, a
 SIZE=LINE WB2 writebacks (MOVE16 residue, Linux does the same). Both paths are unreachable
 on the emulators (WB1S/WB2S never valid there), so emulator boots exercise nothing new;
 first real-040 boot is the actual test.
+
+## ISSUE-12: A2065 ethernet dead on real-HW 040 AMIX (ifconfig -a empty, no ping)
+
+**Status: OPEN (2026-07-11), deferred by user decision — but it BLOCKS the
+"network access to the real machine" goal, so it is the next real-HW work item.**
+
+Observed on the FIRST successful real-HW login (Amiga 3000 + Mercury 68040,
+build 260711-02): `ifconfig -a` prints nothing and the machine does not ping.
+The CARD and cabling are fine — the user ran the same A2065 under AmigaOS on the
+same machine minutes earlier. 030 AMIX on this machine has working networking.
+
+Not investigated yet. Candidate angles for when this resumes:
+- The A2065 (Zorro 0202:70, AMD Lance/Am7990) driver's interrupt or DMA setup on
+  the 040 kernel: the Lance DMAs into shared buffer RAM; buffer VA->phys and
+  cache/serialization assumptions may be 030-shaped (Model-B pfn math again?).
+- Emulator baseline NEVER exercised this: the Amiberry/fs-uae configs have no
+  A2065 device, so the whole if_lance path is untested since the 040 port began.
+- First triage steps: `netstat -in` / `ifconfig ae0` (or whatever the unit name
+  is) for attach evidence; check boot console for the lance attach line; compare
+  against an 030 boot on the same machine.
+
+**ISSUE-10 real-HW datapoint (2026-07-11):** the amixadm flood reproduces on the REAL
+Amiga 3000 + Mercury 68040 (build 260711-02) with the IDENTICAL signature: `User BUS
+ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:184 CMD:amixadm` — same beyond-brk garbage
+link 4AFC0003, same faulting PC as both emulators. Consequences for the paused hunt:
+(a) emulator-specific mechanisms are ruled out for good; (b) the corruption is fully
+deterministic across three different machines given the same kernel layout, which
+strengthens the "layout-deterministic wrong-phys write" picture; (c) the 68040-vs-68060
+split remains a layout artifact, not a CPU mechanism. The resume recipe (write-watchpoint
++ pfntokv census) is unchanged and can now also be validated against real HW.

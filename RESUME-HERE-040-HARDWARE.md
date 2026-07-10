@@ -1,6 +1,27 @@
-# RESUME HERE — AMIX 68040 REAL-HARDWARE line (next: retest with ISSUE-8 fixed)
+# RESUME HERE — AMIX 68040 REAL-HARDWARE line
 
-> ## ★ 2026-07-10 — THE HW SESSION IS STARTING (Mercury 040 @33 MHz, 32 MB; FIRST BOOT DONE)
+> ## ★★★ 2026-07-11 — MILESTONE: AMIX BOOTS TO LOGIN ON REAL HARDWARE ★★★
+> **Amiga 3000 + Mercury 68040 @33 MHz, 32 MB — builds 260711-01/-02/-03, user logged in.**
+> The 2026-07-10 night session found and fixed TWO real-silicon-only bugs from screen
+> photos + one emulator log, then the next boot (after fsck from the crashed attempts)
+> reached login:
+> 1. **hat_free A-slot guard** (hat040.s V3): init's exec teardown walked relic 030-written
+>    root descriptors; a garbage pointer-table base (0x3F0000 = Zorro space) bus-erred on
+>    real HW where the emulator reads it leniently. Same-night emulator log had the
+>    identical BAD-slot/LEAK lines — only the read's outcome differs on silicon.
+> 2. **wb040_replay u_nofault guard** (wb040.s): the replay's `moves` to user space ran
+>    unarmed; stock k_trap only resolves supervisor faults on user VAs when u+0x374 is
+>    armed (copyin/copyout convention), else krnxmemflt→as_segat(&kas)=NULL→PANIC. Real
+>    040 fills WB2/WB3 with the previous insn's pending store → unmapped targets happen.
+>    Now armed around the loop with a log+skip landing pad (Lwb_fail).
+> Verified working on HW: boot, fsck, login, amixadm (floods the known ISSUE-10 signature
+> IDENTICALLY to the emulators — see KNOWN-ISSUES.md ISSUE-10 2026-07-11 datapoint).
+> **NEW ISSUE-12: A2065 ethernet dead on AMIX/040** (ifconfig -a empty; card works from
+> AmigaOS on the same machine) — deferred, but it blocks the "network access for direct
+> testing on the real machine" goal, so it is the FIRST work item of the next HW session.
+> ISSUE-11 (WB1 lane realign) rode along on these boots with no visible anomalies.
+>
+> ## (previous banner) 2026-07-10 — THE HW SESSION IS STARTING (Mercury 040 @33 MHz, 32 MB; FIRST BOOT DONE)
 > User has the card installed and a first boot attempted; **no serial cable yet — analysis is
 > screenshot-based for now** (the console wraps ~40 lines; prioritize the LAST screen + any
 > guru/panic text + the boot banner). What to bring/use:
