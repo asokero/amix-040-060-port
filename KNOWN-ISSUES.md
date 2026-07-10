@@ -829,3 +829,10 @@ entirely outside the audited set.
 corruption class is the real concern — but it has ONLY ever manifested on this one
 binary's heap geometry so far. Normal workloads (boot, login, NetHack, ls -alR, reboot
 cycles) are unaffected. Severity: medium, deferred.
+
+**ISSUE-11 FIXED (2026-07-10, builds 260710-24/-25/-26; emulator-inert, real-HW verify
+pending):** wb040_replay now realigns WB1D per the NetBSD recipe (off=(wb1a&3)*8; LONG
+rol off / WORD rol (off+16)%32 / BYTE >>(24-off)) before the byte-wise replay, and skips
+SIZE=LINE WB2 writebacks (MOVE16 residue, Linux does the same). Both paths are unreachable
+on the emulators (WB1S/WB2S never valid there), so emulator boots exercise nothing new;
+first real-040 boot is the actual test.

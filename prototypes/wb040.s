@@ -160,11 +160,46 @@ wb040_replay:
 	beqw	Lwr_2
 	moveal	%a2@(104),%a3		| WB1A
 	movel	%a2@(108),%d2		| WB1D
+| ISSUE-11 fix (2026-07-10): WB1D is BUS-LANE ALIGNED on real hardware -- unlike WB2D/
+| WB3D, which are plain right-justified values.  NetBSD m68040_writeback realigns it:
+|   off = (wb1a & 3) * 8;  LONG: rotate left by off;  WORD: rotate left by (off+16)%32;
+|   BYTE: shift right by (24-off).  Without this, replaying a valid WB1 with WB2/3
+| semantics writes the WRONG BYTES on a real 68040 (e.g. an aligned word store's data
+| sits in WB1D bits 31-16 -- the old code wrote the low word = zeros).  EMULATOR-INERT:
+| WinUAE/Amiberry never set WB1S valid (verified from source), so this path only ever
+| runs on real silicon.  After realignment d2 is right-justified and Lwb_do applies.
+	movel	%a3,%d0
+	andil	&3,%d0
+	lsll	&3,%d0			| d0 = off = (wb1a & 3) * 8
+	movel	%d3,%d1
+	lsrl	&5,%d1
+	andil	&3,%d1			| SIZE: 0=long 1=byte 2=word
+	beqw	Lw1_rot			| long: rotate by off
+	cmpil	&1,%d1
+	beqw	Lw1_byt
+	addil	&16,%d0			| word: rotate by (off+16)%32
+	andil	&31,%d0
+Lw1_rot:
+	tstl	%d0
+	beqw	Lw1_ok
+	roll	%d0,%d2
+	braw	Lw1_ok
+Lw1_byt:
+	negl	%d0
+	addil	&24,%d0			| byte: >> (24-off)
+	beqw	Lw1_ok
+	lsrl	%d0,%d2
+Lw1_ok:
 	bsrw	Lwb_do
 Lwr_2:
 	clrl	%d3
 	movew	%a2@(80),%d3		| WB2S
 	btst	&7,%d3
+	beqw	Lwr_3
+	movel	%d3,%d0			| ISSUE-11: skip SIZE=LINE WB2 (MOVE16 residue --
+	lsrl	&5,%d0			| Linux does the same; the old code mis-replayed
+	andil	&3,%d0			| a 16-byte line writeback as a 2-byte word write)
+	cmpil	&3,%d0
 	beqw	Lwr_3
 	moveal	%a2@(96),%a3		| WB2A
 	movel	%a2@(100),%d2		| WB2D
