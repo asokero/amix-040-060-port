@@ -328,3 +328,25 @@ correct resolution for both); pure reads stay reads (rw=S_WRITE on a text-page
 read would turn a legal read into SIGSEGV). FA @+72 untouched (get_fault reads
 it). If the loop persists after this, next step is a capped debug print of
 (walk PSR, FSLW) to discriminate a ptest-walk miss from frame semantics.
+
+### Boot test 2 results (2026-07-10, user-run) + fix 2
+
+**fs-uae 68060: FULL SUCCESS** — boots to login, basic commands run, clean
+shutdown, `uname` reports the 68060 tag. The SSW-synthesis fix (builds -07…-09)
+resolved the TAS/COW hang.
+
+**Amiberry 68060: new hang later in boot** (pid=159): `DBG as_fault
+STREAM/REPEAT addr=40734FFE type=0 ret=0` forever — an **unaligned kernel
+u-stack store 2 bytes before page end, i.e. the ISSUE-7 page-crossing class**,
+resurfacing through the 060 restart model: the 060 reports FA = the access's
+START address (FSLW MA set) even when the missing page is the NEXT one, so
+as_fault keeps "resolving" the already-present near page. This is genuine 060
+behavior, not an emulator bug — Linux/m68k handles it with
+`if (fslw & MA) addr = (addr + 7) & -8`. fs-uae simply never hit the pattern
+(different timing/workload).
+
+**Fix 2 (`wb040.s wb060_xpage`, builds 260710-10/-11/-12):** after a successful
+`*_orig` memflt on a fmt-4 frame whose FA lies in the last 8 bytes of its page,
+also as_fault the NEXT page (read, F_INVAL) — the proven hardbus-XPAGE recipe;
+as = curproc->p_as (user wrapper) / &kas (kernel wrapper). fmt-4-gated: on the
+040 the byte-wise write-back replay already covers this class.

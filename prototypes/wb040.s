@@ -39,6 +39,9 @@ usrxmemflt:
 	bnew	Lu_done
 	moveal	%fp@(8),%a2		| a2 = frame
 	bsrw	wb040_replay
+	moveal	u+0x730,%a0		| 060-B: fmt-4 page-crossing completion
+	moveal	%a0@(124),%a1		| a1 = as = curproc->p_as
+	bsrw	wb060_xpage
 Lu_done:
 	movel	%d4,%d0			| restore usrxmemflt's return value
 	moveml	%fp@(-20),%d2-%d4/%a2-%a3
@@ -59,6 +62,8 @@ krnxmemflt:
 	bnew	Lk_done
 	moveal	%fp@(8),%a2		| a2 = frame
 	bsrw	wb040_replay
+	lea	kas,%a1			| 060-B: fmt-4 page-crossing completion, as = &kas
+	bsrw	wb060_xpage
 Lk_done:
 	movel	%d4,%d0			| restore krnxmemflt's return value
 	moveml	%fp@(-20),%d2-%d4/%a2-%a3
@@ -101,6 +106,43 @@ wb060_sswsynth:
 Lws_wr:
 	movew	%d0,%a2@(76)		| replace FSLW upper word with the synthetic SSW
 Lws_ret:
+	rts
+
+| wb060_xpage (060-B, 2026-07-10): the 060 fmt-4 counterpart of wb040_replay's byte-wise
+| page-crossing handling (the ISSUE-7 class).  The 060 has no write-backs -- it RESTARTS
+| the faulted instruction -- but for a misaligned access that CROSSES a page boundary it
+| reports FA = the access's START address (MA set in FSLW) even when the missing page is
+| the NEXT one.  as_fault then resolves the (already-present) near page, ret=0, the
+| restart re-faults identically -> infinite loop (observed boot test 2: pid=159
+| addr=40734FFE, an unaligned kernel u-stack store 2 bytes before page end; Linux/m68k
+| handles the same 060 property with `if (fslw & MA) addr = (addr + 7) & -8`).
+| After a SUCCESSFUL *_orig (ret==0), if the frame is fmt-4 and FA lies in the LAST 8
+| BYTES of its page, also resolve the NEXT page (read, F_INVAL) -- the proven hardbus-
+| XPAGE recipe.  Gated on fmt-4: on the 040 the byte-wise replay already covers this.
+| In: a2 = frame, a1 = as (user: curproc->p_as, kernel: &kas).  Preserves d2-d7/a2-a3
+| (as_fault is ABI-conformant); the wrapper's d4 (orig ret) is untouched.
+wb060_xpage:
+	moveq	&0,%d0
+	moveb	%a2@(70),%d0		| format/vector high byte
+	lsrb	&4,%d0
+	cmpiw	&4,%d0			| 060 format-4 frame?
+	bnew	Lwx_ret
+	movel	%a2@(72),%d0		| FA
+	movel	%d0,%d1
+	andil	&0xfff,%d1
+	cmpil	&0xff8,%d1
+	bcsw	Lwx_ret			| not within 8 bytes of page end -> no crossing
+	andil	&0xfffff000,%d0
+	addil	&0x1000,%d0		| next page base
+	pea	1			| rw = S_READ
+	clrl	%sp@-			| type = F_INVAL
+	pea	4			| len
+	movel	%d0,%sp@-		| addr = next page
+	movel	%a1,%sp@-		| as
+	jsr	as_fault
+	lea	%sp@(20),%sp		| ret ignored: if the next page is genuinely
+					| unmappable the re-fault surfaces as a real error
+Lwx_ret:
 	rts
 
 | wb040_replay: a2 = trap frame.  If it is an 040 format-7 access-error frame, re-issue every
