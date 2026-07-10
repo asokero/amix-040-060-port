@@ -350,3 +350,22 @@ behavior, not an emulator bug — Linux/m68k handles it with
 also as_fault the NEXT page (read, F_INVAL) — the proven hardbus-XPAGE recipe;
 as = curproc->p_as (user wrapper) / &kas (kernel wrapper). fmt-4-gated: on the
 040 the byte-wise write-back replay already covers this class.
+
+### Boot test 3 (2026-07-10) — PHASE 060-B COMPLETE ✅
+
+Amiberry 68060 (builds 260710-10/-11/-12): boots to login, NetHack runs, clean
+shutdown. 040 regression: boots normally. Combined with boot test 2's fs-uae
+result, the **060-B exit criterion is met on BOTH emulators**: interactive login
+on an emulated 68060, `uname` reporting the 68060 tag — with a SINGLE dual-CPU
+binary whose 040 behavior is regression-clean.
+
+Scorecard vs the pre-study estimate: "~3–6 sessions" → **done in ~1 overnight
+session + 3 user boot-test rounds.** Two genuine 060 deltas were discovered at
+runtime that the static census could not see, both write-fault-path semantics:
+  1. FSLW RW=11 on locked RMW (TAS/CAS) vs 040 SSW "write" (fix: wb060_sswsynth)
+  2. restart-model FA = access start on page-crossings (fix: wb060_xpage)
+Both would have bitten real 060 hardware identically.
+
+Remaining from the plan: 060-C leftovers (optional `cpuinfo` userland tool; a
+64-bit-mul emulator-leniency probe), then the deferred shared phases (caches on,
+FPU/060SP, real 060 hardware when a board exists).
