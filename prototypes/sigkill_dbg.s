@@ -37,6 +37,9 @@ Lsg_ptev:
 	.long	0
 Lsg_cellv:
 	.long	0
+Lsg_msg3:
+	.asciz	"DBG SEGVPP pp=%x flg=%x vn=%x off=%x map=%x uown=%x"
+	.even
 
 | v3 (2026-07-03): the killer is USERLAND self-kill (kill(2), sender==target, fu=1) -- the SVR4
 | rtld convention: ld.so (inside libc.so.1 @C1000000) does _kill(_getpid(),SIGKILL) on EVERY
@@ -151,6 +154,36 @@ Lsg_pte:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(32),%sp
+| v4 (2026-07-10): WHO owns this phys page per the VM?  pfn -> page_t via the kernel's
+| own page_numtouserpp, then dump identity fields (3B2 vm/page.h layout, verified against
+| the binary: flags word @0, p_keepcnt @2, p_vnode @4, p_offset @8, p_mapping @32,
+| p_dblist[4] @40, p_uown @56 -- 60-byte DEBUG page_t).  p_vnode!=0 + small p_offset =
+| a FILE/DIR cache page (double-use with sh's anon heap!); p_uown = last u-page owner.
+	movel	Lsg_ptev,%d0
+	andil	&0xfffff000,%d0
+	moveq	&12,%d1
+	lsrl	%d1,%d0			| pfn
+	movel	%d0,%sp@-
+	jsr	page_numtouserpp
+	addqw	&4,%sp
+	movel	%d0,%d1			| pp must land in kvseg (0x4xxxxxxx) to deref
+	andil	&0xf0000000,%d1
+	cmpil	&0x40000000,%d1
+	bnew	Lsg_nopp
+	moveal	%d0,%a1
+	movel	%a1@(56),%sp@-		| p_uown
+	movel	%a1@(32),%sp@-		| p_mapping
+	movel	%a1@(8),%sp@-		| p_offset
+	movel	%a1@(4),%sp@-		| p_vnode
+	moveq	&0,%d1
+	movew	%a1@,%d1
+	movel	%d1,%sp@-		| flags|nio word
+	movel	%d0,%sp@-		| pp
+	pea	Lsg_msg3
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(32),%sp
+Lsg_nopp:
 	movel	Lsg_ptev,%d1
 	movel	Lsg_cellv,%d0
 	braw	Lsg_cell
