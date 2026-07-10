@@ -1,5 +1,24 @@
 # RESUME HERE — AMIX 68040 REAL-HARDWARE line (next: retest with ISSUE-8 fixed)
 
+> ## ★ 2026-07-10 — THE HW SESSION IS STARTING (Mercury 040 @33 MHz, 32 MB; FIRST BOOT DONE)
+> User has the card installed and a first boot attempted; **no serial cable yet — analysis is
+> screenshot-based for now** (the console wraps ~40 lines; prioritize the LAST screen + any
+> guru/panic text + the boot banner). What to bring/use:
+> - **Kernels: builds 260710-24 (unix-040) / -25 (dbg) / -26 (quiet)** — dual-CPU (68040+68060),
+>   all Model-B patches, s5/spec pager fixes, AND the **ISSUE-11 WB1 lane-realignment fix**
+>   (emulator-inert; the FIRST REAL-040 BOOT IS ITS ACTUAL TEST — WB1 writebacks only exist on
+>   real silicon). Verify which build is running from the banner / `uname -m` tag.
+>   NOTE: -24/-25/-26 not yet emulator-boot-verified (built at session end) — do one quick
+>   Amiberry regression boot before the HW visit if convenient.
+> - **Loader: `build/unix_boot040` (2026-07-10)** — overlap-safe copyit + MEMF_REVERSE buffer +
+>   checksum transit guard (**white/red color0 flash = corrupt copy, don't debug past it**) +
+>   cputype poke (prints `kernel cputype set to 40`).
+> - **Known non-bugs on HW:** `amixadm` (or other sh scripts) flooding `User BUS ERROR at
+>   xxx PC:800023xx CMD:...` = **ISSUE-10, known+paused, not a HW regression** (sh self-recovers
+>   with "no space"). dbg probes (SEGVCTX/DMP/PP etc.) print WARNING lines — normal.
+> - Serial cable is the single highest-value hardware purchase for this line (conputc mirror
+>   already in dbg/quiet; SERIAL-DEBUG.md has the recipe).
+>
 > ## ▶ NEXT VISIT (2026-07-09) — ISSUE-8 is FIXED on the emulator; RETEST on real silicon
 > **The real-HW p0init bus error was ISSUE-8's halved leaf-table address** — now root-caused and
 > fixed (commit `998737f`, 2026-07-09). `kvm_init`'s leaf-table `ctob`/`btoc` were left at 2 KB in
