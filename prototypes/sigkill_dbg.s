@@ -30,6 +30,13 @@ Lsg_n:
 Lsg_msg:
 	.asciz	"DBG SEGVCTX a0=%x a1=%x pte=%x cell=%x uva=%x"
 	.even
+Lsg_msg2:
+	.asciz	"DBG SEGVDMP p0=%x p4=%x cm4=%x c0=%x c4=%x c8=%x"
+	.even
+Lsg_ptev:
+	.long	0
+Lsg_cellv:
+	.long	0
 
 | v3 (2026-07-03): the killer is USERLAND self-kill (kill(2), sender==target, fu=1) -- the SVR4
 | rtld convention: ld.so (inside libc.so.1 @C1000000) does _kill(_getpid(),SIGKILL) on EVERY
@@ -124,6 +131,28 @@ Lsg_pte:
 	andil	&0xfff,%d0
 	addal	%d0,%a0
 	movel	%a0@,%d0		| live cell content via the identity-mapped phys
+| v3 (2026-07-10): CONTENT SIGNATURE dump -- whose page is this?  Print longs at the
+| phys page start (+0/+4: a u-area would show recognizable kernel pointers there) and
+| around the cell (-4/0/+4/+8: an old malloc arena shows a chain; file content shows
+| code/data).  a0 = phys of the cell.  Printed as a separate line BEFORE the main one;
+| pte and cell content are stashed in .data cells across the cmn_err (it eats d0/d1/a0/a1).
+	movel	%d0,Lsg_cellv
+	movel	%d1,Lsg_ptev
+	movel	%a0@(8),%sp@-		| c8
+	movel	%a0@(4),%sp@-		| c4
+	movel	%a0@,%sp@-		| c0 (= cell)
+	movel	%a0@(-4),%sp@-		| cm4
+	movel	%d1,%d0
+	andil	&0xfffff000,%d0
+	moveal	%d0,%a1			| a1 = phys page base
+	movel	%a1@(4),%sp@-		| p4
+	movel	%a1@,%sp@-		| p0
+	pea	Lsg_msg2
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(32),%sp
+	movel	Lsg_ptev,%d1
+	movel	Lsg_cellv,%d0
 	braw	Lsg_cell
 Lsg_nc:
 	movel	&0xdeaddead,%d0		| walk failed / phys out of range -> marker
