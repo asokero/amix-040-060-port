@@ -1182,6 +1182,31 @@ Lf_A:
 	movel	%d4,%d0
 	andil	&0xfffffe00,%d0		| pointer-table base = Adesc & ~0x1ff
 	movel	%d0,%fp@(-32)		| stash (reloaded each B iteration; a2 clobbered by hat_ptfree)
+| --- V3 guard (2026-07-10, FIRST REAL-HW PANIC of the Mercury visit): validate the
+|     pointer-table BASE the same way Lf_badleaf validates leaf bases.  init's exec
+|     teardown walks relic root slots (030-written hat_exec/hat_growsdt descriptors);
+|     the UDT test passes garbage like 0x3F0000/0x400000/0x810000 (Zorro-space/hole
+|     addresses).  The emulators read those leniently (open bus) so the B-scan only
+|     logs BAD-slots and boots on, but the REAL A3000 bus-errors on the first Bdesc
+|     read (`movel %a2@`) -> PANIC KERNEL FAULT pc=Lf_B+0x1a fmt=7 vec=2 (build -25).
+|     Bounds: [min(_start>>12, pages_base), pages_end) = the union of Lf_badleaf's
+|     pool bound and hat_unload V2.3's static-table bound (kernel statics lie BELOW
+|     pages_base on the emulator; bank-1 pool pages lie BELOW _start>>12 on real HW,
+|     where the kernel loads in the HIGH 0x08000000 bank).  d0/d1 scratch only.
+	movel	%d0,%d1
+	moveq	&12,%d0
+	lsrl	%d0,%d1			| d1 = pointer-table pfn
+	movel	&_start,%d0
+	lsrl	&8,%d0
+	lsrl	&4,%d0			| d0 = kernel base frame (_start>>12)
+	cmpl	pages_base,%d0
+	bcsw	Lf_Abnd			| _start below pages_base -> kernel-static bound wins
+	movel	pages_base,%d0		| else (high-bank kernel) the pool bound wins
+Lf_Abnd:
+	cmpl	%d0,%d1
+	bcsw	Lf_badA			| below both bounds -> garbage region
+	cmpl	pages_end,%d1
+	bccw	Lf_badA			| at/above RAM top -> garbage region
 	clrl	%fp@(-24)		| B = 0
 Lf_B:
 	movel	%fp@(-24),%d0
@@ -1229,6 +1254,23 @@ Lf_badleaf:
 	jsr	cmn_err
 	lea	%sp@(24),%sp
 	braw	Lf_nextB		| skip the garbage slot (do NOT hat_ptfree it)
+| garbage pointer-table base (V3 guard above): log it (capped) and skip the whole A
+| region WITHOUT reading or freeing it -- same bounded-leak philosophy as Lf_badleaf.
+| root[A] is left as-is; Lf_done frees the whole root page anyway.
+Lf_badA:
+	movel	Lhfa_n,%d0
+	cmpil	&8,%d0
+	bccw	Lf_nextA		| capped -> skip silently
+	addql	&1,%d0
+	movel	%d0,Lhfa_n
+	movel	%fp@(-32),%sp@-		| pointer-table base (3rd %x)
+	movel	%d4,%sp@-		| Adesc raw (2nd %x)
+	movel	%fp@(-20),%sp@-		| A (1st %x)
+	pea	Lhfa_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(20),%sp
+	braw	Lf_nextA		| skip the garbage region entirely
 Lf_PTE:
 	tstl	%a3@
 	beqw	Lf_nextPTE		| empty PTE -> skip
@@ -1525,5 +1567,10 @@ Lhfb_msg:
 	.asciz	"DBG hatfree BAD-slot A=%x B=%x Bdesc=%x leaf=%x (skipped)"
 	.even
 Lhfb_n:
+	.long	0
+Lhfa_msg:
+	.asciz	"DBG hatfree BAD-Aslot A=%x Adesc=%x table=%x (skipped)"
+	.even
+Lhfa_n:
 	.long	0
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
