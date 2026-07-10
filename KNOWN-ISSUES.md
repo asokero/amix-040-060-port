@@ -733,3 +733,23 @@ Found while investigating ISSUE-10 against reference implementations:
 (rotate/shift WB1D per size + wb1a&3 before `Lwb_do`), plus skip WB2 when
 SIZE==LINE (0b11: currently mis-replayed as a word write). Both changes are
 inert on emulators (paths never taken) — verify on real HW.
+
+**ISSUE-10 ROOT CAUSE FOUND + FIXED (2026-07-10, builds 260710-16/-17/-18, boot test pending):**
+SEGVCTX v2 pinned the corrupt cell: sh heap VA 0x80011CC0, phys 0x095AE000, live content
+4AFC0000, and the very first fault followed a beyond-brk link -- the arena head was reading
+STALE page content. Root cause: **`s5getapage` (x23 sites) and `spec_getapage` (x12 sites)
+were never Model-B-converted** -- the Tier-2 pager pass covered ufs_getapage only, and the
+root fs is s5. Full-page paths accidentally work with 2KB masks (4KB-aligned offsets round
+to themselves), but every PARTIAL file page (file tails, incl. every exec'd binary's last
+data page) was half-read/half-zeroed: pagezero(pp, off, 2048-off) leaves bytes 0x800-0xFFF
+holding the phys page's previous content. /sbin/sh's last data page has file bytes only to
+0x6E8 and its malloc arena head sits at page offset 0xF08 -> head read stale garbage ->
+the walk followed the phys page's PREVIOUS content -> 4AFC0003 SIGSEGV flood. Explains all
+observations: only some binaries affected (file-tail offset must land < 0x800 with .bss
+vars in the stale half), late-boot onset (early pool pages are clean), and the apparent
+040-vs-060 split (page-pool allocation order differs per CPU boot -> different previous
+content; NOT a CPU mechanism). FIX: 35 new byte patches, groups s5gp+specgp in
+patch_modelb_pager.py (all 2KB idioms: cmpil/addil #2047, andiw #-2048, movel #2048,
+addil +/-2048, PAGESHIFT moveq #11->12; the mulsl %a1@ fs-bsize multiplies LEFT alone).
+Also fixes silent file-data corruption for any mmap/exec of s5 files with tails in
+(0x800,0x1000) -- a much broader latent bug than amixadm.

@@ -53,9 +53,11 @@ KERNEL = sys.argv[1] if len(sys.argv) > 1 else "build/unix-040"
 # now yields exactly 2 frames (its map loop was already patched to expect 2).  page_find/
 # page_enter use offset>>11 only as a uniform hash bucket (unchanged, stays consistent).
 GROUPS = set((os.environ.get("MODELB_PAGER_GROUPS")
-              or "ufs,pvngp,pvnk,pgget,segmap,buf,genst,bufbk,dmapio,segu").split(","))
+              or "ufs,pvngp,pvnk,pgget,segmap,buf,genst,bufbk,dmapio,segu,s5gp,specgp").split(","))
 def group_of(name):
     if name.startswith("page_get"):     return "pgget"
+    if name.startswith("s5getapage"):   return "s5gp"
+    if name.startswith("spec_getapage"):return "specgp"
     if name.startswith("ufs_get"):      return "ufs"
     if name.startswith("pvn_getpages"): return "pvngp"
     if name.startswith("pvn_kluster"):  return "pvnk"
@@ -84,6 +86,51 @@ A48  = b"\x00\x00\x08\x00"; A96 = b"\x00\x00\x10\x00"   # #2048 -> #4096 (long i
 
 # (vaddr, expect_bytes, new_bytes, name)
 P = [
+ # ===== s5getapage + spec_getapage (groups s5gp/specgp, ISSUE-10 fix 2026-07-10) =====
+ # These two were NEVER Model-B-converted (the Tier-2 work covered ufs_getapage only;
+ # root fs is s5!).  Full-page paths accidentally work with 2KB masks (4KB-aligned
+ # offsets round to themselves), so the system booted -- but PARTIAL file pages (every
+ # file tail, incl. every exec'd binary's last data page) were half-read/half-zeroed:
+ # pagezero(pp, off, 2048-off) leaves bytes 0x800-0xFFF holding the phys page's STALE
+ # previous content.  /sbin/sh's last data page has file bytes only to 0x6E8 and its
+ # malloc arena head at page offset 0xF08 -> the head read stale garbage -> the amixadm
+ # SIGSEGV flood (ISSUE-10: SEGVCTX proved cell 80011CC0 = 4AFC0000 on phys 095AE000).
+ # Same idiom classes as the ufs_getapage set below; mulsl %a1@ (x fs bsize) sites LEFT.
+ (0x741b4, b"\x0c\x85"+A47, b"\x0c\x85"+A95, "s5getapage:cmpil #2047 d5 (bsize<page?)"),
+ (0x741be+2, A48, A96,                       "s5getapage:movel #2048 fp@(-148) (PAGESIZE local)"),
+ (0x743f8, b"\x06\x80"+A47, b"\x06\x80"+A95, "s5getapage:addil #2047 d0 (a)"),
+ (0x74402, b"\x06\x80"+A47, b"\x06\x80"+A95, "s5getapage:addil #2047 d0 (b)"),
+ (0x74408, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "s5getapage:andiw #-2048 d0 (a)"),
+ (0x7441c, b"\x06\x80"+A47, b"\x06\x80"+A95, "s5getapage:addil #2047 d0 (c)"),
+ (0x74426, b"\x06\x80"+A47, b"\x06\x80"+A95, "s5getapage:addil #2047 d0 (d)"),
+ (0x7442c, b"\x02\x40\xf8\x00", b"\x02\x40\xf0\x00", "s5getapage:andiw #-2048 d0 (b)"),
+ (0x7459a, b"\x0c\x85"+A47, b"\x0c\x85"+A95, "s5getapage:cmpil #2047 d5 (b)"),
+ (0x7461e, b"\x06\x80\xff\xff\xf8\x00", b"\x06\x80\xff\xff\xf0\x00", "s5getapage:addil #-2048 d0"),
+ (0x746aa, b"\x02\x80"+A47, b"\x02\x80"+A95, "s5getapage:andil #2047 d0 (pagezero off a)"),
+ (0x746b8, b"\x22\x3c"+A48, b"\x22\x3c"+A96, "s5getapage:movel #2048 d1 (pagezero len a)"),
+ (0x74712, b"\x06\x80"+A47, b"\x06\x80"+A95, "s5getapage:addil #2047 d0 (e)"),
+ (0x74718, b"\x72\x0b", b"\x72\x0c",         "s5getapage:PAGESHIFT >>11 (a)"),
+ (0x747e4, b"\x02\x80"+A47, b"\x02\x80"+A95, "s5getapage:andil #2047 d0 (pagezero off b)"),
+ (0x747f2, b"\x22\x3c"+A48, b"\x22\x3c"+A96, "s5getapage:movel #2048 d1 (pagezero len b)"),
+ (0x74824, b"\x06\x80"+A47, b"\x06\x80"+A95, "s5getapage:addil #2047 d0 (f)"),
+ (0x7482a, b"\x72\x0b", b"\x72\x0c",         "s5getapage:PAGESHIFT >>11 (b)"),
+ (0x74914, b"\x02\x80"+A47, b"\x02\x80"+A95, "s5getapage:andil #2047 d0 (pagezero off c)"),
+ (0x74922, b"\x22\x3c"+A48, b"\x22\x3c"+A96, "s5getapage:movel #2048 d1 (pagezero len c)"),
+ (0x74966, b"\x06\x80"+A47, b"\x06\x80"+A95, "s5getapage:addil #2047 d0 (g)"),
+ (0x7496c, b"\x72\x0b", b"\x72\x0c",         "s5getapage:PAGESHIFT >>11 (c)"),
+ (0x74a72, b"\x06\x81"+A48, b"\x06\x81"+A96, "s5getapage:addil #2048 d1 (next page)"),
+ (0x66cb6, b"\x24\x3c"+A48, b"\x24\x3c"+A96, "spec_getapage:movel #2048 d2 (klust default)"),
+ (0x66cf6, b"\x20\x3c"+A48, b"\x20\x3c"+A96, "spec_getapage:movel #2048 d0 (size unknown -> 1 pg)"),
+ (0x66d9e, b"\x06\x80\xff\xff\xf8\x00", b"\x06\x80\xff\xff\xf0\x00", "spec_getapage:addil #-2048 d0"),
+ (0x66df0, b"\x02\x80"+A47, b"\x02\x80"+A95, "spec_getapage:andil #2047 d0 (pagezero off a)"),
+ (0x66dfe, b"\x2c\x3c"+A48, b"\x2c\x3c"+A96, "spec_getapage:movel #2048 d6 (pagezero len a)"),
+ (0x66e48, b"\x06\x80"+A47, b"\x06\x80"+A95, "spec_getapage:addil #2047 d0 (a)"),
+ (0x66e4e, b"\x7c\x0b", b"\x7c\x0c",         "spec_getapage:PAGESHIFT >>11 (a)"),
+ (0x66f3c, b"\x02\x80"+A47, b"\x02\x80"+A95, "spec_getapage:andil #2047 d0 (pagezero off b)"),
+ (0x66f4a, b"\x2c\x3c"+A48, b"\x2c\x3c"+A96, "spec_getapage:movel #2048 d6 (pagezero len b)"),
+ (0x66f92, b"\x06\x80"+A47, b"\x06\x80"+A95, "spec_getapage:addil #2047 d0 (b)"),
+ (0x66f98, b"\x7c\x0b", b"\x7c\x0c",         "spec_getapage:PAGESHIFT >>11 (b)"),
+ (0x67046, b"\x06\x85"+A48, b"\x06\x85"+A96, "spec_getapage:addil #2048 d5 (next page)"),
  # ===== ufs_getapage: page-round byte masks (the #11 followed by cmpl = NDADDR, LEFT) =====
  (0x81dde, b"\x0c\xae"+A47, b"\x0c\xae"+A95, "ufs_getapage:cmpil #2047 fp@(-44)"),
  (0x81eb4, b"\x06\x80"+A47, b"\x06\x80"+A95, "ufs_getapage:addil #2047 d0 (a)"),
