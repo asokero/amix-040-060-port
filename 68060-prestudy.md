@@ -302,3 +302,29 @@ Static census of the final binary: the only 060-illegal instructions are the
    first suspects are FPU probing (try FPU off/soft if the config allows) and
    emulator leniency (Amiberry may execute 060-unimplemented ops instead of
    trapping — then the lmul/ptest paths are NOT actually being exercised).
+
+### Boot test 1 results (2026-07-10 morning, user-run)
+
+**Worked on the 68060 (both fs-uae and Amiberry):** loader cputype poke, banner
+`68060-260710-05`, MMU-on boot, exec/demand-fault path, all the way into early
+userland (pid 5). 040 regression: boots normally (dbg build).
+
+**Found: pid-5 hang in an infinite hardbus retry loop** — `DBG hardbus pid=5
+addr=8000F816 pte=7E0B00D ret=0 upc=800033FE`, PTE stuck write-protected (COW
+never fired). Root cause (disassembly of `usrxmemflt_orig` @0x5aede): the stock
+classifier reads **frame byte +76 bit 0** as the "read access" flag (040 SSW RW).
+On a fmt-4 frame that bit is **FSLW bit 24 (RW-read)** — which the 060 sets *also*
+for locked read-modify-write (TAS/CAS: RW field = 11), while the 040 SSW reports
+those as writes. A user TAS on a COW page (libc lock word) was thus classified
+"read of a write-protected resident page" → routed to `hardbus` → phys present,
+return 0 → 060 restarts the TAS → same fault forever. (WinUAE source confirms:
+`if (rmw_cycle) fslw |= MMU_FSLW_W | MMU_FSLW_R`.)
+
+**Fix (`wb040.s wb060_sswsynth`, builds 260710-07/-08/-09):** on entry to the
+usrxmemflt/krnxmemflt wrappers (covers both the u_trap and k_trap routes), a
+fmt-4 frame gets an 040-style SSW synthesized in place at +76: ATC | read-only-
+for-pure-FSLW-RW==10 | TM. Write and RMW both classify as write (COW is the
+correct resolution for both); pure reads stay reads (rw=S_WRITE on a text-page
+read would turn a legal read into SIGSEGV). FA @+72 untouched (get_fault reads
+it). If the loop persists after this, next step is a capped debug print of
+(walk PSR, FSLW) to discriminate a ptest-walk miss from frame semantics.
