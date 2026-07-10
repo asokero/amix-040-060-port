@@ -21,6 +21,17 @@
 > Deferred 060 leftovers: `cpuinfo` userland tool, vector-61 emulator-leniency probe, and
 > the shared caches-on / FPU (040 FPSP + 060SP) / real-060-HW phases.
 
+> ## ⏸ ISSUE-10 PAUSED (2026-07-10) — amixadm/sh heap corruption, 040-only, deferred
+> Deterministic repro, 8 runs, 6 probes; full evidence chain + resume recipe in
+> **KNOWN-ISSUES.md (ISSUE-10 state dump)**. Short version: sh's legit anon heap page's
+> CONTENT matches a recently-read disk block (1KB granularity); the write evades the
+> page_get and vtop chokepoints; prime remaining suspects = inline pfntokv/pptonum
+> high-bank pfn math or segmap-window PTE staleness. Resume = Amiberry write-watchpoint
+> (recipe in KNOWN-ISSUES) or a kernel-wide divsll#60+shift census. Probes stay in dbg.
+> Normal workloads unaffected. Fixes landed during the hunt: s5getapage/spec_getapage
+> Model-B conversion (903210c, real file-tail bugs), ISSUE-11 registered (wb040 WB1
+> lane-alignment — REAL-HW landmine, fix before the next hardware visit).
+
 > ## ✅ MILESTONE 2026-07-09 — ISSUE-7 AND ISSUE-8 BOTH RESOLVED (committed); 040 boots to login and survives workload + reboots
 > The 040 kernel now **boots to login on fs-uae, runs `ls -alR`, and survives 7 reboot cycles
 > with ZERO panics** (verified from serial: no `PANIC`/`KERNEL FAULT`/`Bus Error`, no
