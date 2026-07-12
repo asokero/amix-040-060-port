@@ -1,5 +1,23 @@
 # RESUME HERE — AMIX 68040 REAL-HARDWARE line
 
+> ## ✅ 2026-07-12 — ISSUE-13 FIXED + VERIFIED ON REAL HW; COW ACCEPTANCE PASSES ON REAL HW
+> **Build 260712-03 (unix-040 + unix-040-dbg) is the current real-HW line.** Two real-HW
+> validations landed this session (full detail: RESUME-HERE.md top banner + KNOWN-ISSUES
+> ISSUE-13):
+> 1. **ISSUE-13 capture 1 (NFS→local copy panic) fixed by `prototypes/bp_map040.s`**
+>    (commit `4099f4e`): stock 030 `bp_map`/`bp_mapout` walked the retired `st_top1` tree
+>    on the NFS/RFS page-I/O path → low-memory writes + a temp mapping the MMU never saw.
+>    Verified on the real A3000+040: the previously-panicking NFS→local copy now completes;
+>    **5 consecutive 3 MB copies, every one byte-perfect** (`sum` 11920 6060 identical
+>    NFS↔local), machine stable throughout.
+> 2. **hat_dup_cow acceptance test FULL MATRIX PASS on real HW** — 1/32/256 forks (also
+>    passes emu-040 + emu-060). Closes the long-open "fork/COW never runtime-validated on
+>    real silicon".
+> Real-HW session practicals: `telnet 10.0.10.10` works but the Linux telnet client is
+> flaky mid-negotiation — the scratchpad raw-socket runner (`real.py`) is the reliable
+> driver. `nohup` does NOT survive session exit on the real machine. File transfer:
+> slirp-safe TFTP recipe in RESUME-HERE.md. Still NO serial cable on the real machine.
+>
 > ## ★★★ 2026-07-11 — MILESTONE: AMIX BOOTS TO LOGIN ON REAL HARDWARE ★★★
 > **Amiga 3000 + Mercury 68040 @33 MHz, 32 MB — builds 260711-01/-02/-03, user logged in.**
 > The 2026-07-10 night session found and fixed TWO real-silicon-only bugs from screen
@@ -14,11 +32,13 @@
 >    armed (copyin/copyout convention), else krnxmemflt→as_segat(&kas)=NULL→PANIC. Real
 >    040 fills WB2/WB3 with the previous insn's pending store → unmapped targets happen.
 >    Now armed around the loop with a log+skip landing pad (Lwb_fail).
-> Verified working on HW: boot, fsck, login, amixadm (floods the known ISSUE-10 signature
-> IDENTICALLY to the emulators — see KNOWN-ISSUES.md ISSUE-10 2026-07-11 datapoint).
-> **NEW ISSUE-12: A2065 ethernet dead on AMIX/040** (ifconfig -a empty; card works from
-> AmigaOS on the same machine) — deferred, but it blocks the "network access for direct
-> testing on the real machine" goal, so it is the FIRST work item of the next HW session.
+> Verified working on HW: boot, fsck, login, remote telnet over A2065, and amixadm
+> (floods the known ISSUE-10 signature IDENTICALLY to the emulators — see
+> KNOWN-ISSUES.md ISSUE-10 2026-07-11 datapoint).
+> **ISSUE-12 was a false alarm:** A2065 networking works on real-HW 040 AMIX
+> (build 260711-02). `ifconfig -a` is just an unsupported/silent AMIX option;
+> the correct query is `ifconfig aen0`. Remote interactive sessions over the
+> wire work, so the "network access to the real machine" goal is achieved.
 > ISSUE-11 (WB1 lane realign) rode along on these boots with no visible anomalies.
 >
 > ## (previous banner) 2026-07-10 — THE HW SESSION IS STARTING (Mercury 040 @33 MHz, 32 MB; FIRST BOOT DONE)
@@ -76,10 +96,11 @@
 > at handoff, the copied image failed its checksum (transit corruption — report it, don't
 > guess).** Verified on Amiberry: multiple cold boots through AMIX reboot cycles, zero warm-up.
 
-Status: **paused** while the dev continues the EMULATOR + SCSI/root-mount line on a
-laptop (real A3000 not available for a couple of days).  The 040 VM port works on
-emulators (boots to root-fs mount); on REAL silicon it gets further-verified but hits a
-single, well-localized real-040 blocker described here.
+Current status (2026-07-12): the real-HW p0init blocker below is historical. The
+ISSUE-8, loader-overlap, hat_free, and wb040_replay fixes moved the Mercury-040
+machine through fsck/login and onto the network, and the bp_map040 fix (ISSUE-13)
+made NFS page-I/O reliable on it. Keep the lower p0init material as the original
+failure analysis and regression context, not as the live blocker.
 
 ## The machine (real A3000 + PPS Mercury 68040)
 - CPU: 68040 (ShowConfig: "CPU 68040/FPU restricted/MMU 68040"). AttnFlags 0x804f.
