@@ -25,6 +25,9 @@ Lsf_n:
 Lsk_msg:
 	.asciz	"DBG SIG sig=%d pid=%d stat=%x psargs=%s uret=%x uarg2=%x kcaller=%x fu=%x"
 	.even
+Lsk9_msg:
+	.asciz	"DBG SIG9 GOT fde4=%x fe68=%x e000=%x ec00=%x f000=%x"
+	.even
 Lsg_n:
 	.long	0
 Lsg_msg:
@@ -255,6 +258,46 @@ Lsk_log:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(40),%sp
+| v5 (2026-07-12, load-repro run 1): sac self-killed via the rtld convention under
+| fork+I/O load and EVERY later exec hung -> suspicion: the corruptor hit a SHARED
+| libc.so.1 page-cache page (not per-process anon this time).  On each SELF-KILL
+| (sig==9 && fu==1; curproc == the dying process, so lfuword reads ITS space) dump
+| the libc probe words: GOT slots C102FDE4 (expect C101116E) / C102FE68 (expect
+| C102E050), data-seg start C102E000, the ISSUE-10 signature offset C102EC00
+| (page+0xC00), and C102F000.  Garbage/dirent bytes here at kill time = shared-page
+| corruption confirmed, and the content names the source disk block.  Cap shared
+| with the Lsk_n<=64 gate above.  lfuword clobbers d0/d1/a0/a1 only.
+	movel	%fp@(12),%d0
+	moveq	&9,%d1
+	cmpl	%d0,%d1
+	bnew	Lsk_done
+	movel	%fp@(16),%d0
+	subql	&1,%d0
+	bnew	Lsk_done
+	movel	&0xc102f000,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-		| f000
+	movel	&0xc102ec00,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-		| ec00
+	movel	&0xc102e000,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-		| e000
+	movel	&0xc102fe68,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-		| fe68
+	movel	&0xc102fde4,%sp@-
+	jsr	lfuword
+	addqw	&4,%sp
+	movel	%d0,%sp@-		| fde4
+	pea	Lsk9_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(28),%sp
 Lsk_done:
 	moveml	%fp@(-12),%d2-%d3/%a2
 	unlk	%fp
