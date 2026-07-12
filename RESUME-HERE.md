@@ -1,4 +1,89 @@
-# RESUME HERE — AMIX 68040/68060 port status (2026-07-10)
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-12)
+
+> ## ✅ 2026-07-12 — ISSUE-13 FIXED (bp_map040), hat_dup_cow FULL MATRIX PASS, Codex VM-audit round
+> **Committed `4099f4e` (on master): `prototypes/bp_map040.s` + relink-040.sh wiring + KNOWN-ISSUES.**
+> Build line is now **260712-03** (unix-040 + unix-040-dbg; both link bp_map040; dbg also
+> carries the sigkill_dbg v5 GOT-dump probe, UNCOMMITTED in prototypes/sigkill_dbg.s).
+>
+> **ISSUE-13 capture 1 (real-HW NFS-copy panic) ROOT-CAUSED + FIXED + VERIFIED ON REAL HW.**
+> Root cause (via Codex census, sibling repo `amix-kernel-analysis/vm-map/`): `bp_map` and
+> `bp_mapout` were left as stock 030 bodies — 2 KiB counts, and they walk/write the RETIRED
+> `st_top1` tree (which the 040 port does NOT populate for syssegs → zero leaf base → stores
+> `pfn<<11|1` into LOW MEMORY, and the temp translation never appears in the live
+> root040→kptr040→kptbl tree the MMU walks). On the NFS/RFS page-I/O path
+> (nfs_getapage/nfs_writelbn) this is exactly the panic chain. bp_map040 rewrites both for
+> the live 040 tree (4 KiB, kptr040 walk = vatosde/vatopte geometry, leaf PTE `phys|0x19`,
+> ghost-mapping contract kept, cpusha bc + pflusha). VERIFIED: emu-040 + emu-060 hat_dup_cow
+> 1/32/256 all PASS (no regression); real A3000+040 = 5 consecutive 3 MB NFS→local copies,
+> every one byte-perfect (`sum` 11920 6060 identical NFS↔local), machine stable.
+>
+> **hat_dup_cow acceptance test (Codex, `runtime-tests/`) FULL MATRIX PASS** — 1/32/256 forks
+> on emu-040, emu-060, and real A3000+040. Closes the long-open "COW never runtime-validated".
+>
+> **NEXT (all lower priority, pick any — details in memory + KNOWN-ISSUES):**
+> 1. **ISSUE-13 capture 2** (crash(1M) /dev/kmem nested-fault storm): `krnxmemflt_orig`
+>    F_PWRITE branch `0x5b22a..4a` still does the 030 `*(vatosde+4)`+`>>11` walk against the
+>    040 vatosde; + the `k_trap` landing-pad-clear recursion window. Fix = port the F_PWRITE
+>    walk to `vatopte` + a bounded nested-fault fail-fast. Codex options in
+>    `SEGKMEM-KVSEG-MMREAD-FAULT-AUDIT.md`.
+> 2. **Pageout/writeback Model-B conversion group** (~20 sites, silent-data-loss class):
+>    Codex `PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md` is the ordering guide + do-not-patch traps.
+>    Needs a Phase-0 root-fs block-size policy decision first.
+> 3. **ISSUE-10 corruptor** (paused): Codex census found the local page-in path CLEAN, which
+>    narrows it; resume recipe = Amiberry write-watchpoint + pfntokv/shift census.
+> 4. **Z3 graphics track** (new): userspace mmap guard-clean, sptalloc(base≠0) ready; only
+>    blocker = no cache-inhibit CM-bit path in 040 hat_pteload.
+> 5. **Emulator aen/streams UDP-load stall** (found 2026-07-12 during ISSUE-13 repro; distinct
+>    from the corruptor) — isolate with tftp WITHOUT fork load.
+>
+> **DEBUG TIPS (new this session):**
+> - **Amiberry IPC `READ_MEM 0x<addr> <width>`** (1/2/4; 0x prefix required) = clean live-RAM
+>   window into a RUNNING emulated kernel (kernel phys base 0x08000000 = identity DTT0; a data
+>   symbol at nm-addr A reads at 0x08000000+A; but COMMON/bss nm values are SIZES not addrs —
+>   read the runtime addr from a relocated instruction operand). Far safer than crash(1M)/
+>   /dev/kmem on the guest (which fault-storms on unmapped kernel VAs). Do NOT read HALTED
+>   state via IPC (wedges).
+> - **Emulator `telnet` client closes during option negotiation** in the current state — use
+>   the scratchpad raw-socket runners instead: `emu.py` (emulator, root = NO password) /
+>   `real.py` (real 10.0.10.10, root/REDACTED-see-local-secrets-env). Sentinel gotcha: the echoed command line contains
+>   your sentinel — use a quote-split marker (`echo CMD''DONE`, match `CMDDONE`).
+> - **Real-HW telnet**: `telnet 10.0.10.10` root/REDACTED-see-local-secrets-env (creds only in ~/kehitys/CLAUDE.md,
+>   NEVER in repo). nohup does NOT survive session exit on the real machine — keep the session
+>   alive and poll, or run synchronously.
+> - **File transfer to AMIX**: slirp-NAT-safe TFTP = scratchpad `tftp_onesock.py` (replies from
+>   the listening port 1069; the stock runtime-tests/tftp_server.py uses an ephemeral reply
+>   port that slirp drops). Emulator: `tftp 10.0.2.2 1069`; real HW: `tftp 10.0.10.182 1069`.
+> - **Serial capture (emulator)**: Amiberry listens on `serial_port=TCP://0.0.0.0:1234` always;
+>   `nc localhost 1234 > log` or reconnect-tolerant socat loop. Real HW has NO serial cable yet
+>   → photo-based; symbol-resolve a photographed backtrace with nm on build/unix-040-dbg.
+> - **puavoOS = READ-ONLY image**: all apt packages are WIPED on every reboot. Re-check with
+>   `dpkg -s` and give one apt line. Amiberry build (`~/kehitys/amiberry`, branch a2065-backport
+>   = v8.2.2 + PR #2153 A2065-RX fix) needs SDL3 (not SDL2); build binary at
+>   `~/kehitys/amiberry/build/amiberry -D` — USE THIS for inbound networking, not the stock
+>   /usr/bin/amiberry 8.2.2.
+> - Emulator inbound telnet: `slirp_redir=tcp:2323:23:10.0.2.15` (guest-IP 4th field MANDATORY),
+>   guest aen0 = 10.0.2.15, and the guest must send one packet (ping 10.0.2.2) per Amiberry
+>   start to prime slirp's MAC learning.
+
+> ## ★★★ MILESTONE 2026-07-11 — REAL MERCURY-040 BOOTS TO LOGIN + NETWORK WORKS ★★★
+> **Amiga 3000 + Mercury 68040 @33 MHz, 32 MB, build 260711-02:** the current
+> 040 line boots on real hardware through fsck/login, accepts remote telnet over
+> the A2065 (`aen0`), and supports interactive sessions over the wire. The
+> earlier A2065 diagnosis was a false alarm: `ifconfig -a` is an unsupported
+> silent AMIX option; use `ifconfig aen0`.
+>
+> Real-HW fixes proven by this session: the loader overlap/copyit guard, the
+> kvm_init/segu_get ISSUE-8 p0init fix, the hat_free A-slot guard, the wb040
+> replay `u_nofault` guard, and the ISSUE-11 WB1/WB2 replay hardening (no visible
+> anomalies on real silicon). ISSUE-10 (`amixadm`/sh heap corruption) reproduces
+> on the real machine with the identical `4AFC0003` signature, so it is not an
+> emulator artifact; it remains paused with the existing write-watchpoint /
+> pfntokv-census recipe in KNOWN-ISSUES.md.
+>
+> **Immediate useful next work:** use the now-working network path to run the
+> `hat_dup_cow` acceptance test and then heavier workloads on either Amiberry
+> A2065 SLIRP or the real A3000. Keep capturing ISSUE-9 if the idle-time Bus
+> Error loop reappears, but it is not currently blocking login/network use.
 
 > ## ✅ MILESTONE 2026-07-10 — DUAL-CPU KERNEL: 68060 SUPPORT MERGED (branch `060-prestudy` → master, merge `60f17f4`)
 > **One kernel binary now boots to login on BOTH the 68040 and the 68060** — verified on
@@ -57,13 +142,11 @@
 >   (ktrap_latch KSTKCHAIN/KSTKWB, dbg-only). **This is why the three earlier HAT hypotheses all
 >   missed — the bug was in write-back replay, never in HAT.**
 >
-> ## ▶ NEXT SESSION — two goals (see `RESUME-HERE-040-HARDWARE.md` + `KNOWN-ISSUES.md` ISSUE-9)
-> 1. **Real-HW (Mercury-040) retest + prep.** The real-HW p0init bus error was ISSUE-8's halved
->    leaf address (segu_get read it in a real-A3000 RAM hole; see the 2026-07-08 Amiberry.log
->    finding). ISSUE-8 is now fixed, so the real HW is expected to get past the p0init panic —
->    but this is UNTESTED on silicon. Retest on the real A3000 + capture serial. Cache-coherency
->    hypothesis #1 (STORE A / stale page-table lines) in the HW doc may still bite; if so, that's
->    the next frontier, not a regression.
+> ## ▶ 2026-07-09 NEXT SESSION NOTE — NOW SUPERSEDED BY THE 2026-07-11 REAL-HW MILESTONE
+> 1. ~~**Real-HW (Mercury-040) retest + prep.**~~ **DONE 2026-07-11.** The machine
+>    got past the old p0init panic, booted to login, survived fsck, and came up on
+>    A2065 networking. The STORE-A/stale-table hypothesis in the hardware doc is
+>    historical unless a future regression returns to the p0init address range.
 > 2. ~~**Cold-boot flakiness — eliminate the `ed`/`more` warm-up**~~ **✅ RESOLVED 2026-07-09 PM
 >    (same day). ROOT CAUSE: loader buffer/destination OVERLAP + copyit's inverted copy
 >    direction — NOT uninitialized memory.** `AllocMem(MEMF_FAST)` placed the ELF buffer
@@ -144,13 +227,12 @@ Full chain + fix plan (2 byte-patches + optional phase-4 "STORE B neuter"): KNOW
   and `scanned=16 pid1=9F`) — a 3rd/4th confirmation the corruption is isolated to one proc.
   Hunting stays paused per the earlier decision.
 
-**NEXT STEP DEFERRED (2026-07-07, network blocker):** the `hat_dup_cow` fork/COW acceptance
+**NEXT STEP UNBLOCKED (updated 2026-07-11):** the `hat_dup_cow` fork/COW acceptance
 test (`amix-kernel-analysis/runtime-tests/`, Codex-authored, built + verified ready) is the highest-value
 next action — it stress-validates the merged hat_dup040 (fork-without-exec COW, boundary
-crossing, stress loops) which login/fsck do NOT exercise. **But the user currently has no
-working network to the emulator, and the test's transfer method (tftp over fs-uae SLIRP,
-`get hat_dup_cow`) needs it — so the test is DEFERRED until networking/file-transfer is
-sorted.** When picked up: `python3 amix-kernel-analysis/runtime-tests/tftp_server.py` on the host, then in
+crossing, stress loops) which login/fsck do NOT exercise. Networking/file transfer is no
+longer the blocker: real-HW A2065 works, and Amiberry A2065 SLIRP also configures `aen0`
+and reaches 10.0.2.2. When picked up: `python3 amix-kernel-analysis/runtime-tests/tftp_server.py` on the host, then in
 AMIX `tftp 10.0.2.2 1069` → `binary` → `get hat_dup_cow` → `chmod 755` → `./hat_dup_cow 1`
 then `32` then `256`; expect `RESULT PASS`. (Alternative transfer if SLIRP stays broken: mount
 the disk image on Linux and copy the binary in directly, or bake it into the image.) After

@@ -878,10 +878,14 @@ split remains a layout artifact, not a CPU mechanism. The resume recipe (write-w
 
 ## ISSUE-13: kvseg fault robustness — NFS-copy panic + /dev/kmem fault recursion (real HW, 2026-07-12)
 
-**Status: OPEN. Two captures, full backtraces read from photos
-(~/Lataukset/IMG_20260712_013119397.jpg, IMG_20260712_103720403.jpg).
-Investigate on the EMULATOR only; no /dev/kmem poking on real HW until a
-serial cable is available (user decision).**
+**Status (2026-07-12): CAPTURE 1 = FIXED + VERIFIED ON REAL HW (bp_map040, commit
+4099f4e — see the "CAPTURE-1 FIXED" block at the end of this section). CAPTURE 2 =
+OPEN, lower priority (crash(1M) /dev/kmem nested-fault storm: krnxmemflt_orig F_PWRITE
+030-walk + k_trap landing-pad recursion window). Two captures, backtraces read from
+photos (~/Lataukset/IMG_20260712_013119397.jpg = capture 1, IMG_20260712_103720403.jpg
+= capture 2). Do NOT poke /dev/kmem on real HW until a serial cable is available (user
+decision) — use Amiberry IPC READ_MEM on the emulator instead. Blocks below are in
+investigation order; the last one is the resolution.**
 
 **Capture 1 — the original panic (during user's NFS→local `cp`, concurrent
 telnet load):** `DBG as_fault FAIL pid=384 addr=40326000 type=0 rw=1
