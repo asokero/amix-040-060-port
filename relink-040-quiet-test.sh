@@ -22,28 +22,24 @@ ENV="/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
 
 [ -f "$IN" ] || { echo "ERROR: $IN missing -- run sh relink-040.sh first"; exit 1; }
 
-echo "[*] assembling quiet040.s + serdbg.s + ddopen_dbg.s"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/quiet040.s"   -o "$HERE/build/quiet040.o"
+# NOTE 2026-07-12: quiet040.s was RETIRED -- its load-bearing overrides (sched,
+# schedpaging, idle, resume, hardbus) now live in the BASE link (runtime040.s via
+# relink-040.sh) and are inherited through $IN.  Only serdbg + ddopen_dbg layer here.
+echo "[*] assembling serdbg.s + ddopen_dbg.s"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/serdbg.s"     -o "$HERE/build/serdbg.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ddopen_dbg.s" -o "$HERE/build/ddopen_dbg.o"
 
-echo "[*] weaken the overridden symbols (quiet set + ddopen)"
+echo "[*] weaken the overridden symbols (conputc + ddopen)"
 cp "$IN" "$HERE/build/unix-040-quiet-test-stage1"
 m68k-linux-gnu-objcopy \
-	--weaken-symbol sched \
-	--weaken-symbol schedpaging \
-	--weaken-symbol idle \
-	--weaken-symbol resume \
 	--weaken-symbol conputc \
-	--weaken-symbol hardbus \
-	--add-symbol hardbus_orig=.text:0x5b3c2,function,global \
 	--weaken-symbol ddopen \
 	"$HERE/build/unix-040-quiet-test-stage1"
 
 OUT="$HERE/build/unix-040-quiet-test"
 echo "[*] relinking -> $OUT"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-quiet-test-stage1" \
-	"$HERE/build/quiet040.o" "$HERE/build/serdbg.o" "$HERE/build/ddopen_dbg.o"
+	"$HERE/build/serdbg.o" "$HERE/build/ddopen_dbg.o"
 
 echo "[*] overridden defs (each must be a single strong def):"
 for s in sched schedpaging idle resume conputc hardbus hardbus_orig ddopen; do

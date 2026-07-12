@@ -7,8 +7,12 @@
 #   * sysseginit    LOCAL  -> --globalize-symbol then --weaken-symbol (kvm040.o redefines)
 # Then patch the remaining 030 PMMU instructions (patch_pflusha/patch_pmmu).
 #
-# Output: build/unix-040  (ready to boot on a 68040; should advance past the old
-# page_init+0x4a bus error if the kvseg map is now correct).
+# Output: build/unix-040 -- a SELF-CONTAINED bootable 040/060 kernel since 2026-07-12:
+# runtime040.s (native resume fixed-u remap + crossing-page hardbus + swap/pageout
+# disables) is now part of THIS base link.  Before that date the bare artifact was a
+# non-bootable intermediate (stock resume) and only the quiet/dbg overlays could boot;
+# a post-link check below now rejects any image whose resume/hardbus are still stock.
+# Overlays: unix-040-quiet = base + serial mirror; unix-040-dbg = base + probes.
 set -e
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -72,6 +76,14 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/lmul060.s"    -o "$HERE/build/lm
 # st_top1 tree) -> corrupt the NFS page-I/O temp mapping.  bp_map040 rewrites both for
 # the live 040 kptr040 tree (4 KiB, phys|0x19).  Both GLOBAL T -> plain --weaken-symbol.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/bp_map040.s"  -o "$HERE/build/bp_map040.o"
+# runtime040 (2026-07-12): the formerly-overlay-only LOAD-BEARING overrides promoted
+# into the base link (Codex PROCESS-MMU-CONTEXT-SWITCH-CONTRACT.md packaging finding:
+# bare unix-040 retained stock resume -> fixed-u never remapped -> not bootable).
+#   resume   = native 040 fixed-u remap (ctx switch core)
+#   hardbus  = page-crossing read fix (crossing ifetch/read refault loop)
+#   sched/schedpaging/idle = deliberate swap+pageout disables until the writeback
+#                            Model-B conversion group lands
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/runtime040.s" -o "$HERE/build/runtime040.o"
 m68k-linux-gnu-objcopy --redefine-sym segu_get=segu_get_lockfix "$HERE/build/segu_lockfix.o"
 
 echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
@@ -135,6 +147,12 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol lmul \
 	--weaken-symbol bp_map \
 	--weaken-symbol bp_mapout \
+	--weaken-symbol sched \
+	--weaken-symbol schedpaging \
+	--weaken-symbol idle \
+	--weaken-symbol resume \
+	--weaken-symbol hardbus \
+	--add-symbol hardbus_orig=.text:0x5b3c2,function,global \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -148,16 +166,31 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o" \
 	"$HERE/build/inituname040.o" \
 	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" \
-	"$HERE/build/bp_map040.o"
+	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched schedpaging idle resume hardbus hardbus_orig; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
-m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'kptr040|kroot040|sysseginit|segkmem_mapin|kptbl|syssegs' \
+m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'kptr040|kroot040|sysseginit|segkmem_mapin|kptbl|syssegs|hardbus_orig' \
 	| sed 's/^/      /' || echo "      (none)"
+
+# HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
+# remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired
+# 030 ublksde and never updates the live uarea_pt, so a kernel whose strong `resume`
+# still resolves to 0x9c cannot context-switch (Codex PROCESS-MMU-CONTEXT-SWITCH-
+# CONTRACT.md).  Same guard for hardbus (stock 0x5b3c2 loops on crossing reads).
+RESADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="resume" && $2=="T" {print $1}')
+HBADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="hardbus" && $2=="T" {print $1}')
+if [ "$RESADDR" = "0000009c" ] || [ -z "$RESADDR" ]; then
+	echo "[FAIL] strong resume is stock/missing (addr='$RESADDR') -> kernel cannot context-switch"; exit 1
+fi
+if [ "$HBADDR" = "0005b3c2" ] || [ -z "$HBADDR" ]; then
+	echo "[FAIL] strong hardbus is stock/missing (addr='$HBADDR') -> crossing reads loop forever"; exit 1
+fi
+echo "[OK] native resume @0x$RESADDR + crossing-page hardbus @0x$HBADDR are the strong defs."
 echo
 m68k-linux-gnu-size "$OUT" | sed 's/^/      /'
 

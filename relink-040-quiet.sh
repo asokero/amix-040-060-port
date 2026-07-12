@@ -1,17 +1,15 @@
 #!/bin/sh
 # relink-040-quiet.sh -- QUIET serial-capable twin of the dbg build (2026-07-06).
 #
-# Layers ONLY the load-bearing overrides on top of the fully-patched build/unix-040:
-#   quiet040.s  = sched loop + schedpaging skip + idle + resume040 +
-#                 hardbus page-crossing fix  (the dbg overlay's genuine parts, NO output)
-#   serdbg.s    = conputc serial mirror (banner / cmn_err / panics -> serial @9600)
-# hat_dup is NOT overridden here (2026-07-07): the real hat_dup040 port (ISSUE-4) is now
-# a finalized strong override already baked into build/unix-040 -- inherited as-is.
-# All pure diagnostics (ddopen_dbg blkatoff_dbg assegat_dbg execmark hatalloc_dbg
-# ktrap_latch kmem_validate segvn_softunlock_dbg preempt_dbg segu_swap_dbg + the
-# sigkill_dbg probes) are OMITTED.  Functionally the build should match unix-040-dbg;
-# the serial log carries only the real console stream.  Intended for real-HW testing;
-# the MAIN debug line stays unix-040-dbg on the emulator.
+# SLIMMED 2026-07-12: the former quiet040.s load-bearing overrides (sched,
+# schedpaging, idle, resume040, hardbus page-crossing fix) were PROMOTED into the
+# base link (prototypes/runtime040.s via relink-040.sh) after the Codex
+# PROCESS-MMU-CONTEXT-SWITCH-CONTRACT.md packaging finding.  This overlay now layers
+# ONLY the serial mirror on top of the already-bootable build/unix-040:
+#   serdbg.s = conputc serial mirror (banner / cmn_err / panics -> serial @9600)
+# Functionally the build should match unix-040-dbg minus all probes; the serial log
+# carries only the real console stream.  Intended for real-HW testing; the MAIN
+# debug line stays unix-040-dbg on the emulator.
 #
 # Input is the ALREADY-patched build/unix-040 (all Model B / PMMU patches baked in),
 # so we do NOT re-run the byte patchers here (same contract as relink-040-dbg.sh).
@@ -24,28 +22,21 @@ ENV="/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
 
 [ -f "$IN" ] || { echo "ERROR: $IN missing -- run sh relink-040.sh first"; exit 1; }
 
-echo "[*] assembling quiet040.s + serdbg.s"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/quiet040.s" -o "$HERE/build/quiet040.o"
+echo "[*] assembling serdbg.s"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/serdbg.s"   -o "$HERE/build/serdbg.o"
 
-echo "[*] weaken the overridden symbols (sched schedpaging idle resume hardbus conputc)"
+echo "[*] weaken the overridden symbol (conputc)"
 cp "$IN" "$HERE/build/unix-040-quiet-stage1"
 m68k-linux-gnu-objcopy \
-	--weaken-symbol sched \
-	--weaken-symbol schedpaging \
-	--weaken-symbol idle \
-	--weaken-symbol resume \
 	--weaken-symbol conputc \
-	--weaken-symbol hardbus \
-	--add-symbol hardbus_orig=.text:0x5b3c2,function,global \
 	"$HERE/build/unix-040-quiet-stage1"
 
 OUT="$HERE/build/unix-040-quiet"
 echo "[*] relinking -> $OUT"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-quiet-stage1" \
-	"$HERE/build/quiet040.o" "$HERE/build/serdbg.o"
+	"$HERE/build/serdbg.o"
 
-echo "[*] overridden defs (each must be a single strong def; hat_dup is inherited from \$IN, shown for confirmation only):"
+echo "[*] overridden defs (each must be a single strong def; all but conputc are inherited from \$IN, shown for confirmation only):"
 for s in sched schedpaging idle resume hat_dup conputc hardbus hardbus_orig; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
