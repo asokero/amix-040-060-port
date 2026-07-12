@@ -839,23 +839,32 @@ first real-040 boot is the actual test.
 
 ## ISSUE-12: A2065 ethernet dead on real-HW 040 AMIX (ifconfig -a empty, no ping)
 
-**Status: OPEN (2026-07-11), deferred by user decision — but it BLOCKS the
-"network access to the real machine" goal, so it is the next real-HW work item.**
+**Status: RESOLVED — FALSE ALARM (2026-07-11). A2065 networking WORKS on real-HW
+040 AMIX (build 260711-02): remote telnet login to the real machine succeeded,
+`ifconfig aen0` shows UP with the correct address, and interactive sessions work
+over the wire. The "network access to the real machine" goal is ACHIEVED.**
 
-Observed on the FIRST successful real-HW login (Amiga 3000 + Mercury 68040,
-build 260711-02): `ifconfig -a` prints nothing and the machine does not ping.
-The CARD and cabling are fine — the user ran the same A2065 under AmigaOS on the
-same machine minutes earlier. 030 AMIX on this machine has working networking.
+Post-mortem — why the false diagnosis happened:
+- **`ifconfig -a` is a silent no-op on AMIX SVR4** (unsupported option, prints
+  nothing, exits 0). It prints nothing on a fully working system too — verified
+  on the emulator. The original "ifconfig -a empty" observation carried zero
+  information. The correct query is `ifconfig aen0` (interface name is aen0).
+- The original "no ping" was most likely transient operator/test error during
+  the first excited real-HW login session (user's own suspicion too).
 
-Not investigated yet. Candidate angles for when this resumes:
-- The A2065 (Zorro 0202:70, AMD Lance/Am7990) driver's interrupt or DMA setup on
-  the 040 kernel: the Lance DMAs into shared buffer RAM; buffer VA->phys and
-  cache/serialization assumptions may be 030-shaped (Model-B pfn math again?).
-- Emulator baseline NEVER exercised this: the Amiberry/fs-uae configs have no
-  A2065 device, so the whole if_lance path is untested since the 040 port began.
-- First triage steps: `netstat -in` / `ifconfig ae0` (or whatever the unit name
-  is) for attach evidence; check boot console for the lance attach line; compare
-  against an 030 boot on the same machine.
+Useful facts established while investigating (kept for reference):
+- The aen driver (`amix-src/sys/amiga/driver/aen/aen.c`) does NO host-memory
+  DMA: the Lance init block, rx/tx rings and all packet buffers live in the
+  board's own RAM at `board_base+0x8000`, addressed by 16-bit board-relative
+  offsets. No pfn/ctob/btoc math anywhere — the driver is inherently immune to
+  Model-B pfn bugs.
+- Boot-time bring-up chain is `/etc/inet/network-config`:
+  `aen -S && slink addaen /dev/aen0 aen0 && ifconfig aen0 \`uname -n\` up
+  -trailers` — fails silently if the board probe fails.
+- Amiberry A2065 emulation (`a2065=slirp`) works with the 040 kernel: aen0
+  configures, ping to the slirp gateway 10.0.2.2 works. Inbound host->guest
+  needs `slirp_redir=tcp:<hostport>:<guestport>` and guest IP exactly
+  10.0.2.15 (slirp's hardcoded redirect target).
 
 **ISSUE-10 real-HW datapoint (2026-07-11):** the amixadm flood reproduces on the REAL
 Amiga 3000 + Mercury 68040 (build 260711-02) with the IDENTICAL signature: `User BUS
@@ -866,3 +875,135 @@ deterministic across three different machines given the same kernel layout, whic
 strengthens the "layout-deterministic wrong-phys write" picture; (c) the 68040-vs-68060
 split remains a layout artifact, not a CPU mechanism. The resume recipe (write-watchpoint
 + pfntokv census) is unchanged and can now also be validated against real HW.
+
+## ISSUE-13: kvseg fault robustness — NFS-copy panic + /dev/kmem fault recursion (real HW, 2026-07-12)
+
+**Status: OPEN. Two captures, full backtraces read from photos
+(~/Lataukset/IMG_20260712_013119397.jpg, IMG_20260712_103720403.jpg).
+Investigate on the EMULATOR only; no /dev/kmem poking on real HW until a
+serial cable is available (user decision).**
+
+**Capture 1 — the original panic (during user's NFS→local `cp`, concurrent
+telnet load):** `DBG as_fault FAIL pid=384 addr=40326000 type=0 rw=1
+ret=FFFFFFFF` → `PANIC: KERNEL FAULT psw=0x2000 pc=0x080002E8 fmt=0x7 vec=0x2`.
+Full symbol-resolved chain (nm on build/unix-040-dbg, kernel = 260711-02):
+
+```
+read → rw → rdwr → nfs_read → nfs_rdwr → rwvp → uiomove → copyout
+  → (fault on segkmap window = NORMAL) → k_trap → krnxmemflt → as_fault
+    → segmap_fault → nfs_getpage → pvn_getpages → nfs_getapage
+      → nfs_strategy → do_bio → nfsread → rfscall → clnt_clts_kcallit(_addr)
+        → xdr_replymsg → xdr_union → xdr_rdresult → xdr_bytes → xdr_opaque
+          → xdrmblk_getbytes (bcopy at 0x2E8, READ of mblk source)
+            → kernel fault @0x40326000 (kvseg proper, < 0x40440000 segkmap
+              base) → as_fault ret -1 → krnlflt → PANIC
+```
+
+I.e. while decoding an NFS READ RPC reply, the mblk data pointer aimed at an
+UNMAPPED kvseg VA. Streams buffers arrive via the A2065 `aen` driver path.
+
+**Capture 2 — crash(1M) probe fallout (fresh boot, machine otherwise idle):**
+`echo 'vtop 40326000' | crash` → user-mode /dev/kmem read of the same VA →
+`u_trap → usrxmemflt` then a ~25-deep `k_trap → usrxmemflt` nested-fault
+recursion eating the kernel stack → wild jump → `PANIC ... pc=0xC6
+(chk_fpu+0x6) vec=0x4 Illegal Instruction`. Two robustness gaps confirmed:
+(a) mmread (/dev/kmem) has no nofault guard on the 040 port — unmapped kernel
+VA ⇒ fault storm instead of EFAULT; (b) unresolvable kernel faults in the
+fault-handler path recurse (ISSUE-7 class) instead of failing fast.
+
+**Key deduction from capture 2:** 0x40326000 is unmapped on a HEALTHY fresh
+boot too — kvseg is a sparse window region. So capture 1's question is not
+"who tore down the mapping" but **"why did an mblk point there"**: stale
+buffer pointer (use-after-free in the streams/NFS reply path) or
+ISSUE-10-class pointer/PTE corruption are the leading theories.
+
+**Leads (see Codex audits, amix-kernel-analysis/vm-map/):** segmap_fault is
+NOT byte-verified for Model B; hat_pteload locked different-PFN replacement
+misses pt_keepcnt (segmap softlock is a hat_memload(lock=1) caller); no audit
+of segkmem/kvseg fault handling exists yet; NFS/RFS putpage + pvn_range_dirty
+still carry 2 KiB geometry (write side; capture 1 is the READ side though).
+
+**Next steps (emulator):** (1) try to reproduce with heavy streams+disk load
+(big ftp/rcp into emulator AMIX + concurrent local writes; true NFS mount via
+slirp would be ideal); (2) capped dbg probes on allocb/freeb/esballoc pointer
+ranges and/or segkmem_mapin/mapout; (3) harden mmread with a nofault guard
+(cheap, independent fix); (4) consider a fail-fast depth guard in the
+usrxmemflt/k_trap nested-fault path.
+
+**ISSUE-13/ISSUE-10 load-repro run 1 (2026-07-12, emulator 040, build 260711-02):**
+tftp-fetch loop (4MB × N via slirp/aen) + local cp+sync loop. After ~40 min /
+~3900 forks: **sac (pid 158) self-killed via the rtld convention** (`DBG SIG sig=9
+fu=1 uret=800038B6` — same family as the ISSUE-10 amixadm/sh flood), after which
+EVERY subsequent exec hung (telnet login prompt appears, login never completes;
+console silent; loads stalled mid-transfer). Working hypothesis: the ISSUE-10
+corruptor hit a SHARED libc.so.1 page-cache page → every new exec dies/hangs in
+rtld. If the same corruptor can hit an mblk pointer field, ISSUE-13's real-HW
+stale-mblk panic is the same root cause's third face. Serial log preserved
+(issue13-serial-run1.log in the session scratchpad). **Run 2 prepared: dbg build
+260712-01 adds a sigkill_dbg v5 probe — on every rtld self-kill it dumps the dying
+process's libc GOT/data probe words (C102FDE4/C102FE68/C102E000/C102EC00/C102F000)
+→ directly shows whether the shared page is corrupt at kill time and what the
+content is.** Also queued for Codex: static census of bio/pfn conversion sites
+(the 1KB-granularity signature smells like buffer-cache writes through wrong
+Model-B phys math).
+
+**ISSUE-13 load-repro run 2 (2026-07-12, emulator 040, build 260712-01 = sigkill_dbg
+v5):** did NOT reproduce the shared-libc corruption. Under the same load, after ~9 min
+the machine WEDGED into the idle loop instead. State read live via Amiberry IPC
+(READ_MEM against emulator RAM — no /dev/kmem risk; kernel phys base 0x08000000,
+data syms are runtime-absolute):
+- CPU pinned at `stop #8192` in the idle dispatcher (Lidw/before resume), psw=0x2000
+  (IPL 0, interrupts enabled) — scheduler found no runnable proc; NOT a spin, NOT a
+  panic. All user work blocked; a fresh telnet gets the login banner but login never
+  completes; the tftp load stalled mid-file at block 7122.
+- **Streams pool HEALTHY** (rules out buffer exhaustion): `mdbfreelist` non-empty,
+  `strst+0x30` use=79 total=393238 max=82 **fail=0**.
+- **The one SIG9 that fired was benign** (`sac -t 300`, its normal inactivity
+  timeout, not an rtld self-kill) and the v5 GOT dump proved the shared libc page was
+  **intact**: fde4=C101116E, fe68=C102E050, e000=C10314EC, ec00=C102EB0A,
+  f000=9E9FA0A1 — all match libc.so.1's file bytes.
+Conclusion: run 2's failure is a **network/streams delivery stall under sustained UDP
+load** (A2065 `aen` receive path the prime suspect), NOT the memory corruptor. So the
+two runs show two distinct load-induced failures; run 1's "everything execs die" may
+itself have been this stall (all I/O-bound work blocks) rather than proven libc
+corruption. Method note: Amiberry IPC `READ_MEM 0x<addr> <width>` (0x prefix required;
+tab or space separators) is a clean live-RAM window into the emulated machine while
+running — far safer than crash(1M)/dev/kmem, use it for all future live inspection.
+Next: (a) treat the aen/streams receive stall as its own investigation (does plain
+sustained tftp WITHOUT the fork load also stall? isolate network from fork/COW); (b) to
+still chase the corruptor, a longer soak or a tighter allocb/freeb pointer-range probe.
+
+**ISSUE-13 FIX IMPLEMENTED (2026-07-12, awaiting boot test): `prototypes/bp_map040.s`**
+rewrites bp_map + bp_mapout for the live 040 tree. Both were stock 030 bodies
+(Codex PAGEIO-BPMAPIN audit): 2 KiB counts, retired st_top1 tree (zero for syssegs
+on the 040 port -> derives a zero leaf base -> stores pfn<<11|1 into LOW MEMORY),
+pfn<<11. The override: 4 KiB counts, kptr040 walk (same geometry as vatosde/vatopte),
+and the proven live kvseg leaf-PTE format `phys|0x19` (resident, supervisor-writable,
+cacheable-writethrough, U/M preset -- read directly from live kptr040 leaves via
+Amiberry IPC READ_MEM), keeping the stock ghost-mapping contract (no p_mapping /
+ref-mod / keep-count bookkeeping, unlike segkmem_mapin). cpusha bc + pflusha after
+the map/clear loop. Wired into relink-040.sh (both GLOBAL T -> plain --weaken-symbol;
+bp_mapin re-resolves to the strong def). Built: unix-040 + unix-040-dbg (260712-03),
+single strong def each (0xd97f4/0xd98a0), 0 reloc complaints, text/data contiguous,
+.data 4-aligned. Encodings verified (divsll 4c41 0800, oril #0x19, cpusha f4f8,
+pflusha f518). **NOT YET BOOT-TESTED.** Test plan: (1) emulator 040+060 regression =
+login + hat_dup_cow 1/32/256 still pass (bp_map is on the page-I/O path; confirm no
+normal-boot regression); (2) THE test = real-HW NFS->local copy that previously
+panicked (ISSUE-13 capture 1) now completes. If (2) passes, ISSUE-13 capture 1 is
+fixed; the krnxmemflt F_PWRITE 030-walk (capture 2 / crash(1M) recursion amplifier)
+remains a separate, lower-priority follow-up.
+
+**ISSUE-13 CAPTURE-1 FIXED — VERIFIED ON REAL HW (2026-07-12): bp_map040 works.**
+Full verification of build 260712-03 (bp_map040.s):
+- emulator 68040: hat_dup_cow 1/32/256 ALL PASS (no regression);
+- emulator 68060: hat_dup_cow 1/32/256 ALL PASS (no regression);
+- REAL A3000 + Mercury 68040: the NFS->local copy that previously PANICKED
+  (capture 1) now completes and the machine survives. 5 consecutive copies of a
+  3102720-byte file from the NFS mount (/mnt/nasu = nasu:Public) to local SCSI /tmp,
+  every one byte-perfect (`sum` = 11920 6060 identical on NFS source and every local
+  copy), machine stable throughout (uname still 68040-260712-03 after).
+This proves bp_map now maps NFS page-I/O buffers into the LIVE 040 tree with correct
+PFNs. The capture-1 root cause (bp_map/bp_mapout on the retired st_top1 tree) is
+resolved. Remaining ISSUE-13 follow-up (lower priority, separate): capture-2's
+krnxmemflt_orig F_PWRITE 030-walk (the crash(1M) nested-fault amplifier) + the
+k_trap landing-pad recursion window. bp_map040 is ready to COMMIT (awaiting user go).

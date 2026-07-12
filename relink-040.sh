@@ -68,6 +68,10 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/inituname040.s" -o "$HERE/build/
 #   lmul060    = portable lmul (stock's 64-bit muls.l forms trap on the 68060)
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/cputype060.s" -o "$HERE/build/cputype060.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/lmul060.s"    -o "$HERE/build/lmul060.o"
+# ISSUE-13 (2026-07-12): bp_map/bp_mapout were left as stock 030 bodies (2 KiB, retired
+# st_top1 tree) -> corrupt the NFS page-I/O temp mapping.  bp_map040 rewrites both for
+# the live 040 kptr040 tree (4 KiB, phys|0x19).  Both GLOBAL T -> plain --weaken-symbol.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/bp_map040.s"  -o "$HERE/build/bp_map040.o"
 m68k-linux-gnu-objcopy --redefine-sym segu_get=segu_get_lockfix "$HERE/build/segu_lockfix.o"
 
 echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
@@ -129,6 +133,8 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol inituname \
 	--add-symbol inituname_orig=.text:0x00049140,function,global \
 	--weaken-symbol lmul \
+	--weaken-symbol bp_map \
+	--weaken-symbol bp_mapout \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -141,11 +147,12 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/uvatosde040.o" "$HERE/build/prumap040.o" "$HERE/build/haltsys040.o" \
 	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o" \
 	"$HERE/build/inituname040.o" \
-	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o"
+	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" \
+	"$HERE/build/bp_map040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
