@@ -1011,3 +1011,101 @@ PFNs. The capture-1 root cause (bp_map/bp_mapout on the retired st_top1 tree) is
 resolved. Remaining ISSUE-13 follow-up (lower priority, separate): capture-2's
 krnxmemflt_orig F_PWRITE 030-walk (the crash(1M) nested-fault amplifier) + the
 k_trap landing-pad recursion window. bp_map040 is ready to COMMIT (awaiting user go).
+(Committed 4099f4e, 2026-07-12.)
+
+**CAPTURE-2 PLAN UPGRADED (2026-07-13, Codex `040-FAULT-RESOLVER-AUDIT.md`):** the
+fix is NOT just "port the F_PWRITE walk to vatopte". `krnxmemflt_orig` is a COUPLED
+4-defect unit that must be ported together as a native kernel-resolver core:
+1. the shared `ptest` probes user FC 1 / URP even for kernel VAs — user roots are
+   deliberately empty of kernel entries, so a kernel VA always reports I(nvalid)
+   and resident write-protection is invisible;
+2. the rw decode reads the 030 SSW field `frame+72` bit 6 (040: an EA bit; 060: a
+   fault-address bit) — **rw can be wrong already on the ordinary I branch** and
+   flows through as_fault → segmap_fault → VOP_GETPAGE;
+3. the second write-protection gate `0x5b216` also reads `frame+72` (ignores the
+   wrapper's corrected/synthesized `frame+76`);
+4. the admitted leaf walk `0x5b22a..4a` is the stock 030 `*(sde+4)` + `>>11` walk.
+Partial fixes are UNSAFE: fixing only the walk keeps wrong status+rw; fixing only
+the status probe newly EXPOSES the broken walk. Do NOT make the global `ptest`
+supervisor-FC (breaks the working user COW path) — a separate kernel probe is
+needed. Full port spec + acceptance table: Codex `040-FAULT-RESOLVER-AUDIT.md`
+("Required structural boundary" + "Port and test order"). Bonus finding fixed in
+passing 2026-07-13: the base kernel previously lacked the crossing-page `hardbus`
+(runtime040.s promotion, see RESUME-HERE.md).
+
+## ISSUE-14: emulator root-fs s5 inconsistency — shutdown PANIC "free: freeing free frag" (datapoint 2026-07-13)
+
+**OPEN — evidence datapoint, cause unattributed.** During a normal `shutdown` on the
+emulator (dbg build 260712-03 line, after a long probe/load session), the final
+unmount/sync phase printed three `NOTICE: mode = 0, ino = <129025/129026/126908>,
+fs = /` lines and then **`PANIC: free: freeing free frag, dev = 0x480016, block = 47,
+fs = /`** (s5 free() detected a double-free of a fragment; screenshot
+~/Kuvat/Kuvakaappaukset/Kuvakaappaus - 2026-07-13 00-06-51.png, backtrace on screen).
+Notable: the sigkill_dbg v5 GOT dump fired during the same shutdown and showed the
+shared libc page INTACT (fde4=C101116E, fe68=C102E050 = expected values).
+Two candidate explanations, in Occam order: (a) **latent root-fs metadata damage** —
+this disk has survived dozens of kernel panics; mode-0 inodes + a doubly-free frag
+are classic residue that fsck's automatic pass may never have fully repaired;
+(b) a live wrong-page/metadata write from the **unconverted pageout/writeback group**
+or the ISSUE-10 corruptor family. Next cheap steps: run a MANUAL full `fsck` on the
+emulator root (not just the boot-time auto pass) and note what it repairs; if the
+panic recurs on a verified-clean fs, promote this to an active corruption lead.
+
+## ISSUE-15: KMA pool builders double-map their backing (2 KiB counts to a 4 KiB sptalloc)
+
+**OPEN — memory waste, not corruption (Codex `STREAMS-MBLK-LIFETIME-AUDIT.md`).**
+`kmem_allocspool` (0x41b7e) and `kmem_allocbpool` (0x41d96) still request 2/8 PAGES
+from the now-4-KiB `sptalloc`: the small pool maps 8 KiB but manages 4096 bytes, the
+big pool maps 32 KiB but manages 16384. `kmem_freepool` symmetrically returns the
+same 2/8 slots, so alloc/free counts match — no overlap, no early unmap; just doubled
+backing + sptmap churn. Fix when convenient: halve the requested page counts (or
+convert the byte math); verify against `kmem_alloc`/`kmem_free` direct >4096 paths
+which are ALREADY 4-KiB-converted (do not touch those).
+
+## ISSUE-16: RFS client cache still converts PFN with <<11 (5 live sites)
+
+**OPEN — real Model-B bugs, dormant while RFS is unused (Codex `BIO-PFN-PHYS-KVA-CENSUS.md`).**
+`rfesb_fbread` 0x8f56c, `rfc_readend` 0xa102c, `rfc_plmove` 0xa11ba, `rfc_writefill`
+0xa1322, `rfc_readfill` 0xa1bd0: correct page-descriptor division but `PFN<<11` byte
+addresses + 0x800 bounds -> read/write the WRONG physical page whenever the RFS
+client cache is active. Not on the NFS or local-disk paths despite the "remote file"
+naming. Port as a group if RFS is ever exercised; until then treat any RFS testing
+on 040 as unsafe.
+
+## ISSUE-17: procfs prfastmapin/prfastmapout retain the full stock 2 KiB walk
+
+**OPEN — live risk for /proc users (Codex `BIO-PFN-PHYS-KVA-CENSUS.md`).**
+`prfastmapin` 0x63484 / `prfastmapout` 0x63592 still do the 030 SDE/PTE walk,
+`phys>>11`, `PFN<<11`, 0x7ff offsets -> can hold/release/abort the wrong page_t under
+Model B. Anything that pokes /proc process memory (debuggers, some ps variants,
+crash tooling) can trip this. Port as ONE unit together with the deferred
+`prusrio`/`as_iolock` geometry — not immediate-by-immediate.
+
+## ISSUE-18: vtop_orig raw-I/O user walker is stock 2 KiB + vtop040 dispatches by ADDRESS
+
+**OPEN — two coupled residuals (Codex census + own review 2026-07-12).**
+(a) `vtop_orig` 0xb7568 (reached for VA >= 0x40000000, e.g. via `svirtophys` with a
+process argument) still uses stock 2 KiB indices/masks -> wrong DMA target for raw
+per-process I/O. (b) Our `vtop040.s` dispatches on the ADDRESS (`< 0x40000000` ->
+identity), NOT on the proc argument -- a USER VA passed with a proc pointer would be
+returned as if it were an identity physical address. This currently never fires
+because raw user I/O goes through the `dma_pageio` bounce path (kernel bounce buffer
+-> vtop sees a kernel address), but it is an unchecked contract. Cheap hardening: log
+(capped) any vtop call with proc != NULL and VA < 0x40000000. Related dormant-wrong
+helpers (no inbound calls in the current link, do NOT use): `pptophys` 0xb1570
+(PFN<<11), `phystopp` 0xb1532 (>>11), `uvirtophys` 0xb7860 (expects &SDE + 2 KiB).
+
+## ISSUE-19: context-switch residual edges (szombflag overwrite; resume path-U partial p_ubptbl)
+
+**OPEN — statically possible, never reproduced (Codex `PROCESS-MMU-CONTEXT-SWITCH-CONTRACT.md`).**
+(a) `szombflag` is a SINGLE pointer and `swtch` is the only `segu_release` caller: if
+a zombie switches directly to a never-dispatched child (which resumes via procdup's
+context, skipping the zombie-cleanup block) and that child itself exits before any
+normal `swtch` resume runs, the second zombie overwrites the pending pointer and the
+first u-area LEAKS. TS-class `ts_forkret` (child-runs-first) closes this in practice;
+RT/SYS fork policies do not. (b) native `resume` path U validates `p_ubptbl[0]` but
+not `[2]` -> a half-built compat table would produce a second fixed-u PTE with frame
+0; the `segu_ubptbl040` rebuild wrapper writes zeros on a missing PTE but does NOT
+fail the segu_get/swapinub call. Both are hardening items on the (now base-linked)
+runtime040.s resume + the segu wrappers; instrument only if a matching failure
+signature ever appears.

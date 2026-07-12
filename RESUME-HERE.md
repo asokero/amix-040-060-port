@@ -1,4 +1,29 @@
-# RESUME HERE — AMIX 68040/68060 port status (2026-07-12)
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-13)
+
+> ## ✅ 2026-07-13 — PACKAGING FIX (bare unix-040 now bootable!), Codex round-2 digested, ISSUE-14..19 registered
+> **Committed `558c11f`: runtime040.s** — the quiet/dbg overlays' load-bearing overrides
+> (native resume fixed-u remap, hardbus crossing-page fix, sched/schedpaging/idle
+> disables) are PROMOTED into the base link. Bare `build/unix-040` was a non-bootable
+> intermediate (stock resume) despite its script's "ready to boot" claim — Codex
+> PROCESS-MMU-CONTEXT-SWITCH-CONTRACT.md finding. relink-040.sh now HARD-FAILS if the
+> strong resume/hardbus resolve to stock addresses. quiet040.s retired; quiet overlay =
+> serdbg only; dbg unchanged in behaviour (instrumented twins still win via weaken).
+> **VERIFIED on emulator: bare unix-040 260712-04 booted through login for the FIRST
+> TIME EVER** (telnet login, 5 concurrent forks, ps/ls/df); dbg 260712-06 regression
+> clean. Build line: base -04 / quiet -05 / dbg -06.
+> **Codex audit round 2 read** (6 docs, evening 2026-07-12): fault-resolver audit
+> upgrades ISSUE-13 capture 2 into a COUPLED 4-defect resolver-unit port (spec +
+> acceptance table in `040-FAULT-RESOLVER-AUDIT.md`; do NOT patch piecemeal, do NOT
+> make global ptest supervisor); STREAMS/segmap/BIO/segmap_fault audits all CLEAN and
+> retroactively support the bp_map040 root cause. **New KNOWN-ISSUES: ISSUE-14**
+> (emulator root-fs s5 free-frag shutdown panic — run a manual full fsck!), **-15**
+> (KMA pool double-backing), **-16** (RFS <<11 ×5), **-17** (procfs prfastmap 2 KiB),
+> **-18** (vtop_orig raw-I/O + vtop040 address-dispatch ambiguity), **-19** (szombflag
+> single-slot + resume path-U partial p_ubptbl). Emulator runner: scratchpad `emu.py`
+> now does minimal telnet negotiation (telnetd WAITS for an IAC answer before printing
+> login:) — raw connect alone hangs. Amiberry IPC gotcha: commands are TAB-separated
+> (`READ_MEM\t0x<addr>\t4`); buildid string readable at 0x08000000+text_size+0x18518.
+> NEXT: ISSUE-13 capture-2 resolver port (in progress), then writeback conversion group.
 
 > ## ✅ 2026-07-12 — ISSUE-13 FIXED (bp_map040), hat_dup_cow FULL MATRIX PASS, Codex VM-audit round
 > **Committed `4099f4e` (on master): `prototypes/bp_map040.s` + relink-040.sh wiring + KNOWN-ISSUES.**
