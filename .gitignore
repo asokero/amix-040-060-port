@@ -22,7 +22,8 @@ unix_boot/arp.library
 unix_boot/arp40_2/
 
 # --- Machine-specific / editor ---
-.claude/settings.local.json
+# Local Claude Code tool config (permission allowlist with absolute home paths)
+.claude/
 *~
 *.swp
 ghindra-unix/
