@@ -1033,6 +1033,22 @@ needed. Full port spec + acceptance table: Codex `040-FAULT-RESOLVER-AUDIT.md`
 passing 2026-07-13: the base kernel previously lacked the crossing-page `hardbus`
 (runtime040.s promotion, see RESUME-HERE.md).
 
+**CAPTURE-2 FIXED — VERIFIED ON EMULATOR 040+060 (2026-07-13, commit cfa5e49):**
+`prototypes/krnxmemflt040.s` implements the native resolver core per the spec above
+(validated software walk of the live kernel tree instead of the URP-blind ptest;
+rw + protection gate from the synthesized frame+76 SSW; every non-classifiable
+case degrades to the stock-compatible F_INVAL attempt; depth-4 nested-fault
+fail-fast). The wb040.s wrapper is unchanged — its `krnxmemflt_orig` call binds to
+the new core; stock body kept as `krnxmemflt_stock`. Build line 260713-02/-03/-04.
+Verified: emu-040 AND emu-060 boot→login, hat_dup_cow 1/32/256 ALL PASS on both,
+and the capture-2 mechanism itself — `dd if=/dev/kmem` of the unmapped sparse
+kvseg VA `0x40326000` (4 B and 16 KB) — now returns a clean "No such device or
+address" with the machine alive on both CPUs (previously a ~25-deep nested-fault
+storm → wild-jump panic); `echo 'vtop 40326000' | crash` also survives.
+REMAINING: (a) real-HW re-run of the original crash(1M) repro on the next HW
+visit; (b) the F_PROT branch (write to a write-protected resident kernel page)
+is untestable from userland and remains exercised-by-inspection only.
+
 ## ISSUE-14: emulator root-fs s5 inconsistency — shutdown PANIC "free: freeing free frag" (datapoint 2026-07-13)
 
 **OPEN — evidence datapoint, cause unattributed.** During a normal `shutdown` on the

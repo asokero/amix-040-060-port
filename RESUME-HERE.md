@@ -1,5 +1,22 @@
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-13)
 
+> ## ✅ 2026-07-13 (later) — ISSUE-13 CAPTURE 2 FIXED: native kernel fault resolver (krnxmemflt040)
+> **Committed `cfa5e49`: `prototypes/krnxmemflt040.s`** — the coupled 4-defect stock
+> `krnxmemflt_orig` (URP-blind ptest, frame+72 rw decode + prot gate, 030 leaf walk)
+> replaced by a native core: validated software walk of the live kernel tree
+> (vatosde/vatopte + UDT/PDT + leaf-frame bounds), rw from the synthesized frame+76
+> SSW, stock-compatible F_INVAL degradation for every non-classifiable case, F_PROT
+> upgrade only for a genuine write to a write-protected resident kernel page, and a
+> depth-4 nested-fault fail-fast. wb040.s wrapper untouched (binds via
+> `krnxmemflt_orig`; stock body = `krnxmemflt_stock`). **Build line 260713-02/-03/-04.**
+> **VERIFIED emu-040 + emu-060:** boot→login, hat_dup_cow 1/32/256 ALL PASS both CPUs,
+> and the capture-2 mechanism (`dd if=/dev/kmem` @ unmapped kvseg 0x40326000) now
+> returns clean ENXIO with the machine alive — previously a ~25-deep nested-fault
+> storm → panic. REMAINING: real-HW crash(1M) re-run next HW visit; F_PROT branch
+> untestable from userland. NEXT big item: **pageout/writeback Model-B conversion
+> group** (Codex matrix; needs the Phase-0 root-fs block-size decision) — also the
+> gate for true paging/swap in base and the smart precondition for the caches-on track.
+
 > ## ✅ 2026-07-13 — PACKAGING FIX (bare unix-040 now bootable!), Codex round-2 digested, ISSUE-14..19 registered
 > **Committed `558c11f`: runtime040.s** — the quiet/dbg overlays' load-bearing overrides
 > (native resume fixed-u remap, hardbus crossing-page fix, sched/schedpaging/idle
