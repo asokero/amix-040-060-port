@@ -21,7 +21,8 @@
 | each valid write-back with `moves.<size> WBxD -> (WBxA)` under DFC = WBxS&7.
 |
 | Both are file-LOCAL ('t'): relink-040.sh globalizes+weakens them and aliases the originals
-| (usrxmemflt_orig=0x5aede, krnxmemflt_orig=0x5b140).
+| (usrxmemflt_orig=0x5aede; krnxmemflt_orig binds to the NATIVE core in krnxmemflt040.s
+| since 2026-07-13 -- the stock 0x5b140 body remains reachable as krnxmemflt_stock).
 
 	.text
 	.globl	usrxmemflt

@@ -84,6 +84,12 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/bp_map040.s"  -o "$HERE/build/bp
 #   sched/schedpaging/idle = deliberate swap+pageout disables until the writeback
 #                            Model-B conversion group lands
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/runtime040.s" -o "$HERE/build/runtime040.o"
+# krnxmemflt040 (2026-07-13, ISSUE-13 capture 2): NATIVE kernel fault-resolver core.
+# Stock krnxmemflt_orig was a coupled 4-defect 030 remnant (user-FC ptest, frame+72
+# rw decode + prot gate, 030 leaf walk) + the k_trap landing-pad recursion window.
+# The wb040.s public wrapper is UNCHANGED: its krnxmemflt_orig call now binds to this
+# strong def (the stock body stays reachable as krnxmemflt_stock, reference only).
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/krnxmemflt040.s" -o "$HERE/build/krnxmemflt040.o"
 m68k-linux-gnu-objcopy --redefine-sym segu_get=segu_get_lockfix "$HERE/build/segu_lockfix.o"
 
 echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
@@ -137,7 +143,7 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol usrxmemflt \
 	--add-symbol usrxmemflt_orig=.text:0x5aede,function,global \
 	--weaken-symbol krnxmemflt \
-	--add-symbol krnxmemflt_orig=.text:0x5b140,function,global \
+	--add-symbol krnxmemflt_stock=.text:0x5b140,function,global \
 	--weaken-symbol segu_get \
 	--add-symbol segu_get_orig=.text:0x000aa466,function,global \
 	--weaken-symbol swapinub \
@@ -166,11 +172,11 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o" \
 	"$HERE/build/inituname040.o" \
 	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" \
-	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o"
+	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched schedpaging idle resume hardbus hardbus_orig; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched schedpaging idle resume hardbus hardbus_orig; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
