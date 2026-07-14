@@ -16,7 +16,7 @@
 > crashed run otherwise leaves a dirty fs → fsck>reboot loop that stalls the next cycle,
 > ISSUE-14), kill stale nc capture loops (only one client can hold TCP:1234), start the
 > local a2065-backport amiberry, capture serial via a setsid-detached nc loop. Guest
-> state is WIPED each run → push test binaries via `tftp_onesock.py` (guest:
+> state is WIPED each run → push test binaries via `test-tools/tftp_onesock.py` (guest:
 > `tftp 10.0.2.2 1069`) every time; if inbound telnet 2323 stalls, the guest must send
 > one packet first (console `ping 10.0.2.2`, or bake into rc.inet). VERIFIED: golden
 > reset → cold boot → login with NO keypress, on 040.
@@ -60,7 +60,7 @@
 > (emulator root-fs s5 free-frag shutdown panic — run a manual full fsck!), **-15**
 > (KMA pool double-backing), **-16** (RFS <<11 ×5), **-17** (procfs prfastmap 2 KiB),
 > **-18** (vtop_orig raw-I/O + vtop040 address-dispatch ambiguity), **-19** (szombflag
-> single-slot + resume path-U partial p_ubptbl). Emulator runner: scratchpad `emu.py`
+> single-slot + resume path-U partial p_ubptbl). Emulator runner: `test-tools/emu.py`
 > now does minimal telnet negotiation (telnetd WAITS for an IAC answer before printing
 > login:) — raw connect alone hangs. Amiberry IPC gotcha: commands are TAB-separated
 > (`READ_MEM\t0x<addr>\t4`); buildid string readable at 0x08000000+text_size+0x18518.
@@ -110,13 +110,16 @@
 >   /dev/kmem on the guest (which fault-storms on unmapped kernel VAs). Do NOT read HALTED
 >   state via IPC (wedges).
 > - **Emulator `telnet` client closes during option negotiation** in the current state — use
->   the scratchpad raw-socket runners instead: `emu.py` (emulator, root = NO password) /
->   `real.py` (real 10.0.10.10, root/REDACTED-see-local-secrets-env). Sentinel gotcha: the echoed command line contains
->   your sentinel — use a quote-split marker (`echo CMD''DONE`, match `CMDDONE`).
+>   the repo raw-socket runner instead: `test-tools/emu.py` (emulator, root = NO password; does
+>   minimal telnet negotiation — telnetd WAITS for an IAC answer before printing login:). A
+>   `real.py` for the real machine (10.0.10.10, root/REDACTED-see-local-secrets-env) is NOT in the repo — recreate it
+>   from emu.py + creds in ~/kehitys/CLAUDE.md when needed (NEVER commit creds). Sentinel gotcha:
+>   the echoed command line contains your sentinel — use a quote-split marker (`echo CMD''DONE`,
+>   match `CMDDONE`). Console keystrokes (login/priming) via `test-tools/sendkeys.py` (SEND_KEY IPC).
 > - **Real-HW telnet**: `telnet 10.0.10.10` root/REDACTED-see-local-secrets-env (creds only in ~/kehitys/CLAUDE.md,
 >   NEVER in repo). nohup does NOT survive session exit on the real machine — keep the session
 >   alive and poll, or run synchronously.
-> - **File transfer to AMIX**: slirp-NAT-safe TFTP = scratchpad `tftp_onesock.py` (replies from
+> - **File transfer to AMIX**: slirp-NAT-safe TFTP = `test-tools/tftp_onesock.py` (replies from
 >   the listening port 1069; the stock runtime-tests/tftp_server.py uses an ephemeral reply
 >   port that slirp drops). Emulator: `tftp 10.0.2.2 1069`; real HW: `tftp 10.0.10.182 1069`.
 > - **Serial capture (emulator)**: Amiberry listens on `serial_port=TCP://0.0.0.0:1234` always;
