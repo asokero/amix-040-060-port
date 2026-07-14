@@ -1,5 +1,24 @@
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-15)
 
+> ## ★ 2026-07-15 — ROOT FS IS **UFS** (bsize 8192 / frag 1024): writeback Phase-0 is ANSWERED
+> Measured from the golden image's UFS superblock AND confirmed on the running guest
+> (`df -n` → `/ : ufs`). **s5 is not mounted anywhere.** Full block + consequences in
+> **KNOWN-ISSUES.md → "ROOT-FS GEOMETRY"**. Short version:
+> - `fs_bsize=8192`, `fs_fsize=1024`, `fs_frag=8`. 8192 ≥ 2048 → **Codex's recommended
+>   UFS policy holds with margin; NO provider rewrite needed**. `fs_bsize > PAGESIZE`
+>   means one VM page lies within a single fs block (easiest conversion case).
+>   `fs_bsize == MAXBSIZE == segmap slot 0x2000` = 2 × 4 KiB pages.
+> - The s5 `S5MAXREQ=4` / 512 B hazard is **not on any live path** → not a blocker.
+> - **ISSUE-10's "1 KiB granularity" corruption signature = the UFS FRAGMENT size**, not
+>   an s5 1 K block → refocus that hunt on the UFS read/write path.
+> - ISSUE-14's "freeing free frag" is UFS frag accounting (KNOWN-ISSUES corrected).
+> - NOT verified: the REAL A3000's disk (machine was off). Confirm `df -n` + superblock
+>   on the next HW visit before trusting the conversion there.
+> **→ The pageout/writeback Model-B conversion group is now UNBLOCKED.** Task brief:
+> `WRITEBACK-TASK.md` (repo root). Order: spec_putpage (4 sites, simplest) → pvn_range_dirty
+> (6) → ufs_putpage (6) + the `mountfs` gate → generic callers (4). Codex's
+> `PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md` is the authoritative site list + do-not-patch traps.
+
 > ## ✅ 2026-07-15 — unix_boot unattended-boot + serial mirror; deterministic emu test cycle
 > **Committed `dc58ec9` + `1d2b2a7`.** The loader (`build/unix_boot040`, rebuild via
 > LOCAL-BUILD-NOTES §3) no longer blocks an automated boot:

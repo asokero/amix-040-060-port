@@ -1055,7 +1055,8 @@ is untestable from userland and remains exercised-by-inspection only.
 emulator (dbg build 260712-03 line, after a long probe/load session), the final
 unmount/sync phase printed three `NOTICE: mode = 0, ino = <129025/129026/126908>,
 fs = /` lines and then **`PANIC: free: freeing free frag, dev = 0x480016, block = 47,
-fs = /`** (s5 free() detected a double-free of a fragment; screenshot
+fs = /`** (**UFS** `free()` detected a double-free of a FRAGMENT — see the root-fs
+geometry block below: the root is UFS, fragments are 1 KiB; screenshot
 ~/Kuvat/Kuvakaappaukset/Kuvakaappaus - 2026-07-13 00-06-51.png, backtrace on screen).
 Notable: the sigkill_dbg v5 GOT dump fired during the same shutdown and showed the
 shared libc page INTACT (fde4=C101116E, fe68=C102E050 = expected values).
@@ -1066,6 +1067,45 @@ are classic residue that fsck's automatic pass may never have fully repaired;
 or the ISSUE-10 corruptor family. Next cheap steps: run a MANUAL full `fsck` on the
 emulator root (not just the boot-time auto pass) and note what it repairs; if the
 panic recurs on a verified-clean fs, promote this to an active corruption lead.
+
+## ROOT-FS GEOMETRY (measured 2026-07-15) — the writeback Phase-0 answer
+
+**The root filesystem is UFS, NOT s5.** Measured directly from the golden emulator
+image (`amix_hardfileX11R5-net.hdf`, RDB partition `UNIX_Root` @ byte 65536, UFS
+superblock at +8192, magic `0x011954`) and confirmed on the running guest
+(`df -n` → `/ : ufs`; `/etc/vfstab` → `/dev/dsk/c6d0s1 / ufs`):
+
+```
+fs_bsize = 8192      filesystem block size
+fs_fsize = 1024      fragment size
+fs_frag  = 8         frags per block (8192/1024, self-consistent)
+partitions: UNIX_Root 850 MiB | UNIX_Swap 100 MiB | UNIX_Boot 2 MiB | Extra 48 MiB
+```
+
+**s5 is not mounted anywhere on this system** — the only real fs is the UFS root
+(/proc and /dev/fd are pseudo-filesystems).
+
+Consequences (these CORRECT several older working assumptions):
+1. **Phase-0 for the writeback conversion is answered.** Codex's recommended policy
+   ("keep the provider shape, require `fs_bsize >= 2048`") is satisfied with a wide
+   margin by 8192. No provider rewrite is needed, and no 1 KiB-UFS support question
+   arises. `fs_bsize 8192 > PAGESIZE 4096` means one VM page lies WITHIN a single fs
+   block — the easiest case for the conversion.
+2. **The s5 `S5MAXREQ=4` / 512-byte-block hazard is NOT on any live path.** s5putpage
+   may be converted for completeness or simply guarded to reject 512 B; either way it
+   does not block the group.
+3. `fs_bsize 8192 == MAXBSIZE == the segmap slot size (0x2000)`: one UFS block = one
+   segmap slot = two 4 KiB pages.
+4. **ISSUE-10's "1 KiB granularity" signature is the UFS FRAGMENT size, not an s5 1 K
+   block.** The corrupt anon page whose content matched a recently-read disk block at
+   1 KiB granularity was matching exactly one UFS fragment → focus that hunt on the
+   UFS read/write path.
+5. **ISSUE-14's "freeing free frag" is UFS fragment accounting** (corrected above).
+
+NOT yet verified: the REAL A3000's disk geometry (machine was powered off on
+2026-07-15). It is very likely the same AMIX X11R5 install lineage, but confirm with
+`df -n` + the UFS superblock on the next hardware visit BEFORE trusting the conversion
+there.
 
 ## ISSUE-15: KMA pool builders double-map their backing (2 KiB counts to a 4 KiB sptalloc)
 
