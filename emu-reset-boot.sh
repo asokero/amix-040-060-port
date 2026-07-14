@@ -44,6 +44,15 @@ if pgrep -f "amiberry -f" > /dev/null 2>&1; then
 	sleep 2
 fi
 
+# Kill any prior serial-capture loop too: only one client can hold the single
+# TCP:1234 serial connection, so a leftover loop from an earlier run steals the
+# port and the new run's log stays empty (learned the hard way 2026-07-15).
+if pgrep -f "nc localhost 1234" > /dev/null 2>&1; then
+	echo "[*] stopping stale serial-capture loop(s)"
+	pkill -f "nc localhost 1234" || true
+	sleep 1
+fi
+
 echo "[*] restoring golden image: $(basename "$GOLDEN") -> $(basename "$DISK")"
 cp "$GOLDEN" "$DISK"
 
