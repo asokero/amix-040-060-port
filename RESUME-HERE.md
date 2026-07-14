@@ -1,4 +1,28 @@
-# RESUME HERE — AMIX 68040/68060 port status (2026-07-13)
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-15)
+
+> ## ✅ 2026-07-15 — unix_boot unattended-boot + serial mirror; deterministic emu test cycle
+> **Committed `dc58ec9` + `1d2b2a7`.** The loader (`build/unix_boot040`, rebuild via
+> LOCAL-BUILD-NOTES §3) no longer blocks an automated boot:
+> - the pre-handoff diagnostic pause now **auto-continues after 10 s** (was a blocking
+>   `read(0)` — nobody to press RETURN in an unattended cycle); RETURN still stops it,
+>   and **`-w`** restores wait-forever for real-HW photo sessions (`unix_boot040 -w unix-040-dbg`);
+> - **all loader diagnostics mirror to serial** (custom-chip SERDAT @9600, same channel
+>   as the kernel serdbg.s) → one capture holds loader+kernel. AttnFlags now prints
+>   correctly as `0x0000804f` (a multi-vararg `%04x`+7×`%d` line rendered GARBAGE on
+>   bebbo/clib2 — reduced to a single `%08lx`; the decisive movec-vs-pmove line is
+>   separate and was always correct).
+> **`emu-reset-boot.sh [040|060] [logfile]`** = the deterministic emulator cycle: stop
+> amiberry, restore the GOLDEN image (`amix_hardfileX11R5-net.hdf` → `…X11R5.hdf`; a
+> crashed run otherwise leaves a dirty fs → fsck>reboot loop that stalls the next cycle,
+> ISSUE-14), kill stale nc capture loops (only one client can hold TCP:1234), start the
+> local a2065-backport amiberry, capture serial via a setsid-detached nc loop. Guest
+> state is WIPED each run → push test binaries via `tftp_onesock.py` (guest:
+> `tftp 10.0.2.2 1069`) every time; if inbound telnet 2323 stalls, the guest must send
+> one packet first (console `ping 10.0.2.2`, or bake into rc.inet). VERIFIED: golden
+> reset → cold boot → login with NO keypress, on 040.
+> **NEXT big item unchanged: pageout/writeback Model-B conversion group** (Codex matrix;
+> needs the Phase-0 root-fs block-size decision) — gate for true paging/swap + smart
+> precondition for caches-on.
 
 > ## ✅ 2026-07-13 (later) — ISSUE-13 CAPTURE 2 FIXED: native kernel fault resolver (krnxmemflt040)
 > **Committed `cfa5e49`: `prototypes/krnxmemflt040.s`** — the coupled 4-defect stock
