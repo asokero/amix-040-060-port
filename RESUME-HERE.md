@@ -1,5 +1,27 @@
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-15)
 
+> ## ✅★ 2026-07-15 (evening) — SCHEDPAGING RETIRED: pageout daemon LIVE; starvation-wedge FIXED; ISSUE-10 got a FAST REPRO
+> **The `schedpaging` rts-override is GONE** (runtime040.s + mainmarks.s + the weakens in
+> relink-040.sh/relink-040-dbg.sh; quiet variants' lists cleaned). Newly-live daemon path
+> converted as `patch_writeback.py` group **`pageoutd`**: setupclock `0x51eee` handspread
+> ptob `<<11→<<12` (one moveq feeds two asll), pageout head `0x5204c/0x52052`
+> btop(handspread) → 4 KiB; stock schedpaging (0x51f88) audited = pure page-count
+> tunables, no patch needed. `sched` (process swapper) STAYS disabled (u-area swap
+> unvalidated). Build 260715-11/-12.
+> **Pressure re-test (emu-040): the 6×4 MiB copy burst that previously FROZE userspace
+> (page_get starvation → sac SIGKILLed → console+telnet dead, kernel alive) now runs
+> 6/6 to completion with every `sum` byte-perfect (1570 8192)** — reclaim works.
+> **BUT: with page reuse now fast, the paused ISSUE-10 stale-PTE corruption fires within
+> MINUTES under pressure** — victims escalate sh → in.telnetd/inetd (→ the old
+> "telnet/network stall under load" was at least partly these daemons dying!) → init
+> itself (sig=4 crash-loop, 0x4AFC ILLEGAL content). File data stays byte-perfect →
+> page-REUSE corruption, not putpage. Mechanism (already in hatalloc_dbg.s comments):
+> `page_abort` unloads only if `p_mapping!=0`; 040 PTEs loaded without p_mapping
+> registration survive the free. **Fast repro + resume recommendation recorded under
+> ISSUE-10 in KNOWN-ISSUES — the 040-HAT p_mapping registration fix is the next
+> frontier.** Normal (non-pressure) boots: pageout idle, zero behavior change —
+> boot→login→telnet re-verified on -12.
+
 > ## ✅ 2026-07-15 (later) — PAGEOUT/WRITEBACK MODEL-B GROUP CONVERTED + EMULATOR-VERIFIED 040+060
 > **`prototypes/patch_writeback.py`** — all 20 sites from Codex's
 > `PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md`: `spec_putpage` (4) + `pvn_range_dirty` (6)

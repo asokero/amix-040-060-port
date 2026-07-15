@@ -81,8 +81,9 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/bp_map040.s"  -o "$HERE/build/bp
 # bare unix-040 retained stock resume -> fixed-u never remapped -> not bootable).
 #   resume   = native 040 fixed-u remap (ctx switch core)
 #   hardbus  = page-crossing read fix (crossing ifetch/read refault loop)
-#   sched/schedpaging/idle = deliberate swap+pageout disables until the writeback
-#                            Model-B conversion group lands
+#   sched/idle = sched still a deliberate process-swap disable (u-area swap-out
+#                unvalidated); schedpaging override RETIRED 2026-07-15 -- writeback
+#                group converted (patch_writeback.py), stock pageout daemon runs
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/runtime040.s" -o "$HERE/build/runtime040.o"
 # krnxmemflt040 (2026-07-13, ISSUE-13 capture 2): NATIVE kernel fault-resolver core.
 # Stock krnxmemflt_orig was a coupled 4-defect 030 remnant (user-FC ptest, frame+72
@@ -154,7 +155,6 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol bp_map \
 	--weaken-symbol bp_mapout \
 	--weaken-symbol sched \
-	--weaken-symbol schedpaging \
 	--weaken-symbol idle \
 	--weaken-symbol resume \
 	--weaken-symbol hardbus \
@@ -176,7 +176,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched schedpaging idle resume hardbus hardbus_orig; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"

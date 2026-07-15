@@ -667,6 +667,26 @@ flakiness come first).
 **Status: OPEN (2026-07-10). Deterministic repro on the 68040** (reproduced at least twice;
 first seen right after the 060 merge but confirmed on 040 → NOT an 060 regression).
 
+**★ DATAPOINT + FAST REPRO 2026-07-15 (writeback conversion + schedpaging retirement):**
+with the pageout daemon LIVE (schedpaging override retired, `pageoutd` sites converted),
+sustained I/O pressure trips this class **within minutes**, escalating victim by victim:
+console `-sh` (BUS ERROR at `4AFC0000`, the classic signature), then `in.telnetd` +
+`inetd` (bus errors at `4AFC005F`/`C09EFBEC` — **the "network/telnet stall under load"
+is at least partly THESE daemons dying, not a streams wedge**), finally `/sbin/init`
+itself in a `sig=4` (ILLEGAL = 0x4AFC content) crash-loop. Repro recipe: emu-040 dbg
+build ≥260715-12, tftp a 4 MiB file in, `cp` it 6× to `/` (one per telnet session),
+run sums — corruption lands during/after the copy+reclaim burst. File-data writeback
+stays byte-perfect throughout (`sum` 1570 8192 on all copies) → the corruption hits
+USER anon/text pages via page REUSE, not the putpage data path. Mechanism already
+diagnosed in `prototypes/hatalloc_dbg.s` (page_abort wrapper): **`page_abort` calls
+`hat_pageunload` only when `p_mapping != 0`; a 040 PTE loaded without p_mapping
+registration survives the free → freed page is re-used while still mapped → the old
+owner reads the new owner's (often freshly disk-read) content.** Pageout multiplies
+page-reuse rate, which is why the daemon makes it fire fast. **RESUME RECOMMENDATION:
+the root fix is p_mapping registration coverage in the 040 HAT load paths (or an
+unconditional-unload strategy that can find PTEs without p_mapping); the fast repro
+above replaces the old slow amixadm-flood hunt.**
+
 **Symptom:** running `/usr/amiga/bin/amixadm` floods the console with
 `NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:<n> CMD:amixadm`, forever.
 

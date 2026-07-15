@@ -4,8 +4,10 @@
 # The page-IN side is fully converted (patch_modelb.py Tier-0/1 + patch_modelb_pager.py
 # Tier-2, 123/123 sites); the page-OUT side was still 2KB: a dirty 4KB page got only its
 # lower 2KB written back while the dirty bit was cleared -> silent data loss under
-# fsflush / pageout / mmap-write / big copies.  This is also the gate for re-enabling
-# sched/schedpaging (runtime040.s DISABLES) and a precondition for the caches-on track.
+# fsflush / pageout / mmap-write / big copies.  This was also the gate for re-enabling
+# schedpaging (whose runtime040.s rts-override was RETIRED 2026-07-15 together with the
+# 'pageoutd' group below) and a precondition for the caches-on track.  sched (process
+# swapper) remains disabled in runtime040.s.
 #
 # Authoritative site list + do-not-patch traps:
 #   amix-kernel-analysis/vm-map/PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md
@@ -32,12 +34,14 @@
 
 import struct, sys, os
 KERNEL = sys.argv[1] if len(sys.argv) > 1 else "build/unix-040"
-GROUPS = set((os.environ.get("WRITEBACK_GROUPS") or "spec,pvn,ufs,callers").split(","))
+GROUPS = set((os.environ.get("WRITEBACK_GROUPS") or "spec,pvn,ufs,callers,pageoutd").split(","))
 def group_of(name):
     if name.startswith("spec_putpage"):    return "spec"
     if name.startswith("pvn_range_dirty"): return "pvn"
     if name.startswith("ufs_putpage"):     return "ufs"
     if name.startswith("mountfs"):         return "ufs"
+    if name.startswith("setupclock"):      return "pageoutd"
+    if name.startswith("pageout"):         return "pageoutd"
     return "callers"
 
 def u16(b,o): return struct.unpack(">H", b[o:o+2])[0]
@@ -80,6 +84,16 @@ P = [
  # Phase-0): the provider keeps its "at most two fs blocks per VM page" shape, so
  # REQUIRE fs_bsize >= 2048 -- reject <= 2047.  Live root is bsize 8192 (margin 4x).
  (0x7e67e, b"\x0c\xaa\x00\x00\x03\xff", b"\x0c\xaa"+A47, "mountfs:cmpil #1023 -> #2047 a2@(48) (reject fs_bsize<2048)"),
+ # ===== pageout-daemon enablement (unit 5 'pageoutd', 2026-07-15: schedpaging's
+ # runtime040.s rts-override retired -> the stock tuning + pageout daemon run again).
+ # setupclock (boot): handspread clamp ptob = npages<<11; ONE moveq #11 feeds BOTH
+ # asll uses (0x51ef0 compare + 0x51f00 store).  pageout (daemon head): front hand =
+ # back hand + btop(handspread)*sizeof(struct page); btop was (x+2047)>>11.  The *60
+ # (page struct size) and hand walking are page-size-agnostic.  Stock schedpaging
+ # itself (0x51f88) is pure page-count tunable math -- no conversion needed. =====
+ (0x51eee, b"\x74\x0b", b"\x74\x0c", "setupclock:handspread ptob moveq #11->#12 (feeds 2 asll)"),
+ (0x5204c, b"\x06\x80"+A47, b"\x06\x80"+A95, "pageout:btop(handspread) round +2047"),
+ (0x52052, b"\x72\x0b", b"\x72\x0c", "pageout:btop(handspread) shift moveq #11->#12"),
  # ===== generic one-page VOP_PUTPAGE callers (unit 4: AFTER providers can consume a
  # 4KB dirty page; all four pass len as an immediate pea 0x800) =====
  (0x52238, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "checkpage:pea 2048 (pageout B_ASYNC|B_FREE len)"),

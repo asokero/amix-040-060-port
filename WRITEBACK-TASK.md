@@ -13,11 +13,20 @@ Verification (per-unit boot bisection spec → +pvn → +ufs → +callers, then 
   ran `-m` only (clean fs). Datapoint recorded in KNOWN-ISSUES.
 - NOT converted (policy, per matrix): `s5putpage` (s5 not mounted anywhere; 512 B
   `S5MAXREQ` stack hazard), NFS/RFS putpage. `mountfs` now rejects `fs_bsize < 2048`.
+- **FOLLOW-ON DONE (2026-07-15, same day):** the `schedpaging` rts-override was RETIRED
+  (runtime040.s + mainmarks.s + relink weakens) and the newly-live daemon path converted
+  (group `pageoutd`: setupclock `0x51eee` handspread ptob `<<11→<<12`, pageout
+  `0x5204c/0x52052` btop(handspread) `+2047>>11 → +4095>>12`; stock schedpaging itself
+  is page-count math, clean). Pressure re-test: the 6×4 MiB copy burst that previously
+  FROZE userspace (page_get starvation, sac SIGKILL) now completes 6/6 with all sums
+  byte-perfect — reclaim works. `sched` (process swapper) remains disabled.
 - **REMAINING:** (1) real-HW re-verify (root-disk geometry there still unmeasured);
-  (2) sustained memory pressure still WEDGES userspace (page_get starvation, sac gets
-  SIGKILL) — that is the pre-existing schedpaging DISABLE in `runtime040.s`, i.e. the
-  follow-on this group unblocks: retire the override + pressure re-test;
-  (3) mmap/msync (`segvn_sync` per-page) path untested — no test binary yet.
+  (2) mmap/msync (`segvn_sync` per-page) path untested — no test binary yet;
+  (3) with pageout live, sustained pressure now trips the **ISSUE-10 stale-PTE
+  page-reuse corruption within minutes** (victims: sh → telnetd/inetd → init) — fast
+  repro + mechanism + resume recommendation recorded under ISSUE-10 in KNOWN-ISSUES;
+  that HAT p_mapping fix is the next frontier, not a writeback defect (file data
+  stays byte-perfect throughout).
 
 ## Why this matters
 

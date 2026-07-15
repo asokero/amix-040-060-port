@@ -15,12 +15,12 @@
 |                          overlay the instrumented twins (markers + probes)
 | Keep this file and mainmarks.s IN SYNC: dbg minus markers must equal this file.
 |
-| NOTE (deliberate disables, not fixes): sched + schedpaging below DISABLE the SVR4
-| swapper and the paging-daemon tuning.  The pageout/writeback side is still largely
-| unconverted Model B (silent-data-loss class; see Codex
-| PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md) and the swap-out path is unvalidated, so a
-| kernel that actually pages/swaps needs that conversion group first.  When it lands,
-| these two overrides are the place to retire.
+| NOTE (deliberate disable, not a fix): sched below DISABLES the SVR4 process
+| swapper (whole-process u-area swap-out is still unvalidated on 040).
+| schedpaging's rts-override was RETIRED 2026-07-15: the pageout/writeback group
+| is now Model-B-converted (patch_writeback.py incl. the pageoutd sites in
+| setupclock/pageout), so the stock schedpaging tuning + pageout daemon run again
+| and page reclaim works under memory pressure.
 
 	.text
 | ---------------------------------------------------------------------------
@@ -34,13 +34,6 @@ Lrt_sch:
 	jsr	swtch
 	braw	Lrt_sch
 	nop
-
-| ---------------------------------------------------------------------------
-| schedpaging OVERRIDE -- skip paging-daemon tuning (harmless with free memory;
-| pageout writeback is not yet Model-B-converted).  --weaken-symbol schedpaging.
-	.globl	schedpaging
-schedpaging:
-	rts
 
 | ---------------------------------------------------------------------------
 | idle OVERRIDE -- stock idle wait.  --weaken-symbol idle.

@@ -37,7 +37,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-quiet-stage1" \
 	"$HERE/build/serdbg.o"
 
 echo "[*] overridden defs (each must be a single strong def; all but conputc are inherited from \$IN, shown for confirmation only):"
-for s in sched schedpaging idle resume hat_dup conputc hardbus hardbus_orig; do
+for s in sched idle resume hat_dup conputc hardbus hardbus_orig; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 

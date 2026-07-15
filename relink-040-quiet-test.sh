@@ -42,7 +42,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-quiet-test-stage1" \
 	"$HERE/build/serdbg.o" "$HERE/build/ddopen_dbg.o"
 
 echo "[*] overridden defs (each must be a single strong def):"
-for s in sched schedpaging idle resume conputc hardbus hardbus_orig ddopen; do
+for s in sched idle resume conputc hardbus hardbus_orig ddopen; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 

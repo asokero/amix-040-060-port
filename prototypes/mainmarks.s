@@ -142,27 +142,11 @@ Lsch_loop:
 	nop
 
 | ---------------------------------------------------------------------------
-| schedpaging (GLOBAL T) -- FIRST call after swapconf returns.  Override: one-shot 'P' marker
-| (direct) + return (skip paging-daemon tuning; harmless with free memory).  Proves we got
-| past the banner + swapconf synchronously.  --weaken-symbol schedpaging.
-	.globl	schedpaging
-schedpaging:
-	linkw	%fp,&0
-	movel	Lsp_n,%d0
-	bnew	Lsp_ret			| one-shot
-	moveq	&1,%d0
-	movel	%d0,Lsp_n
-	pea	0x50			| 'P' -- schedpaging entered (direct serial)
-	jsr	serdbg_mark
-	addqw	&4,%sp
-	pea	Lsp_msg
-	pea	2
-	jsr	cmn_err
-	addqw	&8,%sp
-Lsp_ret:
-	unlk	%fp
-	rts
-	nop
+| schedpaging override RETIRED 2026-07-15: the writeback Model-B group is converted
+| (patch_writeback.py incl. pageoutd sites) and the STOCK schedpaging tuning +
+| pageout daemon must run so page reclaim works.  The one-shot 'P' marker (proved
+| banner+swapconf reached) is long-served; do NOT re-add a rts-body here -- it
+| silently starves page_get under memory pressure (userspace wedge, sac SIGKILL).
 
 | ---------------------------------------------------------------------------
 | idle (GLOBAL T) -- swtch idles here only when maxrunpri==-1.  One-shot 'I' marker (direct)
@@ -383,11 +367,6 @@ Lr_rest:
 Lsch_msg:
 	.asciz	"DBG sched ENTRY maxrunpri=%x"
 	.even
-Lsp_msg:
-	.asciz	"DBG MARK: schedpaging (swapconf returned) -- entering proc-1 setup"
-	.even
-Lsp_n:
-	.long	0
 Lidle_n:
 	.long	0
 Lr_n:
