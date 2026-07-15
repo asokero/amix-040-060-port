@@ -1,5 +1,14 @@
 | hat_exec040.s -- 040 no-op override of hat_exec (stock orig 0xb6f20, GLOBAL T).
 |
+| STATUS (2026-07-15, build 260715-20): this is a SAFETY HARDENING, *not* the ISSUE-10 fix.
+| It was built to test Audit #1's hypothesis (hat_exec flag-0 steal -> orphaned 040 PTEs =
+| ISSUE-10 chain II).  The 4-burst issue10-pressure.sh repro reproduced the corruption
+| IDENTICALLY with this no-op in place (same crash page pp=400AA2C0, same 4AFC005F, same
+| \x7fELF disk-read reuse -- test-tools/issue10-noexec-negative-260715.txt), REFUTING that
+| hypothesis.  Kept anyway: it removes an unported-030 stack-PT-move optimization and its
+| NULL->CE_PANIC branch, and boots clean.  Surviving ISSUE-10 suspects + the recommended
+| free-time invariant probe are in ISSUE-10-CHAIN-II-030-MAP.md.
+|
 | WHY: stock hat_exec is an exec-time OPTIMIZATION that tries to MOVE the exec'ing
 | process's stack page tables from the old AS to the new AS instead of faulting
 | them back in.  On the 040 its body is UNPORTED (only an 8-byte root-load patch;

@@ -93,6 +93,43 @@ via 040 faults through `hat_pteload`. A no-op never calls `hat_ptalloc` → no s
 Strictly safer than today (removes both the corruption vector and the NULL-panic). Testable
 against the reliable repro.
 
+## Audit #1 FIX TESTED → REFUTED (2026-07-15 night, build 260715-20, commit 6e56ee0)
+
+Built the no-op `hat_exec` (`prototypes/hat_exec040.s`, `--weaken-symbol hat_exec`), booted
+emu-040 clean to login (exec exercised heavily by init/getty/login/print-services — no-op does
+NOT break exec), then ran the reliable 4-burst `issue10-pressure.sh` repro (6×4 MiB cp +
+`hat_dup_cow 64`, ×4).
+
+**Result: corruption reproduced IDENTICALLY.** Same crash page `pp=400AA2C0`, same
+`hat_pageunload CALLED … p_mapping=9CDC0C8`, same `User BUS ERROR at 4AFC005F`, same
+`SEGVDMP p0=7F454C46` (`\x7fELF`) — the reused frame even shows a libc `.dynstr`
+(`exit`/`_xmknod`/`write` symbol strings) from a concurrent segmap/exec disk-read. Then it
+degrades into a tight respawn crash-loop (`BUS ERROR at 5C313595` ×6316, ~80 % host CPU).
+Evidence: `test-tools/issue10-noexec-negative-260715.txt`.
+
+**Conclusion: hat_exec's flag-0 steal is NOT the producer of the missing-live-entry.** The
+no-op removes the steal path (and the NULL→CE_PANIC branch) entirely, yet the identical
+chain-II corruption persists. Audit #1's hypothesis is refuted.
+
+The no-op hat_exec is **KEPT** anyway — a Codex `HAT-EXEC-POLICY`-endorsed safety hardening
+(removes an unported-030 stack-PT-move optimization and its NULL-panic branch, boots clean) —
+but **relabelled: safety hardening, NOT the ISSUE-10 fix.**
+
+**Surviving chain-II suspects (re-ranked after refutation):**
+1. `hat_ptalloc_orig` / `hat_sdtalloc` **p_mapping ALIAS** phys-double-use (still reachable on
+   every exec/fork table-grow, independent of the removed steal path).
+2. Structural VA-vs-page GC mismatch (Codex incompatibility #2): a live 040 PTE established/moved
+   by a retained-030 driver (`relvm`/`as_free`/`as_exec`/`hat_asload`/`segvn_unmap`) absent from
+   the page's `p_mapping` chain → page-based free (pvn_done/page_abort→hat_pageunload) misses it.
+3. Coherency/ordering (cpusha/pflusha) leaving a stale TLB/cache copy of a freed frame.
+
+**Recommended next move (per KNOWN-ISSUES strategy — stop patch-guessing):** the DIRECT
+free-time invariant probe (`ISSUE-10-FREETIME-PROBE-SPEC.md`) — at `page_free`/`page_get`
+free-list reuse, walk the live 040 tree for ANY PTE whose pfn == the reused frame and dump
+{pfn, VA, owning table, PTE value, in-chain?}. A hit NOT in the chain proves the
+missing-live-entry and *names the producer* — cheaper and more conclusive than testing
+suspects 1–3 one patch at a time.
+
 Cross-refs: `P-MAPPING-MATRIX.md`, `HAT-EXEC-AUDIT.md`/`HAT-EXEC-POLICY.md`,
 `HAT-PTALLOC-AUDIT.md`, `HAT-MAP-AUDIT.md`/`HAT-MAP-POLICY.md`, `PAGE-ABORT-FREE-CONTRACT.md`,
 `REFMOD-PAGEOUT-CONTRACT.md`, `HAT-UNLOAD-COHERENCY-AUDIT.md` (all in

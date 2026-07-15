@@ -1,0 +1,18 @@
+ISSUE-10 repro on build 68040-260715-20 (no-op hat_exec, commit 6e56ee0)
+Test: 4-burst issue10-pressure.sh (6x4MiB cp + hat_dup_cow 64), emu-040.
+RESULT: corruption reproduced IDENTICALLY -> no-op hat_exec is NOT the ISSUE-10 fix.
+Audit #1 (hat_exec flag-0 steal -> orphaned 040 PTEs) REFUTED: steal path removed, corruption persists.
+
+--- first crash + smoking gun (same pp=400AA2C0, same 4AFC005F, \x7fELF disk-read reuse) ---
+WARNING: DBG hat_pageunload CALLED on crash page pp=400AA2C0 p_mapping=9CDC0C8 (0=>page_abort SKIPS unmap)
+NOTICE: User BUS ERROR at 4AFC005F, PC:C1012100 FAULT:6 PID:275 CMD:sh /tmp/pressure.sh 
+WARNING: DBG SEGVDMP p0=7F454C46 p4=1020100 cm4=64736574 c0=726561 c4=64006D61 c8=6C6C6F63
+WARNING: DBG SEGVDMP p0=7F454C46 p4=1020100 cm4=65786974 c0=5F786D c4=6B6E6F64 c8=777269
+WARNING: DBG SEGVDMP p0=7F454C46 p4=1020100 cm4=65786974 c0=5F786D c4=6B6E6F64 c8=777269
+WARNING: DBG SEGVDMP p0=7F454C46 p4=1020100 cm4=65786974 c0=5F786D c4=6B6E6F64 c8=777269
+
+--- degrade into respawn crash-loop (80% CPU spin) ---
+NOTICE: User BUS ERROR at 5C313595, PC:C1012100 FAULT:6 PID:275 CMD:sh /tmp/pressure.sh 
+NOTICE: User BUS ERROR at 5C313595, PC:C1012100 FAULT:6 PID:275 CMD:sh /tmp/pressure.sh 
+NOTICE: User BUS ERROR at 5C313595, PC:C1012100 FAULT:6 PID:275 CMD:sh /tmp/pressure.sh 
+  ... (x6316 total)
