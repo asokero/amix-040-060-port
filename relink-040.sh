@@ -233,6 +233,9 @@ python3 "$HERE/prototypes/patch_modelb.py" "$OUT" | tail -3
 echo "[*] Model B Tier-2 pager/fs page-I/O (dir-read chain) byte patches"
 python3 "$HERE/prototypes/patch_modelb_pager.py" "$OUT" | tail -3
 
+echo "[*] Model B writeback/putpage conversion (WRITEBACK-TASK.md; WRITEBACK_GROUPS=spec,pvn,ufs,callers)"
+python3 "$HERE/prototypes/patch_writeback.py" "$OUT" | tail -3
+
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/prototypes/patch_framesz060.py" "$OUT"
 

@@ -1,7 +1,23 @@
 # TASK: pageout/writeback Model-B conversion group
 
-**Status: READY TO START (Phase-0 answered 2026-07-15). This is the port's next
-structural frontier.**
+**Status: ✅ DONE — EMULATOR-VERIFIED 040+060 (2026-07-15). All 20 sites converted in
+`prototypes/patch_writeback.py` (wired into `relink-040.sh` after
+`patch_modelb_pager.py`; bisection via `WRITEBACK_GROUPS=spec,pvn,ufs,callers`).**
+
+Verification (per-unit boot bisection spec → +pvn → +ufs → +callers, then exercises):
+- 040 + 060: boot→login→telnet, `hat_dup_cow` 1/32/256 (040) / 1/32 (060) ALL PASS.
+- **Disk truth:** 4 MiB stamped-pattern file, `cp` + `sync` → across BOTH an unclean
+  kill+`fsck -y` (040) and a clean `shutdown -i6`+reboot (060), `sum` = `1570 8192`
+  byte-perfect on re-read from disk.
+- Clean 060 shutdown produced **no ISSUE-14 "freeing free frag" panic**; reboot fsck
+  ran `-m` only (clean fs). Datapoint recorded in KNOWN-ISSUES.
+- NOT converted (policy, per matrix): `s5putpage` (s5 not mounted anywhere; 512 B
+  `S5MAXREQ` stack hazard), NFS/RFS putpage. `mountfs` now rejects `fs_bsize < 2048`.
+- **REMAINING:** (1) real-HW re-verify (root-disk geometry there still unmeasured);
+  (2) sustained memory pressure still WEDGES userspace (page_get starvation, sac gets
+  SIGKILL) — that is the pre-existing schedpaging DISABLE in `runtime040.s`, i.e. the
+  follow-on this group unblocks: retire the override + pressure re-test;
+  (3) mmap/msync (`segvn_sync` per-page) path untested — no test binary yet.
 
 ## Why this matters
 

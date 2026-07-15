@@ -1,5 +1,32 @@
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-15)
 
+> ## ✅ 2026-07-15 (later) — PAGEOUT/WRITEBACK MODEL-B GROUP CONVERTED + EMULATOR-VERIFIED 040+060
+> **`prototypes/patch_writeback.py`** — all 20 sites from Codex's
+> `PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md`: `spec_putpage` (4) + `pvn_range_dirty` (6)
+> + `ufs_putpage` (5) + `mountfs` gate (reject `fs_bsize<2048`) + generic callers
+> `checkpage`/`fsflush`/`segvn_swapout`/`segvn_sync` (4× `pea 0x800→0x1000`). Wired into
+> `relink-040.sh` after `patch_modelb_pager.py`; bisect with
+> `WRITEBACK_GROUPS=spec,pvn,ufs,callers`. s5putpage/NFS/RFS NOT converted (policy —
+> s5 not mounted anywhere; S5MAXREQ 512 B stack hazard). Verified per-unit boot
+> bisection + exercises, full detail in `WRITEBACK-TASK.md`:
+> boot→login, hat_dup_cow PASS, **disk-truth 4 MiB `sum` 1570 8192 byte-perfect across
+> unclean-kill+fsck-y (040) AND clean shutdown-i6+reboot (060)**; clean 060 shutdown =
+> **no ISSUE-14 frag panic** (datapoint in KNOWN-ISSUES).
+> **NEXT: retire the `schedpaging` rts-override in `prototypes/runtime040.s`** (its own
+> comment says to, now that this landed) — sustained pressure (6×4 MiB cp) currently
+> WEDGES userspace via page_get starvation (sac SIGKILLed, everything blocks; kernel
+> alive) because nothing reclaims pages. Then pressure re-test; `sched` swapper-loop
+> stays for now (u-area/process swapout = separate risk). Also remaining: real-HW
+> verify (disk geometry unmeasured) + an mmap/msync test binary for segvn_sync.
+> **Test-cycle lessons (durable):** the golden image's console keymap is GERMAN —
+> `test-tools/sendkeys.py` now translates (default `de` layout, `--us` to revert);
+> before the fix, console `/ - > y z` typed garbage and shutdown/sum "ran" as no-ops.
+> emu.py per-command sentinel timeout is 120 s → one 4 MiB `cp` per command, never
+> two. A dropped telnet session SIGHUPs its children mid-`cp`. During one read-flood
+> the console `-sh` died of an ISSUE-10-class SIGSEGV (SEGVDMP page full of
+> "/usr","/bin" path text; pid 568) — single hit, logged as an ISSUE-10 datapoint, not
+> chased (paused by user decision).
+
 > ## ★ 2026-07-15 — ROOT FS IS **UFS** (bsize 8192 / frag 1024): writeback Phase-0 is ANSWERED
 > Measured from the golden image's UFS superblock AND confirmed on the running guest
 > (`df -n` → `/ : ufs`). **s5 is not mounted anywhere.** Full block + consequences in

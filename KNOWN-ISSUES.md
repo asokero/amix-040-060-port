@@ -1068,6 +1068,16 @@ or the ISSUE-10 corruptor family. Next cheap steps: run a MANUAL full `fsck` on 
 emulator root (not just the boot-time auto pass) and note what it repairs; if the
 panic recurs on a verified-clean fs, promote this to an active corruption lead.
 
+**DATAPOINT 2026-07-15 (writeback conversion landed, `patch_writeback.py`):** with the
+FULL pageout/writeback Model-B group converted, a clean `shutdown -y -g0 -i6` on
+emu-060 (golden image; session load = hat_dup_cow 1/32 + 4 MiB cp/sync/sum) completed
+with **NO freeing-free-frag panic**, and the reboot ran only `fsck -m` (fs clean — no
+repairs). On emu-040 the same build survived an UNCLEAN kill (hard emulator restart
+after a pressure-test wedge) → boot-time `fsck -y` repaired and both 4 MiB test files
+read back byte-perfect (`sum` 1570 8192). Consistent with explanation (b) being the
+unconverted writeback group; not yet proof — needs recurrence-watching across future
+shutdown cycles.
+
 ## ROOT-FS GEOMETRY (measured 2026-07-15) — the writeback Phase-0 answer
 
 **The root filesystem is UFS, NOT s5.** Measured directly from the golden emulator
