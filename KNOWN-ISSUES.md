@@ -797,6 +797,23 @@ earlier "frozen at 121430" was a stale read) gives the discriminator:**
   (II). Porting `hat_pagesync040` (read U/M from the +256 leaf PTE, global `pflusha`) is the
   candidate FIX to test once the probe confirms.
 
+**★ hat_pagesync040 BUILT + TESTED 2026-07-15 night (build 260715-18, commit 4833ae6) — does
+NOT fix ISSUE-10; rules out chain (I), points at chain (II).** Ported `hat_pagesync` to 040
+(prototypes/hat_pagesync040.s: verbatim U/M gather+clear, retired flushmmu block replaced with
+unconditional `cpusha bc`+`pflusha`). Boots clean to login (hat_pagesync is exercised by
+fsflush during boot) — no regression. But the 4-burst concurrent-pressure repro STILL fires,
+**identically**: first victim `cp /payload.bin/press6.bin` then `sh /tmp/pressure.sh`, BUS ERROR
+`4AFC005F` PC:C1012100, `SEGVDMP p0=7F454C46`=`\x7fELF` + the same `.dynstr` symbols, `Lhl_findfail`
+still 0. Fired one burst LATER than on 260715-16 (fix_p3 ~2 min clean, then flooded) — a slight
+rate reduction, not a cure. **Conclusion:** the reclaim ref/mod SAMPLING (chain I) is not the
+mechanism; the corrupting frame reaches page_get/exec-disk-read reuse while a USER PTE still maps
+it via a path that never hat_pageunload'd THAT mapping (chain II — most likely a phys double-use /
+alias whose PTE is absent from the freed page's `p_mapping` list, ISSUE-5/6 family). **hat_pagesync040
+is KEPT** (a genuine correctness fix: the op was unported and its ATC flush broken, which degrades
+pageout LRU ref-bit sampling regardless of ISSUE-10) but is NOT the ISSUE-10 fix. Evidence:
+`test-tools/issue10-hatpagesync-negative-260718.txt`. **Next: the page_get free-list-reuse probe
+(chain-II direct test) — still the decisive instrument.**
+
 **★ AMIXADM TRIGGER RETESTED 2026-07-15 (evening) — the 2026-07-10 deterministic trigger NO
 LONGER FIRES on 260715-12.** Ran the original deterministic use case (`/usr/amiga/bin/amixadm`,
 the interactive-menu sh script whose malloc free-list walk faulted) directly: bare run,
