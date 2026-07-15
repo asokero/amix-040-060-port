@@ -202,6 +202,13 @@ Lrt_flush:
 	.word	0xf4f8			| cpusha bc -- push the uarea_pt writes to RAM for the HW tablewalk
 	.word	0xf518			| pflusha -- invalidate the ATC (fixed-VA stack now remaps away!)
 Lrt_rest:
+	| caches-on Step A (2026-07-15): invalidate the IC on every context switch so a
+	| physical code page reused for new code cannot execute stale cached instructions
+	| (the 040 IC is physically tagged and does not snoop CPU/DMA writes).  Covers the
+	| dominant cases -- cross-process reload and post-schedule demand-paged text.  Blunt
+	| (whole-IC) but correct; a per-page cinvl at code pagein is the future optimization.
+	| Harmless while IC is disabled (early boot, before pstart040 enables CACR).
+	.word	0xf498			| cinva ic
 	moveml	%a0@,%d2-%d7/%a1-%sp
 	movew	%d0,%sr
 	moveq	&1,%d0

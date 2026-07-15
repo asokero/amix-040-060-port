@@ -317,6 +317,26 @@ Lkroot:
 	.word	0xf518			| pflusha
 	movel	&0x00008000,%d0
 	.word	0x4e7b,0x0003		| movec %d0,%tc  (E=1, 4KB pages)
+	| ---- caches-on Step A (2026-07-15): enable the INSTRUCTION cache (IC) ONLY.
+	| CACR bit15 = IE(040)/EIC(060) = 0x00008000 -- the SAME bit on both CPUs, so no
+	| cputype gate is needed.  DC stays OFF (bit31 clear): the 040 copyback data cache
+	| + DMA coherency is HW-gated (Amiberry does not model it; see CACHES-ON-PLAYBOOK.md).
+	|
+	| CRITICAL: a bare `movec ...,%cacr` here would be CLOBBERED by the first interrupt.
+	| The shared Amiga interrupt handlers (p1int..p6int, ttrap.s) reload CACR from the
+	| data globals `sup_cacr` (supervisor) / `cacr` (user) on EVERY entry/return.  Their
+	| static values are stale 030 CACR bits (sup_cacr=0x1019, cacr=0x3919) that are INERT
+	| on the 040 (no bit15/31) -> that is why the 040 caches have been off.  cache_on/
+	| cache_off (0x5641c/0x56406) are DEAD (0 callers), so nothing else writes these.
+	| Set BOTH globals to the 040 IC-enable value so the interrupt machinery MAINTAINS
+	| IC-on; then enable CACR immediately.  cinva ic first so the IC starts clean.  IC
+	| coherence on code RELOAD (a reused physical page getting new code) is handled by a
+	| cinva ic at every context switch in resume040 (runtime040.s).
+	.word	0xf498			| cinva ic  -- clear IC before enabling
+	movel	&0x00008000,%d0		| 040 CACR: bit15 IE/EIC = IC on, DC off (bit31 clear)
+	movel	%d0,cacr		| user-mode CACR value (ttrap restores on return-to-user)
+	movel	%d0,sup_cacr		| supervisor CACR value (p1int..p6int restore per interrupt)
+	.word	0x4e7b,0x0002		| movec %d0,%cacr  (enable IC now; DC stays off)
 | =========================================================================
 
 | ---- 0xfe6: tail (verbatim, except the Model B v-halving below) ----
