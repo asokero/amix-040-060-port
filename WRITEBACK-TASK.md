@@ -20,9 +20,14 @@ Verification (per-unit boot bisection spec → +pvn → +ufs → +callers, then 
   is page-count math, clean). Pressure re-test: the 6×4 MiB copy burst that previously
   FROZE userspace (page_get starvation, sac SIGKILL) now completes 6/6 with all sums
   byte-perfect — reclaim works. `sched` (process swapper) remains disabled.
+- **✅ mmap/msync (`segvn_sync`) path VALIDATED emu-060 (2026-07-15):** `test-tools/msynctst.c`
+  mmaps MAP_SHARED, dirties every page, `msync(MS_SYNC)` → `segvn_sync` → `ufs_putpage`.
+  In-process read-back byte-perfect (MSYNC-OK, 64 KiB), and cold-cache disk-truth held
+  across a clean `init 6` reboot (`sum` = `32895 128` pre == post), so the Model-B pfn
+  conversion in the msync putpage path writes the CORRECT disk blocks (no wrong-block
+  write masked by page cache). `segvn_sync` is MI C → 040 expected identical.
 - **REMAINING:** (1) real-HW re-verify (root-disk geometry there still unmeasured);
-  (2) mmap/msync (`segvn_sync` per-page) path untested — no test binary yet;
-  (3) with pageout live, sustained pressure now trips the **ISSUE-10 stale-PTE
+  (2) with pageout live, sustained pressure now trips the **ISSUE-10 stale-PTE
   page-reuse corruption within minutes** (victims: sh → telnetd/inetd → init) — fast
   repro + mechanism + resume recommendation recorded under ISSUE-10 in KNOWN-ISSUES;
   that HAT p_mapping fix is the next frontier, not a writeback defect (file data
