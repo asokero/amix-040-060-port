@@ -1,0 +1,25 @@
+ISSUE-10 SEGVCHAIN probe HIT (build 260715-22, grind run 2026-07-16) -- KÄÄNNE
+sh-heap morfologia (4x 4AFC005F cp-uhrit, sh 5C313595); EI init-morfologiaa (C0800084=0).
+
+RATKAISEVA: in=1 KAIKISSA 8 SEGVCHAIN-rivissa (mm. rivit 1-2 vpte!=head => ketju kaveltiin
+aidosti lapi) => uhrin live-040 PTE ON p_mapping-ketjussa. 'missing-live-entry' (chain II) KUMOTTU.
+
+SEGVPP: p_vnode != 0, off=0 (tiedoston ENSISIVU) JA uhrin anon-PTE ketjussa =>
+frame DOUBLE-REGISTERED: vnode-cache-sivu + user-anon-heap yhta aikaa. hpte=...00D = live-040 (pfn<<12).
+=> ei reverse-map-vuoto; frame paatyi uudelleenkayttoon elavan user-mappauksen kanssa (page_get/vnode-hash).
+
+--- SEGVCHAIN-rivit ---
+WARNING: DBG SEGVCHAIN cnt=6 in=1 head=8E49000 vpte=8D56000 hpte=9DC700D
+WARNING: DBG SEGVCHAIN cnt=5 in=1 head=8E49000 vpte=8C16000 hpte=9DC700D
+WARNING: DBG SEGVCHAIN cnt=3 in=1 head=8E49000 vpte=8E49000 hpte=9DC700D
+WARNING: DBG SEGVCHAIN cnt=2 in=1 head=90C2000 vpte=90C2000 hpte=9DC700D
+WARNING: DBG SEGVCHAIN cnt=4 in=1 head=8AB3000 vpte=8AB3000 hpte=9E0D00D
+WARNING: DBG SEGVCHAIN cnt=4 in=1 head=8AB3000 vpte=8AB3000 hpte=9E0D00D
+WARNING: DBG SEGVCHAIN cnt=4 in=1 head=8AB3000 vpte=8AB3000 hpte=9E0D00D
+WARNING: DBG SEGVCHAIN cnt=4 in=1 head=8AB3000 vpte=8AB3000 hpte=9E0D00D
+
+--- edustava rypas (cp-uhri) ---
+NOTICE: User BUS ERROR at 4AFC005F, PC:C1012100 FAULT:6 PID:3385 CMD:cp /payload.bin /press1.bin 
+WARNING: DBG SEGVDMP p0=7F454C46 p4=1020100 cm4=6C6F7365 c0=657869 c4=74005F78 c8=6D6B6E6F
+WARNING: DBG SEGVPP pp=400A8F88 flg=200 vn=40121658 off=0 map=8E49000 uown=0
+WARNING: DBG SEGVCHAIN cnt=6 in=1 head=8E49000 vpte=8D56000 hpte=9DC700D

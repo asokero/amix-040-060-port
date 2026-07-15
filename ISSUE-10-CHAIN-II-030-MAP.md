@@ -172,6 +172,53 @@ occurs. Two ways forward:
 
 Evidence: `test-tools/issue10-initmorph-260716.txt`.
 
+## ★★★ SEGVCHAIN HIT — chain-II REFUTED, it's a DOUBLE-REGISTERED frame (2026-07-16)
+
+A grind run (build 260715-22) finally landed the **sh-heap morphology** (4× `4AFC005F`
+cp victims + sh `5C313595`; **zero** init-`C0800084` this run) and the probe fired 8×.
+Result (`test-tools/issue10-segvchain-260716.txt`):
+
+```
+DBG SEGVPP  pp=400A8F88 flg=200 vn=40121658 off=0 map=8E49000 uown=0
+DBG SEGVCHAIN cnt=6 in=1 head=8E49000 vpte=8D56000 hpte=9DC700D
+DBG SEGVCHAIN cnt=5 in=1 head=8E49000 vpte=8C16000 hpte=9DC700D   <- vpte != head, in=1
+...
+DBG SEGVPP  pp=400A9FF0 flg=200 vn=40120EE8 off=0 map=8AB3000 uown=0
+DBG SEGVCHAIN cnt=4 in=1 head=8AB3000 vpte=8AB3000 hpte=9E0D00D
+```
+
+**`in=1` in ALL 8** — including rows where `vpte != head` (the probe walked the chain and
+found the victim mid-list, so the compare is genuinely working). **The victim's live-040
+PTE IS in the freed page's `p_mapping` chain.** ⇒ **chain-II "missing-live-entry" is
+REFUTED.** The reverse map is intact.
+
+What the crash actually is (from SEGVPP): the frame has **`p_vnode != 0, off=0`** (a file's
+first page — the ELF header, matching the `\x7fELF` SEGVDMP) **and simultaneously** the
+victim's user-anon heap PTE in its chain. `hpte=…00D` decodes to a **live-040** PTE
+(`pfn<<12`, status W|U), not a legacy phantom. Two distinct page_ts showed it
+(`400A8F88`/vn=`40121658`, `400A9FF0`/vn=`40120EE8`).
+
+**So the bug is a DOUBLE-REGISTERED frame, not a reverse-map leak:** one physical frame is
+concurrently a **file vnode-cache page** (`p_vnode`/`p_offset` set) and a **user-anon heap
+page** (live PTE, intact chain). The frame reached page reuse / a vnode disk-read **while a
+live user-anon mapping still owned it** — exactly the original ISSUE-10 sentence, now proven
+to be a page-allocation / vnode-cache-lifetime fault, **not** a `hat_pageunload`/`p_mapping`
+fault. This retires the whole chain-II suspect list (hat_ptalloc alias, VA-vs-page GC,
+cpusha) as the *primary* line.
+
+**New direction — page/vnode lifetime (ISSUE-5/6 phys double-use):** how does one page_t end
+up both vnode-hashed (`p_vnode` set) and user-anon-mapped? Two orderings:
+(A) a vnode-cache page is freed to the free list without clearing `p_vnode`, then `page_get`
+hands it to anon; (B) a live user-anon page is handed to `page_get`/`vnode-getpage` for the
+disk read (which sets `p_vnode` and reads the ELF over it) — the victim then reads the ELF.
+`page_free`/`page_abort` panic on `p_mapping != 0`, and the chain is intact here, so the
+frame must reach reuse by a path that **bypasses that gate** (or `hat_pteload` linked the
+victim PTE only after the vnode read). Audit targets: `page_get`/`page_free` free-list +
+`page_lookup`/vnode hash lifetime, `PAGE-ABORT-FREE-CONTRACT.md`,
+`VOP-GETPAGE-PAGEIN-CONTRACT.md`, `SEGMAP-HAT-STALE-WINDOW-AUDIT.md`,
+`ANON-SWAP-PAGEIN-CONTRACT.md`. The SEGVCHAIN/SEGVPP probe stays in `sigkill_dbg.s` as the
+live confirmator.
+
 Cross-refs: `P-MAPPING-MATRIX.md`, `HAT-EXEC-AUDIT.md`/`HAT-EXEC-POLICY.md`,
 `HAT-PTALLOC-AUDIT.md`, `HAT-MAP-AUDIT.md`/`HAT-MAP-POLICY.md`, `PAGE-ABORT-FREE-CONTRACT.md`,
 `REFMOD-PAGEOUT-CONTRACT.md`, `HAT-UNLOAD-COHERENCY-AUDIT.md` (all in
