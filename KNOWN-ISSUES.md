@@ -769,6 +769,34 @@ earlier "frozen at 121430" was a stale read) gives the discriminator:**
   `test-tools/issue10-smokinggun-260715.txt`. Spec: `ISSUE-10-FREETIME-PROBE-SPEC.md` (widen its scan target
   from free-time to the disk-read fill).
 
+**★★ SOURCE-FIRST ANALYSIS 2026-07-15 (night) — the reclaim contract + a real unported HAT op
+(`hat_pagesync`).** Read the 3b2 reference reclaim path that the now-live pageout exercises:
+- `checkpage` (vm_pageout.c:351): DIRTY pages (`p_mod && p_vnode`, = sh's malloc heap) are NOT
+  freed inline — they go `VOP_PUTPAGE(…, B_ASYNC|B_FREE)` and are freed later in **`pvn_done`
+  B_FREE completion** (vm_pvn.c:365-394). That block is the reclaim's safety gate:
+  `if (p_mod==0 && p_mapping) hat_pagesync(pp); if ((!p_ref && !p_mod)||p_gone||!p_vnode){ if
+  (p_mapping) hat_pageunload(pp); page_free(pp);} else page_unlock(pp);`
+  → **`hat_pagesync` is the linchpin: it reads the HW Used/Modified bits to decide whether the
+  process still needs the page** (referenced ⇒ RECLAIM/keep, not free).
+- **`hat_pagesync` is UNPORTED** — no override in prototypes/*.s or the relink scripts; stock
+  030 body runs at 0xb4be8, calling `hat_pt2ptdat` (0xb5e0a, the retired 030 ptdat/secseg
+  machinery) + `flushmmu`. The ref/mod BIT POSITIONS happen to align (immu.h `PG_REF`=bit3,
+  `PG_M`=bit4 == 040 U/M), so the read isn't obviously wrong; the suspect part is the retired
+  `hat_pt2ptdat`/`flushmmu` ATC handling on the 040 tree (Codex "hat_pagesync cpusha gap
+  LATENT"). **LATENT until pageout went live** (schedpaging retirement 836cec7) — which is
+  exactly why ISSUE-10's hit-rate jumped this same day.
+- **HONEST confidence:** hat_pagesync-unported is a REAL gap in the reclaim safety path and the
+  best structural lead, BUT the exact corruption chain is not yet closed: the B_FREE path DOES
+  call `hat_pageunload` (which pflushas the single 040 ATC) before `page_free`, so a naive
+  "freed while still mapped" story is incomplete. Two chains remain to disambiguate: (I)
+  hat_pagesync mis-accounting frees an actively-used page whose content sh then re-faults into a
+  reused frame; (II) page_get hands out a frame still mapped by a path that skipped the B_FREE
+  hat_pageunload. **DECISIVE next step:** a probe at `page_get` (free-list reuse) asserting the
+  returned page has `p_mapping==0` AND no live USER PTE — now runnable against the reliable
+  repro. If it fires, dump the offending pfn + the surviving PTE's table → names chain (I) vs
+  (II). Porting `hat_pagesync040` (read U/M from the +256 leaf PTE, global `pflusha`) is the
+  candidate FIX to test once the probe confirms.
+
 **★ AMIXADM TRIGGER RETESTED 2026-07-15 (evening) — the 2026-07-10 deterministic trigger NO
 LONGER FIRES on 260715-12.** Ran the original deterministic use case (`/usr/amiga/bin/amixadm`,
 the interactive-menu sh script whose malloc free-list walk faulted) directly: bare run,
