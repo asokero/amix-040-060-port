@@ -130,6 +130,48 @@ free-list reuse, walk the live 040 tree for ANY PTE whose pfn == the reused fram
 missing-live-entry and *names the producer* — cheaper and more conclusive than testing
 suspects 1–3 one patch at a time.
 
+## Chain-II SEGVCHAIN probe DEPLOYED — correct + safe, but repro morphology blocks capture (2026-07-16)
+
+Built the victim-context reverse-map probe (`prototypes/sigkill_dbg.s`, commit `ffbf3f4`,
+builds 260715-21/-22). On a SIGSEGV whose saved-`a0` URP walk reaches a **resident leaf**
+(the sh-heap double-use morphology), after the existing SEGVDMP/SEGVPP dump it walks
+`pp->p_mapping` and reports:
+
+```
+DBG SEGVCHAIN cnt=<nodes> in=<1=found|0=MISSING> head=<p_mapping> vpte=<victim &leaf> hpte=<*head>
+```
+
+`in=0` with a valid `vpte` = the missing-live-entry proof. Verified: the chain stores the
+**physical** `&leaf` (`hat040.s:461` links `%a4`, derived from `%urp`), and the crash walk
+computes the victim `&leaf` from the same `%urp` phys-identity space → address compare is
+exact. All chain derefs are phys-range gated (top nibble 0, 4-byte aligned) + capped 16 nodes.
+Cap split (Lsg_n=8 diagnostic, consumed only on resident-leaf; Lsg_bn=4 for walk-bail) so an
+init crash-loop can't drain the budget or flood serial. Boots clean; reloc check 0.
+
+**Blocker — repro morphology.** Three emu-040 runs:
+- full 6×4 MiB `issue10-pressure.sh` ×2 (builds -21, -22): both escalated to **/sbin/init
+  PID 1 control-flow corruption** — `BUS ERROR at C0800084, PC:E, a0=FFFFFFFF, pte=0,
+  cell=DEADDEAD` in a tight 80 000× kernel-NOTICE loop. init's corrupted datum is a *code
+  pointer / return address*, not a walkable heap cell, so the URP walk bails → **no SEGVDMP /
+  SEGVPP / SEGVCHAIN**. The cap split worked (only 4 bail SEGVCTX; no probe flood).
+- fork-heavy / light-cp `forkpress.sh` ×1 (build -22): **no corruption at all** — 4 bursts
+  `ALLBURSTS-OK`, forks to pid 3372 clean. ⇒ the double-use needs the heavy 6-cp reclaim
+  pressure; lighter pressure doesn't fire it.
+
+So the classic sh-heap `4AFC005F` morphology (reliable on the pre-probe build 260715-20) did
+**not** recur on the probe builds — the heavy-pressure victim keeps landing on init. The probe
+is correct and staged; it will answer IN-vs-MISSING the moment a resident-leaf user-heap fault
+occurs. Two ways forward:
+
+1. **Grind full-pressure runs** for the sh-heap morphology (variance; it was the norm
+   pre-probe). Cheapest, no new code, but each run = reset-boot (~3 min) + tftp (~70 s).
+2. **Morphology-independent producer-side probe** — catch the double-use at page reuse
+   regardless of how it later crashes. Robust but heavier: needs either an all-AS reverse
+   scan at `page_free`/`page_get` (expensive per free) or a pfn→pte side-table shadow of
+   `hat_pteload`/`hat_unload`. This is the durable instrument if grinding doesn't land it.
+
+Evidence: `test-tools/issue10-initmorph-260716.txt`.
+
 Cross-refs: `P-MAPPING-MATRIX.md`, `HAT-EXEC-AUDIT.md`/`HAT-EXEC-POLICY.md`,
 `HAT-PTALLOC-AUDIT.md`, `HAT-MAP-AUDIT.md`/`HAT-MAP-POLICY.md`, `PAGE-ABORT-FREE-CONTRACT.md`,
 `REFMOD-PAGEOUT-CONTRACT.md`, `HAT-UNLOAD-COHERENCY-AUDIT.md` (all in
