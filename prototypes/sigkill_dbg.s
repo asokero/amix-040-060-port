@@ -22,6 +22,8 @@ Lsk_n:
 	.long	0
 Lsf_n:
 	.long	0
+Lsg_bn:					| chain-II probe: separate cap for walk-BAIL SIGSEGVs (non-resident)
+	.long	0
 Lsk_msg:
 	.asciz	"DBG SIG sig=%d pid=%d stat=%x psargs=%s uret=%x uarg2=%x kcaller=%x fu=%x"
 	.even
@@ -40,8 +42,17 @@ Lsg_ptev:
 	.long	0
 Lsg_cellv:
 	.long	0
+Lsg_pteaddr:				| victim leaf PTE ADDRESS (phys, &leaf) from the URP walk
+	.long	0
+Lsg_ppv:				| stashed pp (page_numtouserpp result) for the chain walk
+	.long	0
+Lsg_headv:				| stashed pp->p_mapping chain head
+	.long	0
 Lsg_msg3:
 	.asciz	"DBG SEGVPP pp=%x flg=%x vn=%x off=%x map=%x uown=%x"
+	.even
+Lsg_cw_msg:
+	.asciz	"DBG SEGVCHAIN cnt=%x in=%x head=%x vpte=%x hpte=%x"
 	.even
 
 | v3 (2026-07-03): the killer is USERLAND self-kill (kill(2), sender==target, fu=1) -- the SVR4
@@ -77,11 +88,14 @@ sigtoproc:
 	movel	%fp@(12),%d0
 	cmpil	&11,%d0
 	bnew	Lsg_skip
-	movel	Lsg_n,%d0
-	cmpil	&4,%d0
-	bccw	Lsg_skip
-	addql	&1,%d0
-	movel	%d0,Lsg_n
+| chain-II probe (2026-07-15): run the URP walk on EVERY SIGSEGV (cheap, all derefs gated),
+| but DEFER the cap decision.  The diagnostic cap (Lsg_n) is consumed ONLY when the walk
+| reaches a resident leaf (the sh-heap double-use morphology that carries SEGVDMP/SEGVCHAIN
+| data).  Walk-BAIL faults (init PC-corruption at C0800084 etc. -- saved a0 not a resident
+| heap cell) take a separate small cap (Lsg_bn) so an init crash-loop can neither drain the
+| diagnostic budget nor flood the log.
+	clrl	Lsg_pteaddr		| 0 until the full URP walk reaches a leaf
+	clrl	Lsg_ppv			| 0 until page_numtouserpp gives a kvseg pp
 | v2 (2026-07-10): CORRECT frame layout from ttrap.s source: the trap prologue does
 | `movm.l &0xfffe,-(%sp)` (= d0-d7/a0-a6, 15 regs) then pushes USP, so u_ar0 points at:
 | USP@0, d0-d7@4..32, a0-a6@36..60, SR@64, PC@66.  (v1 read +32/+36 = d7/a0 by mistake --
@@ -124,12 +138,18 @@ sigtoproc:
 	andil	&0x3f,%d0
 	lsll	&2,%d0
 	addal	%d0,%a0
+	movel	%a0,Lsg_pteaddr		| chain-II probe: victim &leaf (phys) -- same space hat_pteload links
 	movel	%a0@,%d0		| leaf PTE
 Lsg_pte:
 	movel	%d0,%d1			| d1 = pte (or the invalid descriptor from a bailed walk)
 	andil	&0xf0000001,%d0
 	cmpil	&1,%d0			| resident leaf AND phys < 0x10000000?
-	bnew	Lsg_nc
+	bnew	Lsg_bail		| non-resident -> light bail path (separate cap, no chain data)
+	movel	Lsg_n,%d0		| resident leaf = the diagnostic morphology -> consume diag cap HERE
+	cmpil	&8,%d0
+	bccw	Lsg_skip		| diagnostic cap reached -> silent (retries repeat identical state)
+	addql	&1,%d0
+	movel	%d0,Lsg_n
 	movel	%d1,%d0
 	andil	&0xfffff000,%d0
 	moveal	%d0,%a0
@@ -174,6 +194,7 @@ Lsg_pte:
 	cmpil	&0x40000000,%d1
 	bnew	Lsg_nopp
 	moveal	%d0,%a1
+	movel	%d0,Lsg_ppv		| chain-II probe: stash pp for the reverse-map chain walk
 	movel	%a1@(56),%sp@-		| p_uown
 	movel	%a1@(32),%sp@-		| p_mapping
 	movel	%a1@(8),%sp@-		| p_offset
@@ -186,10 +207,72 @@ Lsg_pte:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(32),%sp
+| ISSUE-10 CHAIN-II probe (2026-07-15): is the VICTIM's OWN leaf PTE address in pp's
+| p_mapping reverse-map chain?  cnt = nodes walked (capped 16; -1 = hit an out-of-range/
+| misaligned node = corrupt chain, stopped).  in = 1 if the victim's &leaf (Lsg_pteaddr)
+| was found in the chain, 0 = MISSING => missing-live-entry: the frame was freed/reused
+| while this live PTE still mapped it, because free-time hat_pageunload cleared a chain
+| that did NOT contain it.  head = pp->p_mapping; vpte = victim &leaf; hpte = *head
+| (decode: pfn<<12|status = live-040 vs pfn<<11 = legacy phantom -> names the producer).
+| Every deref is phys-range gated (top nibble 0 => phys < 0x10000000, 4-byte aligned) so a
+| corrupt chain cannot fault the kernel.  Registers free here (Lsg_nopp/Lsg_cell reload d0/d1
+| from .data).
+	movel	Lsg_ppv,%d0
+	beqw	Lsg_nopp		| no kvseg pp this pass -> skip the walk
+	moveal	%d0,%a1
+	movel	%a1@(32),%a0		| a0 = cursor = pp->p_mapping
+	movel	%a0,Lsg_headv		| stash head for the emit
+	movel	Lsg_pteaddr,%d3		| d3 = victim &leaf (0 if the URP walk bailed)
+	moveq	&0,%d2			| d2 = found flag
+	moveq	&0,%d1			| d1 = node count
+Lsg_cw:
+	movel	%a0,%d0
+	beqw	Lsg_cwd			| NULL -> end of chain
+	cmpil	&16,%d1
+	bccw	Lsg_cwd			| cap 16 (corrupt/looping chain guard)
+	andil	&0xf0000003,%d0		| phys < 0x10000000 AND 4-byte aligned?
+	bnew	Lsg_cwbad		| out of range / misaligned -> corrupt, stop
+	cmpal	%d3,%a0			| node == victim &leaf?
+	bne	Lsg_cwn
+	moveq	&1,%d2			| FOUND -> victim IS in the chain (registered; not chain-II)
+Lsg_cwn:
+	addql	&1,%d1
+	movel	%a0@(256),%a0		| next = *(node + 256)
+	braw	Lsg_cw
+Lsg_cwbad:
+	moveq	&-1,%d1			| corrupt-chain marker (stopped at an unsafe node)
+Lsg_cwd:
+	moveq	&0,%d0			| hpte default 0
+	movel	Lsg_headv,%d3
+	beqw	Lsg_cwe			| NULL head -> hpte 0
+	movel	%d3,%d0
+	andil	&0xf0000003,%d0
+	bnew	Lsg_cwe0		| unsafe head -> hpte 0
+	moveal	%d3,%a0
+	movel	%a0@,%d0		| hpte = *head (the head leaf PTE value)
+	braw	Lsg_cwe
+Lsg_cwe0:
+	moveq	&0,%d0
+Lsg_cwe:
+	movel	%d0,%sp@-		| hpte
+	movel	Lsg_pteaddr,%sp@-	| vpte = victim &leaf
+	movel	Lsg_headv,%sp@-		| head = pp->p_mapping
+	movel	%d2,%sp@-		| in  (1 = found, 0 = MISSING)
+	movel	%d1,%sp@-		| cnt (-1 = corrupt chain)
+	pea	Lsg_cw_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(28),%sp
 Lsg_nopp:
 	movel	Lsg_ptev,%d1
 	movel	Lsg_cellv,%d0
 	braw	Lsg_cell
+Lsg_bail:
+	movel	Lsg_bn,%d0		| walk bailed (non-resident) -> separate small cap so an init
+	cmpil	&4,%d0			| PC-corruption crash-loop can't flood or drain the diag budget
+	bccw	Lsg_skip		| bail cap reached -> silent
+	addql	&1,%d0
+	movel	%d0,Lsg_bn
 Lsg_nc:
 	movel	&0xdeaddead,%d0		| walk failed / phys out of range -> marker
 Lsg_cell:
