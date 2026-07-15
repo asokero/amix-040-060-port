@@ -68,6 +68,31 @@ producer. Cheapest confirming source-first move first: audit #1 (hat_ptalloc/sdt
 alias-vs-data-page double-use) and #2 (hat_exec zero-flag fallback reachability) before
 writing the probe.
 
+## Audit #1 RESULT (2026-07-15 night) — concrete culprit: `hat_exec_orig` flag-0 steal path
+
+Followed the hat_ptalloc/sdtalloc thread (Codex `HAT-PTALLOC-AUDIT.md` + binary). Findings:
+- `hat_ptalloc` callers: `hat_pteload`/`hat_dup040` pass flag **2/3 = HAT_NOSTEAL** (no steal).
+  **Only `hat_exec_orig` passes flag 0** (verified @0xb7232 `clrl %sp@-`) = steal ALLOWED
+  (HAT_CANWAIT does not disable stealing; only HAT_NOSTEAL does).
+- The `hat_ptalloc` **steal path is entirely UNPATCHED 030**: 8-byte SDE arithmetic
+  (0xb6b52/72), 21-bit PFN extract (0xb6bb2), 2 KiB VA step (0xb6c62). On the 040 it walks the
+  inert 030 tree and does NOT clear the live 040 PTEs of the stolen table's mapped pages.
+- The steal victim is **any unlocked table in `active_pts`, not the exec'ing stack** — so it can
+  steal `cp`/`sh`'s HEAP page-table, 030-unlink it (wrong), and leave that process's heap pages
+  with **live 040 PTEs orphaned from `p_mapping`** → free/reuse → the observed corruption. This
+  explains why a stack-transfer optimization corrupts heap pages, and why it needs BOTH heavy
+  exec (steal trigger) AND memory pressure (normal alloc fails → steal fallback).
+- **The steal cannot simply be blocked:** on `hat_ptalloc`==NULL, `hat_exec` calls
+  `cmn_err(CE_PANIC)` (0xb7250, `pea 3`). So steal is how it dodges the panic under pressure;
+  forcing NOSTEAL trades corruption for a panic.
+
+**FIX (Codex `HAT-EXEC-POLICY`-endorsed): make `hat_exec` a no-op returning 0.** It is a pure
+stack-page-table-move OPTIMIZATION; `as_exec` already moves the seg object (data ownership is on
+the seg, not the PTEs), `relvm` tears down the old AS, and the moved stack's translations rebuild
+via 040 faults through `hat_pteload`. A no-op never calls `hat_ptalloc` → no steal, no panic.
+Strictly safer than today (removes both the corruption vector and the NULL-panic). Testable
+against the reliable repro.
+
 Cross-refs: `P-MAPPING-MATRIX.md`, `HAT-EXEC-AUDIT.md`/`HAT-EXEC-POLICY.md`,
 `HAT-PTALLOC-AUDIT.md`, `HAT-MAP-AUDIT.md`/`HAT-MAP-POLICY.md`, `PAGE-ABORT-FREE-CONTRACT.md`,
 `REFMOD-PAGEOUT-CONTRACT.md`, `HAT-UNLOAD-COHERENCY-AUDIT.md` (all in

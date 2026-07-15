@@ -32,6 +32,13 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat_chgprot040.s" -o "$HERE/buil
 #                    read p_ref==0 and get reclaimed+reused (ISSUE-10).  This flushes the
 #                    ATC unconditionally after the walk.  A genuine fix, belongs in base.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat_pagesync040.s" -o "$HERE/build/hat_pagesync040.o"
+#     hat_exec040  = NO-OP override of the stock exec stack-page-table MOVE optimization.
+#                    Stock passes flag 0 to hat_ptalloc (steal allowed) and its unpatched-030
+#                    steal path, hit under memory pressure, orphans live 040 PTEs of a stolen
+#                    table's pages (ISSUE-10 chain II).  as_exec moves the seg + faults rebuild
+#                    the stack via hat_pteload, so the move is a pure (unsafe-on-040) optimization.
+#                    Codex HAT-EXEC-POLICY.md-endorsed.  A genuine fix, belongs in base.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat_exec040.s"    -o "$HERE/build/hat_exec040.o"
 #     hat_dup040   = REAL 040 fork/COW port (ISSUE-4, boot-verified 2026-07-04 on branch
 #                    040-hat-dup-port incl. the fork-without-exec COW subshell test) --
 #                    replaces the old forkdbg.s no-op stub.  A genuine fix, belongs in base.
@@ -128,6 +135,7 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol hat_unload \
 	--weaken-symbol hat_pageunload \
 	--weaken-symbol hat_pagesync \
+	--weaken-symbol hat_exec \
 	--weaken-symbol hat_alloc \
 	--weaken-symbol hat_free \
 	--weaken-symbol hat_ptfree \
@@ -172,7 +180,7 @@ OUT="$HERE/build/unix-040"
 echo "[*] relinking -> $OUT"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/pstart040.o" "$HERE/build/kvm040.o" "$HERE/build/hat040.o" \
-	"$HERE/build/hat_chgprot040.o" "$HERE/build/hat_pagesync040.o" "$HERE/build/hat_dup040.o" \
+	"$HERE/build/hat_chgprot040.o" "$HERE/build/hat_pagesync040.o" "$HERE/build/hat_exec040.o" "$HERE/build/hat_dup040.o" \
 	"$HERE/build/getfault040.o" "$HERE/build/userspace040.o" \
 	"$HERE/build/vtop040.o" "$HERE/build/wb040.o" "$HERE/build/ptest040.o" \
 	"$HERE/build/uvatosde040.o" "$HERE/build/prumap040.o" "$HERE/build/haltsys040.o" \
@@ -183,7 +191,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
