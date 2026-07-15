@@ -738,6 +738,37 @@ probe: in page_free/page_abort, when `p_mapping==0`, do a bounded reverse scan f
 PTE still mapping that pfn; a hit is the smoking gun and catches the bug WITHOUT needing the
 userspace crash to manifest, sidestepping the repro nondeterminism entirely.
 
+**★★★ RELIABLE REPRO + SMOKING-GUN CONTENT 2026-07-15 (night) — corrupting data is a
+FRESHLY-DISK-READ ELF binary, so the reuse is via the segmap/exec disk-read path, NOT a HAT
+p_mapping bug.** Move (i) landed: `test-tools/` (this session) proved the FILE-via-tftp
+workload path, so `scratchpad/tftp/pressure.sh` (6× concurrent 4 MiB `cp` + `hat_dup_cow 64`,
+run as a detached FILE not typed) now reproduces the corruption **within the FIRST burst
+(~80 s)** on emu-040 dbg 260715-16 — the bug is no longer nondeterministic once you apply
+*concurrent* copy pressure + fork churn from a real script. Escalation: first victim
+`hat_dup_cow`/`cp` (BUS ERROR `4AFC005F`), then `/sbin/init` PID 1 in a permanent `PC:4`
+crash-loop (control flow corrupted to addr 0x4). **Serial (30 MB, capture DID survive — the
+earlier "frozen at 121430" was a stale read) gives the discriminator:**
+- **`SEGVDMP p0=7F454C46 p4=1020100 …`** = `\x7fELF` + class32/big-endian ELF header, and the
+  cm4/c0/c4/c8 fields decode to `.dynstr` symbol names — `open waitpid read exit _xmknod write
+  close malloc …`. **The crash page holds an ELF binary's header + dynamic-symbol string table,
+  read fresh from disk.** i.e. a user anon/heap page (sh malloc region va≈0x80010000) was handed
+  to the segmap/exec demand-page path to hold a forked child's executable, WHILE the user PTE
+  still mapped it. Concurrent `segmap-map … pfn=883F/863F/8E2C/8E2E/8E65` disk reads run right
+  up to the first fault.
+- **`Lhl_findfail` ("pte not in revmap") fired 0×** and `hat_pageunload` was called on the crash
+  page with **non-zero p_mapping** immediately before the fault → **the HAT registration path is
+  healthy**; this is NOT a missing-p_mapping bug (re-confirms the source-first finding, now under
+  a real repro). Crash page structs cluster contiguously (stride 0x54 = sizeof(page)=84).
+- **NARROWED to candidate (c), refined:** a *phys double-use* between user anon pages and the
+  **buffer-cache/segmap/exec disk-read** reuse — the page reaches the free list / segmap fill
+  while a user PTE still maps it, bypassing hat_pageunload of that mapping. This is the ISSUE-5/6
+  "phys double-use" family, on the reclaim↔disk-read boundary — NOT the HAT p_mapping contract.
+- **Best next probe (supersedes the generic free-time walker):** instrument the segmap/disk-read
+  page-fill (or page_get/page reclaim into segmap) to assert the target pfn has no live USER PTE
+  before filling it from disk — a hit names the exact reuse. Excerpt saved:
+  `test-tools/issue10-smokinggun-260715.txt`. Spec: `ISSUE-10-FREETIME-PROBE-SPEC.md` (widen its scan target
+  from free-time to the disk-read fill).
+
 **★ AMIXADM TRIGGER RETESTED 2026-07-15 (evening) — the 2026-07-10 deterministic trigger NO
 LONGER FIRES on 260715-12.** Ran the original deterministic use case (`/usr/amiga/bin/amixadm`,
 the interactive-menu sh script whose malloc free-list walk faulted) directly: bare run,
