@@ -687,6 +687,73 @@ the root fix is p_mapping registration coverage in the 040 HAT load paths (or an
 unconditional-unload strategy that can find PTEs without p_mapping); the fast repro
 above replaces the old slow amixadm-flood hunt.**
 
+**★ SOURCE-FIRST NARROWING 2026-07-15 (evening) — leading hypothesis REFUTED.** Read the
+SVR4 3b2 `vm_hat.c` p_mapping CONTRACT (the intended design) and verified the m68k port
+against it, function by function. The contract: `hat_pteload` registers every new PTE
+(`*(pte+NPGPT)=pp->p_mapping; pp->p_mapping=pte`); `hat_dup` splices the child PTE in
+(both COW-copy and share paths); `hat_unload` walks the list and unlinks the specific
+PTE; `hat_pageunload` walks + NULLs; `page_abort`/`hat_unload` free only when
+`p_mapping==0`. **The m68k port implements ALL of these correctly** — hat040.s
+`Lw_nolock` (fresh register), `Lreplace` (remap-diff-pfn unlink-old+register-new),
+hat_dup040.s `Lhd_copy`/`Lhd_share` (both splice), hat_unload040 `Lhl_findmap`/`Lhl_unlink`
+(with an `Lhl_findfail` diagnostic that fires iff a to-be-unloaded PTE is absent from the
+list). And the ONE known violator — stock `hat_map`'s phantom vnode-preload that published
+legacy pfn<<11 reverse-map entries — was already DISABLED (9b7f00c, 0xb58d2 beqw→braw).
+**So "a PTE loaded without p_mapping registration" is NOT the surviving mechanism.** The
+narrowed suspect set is now: (a) page-table **coherency/ordering** — the +256 reverse-map
+link or PTE write not pushed to RAM (cpusha/pflusha) before a page-table is freed+reused
+(hat040/hat_dup040 comments already obsess over this); (b) the **old-SDT teardown leak**
+(HAT-MAP-AUDIT: hat_unload/hat_free don't retire leaked legacy SDT tables → a file-backed
+page can retain a reverse-map pointer into a reused legacy table); (c) a page freed via a
+path that **bypasses hat_pageunload entirely**. **DECISIVE NEXT STEP (empirical, not more
+static reading): boot `unix-040-dbg` (has the `Lhl_findfail` probe + hatalloc_dbg
+page_abort p_mapping logger), run the fast 6×4 MiB pressure repro, and read the serial log
+— WHICH probe fires selects (a)/(b)/(c).** The source-first pass converted ISSUE-10 from
+"mysterious stale-PTE, many hypotheses" to "core contract verified correct, 3 narrow
+candidates, one instrumented experiment to disambiguate." Method win recorded in
+[[amix-source-reconstruction-feasibility]].
+
+**★ EMPIRICAL RUN 2026-07-15 (evening) — 2 of 3 candidates further narrowed; repro is
+NON-DETERMINISTIC.** Booted `unix-040-dbg` (260715-12, has `Lhl_findfail` "pte not in
+revmap" + hatalloc_dbg page_abort/memload/pageunload loggers), ran pressure workloads.
+Session tally (whole boot): **0 corruption hits** (no `4AFC` BUS ERROR, no `SIG sig=4|11`,
+no `SEGVDMP`) and **0 `pte not in revmap`** — plus benign churn: 40× `page_abort crash
+p_mapping=0` (caller = **anon_decref+0x42**, the COW-anon refcount-drop free), 8× `hat_memload
+crash` (p_mapping ALWAYS non-zero = registered), 2× `hat_pageunload CALLED`, 6× `page_free
+SH DATA` (callers page_abort+0xDA, as_free+0x12 exit-teardown, hat_ptfree+0x70). All file
+sums stayed `1570 8192`, guest alive. **Rules out two more mechanisms:** (1) load-registration
+failure — hat_memload always registers; (2) hat_unload orphan — `Lhl_findfail` stayed SILENT,
+so hat_unload never met a to-be-unloaded PTE missing from the revmap. **The corruption did
+NOT reproduce in two deliberate pressure attempts** (both hampered by telnet tooling friction:
+a heredoc'd and a nested-quote flood script both failed to run through emu.py). It fired
+INCIDENTALLY earlier the same day but resists scripted on-demand repro — classic elusive
+signature ([[feedback-pause-elusive-bug-hunting]]).
+
+**Surviving candidates:** (a) page-table coherency/ordering (cpusha/pflusha), (b) old-SDT
+teardown leak, (c) a free that bypasses hat_pageunload while a live PTE persists. The current
+probes are PROXIES — none directly verifies the invariant at free time. **Two concrete
+next-session moves:** (i) TOOLING — push the pressure workload as a FILE via tftp (not typed
+through telnet) so it actually runs hard; (ii) INSTRUMENTATION (Fable) — a DIRECT invariant
+probe: in page_free/page_abort, when `p_mapping==0`, do a bounded reverse scan for any live
+PTE still mapping that pfn; a hit is the smoking gun and catches the bug WITHOUT needing the
+userspace crash to manifest, sidestepping the repro nondeterminism entirely.
+
+**★ AMIXADM TRIGGER RETESTED 2026-07-15 (evening) — the 2026-07-10 deterministic trigger NO
+LONGER FIRES on 260715-12.** Ran the original deterministic use case (`/usr/amiga/bin/amixadm`,
+the interactive-menu sh script whose malloc free-list walk faulted) directly: bare run,
+8× with `q` after priming with 128 forks (u-area churn), and a heavy menu-loop attempt — **all
+exited CLEANLY, zero `4AFC`, zero `CMD:amixadm`/`CMD:-sh` fault lines across the whole boot,
+data intact.** The bug is NOT fixed (it still crashed sh/telnetd/init under HEAVY sustained
+pressure earlier the same day on 260715-10, task-5 evidence), but its trigger threshold has
+clearly moved UP: amixadm's light forking is no longer enough to land sh's heap on a
+stale/reused page. Likely causes of the reduced hit-rate since 2026-07-10: the completed
+Model-B page-in/writeback conversion (fewer stale/half-read pages) and possibly the orderly
+pageout reclaim from the schedpaging retirement (836cec7). **Practical consequence: amixadm is
+retired as a reliable repro; ISSUE-10 is now a RARE, pressure-gated corruption, consistent with
+the source-first finding that the core p_mapping machinery is correct. Recommended handling:
+land the DIRECT free-time invariant probe (above) so the residual is caught opportunistically
+in the background rather than chased with an increasingly-unreliable trigger.**
+
 **Symptom:** running `/usr/amiga/bin/amixadm` floods the console with
 `NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:<n> CMD:amixadm`, forever.
 
