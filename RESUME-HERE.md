@@ -1,5 +1,23 @@
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-15)
 
+> ## ✅★ 2026-07-15 (night) — CACHES-ON STEP A: INSTRUCTION CACHE ENABLED (emu-040+060 verified)
+> **IC is now ON.** `pstart040.s`: after MMU-on, `cinva ic` + set CACR bit15 `0x8000`
+> (= IE on 040 / EIC on 060, same bit) via `movec`, AND write `0x8000` into the
+> `cacr`/`sup_cacr` DATA globals — the shared interrupt handlers (p1int..p6int, ttrap)
+> reload CACR from those globals every entry, so a bare `movec` alone is clobbered by the
+> first interrupt. `runtime040.s`: `cinva ic` at the `resume` `Lrt_rest` tail flushes the
+> physically-tagged IC on every context switch (reused code page must not run stale lines);
+> this whole-IC flush subsumes per-path exec/hat_memload invalidates. Build 260715-16,
+> commit b69a2c1. **Verified emu-040 AND emu-060:** boot→login clean, interactive login
+> (getty→login→sh through shared `libc.so.1`), `for i in 1..5; do ls -alR / done`
+> fork/exec+recursive-libc churn → `LOOPDONE-RC0`, no panic, no stale-IC crash.
+> **DC (data cache) STAYS OFF — Step B, HW-GATED:** Amiberry doesn't model 040 copyback DC,
+> so DC coherency is unvalidatable on emulator. Step B (real HW only) = `hat_pteload` CM-bit
+> path (copyback `0x20` RAM / noncachable `0x60` device) + narrow DTT0 (`0x003fc060` blanket-
+> inhibits data 0–1GB today) + DMA `cpusha`/`cinva` audit around SDMAC/a3091 + CACR DC-enable.
+> Full plan = `CACHES-ON-PLAYBOOK.md`. **NEXT real-HW visit:** writeback real-HW verify +
+> caches Step B; ISSUE-10 free-time reverse-map invariant probe (see KNOWN-ISSUES, 1978f88).
+
 > ## ✅★ 2026-07-15 (evening) — SCHEDPAGING RETIRED: pageout daemon LIVE; starvation-wedge FIXED; ISSUE-10 got a FAST REPRO
 > **The `schedpaging` rts-override is GONE** (runtime040.s + mainmarks.s + the weakens in
 > relink-040.sh/relink-040-dbg.sh; quiet variants' lists cleaned). Newly-live daemon path
