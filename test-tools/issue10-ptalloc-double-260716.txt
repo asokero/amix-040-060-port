@@ -1,0 +1,14 @@
+ISSUE-10: ptalloc DOUBLE osuma (build 260716-01, 4-burst repro 2026-07-16)
+
+hat_ptalloc palautti taulusivuksi framen jonka phys == sh:n datasivun phys (g_shdatabase),
+molemmat kutsut hat_dup040:sta (fork): caller 80D8766 = LhdA_res (A-taulu), 80D89D2 = Lhd_bok/ptok (leaf).
+PGALIAS (page_get palauttaa p_mapping!=0 -sivun) EI lauennut => frame ei tullut page_getista mapattuna
+=> hat_ptalloc_orig:in oma 030-POOLI antoi sen. KMA/pt-pool double-backing -perhe (Codex round 2).
+
+WARNING: DBG SIG9 GOT fde4=0 fe68=0 e000=C10314EC ec00=0 f000=9E9FA0A1
+WARNING: DBG hat_pageunload CALLED on crash page pp=400AA2C0 p_mapping=9CDC0C8 (0=>page_abort SKIPS unmap)
+WARNING: DBG ptalloc DOUBLE base=9E19000 == shdata caller=80D89D2
+WARNING: DBG ptalloc DOUBLE base=9E19000 == shdata caller=80D8766
+
+Saman ajon morfologia: SIG4/SIGILL-perhe (libc-koodisivu korruptoitui; cp pid=196 illegal instruction
+core dumped; inetd/sac/scrmon SIG4) - konsoli-screenshot rep16.png. Sama pp=400AA2C0 kuin aiemmissa.
