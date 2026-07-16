@@ -585,6 +585,8 @@ Laf_trace:
 	andil	&0x3f,%d0
 	asll	&2,%d0
 	movel	%a2@(0,%d0:l),%d3	| d3 = leaf PTE
+	lea	%a2@(0,%d0:l),%a3	| a3 = &leaf (stashed below if this is sh's data page;
+					|  a3 is reloaded later for the frame walk -- free here)
 | --- record sh's data-page PHYS base for the hatalloc double-alloc detector (hatalloc_dbg.s):
 |     when this fault is in sh's data segment [0x8000f000,0x80012000), stash (leaf PTE & ~0xfff) in
 |     g_shdatabase.  The hat_sdtalloc/hat_ptalloc wrappers then flag any PT allocation that returns
@@ -597,6 +599,8 @@ Laf_trace:
 	movel	%d3,%d0
 	andil	&0xfffff000,%d0
 	movel	%d0,g_shdatabase
+	movel	%a3,g_shdataleaf	| &leaf: lets the ptalloc DOUBLE probe test whether sh's
+					|  PTE STILL maps the reallocated frame (live vs stale)
 | also compute g_shdatapp = pages + ((base>>12) - pages_base) * 60  (page struct, 60-byte stride)
 | so the page_free wrapper can detect a spurious free of this exact page by pointer compare.
 	movel	%d0,%d1

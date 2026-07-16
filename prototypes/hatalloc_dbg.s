@@ -21,6 +21,9 @@ g_shdatabase:
 	.globl	g_shdatapp
 g_shdatapp:
 	.long	0			| page struct (pages + (pfn-pages_base)*60) for sh's data page
+	.globl	g_shdataleaf
+g_shdataleaf:
+	.long	0			| &leaf of sh's data page (assegat_dbg records it with the base)
 Lpf_n:
 	.long	0
 Lhsd_n:
@@ -46,6 +49,12 @@ Lhsd_msg:
 	.even
 Lhpa_msg:
 	.asciz	"DBG ptalloc DOUBLE base=%x == shdata caller=%x"
+	.even
+Lhpa_live_msg:
+	.asciz	"DBG ptalloc DOUBLE-LIVE *leaf=%x -- sh's PTE STILL MAPS the new PT page (ILLEGAL reuse)"
+	.even
+Lhpa_stale_msg:
+	.asciz	"DBG ptalloc DOUBLE-STALE *leaf=%x -- sh's leaf moved on (legit recycle)"
 	.even
 Lpf_msg:
 	.asciz	"DBG page_free SH DATA pp=%x caller=%x grandcaller=%x (who reclaimed)"
@@ -507,6 +516,35 @@ hat_ptalloc:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(16),%sp
+| LIVE-vs-STALE discriminator (2026-07-16): does sh's leaf PTE STILL point at the frame
+| hat_ptalloc just handed out as a page table?  *g_shdataleaf & ~0xFFF == base -> the reuse
+| is ILLEGAL (sh's live mapping survived the page's free/realloc = the ISSUE-10 missing-
+| entry producer caught in the act); != -> g_shdatabase was just a stale snapshot (legit
+| recycle after sh exited/remapped).  Leaf deref is phys-range gated.  d2 = base survives
+| cmn_err (callee-saved); a2 is saved/restored by this wrapper.
+	movel	g_shdataleaf,%d0
+	beqw	Lhpa_done
+	movel	%d0,%d1
+	andil	&0xf0000003,%d1		| leaf ptr: phys < 0x10000000 AND 4-byte aligned?
+	bnew	Lhpa_done
+	moveal	%d0,%a2
+	movel	%a2@,%d1		| d1 = *leaf = sh's data-page PTE right now
+	movel	%d1,%d0
+	andil	&0xfffff000,%d0
+	cmpl	%d2,%d0			| still maps the just-allocated PT frame?
+	beqw	Lhpa_live
+	movel	%d1,%sp@-		| *leaf
+	pea	Lhpa_stale_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(12),%sp
+	braw	Lhpa_done
+Lhpa_live:
+	movel	%d1,%sp@-		| *leaf
+	pea	Lhpa_live_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(12),%sp
 Lhpa_done:
 	moveal	%d3,%a0			| restore return a0
 	moveml	%fp@(-12),%d2-%d3/%a2
