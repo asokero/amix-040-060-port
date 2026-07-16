@@ -693,4 +693,81 @@ Lgr_done:
 	nop
 	nop
 	nop
+
+| ---------------------------------------------------------------------------
+| hat_pteload WRAPPER (2026-07-17, ISSUE-10 producer hunt).  Overnight SEGVND/SEGVVN
+| proved the corruption = a UFS file's page-0 frame (p_vnode!=0, p_offset==0, VREG)
+| mapped into a user HEAP-family VA (chain node at PGI 0x16 alongside the legit PGI-0
+| text mapping).  hat_pteload registers it cleanly (in=1), so the PRODUCER is whoever
+| hands the file page to a heap fault.  Log every hat_pteload of a file-off-0 page
+| into a suspicious VA: va in [0x80001000, 0xC0000000) -- i.e. NOT the text base page
+| 0x80000000 (the only legit low-VA home for file offset 0) and NOT the libc range
+| C1000000+ (legit shared-lib header map).  Dump va/pp/vnode + a 3-deep caller chain
+| (c1 = direct caller e.g. hat_memload; c2/c3 walk the saved-fp chain -> names the
+| segvn/anon/segmap path).  Cap 8.  Tail-jmp keeps the arg stack intact (arg count
+| irrelevant).  hat_pteload args: hat@8, va@12, pp@16 (hat040.s prologue).
+	.balign 4
+	.data
+	.even
+Lptl_n:
+	.long	0
+Lptl_msg:
+	.asciz	"DBG PTLFILE0 va=%x pp=%x vn=%x c1=%x c2=%x c3=%x"
+	.even
+	.balign 4
+	.text
+	.globl	hat_pteload
+hat_pteload:
+	linkw	%fp,&0
+	moveml	%d2/%a2,%sp@-
+	movel	Lptl_n,%d0
+	cmpil	&8,%d0
+	bccw	Lptl_pass		| cap reached -> zero-cost pass-through
+	movel	%fp@(12),%d2		| va
+	cmpil	&0x80001000,%d2
+	bcsw	Lptl_pass		| below the window (kernel/text-base page)
+	cmpil	&0xc0000000,%d2
+	bccw	Lptl_pass		| libc/shared-lib range -> legit
+	movel	%fp@(16),%d0		| pp
+	moveal	%d0,%a2
+	andil	&0xf0000000,%d0
+	cmpil	&0x40000000,%d0
+	bnew	Lptl_pass		| pp not kvseg -> can't inspect
+	tstl	%a2@(4)			| p_vnode == 0 -> anon page, legit
+	beqw	Lptl_pass
+	tstl	%a2@(8)			| p_offset != 0 -> not the header page, pass
+	bnew	Lptl_pass
+	addql	&1,Lptl_n
+| caller chain: c1 = my return addr; c2/c3 via the saved-fp chain (gated derefs --
+| frames live on the kernel/u stack, kvseg 0x4xxxxxxx)
+	moveq	&0,%d2			| c2 default 0
+	moveq	&0,%d1			| c3 default 0
+	movel	%fp@(0),%d0		| caller's fp
+	moveal	%d0,%a2
+	andil	&0xf0000000,%d0
+	cmpil	&0x40000000,%d0
+	bnew	Lptl_c0			| caller fp not kvseg -> stop the walk
+	movel	%a2@(4),%d2		| c2 = caller's return addr
+	movel	%a2@(0),%d0		| grandcaller's fp
+	moveal	%d0,%a2
+	andil	&0xf0000000,%d0
+	cmpil	&0x40000000,%d0
+	bnew	Lptl_c0
+	movel	%a2@(4),%d1		| c3
+Lptl_c0:
+	movel	%d1,%sp@-		| c3
+	movel	%d2,%sp@-		| c2
+	movel	%fp@(4),%sp@-		| c1
+	moveal	%fp@(16),%a2
+	movel	%a2@(4),%sp@-		| vn
+	movel	%a2,%sp@-		| pp
+	movel	%fp@(12),%sp@-		| va
+	pea	Lptl_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(32),%sp
+Lptl_pass:
+	moveml	%sp@+,%d2/%a2
+	unlk	%fp
+	jmp	hat_pteload_orig
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
