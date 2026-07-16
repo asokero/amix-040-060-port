@@ -724,8 +724,8 @@ hat_pteload:
 	cmpil	&8,%d0
 	bccw	Lptl_pass		| cap reached -> zero-cost pass-through
 	movel	%fp@(12),%d2		| va
-	cmpil	&0x80001000,%d2
-	bcsw	Lptl_pass		| below the window (kernel/text-base page)
+	cmpil	&0x80003000,%d2		| (boot run 260717-01: va=80002000 is the LEGIT AMIX
+	bcsw	Lptl_pass		|  ELF text base for file off 0 -- exclude it too)
 	cmpil	&0xc0000000,%d2
 	bccw	Lptl_pass		| libc/shared-lib range -> legit
 	movel	%fp@(16),%d0		| pp
