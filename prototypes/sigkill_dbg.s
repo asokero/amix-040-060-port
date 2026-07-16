@@ -54,6 +54,17 @@ Lsg_msg3:
 Lsg_cw_msg:
 	.asciz	"DBG SEGVCHAIN cnt=%x in=%x head=%x vpte=%x hpte=%x"
 	.even
+| chain-II v2 (2026-07-16, file-vs-swap + wrong-VA discriminators):
+Lsg_a0v:				| saved user a0 (the faulting heap cell VA) across cmn_errs
+	.long	0
+Lsg_nd:					| first 3 chain nodes: {addr, PTE value} pairs
+	.long	0,0,0,0,0,0
+Lsg_nd_msg:
+	.asciz	"DBG SEGVND a0=%x n1=%x p1=%x n2=%x p2=%x n3=%x p3=%x"
+	.even
+Lsg_vn_msg:
+	.asciz	"DBG SEGVVN vn=%x vflg=%x vop=%x vtyp=%x vpgs=%x"
+	.even
 
 | v3 (2026-07-03): the killer is USERLAND self-kill (kill(2), sender==target, fu=1) -- the SVR4
 | rtld convention: ld.so (inside libc.so.1 @C1000000) does _kill(_getpid(),SIGKILL) on EVERY
@@ -96,6 +107,13 @@ sigtoproc:
 | diagnostic budget nor flood the log.
 	clrl	Lsg_pteaddr		| 0 until the full URP walk reaches a leaf
 	clrl	Lsg_ppv			| 0 until page_numtouserpp gives a kvseg pp
+	lea	Lsg_nd,%a1		| clear the 3 chain-node {addr,val} capture pairs
+	clrl	%a1@+
+	clrl	%a1@+
+	clrl	%a1@+
+	clrl	%a1@+
+	clrl	%a1@+
+	clrl	%a1@
 | v2 (2026-07-10): CORRECT frame layout from ttrap.s source: the trap prologue does
 | `movm.l &0xfffe,-(%sp)` (= d0-d7/a0-a6, 15 regs) then pushes USP, so u_ar0 points at:
 | USP@0, d0-d7@4..32, a0-a6@36..60, SR@64, PC@66.  (v1 read +32/+36 = d7/a0 by mistake --
@@ -105,6 +123,7 @@ sigtoproc:
 | leaf with phys < 0x10000000 so an invalid walk can't fault the kernel.
 	moveal	u+0x864,%a1		| u_ar0 = saved trap regs
 	movel	%a1@(36),%d3		| d3 = saved a0 (heap cell address)
+	movel	%d3,Lsg_a0v		| stash the faulting cell VA for the SEGVND line
 	movel	%a1@(40),%d2		| d2 = saved a1 (the bad link value; expect 4AFC0000)
 	.word	0x4e7a,0x0806		| movec %urp,%d0 -- live user root (phys, identity)
 	moveal	%d0,%a0
@@ -232,6 +251,14 @@ Lsg_cw:
 	bccw	Lsg_cwd			| cap 16 (corrupt/looping chain guard)
 	andil	&0xf0000003,%d0		| phys < 0x10000000 AND 4-byte aligned?
 	bnew	Lsg_cwbad		| out of range / misaligned -> corrupt, stop
+	cmpil	&3,%d1			| capture the first 3 nodes {addr, PTE value}
+	bcc	Lsg_cwnc		| (wrong-VA discriminator: addr low byte>>2 = PGI = VA[17:12])
+	lea	Lsg_nd,%a1
+	movel	%d1,%d0
+	lsll	&3,%d0
+	movel	%a0,%a1@(0,%d0:l)	| node address (phys &leaf)
+	movel	%a0@,%a1@(4,%d0:l)	| node PTE value (pfn<<12 | status)
+Lsg_cwnc:
 	cmpal	%d3,%a0			| node == victim &leaf?
 	bne	Lsg_cwn
 	moveq	&1,%d2			| FOUND -> victim IS in the chain (registered; not chain-II)
@@ -260,6 +287,46 @@ Lsg_cwe:
 	movel	%d2,%sp@-		| in  (1 = found, 0 = MISSING)
 	movel	%d1,%sp@-		| cnt (-1 = corrupt chain)
 	pea	Lsg_cw_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(28),%sp
+| chain-II v2 (2026-07-16): SEGVND -- the faulting cell VA + first 3 chain nodes {addr,val}.
+| Node addr low byte >>2 = PGI = the mapping VA's bits [17:12]: tells whether the OTHER
+| mappings of this frame are libc-family (C1000000: PGI 0) or heap-family VAs -> separates
+| "shared file page wrongly mapped into the victim's heap VA" from "anon page clobbered".
+	lea	Lsg_nd,%a1
+	movel	%a1@(20),%sp@-		| p3
+	movel	%a1@(16),%sp@-		| n3
+	movel	%a1@(12),%sp@-		| p2
+	movel	%a1@(8),%sp@-		| n2
+	movel	%a1@(4),%sp@-		| p1
+	movel	%a1@,%sp@-		| n1
+	movel	Lsg_a0v,%sp@-		| a0 = the faulting heap cell VA
+	pea	Lsg_nd_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(36),%sp
+| SEGVVN -- the crash page's vnode identity: v_flag (bit 0x40 = VISSWAP -> swap device,
+| else file), v_op (compare offline vs ufs_vnodeops/spec_vnodeops nm), v_type (1=VREG file,
+| 3=VBLK/4=VCHR device), v_pages.  Settles file-vs-swap for the p_vnode!=0 off=0 identity.
+| Gated: the vnode pointer must land in kvseg (0x4xxxxxxx) to deref.
+	movel	Lsg_ppv,%d0
+	beqw	Lsg_nopp
+	moveal	%d0,%a1
+	movel	%a1@(4),%d3		| p_vnode
+	movel	%d3,%d0
+	andil	&0xf0000000,%d0
+	cmpil	&0x40000000,%d0
+	bnew	Lsg_nopp		| vnode not a kvseg pointer -> skip
+	moveal	%d3,%a1
+	movel	%a1@(20),%sp@-		| v_pages
+	movel	%a1@(24),%sp@-		| v_type (enum: 1=VREG, 3=VBLK, 4=VCHR)
+	movel	%a1@(8),%sp@-		| v_op
+	moveq	&0,%d0
+	movew	%a1@,%d0
+	movel	%d0,%sp@-		| v_flag (0x40 = VISSWAP)
+	movel	%d3,%sp@-		| vn
+	pea	Lsg_vn_msg
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(28),%sp
