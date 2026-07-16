@@ -1,5 +1,19 @@
 # ISSUE-10 free-time reverse-map invariant probe — implementation spec
 
+> **STATUS 2026-07-16 (SUPERSEDED as the primary lead):** the chain-II question was answered
+> instead by a *victim-context* probe (`DBG SEGVCHAIN` in `prototypes/sigkill_dbg.s`, commit
+> `744cd65`), which is cheaper (fires only on the crash, in the victim's context) than this
+> free-time all-AS/kernel-tree scan. It measured **`in=1`** — the victim's live PTE IS in the
+> freed page's `p_mapping` chain — so **chain-II "missing-live-entry" is REFUTED and the
+> reverse map is intact.** The real root is a **DOUBLE-REGISTERED frame** (a file vnode-cache
+> page that is also a live user-anon page); see `ISSUE-10-CHAIN-II-030-MAP.md` and
+> `KNOWN-ISSUES.md`. A free-time probe like this one could still be useful later to catch the
+> double-registration at `page_get`/`page_free` (check the returned page has no `p_vnode` AND
+> no live user PTE), but the `p_mapping==0` gate below is the WRONG gate — the chain is
+> non-empty in the real bug. Kept for reference / possible repurposing.
+
+
+
 **Purpose:** catch the ISSUE-10 stale-PTE page-reuse bug *opportunistically at free
 time*, without needing the userspace crash to manifest. Directly verifies the invariant
 `page_abort`/`page_free` rely on: **when `p_mapping == 0`, no live PTE may still map this

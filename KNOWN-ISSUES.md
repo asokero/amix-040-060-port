@@ -814,6 +814,46 @@ pageout LRU ref-bit sampling regardless of ISSUE-10) but is NOT the ISSUE-10 fix
 `test-tools/issue10-hatpagesync-negative-260718.txt`. **Next: the page_get free-list-reuse probe
 (chain-II direct test) — still the decisive instrument.**
 
+**★ hat_exec steal REFUTED 2026-07-15 (audit #1, commit 79c1faa, build 260715-20).** No-op
+`hat_exec` (prototypes/hat_exec040.s, 6e56ee0 — removes the flag-0 steal path + NULL-panic) boots
+clean but the 4-burst repro reproduces IDENTICALLY (same pp=400AA2C0, 4AFC005F, `\x7fELF`). hat_exec's
+steal is NOT the producer. No-op KEPT as Codex `HAT-EXEC-POLICY` safety hardening, not the fix.
+Evidence `test-tools/issue10-noexec-negative-260715.txt`.
+
+**★★★ SEGVCHAIN PROBE + ROOT REFRAMED 2026-07-16 (commit 744cd65, build 260715-22) — chain-II
+REFUTED; it is a DOUBLE-REGISTERED frame.** Added a victim-context reverse-map probe to
+`prototypes/sigkill_dbg.s`: on a SIGSEGV whose saved-a0 URP walk reaches a resident leaf (the sh-heap
+morphology), after SEGVDMP/SEGVPP it walks `pp->p_mapping` and prints `DBG SEGVCHAIN cnt in head vpte
+hpte` — `in` = whether the victim's own leaf-PTE address is in the chain. Verified apples-to-apples
+(chain stores PHYS `&leaf`, `hat040.s:461` links `%a4` from `%urp`); all derefs phys-gated + cap 16;
+cap-split (Lsg_n=8 resident-leaf / Lsg_bn=4 bail) so an init crash-loop can't flood/drain. Two runs
+first escalated to /sbin/init control-flow corruption (`C0800084 PC:E`, walk-bails → no data); a
+grind run then landed the sh-heap morphology and the probe fired 8×:
+- **`in=1` in ALL rows** (incl. `vpte!=head`, so the chain was genuinely walked) → **the victim's
+  live-040 PTE IS in the freed page's chain. The "missing-live-entry" chain-II hypothesis is
+  REFUTED; the reverse map is INTACT.**
+- SEGVPP: the frame has **`p_vnode!=0 off=0`** (a file's first page = the ELF header behind
+  `\x7fELF`) **and** the victim's user-anon heap PTE in its chain, `hpte=…00D` = live-040 PTE. Two
+  page_ts (`400A8F88`/vn=`40121658`, `400A9FF0`/vn=`40120EE8`).
+
+**⇒ ROOT: a DOUBLE-REGISTERED frame** — one physical frame is concurrently a **file vnode-cache
+page** (`p_vnode`/`p_offset` set) and a **user-anon heap page** (live PTE, intact chain). It reached
+page reuse / a vnode disk-read while a live user-anon mapping still owned it — a page-allocation /
+vnode-cache-lifetime fault (ISSUE-5/6 phys double-use), **not** a `hat_pageunload`/`p_mapping` fault.
+This retires the chain-II suspect list (hat_ptalloc alias, VA-vs-page GC, cpusha) as the primary
+line. Evidence `test-tools/issue10-segvchain-260716.txt`, `issue10-initmorph-260716.txt`.
+
+**NEXT (source-first, delegatable to Fable): page/vnode lifetime audit.** How does one page_t end up
+both vnode-hashed and user-anon-mapped? (A) a vnode-cache page freed to the free list without
+clearing `p_vnode`, then `page_get` hands it to anon; (B) a live user-anon page handed to
+`page_get`/`vnode-getpage` for the disk read (sets `p_vnode`, reads the ELF over it). `page_free`/
+`page_abort` panic on `p_mapping!=0` and the chain is intact here, so the frame reaches reuse by a
+path bypassing that gate, or `hat_pteload` linked the victim PTE only after the vnode read. Audit
+`page_get`/`page_free` free-list + `page_lookup`/vnode hash lifetime; Codex `PAGE-ABORT-FREE-CONTRACT`,
+`VOP-GETPAGE-PAGEIN-CONTRACT`, `SEGMAP-HAT-STALE-WINDOW-AUDIT`, `ANON-SWAP-PAGEIN-CONTRACT`. The
+SEGVCHAIN/SEGVPP probe stays as the live confirmator (grind full 6-cp pressure to land the sh-heap
+morphology; ~1 in 3 runs, the rest hit the non-walkable init morphology).
+
 **★ AMIXADM TRIGGER RETESTED 2026-07-15 (evening) — the 2026-07-10 deterministic trigger NO
 LONGER FIRES on 260715-12.** Ran the original deterministic use case (`/usr/amiga/bin/amixadm`,
 the interactive-menu sh script whose malloc free-list walk faulted) directly: bare run,
