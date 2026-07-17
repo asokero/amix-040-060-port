@@ -640,6 +640,31 @@ P = [
  # maps, ~4KB+16KB waste per pool; flip the whole 8+-site set later if memory
  # matters).  kvm_init's sptalloc caller 0x48e7e already passes 4KB clicks
  # (0x48e64/0x48e6a flipped in Tier 0).  bp_mapin/bp_mapout already 4KB (dmapio).
+ # --- segvn FAULT path (2026-07-17, ISSUE-10 ROOT CAUSE): segvn_fault/faultpage/faulta
+ # were NEVER converted (zero sites above cover 0xac01a-0xac8f8) while every neighbour
+ # (create/extend/dup/unmap/free/softunlock) and anonmap_alloc were -> the fault path
+ # indexed 4KB-granular anon/vpage arrays with 2KB indices and stepped its multi-page
+ # loop by 0x800.  Effect (proven live, test-tools/issue10-offbypage-260717.txt): under
+ # multi-page faults (pressure/readahead) a file page lands at the WRONG VA / wrong anon
+ # slot -- content is exactly one page off (off=0x4000 content at the VA whose legit
+ # content is off 0x2000).  Single-page faults were unaffected => boots fine, corrupts
+ # under load.  Sites audited one by one from the disasm (segvn_fault_full.dis):
+ (0xac13e, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_faultpage:anon_getpage plsz 0x800"),
+ (0xac4fe, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff", "segvn_fault:vpage-array npages round"),
+ (0xac504, b"\x76\x0b", b"\x76\x0c", "segvn_fault:vpage-array npages >>11"),
+ (0xac52e, b"\x76\x0b", b"\x76\x0c", "segvn_fault:(addr-s_base)>>11 anon/vpage idx"),
+ (0xac59a, b"\x76\x0b", b"\x76\x0c", "segvn_fault:pl[] count len>>11"),
+ (0xac5d4, b"\x0c\xae\x00\x00\x08\x00", b"\x0c\xae\x00\x00\x10\x00", "segvn_fault:single-vs-cluster len<=2048 gate"),
+ (0xac726, b"\x06\x82\x00\x00\x08\x00", b"\x06\x82\x00\x00\x10\x00", "segvn_fault:loop addr += 0x800"),
+ (0xac72c, b"\x06\x85\x00\x00\x08\x00", b"\x06\x85\x00\x00\x10\x00", "segvn_fault:loop off += 0x800"),
+ (0xac778, b"\x76\x0b", b"\x76\x0c", "segvn_fault:cluster (p_offset-off)>>11 vpage idx"),
+ (0xac868, b"\x74\x0b", b"\x74\x0c", "segvn_faulta:(addr-s_base)>>11 anon idx"),
+ (0xac8c2, b"\x48\x78\x08\x00", b"\x48\x78\x10\x00", "segvn_faulta:VOP_GETPAGE len 0x800"),
+ # NOT flipped in the fault group (audited): 0xac58a/0xac5b8 16KB pl-cap (valid either
+ # way); 0xac638 is a pea (a4,d0.l) extension word, not a constant; segvn_unload
+ # 0xac922+, setprot/checkprot/getprot 0xaca06-0xacce0, segvn_kluster 0xacd80/86 and
+ # segvn_swapout 0xace4c/98 are separate paths -- audit later (kluster only affects
+ # readahead COUNT, not placement, once 0xac778 is correct).
 ]
 # pea-800 sites DELIBERATELY NOT flipped (triaged 2026-07-03): 0xdbbe/0xdd58/0x20c60/0x20c9c
 # (ngeteblk/allocb buffer sizes -- STREAMS/block semantics, not page), 0xee3e/0xee90 (bbmem
