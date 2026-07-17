@@ -724,11 +724,14 @@ hat_pteload:
 	cmpil	&8,%d0
 	bccw	Lptl_pass		| cap reached -> zero-cost pass-through
 	movel	%fp@(12),%d2		| va
-	cmpil	&0x80000000,%d2		| user range only (run 260717-02: the chain's illegal
-	bcsw	Lptl_pass		|  nodes are PGI-0 = VA 0x80000000, BELOW the old floor!)
+	cmpil	&0x80000000,%d2
+	bcsw	Lptl_pass		| kernel range -> pass
 	movel	%d2,%d0
 	andil	&0xfffff000,%d0
-	cmpil	&0x80002000,%d0		| va page == 0x80002000 = the LEGIT AMIX ELF text base
+	cmpil	&0x80000000,%d0		| va page 0x80000000 = LEGIT exec-header map (AT_PHDR --
+	beqw	Lptl_pass		|  boot run 260717-03: every exec loads file-off-0 there,
+					|  incl. the very pages the victims later fault on)
+	cmpil	&0x80002000,%d0		| va page 0x80002000 = LEGIT AMIX ELF text base
 	beqw	Lptl_pass		|  (boot run 260717-01: 5 distinct vnodes map off-0 there)
 	cmpil	&0xc0000000,%d2
 	bccw	Lptl_pass		| libc/shared-lib range -> legit
