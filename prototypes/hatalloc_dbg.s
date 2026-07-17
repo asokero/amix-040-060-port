@@ -724,8 +724,12 @@ hat_pteload:
 	cmpil	&8,%d0
 	bccw	Lptl_pass		| cap reached -> zero-cost pass-through
 	movel	%fp@(12),%d2		| va
-	cmpil	&0x80003000,%d2		| (boot run 260717-01: va=80002000 is the LEGIT AMIX
-	bcsw	Lptl_pass		|  ELF text base for file off 0 -- exclude it too)
+	cmpil	&0x80000000,%d2		| user range only (run 260717-02: the chain's illegal
+	bcsw	Lptl_pass		|  nodes are PGI-0 = VA 0x80000000, BELOW the old floor!)
+	movel	%d2,%d0
+	andil	&0xfffff000,%d0
+	cmpil	&0x80002000,%d0		| va page == 0x80002000 = the LEGIT AMIX ELF text base
+	beqw	Lptl_pass		|  (boot run 260717-01: 5 distinct vnodes map off-0 there)
 	cmpil	&0xc0000000,%d2
 	bccw	Lptl_pass		| libc/shared-lib range -> legit
 	movel	%fp@(16),%d0		| pp
@@ -770,4 +774,69 @@ Lptl_pass:
 	moveml	%sp@+,%d2/%a2
 	unlk	%fp
 	jmp	hat_pteload_orig
+
+| ---------------------------------------------------------------------------
+| page_hashin WRAPPER (2026-07-17, ISSUE-10 producer hunt, direction B).  If the file
+| identity (vp, off) is hashed onto a frame that STILL HAS live mappings
+| (pp->p_mapping != 0), the vnode side is claiming a frame some AS still maps -- the
+| other way the double-registration can arise (hat_pteload's PTLFILE0 covers direction
+| A: file page loaded into an illegal VA).  Log pp/vp/off/p_mapping + 3-deep caller
+| chain.  Cap 8.  page_hashin(pp@8, vp@12, offset@16, lock@20) -- vanilla 0xb02ac.
+	.balign 4
+	.data
+	.even
+Lphi_n:
+	.long	0
+Lphi_msg:
+	.asciz	"DBG HASHINMAP pp=%x vn=%x off=%x map=%x c1=%x c2=%x c3=%x"
+	.even
+	.balign 4
+	.text
+	.globl	page_hashin
+page_hashin:
+	linkw	%fp,&0
+	moveml	%d2/%a2,%sp@-
+	movel	Lphi_n,%d0
+	cmpil	&8,%d0
+	bccw	Lphi_pass
+	movel	%fp@(8),%d0		| pp
+	moveal	%d0,%a2
+	andil	&0xf0000000,%d0
+	cmpil	&0x40000000,%d0
+	bnew	Lphi_pass		| pp not kvseg -> skip inspection
+	tstl	%a2@(32)		| p_mapping != 0 = live mappings at hashin time?
+	beqw	Lphi_pass
+	addql	&1,Lphi_n
+| caller chain (gated, as in PTLFILE0)
+	moveq	&0,%d2			| c2
+	moveq	&0,%d1			| c3
+	movel	%fp@(0),%d0
+	moveal	%d0,%a2
+	andil	&0xf0000000,%d0
+	cmpil	&0x40000000,%d0
+	bnew	Lphi_c0
+	movel	%a2@(4),%d2
+	movel	%a2@(0),%d0
+	moveal	%d0,%a2
+	andil	&0xf0000000,%d0
+	cmpil	&0x40000000,%d0
+	bnew	Lphi_c0
+	movel	%a2@(4),%d1
+Lphi_c0:
+	movel	%d1,%sp@-		| c3
+	movel	%d2,%sp@-		| c2
+	movel	%fp@(4),%sp@-		| c1
+	moveal	%fp@(8),%a2
+	movel	%a2@(32),%sp@-		| p_mapping
+	movel	%fp@(16),%sp@-		| off
+	movel	%fp@(12),%sp@-		| vn
+	movel	%a2,%sp@-		| pp
+	pea	Lphi_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(36),%sp
+Lphi_pass:
+	moveml	%sp@+,%d2/%a2
+	unlk	%fp
+	jmp	page_hashin_orig
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
