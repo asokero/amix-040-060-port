@@ -1,0 +1,19 @@
+ISSUE-10 LAPIMURTO (build 260717-04, repro 2026-07-17): FILE PAGE MAPPED AT THE WRONG VA -- off-by-a-page
+
+SEGVDMP p0=4EB98000 cm4=4E5E4E75 c0=4E56FFF0 = 68k CODE (jsr/unlk;rts/linkw) -- the page holds machine code
+SEGVPP  pp=40098890 vn=40139E68 off=4000  = the file's offset-0x4000 page
+SEGVND  a0=8000405C = the fault walked VA page 0x80004000
+
+INVARIANT BROKEN: text base 0x80002000 <-> file off 0 => VA 0x80004000 SHOULD hold off 0x2000,
+but the mapped page has p_offset=0x4000 => content is one 4K page (two 2K pages) OFF.
+Explains ALL prior morphologies (ELF header/.dynstr at heap-looking VAs, SIGILL family, init PC
+corruption) as neighbour-page content. Model-B 2KB<->4KB offset-translation residue in the
+segvn/segmap fault path. PTLFILE0 missed it (p_offset==0 gate); HASHINMAP=0; DOUBLE-LIVE=0.
+
+--- raw ---
+WARNING: DBG SEGVDMP p0=4EB98000 p4=7BE0DEFC cm4=4E5E4E75 c0=4E56FFF0 c4=2F022D79 c8=8001612C
+WARNING: DBG SEGVPP pp=40098890 flg=200 vn=40139E68 off=4000 map=9721010 uown=0
+WARNING: DBG SEGVND a0=8000405C n1=9721010 p1=996500D n2=9785010 p2=996500D n3=0 p3=0
+WARNING: DBG SEGVDMP p0=4EB98000 p4=7BE0DEFC cm4=404E5E4E c0=754E56FF c4=F02F022D c8=79800161
+WARNING: DBG SEGVPP pp=40098890 flg=200 vn=40139E68 off=4000 map=9785010 uown=0
+WARNING: DBG SEGVND a0=8000405B n1=9785010 p1=996500D n2=0 p2=0 n3=0 p3=0
