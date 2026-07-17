@@ -1,0 +1,14 @@
+ISSUE-10: segvn-fault-konversio (11 sitea, 260717-05/-06) EI YKSIN korjaa -- repro toistui
+
+4-burst repro fix-buildilla: sama 4AFC005F sh-heap-morfologia (~3.3 min). Uhrin malloc-HEAD
+(bss) sisalsi 0x8000091B (AT_PHDR-header-sivu) -> 'linkki' 4AFC005F = header-binaaritavuja.
+=> sh:n DATA/BSS-sivun SISALTO korruptoituu edelleen jollain toisella polulla (kirjoitus
+framen phys-muistiin; PTL/HASH/LIVE-probet 0 = ei mappaus/identiteettitapahtumaa).
+Fault-patchit JAAVAT (aito off-by-page-vika todistettu issue10-offbypage-260717.txt);
+kaato tuli hieman myohemmin muttei merkitsevasti.
+
+WARNING: DBG SEGVDMP p0=7F454C46 p4=1020100 cm4=64736574 c0=726561 c4=64006D61 c8=6C6C6F63
+WARNING: DBG SEGVPP pp=400A9FF0 flg=200 vn=40120EE8 off=0 map=963C000 uown=0
+WARNING: DBG SEGVND a0=8000091B n1=963C000 p1=9E0D00D n2=91D5000 p2=9E0D005 n3=98C6000 p3=9E0D005
+WARNING: DBG SEGVVN vn=40120EE8 vflg=0 vop=80E55C0 vtyp=1 vpgs=400A9A8C
+WARNING: DBG SEGVDMP p0=7F454C46 p4=1020100 cm4=65786974 c0=5F786D c4=6B6E6F64 c8=777269
