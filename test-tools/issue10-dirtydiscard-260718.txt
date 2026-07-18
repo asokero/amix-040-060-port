@@ -1,0 +1,101 @@
+ISSUE-10 TUOTTAJA LOYDETTY: hat_pageunload040 hukkaa M-bitin -> likaiset anon-sivut
+discardataan swap-kirjoituksetta (2026-07-18 ilta, build 260717-06, emu-040)
+
+TUTKIMUSKETJU (kaikki live-mittauksia IPC READ_MEM:lla, tyokalut test-tools/kvwalk.py +
+scratchpad ppwalk.py/mon8.py):
+
+1. KVSEG-ALIAS PURETTU LAILLISEKSI: VA 0x404F2000 leaf-PTE = 0x09E19001 (= sh:n
+   "dataframe") loytyi LIVE -- mutta pfn 0x9E19:n page_t (pp VA 0x400AA2C0, sama
+   deterministinen pp kuin 15.7. smoking-gunissa!) kertoi: p_vnode=0x4012D7B8
+   (v_op == ufs_vnodeops, v_type=VREG), p_offset=0x1E000, p_mapping = TASAN yksi
+   solmu = kvseg-leaf 0x9CDC0C8. Eli "copyin kernel-puskuriin" = SEGMAP-ikkuna,
+   write(2)-polku UFS-tiedostoon (utmp/sac-lokia). KMA/STREAMS-double-backing
+   -kehys KUMOTTU: kirjanpito oli laillinen -- frame oli KIERRATETTY sh:lta
+   tiedostosivuksi. sh:n leaf (g_shdataleaf 0x9E1C040) = 0, ja sh:n koko
+   leaf-taulusivu 0x9E1C000 oli MYOS kierratetty (sisalto ASCII-lokitekstia).
+
+2. SWAPADD 2x -BUGI VAHVISTETTU LIVENA (uusi, erillinen): swapinfo: partitio
+   100.0 MiB = 25600 4K-sivua, mutta si_anon-slotteja 51199 (suhde 2.000),
+   si_npgs=0xC800. Syy: swapadd 0xb3242 `pages = (eoff-soff)>>11` + soff/eoff
+   pyoristys 2K:hon (0xb3224/28 andiw #-2048). swap_xlate/swap_anon (patchattu
+   <<12/>>12) ovat oikein -> alle 25600 slotin kaytolla ei rikkoudu, mutta
+   ani_max/availsmem tuplana + ylivuoto partition ohi jos >100MB swapataan.
+
+3. SWAP-LEVYTUTKIMUS: golden-imagen swapissa sh:n .dynamic-signature 2x
+   in-page-offsetilla 0xE60 (po. 0x660) = kokonaiset sivut 2K-parittomissa
+   kohdissa (idx<<11-aikakauden jaamia, ARKEOLOGIAA). RATKAISEVA HAVAINTO:
+   live-swap == golden-swap TAVULLEEN koko bootin ajan (0 muuttunutta MB) --
+   VAIKKA sh:n likainen data-sivu (GOT-relokaatiot kirjoitettu = varmasti dirty)
+   varastettiin ja kierratettiin. Likainen sivu katosi ILMAN swap-kirjoitusta.
+
+4. LAHDEKOODITODISTUS (3b2 seg_vn.c segvn_swapout): sivut tulevat swapoutiin JO
+   unloadattuina ("Find pages unmapped by our caller"; `if (p_mapping) continue`),
+   hat_pagesync ei loyda enaa mitaan harvestoitavaa, ja paatos on
+   `if (pp->p_mod && pp->p_vnode) VOP_PUTPAGE(...B_FREE) else page_free` --
+   koko dirty-paatos lepaa UNLOAD-hetken M-harvestin varassa. MUTTA
+   hat_pageunload040 (hat040.s Lpu_loop) tekee pelkan `clrl %a3@` -- EI harvestoi
+   U/M:aa pp:hen. (Vrt. hat_pagesync040, joka harvestoi oikein -- sen keraamat
+   p_mod=1:t selittavat miksi OSA sivuista sentaan kirjoittui swapiin.)
+
+5. DYNAAMINEN VAHVISTUS (pressure.sh klo 22:58, mon8.py): kaatuminen ~30 s.
+   poll01: copyin (lcilloop) kirjoittaa lokitekstia segmapin lapi 0x9E19xxx:aan.
+   poll02: **PC 0x080D7C32 = Lpu_loop+0xe = hat_pageunload040:n clrl** nollaa
+   watchatun leafin = steal kameralla. poll03: lcopyout (lcolloop) kirjoittaa
+   sigtoproc-pinoa USER-pino-VA:han 0xC011D03C jonka kaannos osuu frameen
+   0x9E19000 = LIVE double-use (pinosivu + utmp-sivu samassa framessa).
+   bus: 2 -> 2723 -> 6492 -> 11568 (lopulta 54847); swapdiff_MB: 2 -> 4 -> 4 -> 4
+   (PLATOAA vaikka tuhansia kuolemia = valtaosa likaisista discardattu).
+   Serial: "User BUS ERROR at 4AFC005F PC:C1012100 FAULT:6 CMD:sh pressure.sh" +
+   "CMD:cp /payload.bin /press5.bin" = klassinen ISSUE-10-morfologia.
+
+MEKANISMI KOKONAISUUDESSAAN: paine -> pageout/swapout varastaa idlaavien
+prosessien (sh:t odottamassa cp-lapsiaan, init) sivuja -> hat_pageunload040
+nollaa PTE:t ja HUKKAA M-bitin -> skannauksen jalkeen kirjoitetut sivut (heapit,
+PINOT) nayttavat puhtailta -> page_free ILMAN swap-kirjoitusta -> frame
+kierratetaan (tiedostosivuksi tms.) -> omistajan refault lukee KIRJOITTAMATTOMAN
+swap-slotin roskaa -> malloc-head roskaa -> deref 4AFC005F -> BUS ERROR ->
+signaalitoimitus roskapinoon (lcopyout-havainnot) -> lumivyory.
+
+FIX (build 260718-02/-03): hat040.s hat_pageunload -- U/M-harvest pp:hen ennen
+clrl:aa (bittipaikat identtiset hat_pagesync040:n kanssa, joka on todistetusti
+oikein). Hyvaksymistesti: sama pressure-sykli uudella kernelilla -- odotus:
+swapdiff kasvaa, bus=0, PRESSURE-DONE + oikeat summat.
+
+JATKOT (kirjattava KNOWN-ISSUESiin):
+- swapadd 2x (kohta 2) -- oma patch-settinsa (pages>>12 + 4K-pyoristykset).
+- hat_swapout: stock-030-body taynna 030-PTE-bittioperaatioita (bit0-invalidointi,
+  bit2-flappays) + >>11-indeksit + 0x800-stridet + 0x20000-tauluhypyt, ajaa
+  ptdat-koneistolla (todennakoisesti inertti 040:lla kuten pagesyncin vanha
+  flush-polku -- auditoitava: jos EI inertti, se sotkee elavia 040-tauluja).
+- g_shdatabase-rekisteroija ei lauennut telnet-loginin sh:sta (monisivufaultin
+  alkuosoite ikkunan ulkopuolella?) -- tiedoksi tuleville probeille.
+
+HYVAKSYMISAJO build 260718-03 (klo 23:24, sama pressure-sykli):
+  poll: bus 0 -> 2 -> 2 -> 1487 -> 3715 (lopulta 17089); swapdiff_MB 0 -> 1 -> 1 -> 1 -> 4
+  VERDIKTI: fix on VALTTAMATON MUTTEI RIITTAVA.
+  + Swap-KIRJOITUKSET ALKOIVAT (ennen: 0 tavua koko bootissa) ja SIJOITTUVAT OIKEIN:
+    tuoreet sh .dynamic -sivukuvat sloteissa 52 ja 553 in-page-offsetilla 0x660 (4K-oikein);
+    2K-siirtyneet loydokset molemmat arkeologiaa (golden-identtisia).
+  + Lumivyory VIIVASTYI ~45-60 s (ennen: bus 2723 jo 15 s kohdalla).
+  - MUTTA vyory tuli silti: ensin paine-sh:n heap-korruptio (sama PC C1012100, roska
+    615861B5), sitten massakuolema JUURI kun swap-liikenne kasvoi (poll04: swapdiff 1->4MB
+    JA bus 2->1487 samassa ikkunassa) -> jaljella oleva tuottaja on kuumana nyt ensi
+    kertaa elavalla SWAP-IN-polulla (spec-getpage-ketjua ei ole koskaan validoitu kuumana:
+    swap-lukuja ei tapahtunut ennen tata fixia!).
+
+JALJELLA OLEVAN TUOTTAJAN EPAILTYLISTA (staattinen skannaus, 2K-jaamat swap-in-ketjussa):
+  spec_getpage+0x48  addil #0x7ff  (EOF-raja s_size+PAGEOFFSET -- 2K-slack)
+  spec_getpage+0xb4  cmpil #0x800  (len<=PAGESIZE-portti: 4K-fault -> pvn_getpages-reitti;
+                     pvn_getpages on konvertoitu, joten reititys ehka harmiton -- AUDITOI)
+  anon_getpage+0xfe  pea #0x800    (VOP_GETPAGE len -- reitittyy 0x800<=0x800 ->
+                     spec_getapage, joka lukee tayden sivun -> ehka harmiton -- KONVERTOI silti)
+  anon_private+0x1f2 pea #0x800    (hat_unload len -- unload kavelee 4K-sivuittain -> harmiton)
+  segvn_lockop+0x192/+0x246, segmap_faulta+0x72: pea #0x800 (softlock/readahead, kylmempia)
+  hat_swapout: 5x addil #0x800 + 6x moveq#11 + 030-PTE-bittiopit (orl#4/andl#-5/andl#-2
+    vaariin indekseihin >>11) -- JOS ptdat-koneisto ei ole inertti, sotkee elavia tauluja.
+  spec_getapage (konvertoitu 903210c, 35 patchia) -- EI KOSKAAN validoitu kuumana: #1-epailty.
+POST-MORTEM in-core-vs-levy -vertailu (kaatunut kone): 2 sivua taysin samaa, 5 taysin eri
+(= likaisia ei-viela-kirjoitettuja, odotettua), MUTTA pfn 09636: yksi probe tasmaa levyyn
+XOR-0x800-offsetilla ja pfn 0972F tasmaa vain keskiosin -> 2K-sekoittumisen hajua
+LUKUPUOLELLA; ei puhdas todiste. SEURAAVA SESSIO: kontrolloitu swap-roundtrip-testi
+(tunnettu sivu -> pakotettu swapout -> refault -> sisaltovertailu) + spec_getapage-auditti.

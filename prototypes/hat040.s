@@ -654,6 +654,17 @@ Lhu_done:
 | walker reloads the invalid descriptor and the next access faults & re-maps.  CONSERVATIVE: does
 | NOT free the now-emptier leaf tables or adjust as->a_rss (a bounded leak / soft-count drift, same
 | philosophy as hat_free040) -- correctness (no stale resident PTE on a freed page) comes first.
+|
+| 2026-07-18 ISSUE-10 PRODUCER FIX: harvest each PTE's HW U/M bits into pp->p_ref/p_mod BEFORE
+| invalidating (SVR4 vm_hat.c contract; hat_pagesync040 mirrors the same bit layout).  Unload is
+| the LAST moment the HW-maintained M bit is readable: checkpage's steal and segvn_swapout's
+| dirty-vs-clean decision (3b2 seg_vn.c: pages arrive here ALREADY unloaded, hat_pagesync finds an
+| empty chain, then `if (p_mod) VOP_PUTPAGE else page_free`) both depend on p_mod surviving the
+| unload.  Without the harvest, any anon page written AFTER the last pagesync scan (heaps, stacks)
+| was freed as "clean" with NO swap write -> the owner's refault read a never-written swap slot ->
+| garbage heap/stack -> the 4AFC005F bus-error avalanche.  Proven live on emu-040 (memwatch: the
+| steal's PTE clear = Lpu_loop+0xe; swap partition byte-diff vs golden stayed ~0 while thousands of
+| processes died; evidence test-tools/issue10-dirtydiscard-260718.txt).
 | Args: arg@8 = pp.  Returns void.
 	.globl	hat_pageunload
 hat_pageunload:
@@ -666,6 +677,19 @@ Lpu_loop:
 	beqw	Lpu_done
 	moveal	%d2,%a3			| a3 = &PTE (current)
 	movel	%a3@(256),%d3		| d3 = next = *(pte + NPGPT*4)  (reverse-map chain)
+|	--- harvest U/M -> pp->p_ref/p_mod before the invalidate (bit layout = hat_pagesync040,
+|	    verbatim from the stock disasm: p_ref = pp bit-offset 6, p_mod = bit-offset 5;
+|	    PTE U = low-byte bit3 0x08 -> bf-offset 4, M = bit4 0x10 -> bf-offset 3).
+|	    An invalid/zero node contributes 0 bits -> the OR is harmless. ---
+	lea	%a3@(3),%a0		| a0 = &PTE low byte (U/M live here)
+	bfextu	%a2@{&6:&1},%d0
+	bfextu	%a0@{&4:&1},%d1
+	orl	%d1,%d0
+	bfins	%d0,%a2@{&6:&1}		| pp->p_ref |= PTE U
+	bfextu	%a2@{&5:&1},%d0
+	bfextu	%a0@{&3:&1},%d1
+	orl	%d1,%d0
+	bfins	%d0,%a2@{&5:&1}		| pp->p_mod |= PTE M
 	clrl	%a3@			| *pte = 0 -> 040 leaf descriptor INVALID (UDT=0)
 	movel	%d3,%d2			| advance to next mapping
 	braw	Lpu_loop

@@ -1393,3 +1393,35 @@ segvn fault-path Model-B conversion (11 sites, REAL bug, base 260717-05 — part
 SEGVND/SEGVVN/PTLFILE0/HASHINMAP/LIVE-STALE probes (AT_PHDR page 0x80000000 + text base 0x80002000
 identified as LEGIT off-0 homes). **NEXT: at hit time, walk the kvseg leaf for 0x404F2000 via IPC
 READ_MEM (who mapped it, what pfn) + audit the kmem_alloc/sptalloc page-translation path.**
+
+**★★★ ISSUE-10 PRODUCER FOUND AND FIXED 2026-07-18 EVE — hat_pageunload040 dropped the M bit:
+dirty anon pages were freed WITHOUT their swap write (dirty-discard).** The kvseg-leaf walk
+planned above was executed live (test-tools/kvwalk.py + IPC READ_MEM) and REFUTED the KMA
+double-backing framing: VA 0x404F2000's leaf → pfn 0x9E19 was a LEGAL segmap window over a UFS
+VREG page (p_vnode=ufs_vnodeops vnode, off 0x1E000, p_mapping = exactly the segmap leaf) — the
+"copyin into a kernel buffer" was write(2) appending to a utmp/sac log file whose cache page had
+LEGALLY been given sh's recycled data frame. The real question became: why was sh's DIRTY data
+frame (GOT relocations written at exec) recycled with the swap partition BYTE-IDENTICAL to the
+golden image (zero swap writes all boot)? Source proof (3b2 seg_vn.c segvn_swapout): pages reach
+swapout ALREADY unloaded, hat_pagesync then finds an empty chain, and the decision is
+`if (p_mod) VOP_PUTPAGE else page_free` — the whole dirty decision rests on the M bit harvested
+AT UNLOAD TIME. Our hat_pageunload040 (hat040.s Lpu_loop) did a bare `clrl %a3@` with NO U/M
+harvest into pp->p_ref/p_mod (hat_pagesync040 harvests correctly — its sticky p_mod explains the
+few pages that DID reach swap). Dynamic confirmation on camera (mon8.py, pressure run 22:58):
+memwatch caught PC 0x080D7C32 = Lpu_loop+0xe clearing the watched leaf during the steal; bus
+errors 2→2723→6492→11568 while swap-diff-vs-golden PLATEAUED at 4 MB; serial showed the classic
+`User BUS ERROR at 4AFC005F ... CMD:sh pressure.sh`; lcopyout (sigtoproc sigcontext push) was
+observed writing to user stack VA 0xC011D03C whose translation hit the shared frame = live
+double-use of a stack page and the utmp file page. Full chain + mechanism:
+test-tools/issue10-dirtydiscard-260718.txt. FIX (build 260718-02 base / -03 dbg): U/M harvest
+added to hat_pageunload040 before the invalidate (bit layout identical to hat_pagesync040).
+
+Landed en route (same session): swapadd 2× slot over-allocation CONFIRMED LIVE (si_anon 51199
+slots for a 25600-page 100 MiB partition; swapadd 0xb3242 `>>11` + 2K soff/eoff rounding
+0xb3224/28 unconverted — xlate/anon already 4K ⇒ harmless below 25600 in-use slots, ani_max/
+availsmem doubled, overflow past the partition if >100 MB ever swapped: patch as its own set).
+hat_swapout audited statically: stock 030 body (030 PTE bit ops, >>11 leaf indices, 0x800 strides,
+0x20000 table hops) running against the ptdat machinery — likely INERT on 040 (same class as
+hat_pagesync's retired flush path) but MUST be audited: if it ever walks live 040 tables it
+corrupts them. Golden image's swap area contains ARCHAEOLOGICAL 2K-placed page images (pre-xlate-
+patch era) — do not mistake them for fresh evidence (bit us tonight; golden-vs-live diff settles it).
