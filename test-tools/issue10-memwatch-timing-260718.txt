@@ -1,0 +1,18 @@
+ISSUE-10 memwatch-uusinta TIHEALLA pollauksella (2026-07-18, build 260717-06)
+
+Pollit 1-15 (15 s valein, koko repro-paine): mwhits=0 -- EI yhtaan kernel-kirjoitusta
+sh:n datasivulle 0x9E19000. Poll 16: mwhits=32 JA crash=3475 SAMASSA ikkunassa.
+=> lcopyout-kirjoitus (PC 0x080005C6) ja kaatuminen ovat SAMA TAPAHTUMA.
+
+Sisalto = kernelin pinokehyksia sigtoproc-ketjun ympärilta (0x40001Exx-framet,
+paluuosoitteet 0x0803E8C2/0x0801937C/0x08047538/0x0804858C) + page_t-osoitteita
+(0x4024F000, 0x402B6724). Kirjoitus sekventiaalinen 0x9E19080->0x9E190FC.
+
+TULKINTA (paras): signaalitoimituksen kirjoitus user-'pinoon' jonka SP/kaannos on
+roskaa -> osuu sh:n datasivun frameen = korruption LEVIAMISMEKANISMI (kaatuva
+prosessi -> sendsig roska-USP -> sh:n data tuhoutuu -> sh kaatuu -> lumivyory).
+Alkusyy (mika korruptoi ensimmaisen USP:n/kaannoksen) viela auki.
+
+SEURAAVA: laajenna mwlog tallentamaan kohde-USER-VA (a1) + lcopyoutin kutsujan
+paluuosoite kernel-pinosta -> kuka kutsui (sendsig? u_trap-polku?) ja mille VA:lle;
+korreloi uhri-PID serialin BUS ERROR -riveihin samassa ikkunassa.
