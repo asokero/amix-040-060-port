@@ -1,0 +1,8 @@
+ISSUE-10 memwatch-jahti (Amiberry IPC SET_MEMWATCH/GET_MEMWATCH_LOG, 2026-07-18)
+Watch: sh:n datasivu phys 0x9E19000 (g_shdatabase, sama kuin ptalloc-DOUBLE eilen).
+SAALIS: 32/32 osumaa PC=0x080005C6 = lcopyout-kopiosilmukka (movesl a1@+, DFC=1).
+Sekventiaalinen kirjoitus 0x9E19088->0x9E19104, sisalto = KERNEL-PINOA (kvseg-framet
+0x40001Exx, paluuosoitteet ml. 0x804858C=sigtoproc-kutsu) => sendsig/sigcontext-tyylinen
+kernel->user-pinokopio jonka KOHDE-VA:n kaannos osui sh:n datasivuframeen.
+Yon yli -ajo => ei aikaleimaa; laillinen kierratys vs korruptio ratkeaa uusinta-ajolla
+(mon6 pollaa 15 s valein). Tyokalu committoitu amiberry-puuhun (debug.cpp+ipc_socket).
