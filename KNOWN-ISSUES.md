@@ -1378,3 +1378,18 @@ not `[2]` -> a half-built compat table would produce a second fixed-u PTE with f
 fail the segu_get/swapinub call. Both are hardening items on the (now base-linked)
 runtime040.s resume + the segu wrappers; instrument only if a matching failure
 signature ever appears.
+
+**★★★ MEMWATCH-JAHTI 2026-07-18 (ba99d82+66c8cff) — CURRENT FRONTIER, supersedes the probe plans
+above.** Added an IPC-driven silent memwatch to Amiberry (SET_MEMWATCH/GET_MEMWATCH_LOG; kernel-PC-only
+ring, no halt; v2 also logs A1=dest / A0=src regs). Watching sh's data frame (phys 0x9E19000,
+deterministic every boot; g_shdatabase runtime @ 0x08000000+.textsize+nm-offset): **timing NAILED,
+reproduced 2x — zero kernel writes during the whole pressure run, then the write burst AND the crash in
+the SAME 15 s window.** v2 flipped the picture: the writer is **COPYIN (user->kernel, PC 0x0800054A)
+into a KERNEL kvseg buffer 0x404F2xxx** (content = sac/inetd config "inet/tcp/PM10/PM40") **whose
+VA->phys translation resolves to sh's data frame** => a kvseg leaf PTE holds the WRONG PFN = KMA/STREAMS
+buffer double-backing (ISSUE-5/6 family; Codex round-2 residual "KMA pool double-backing" now PRIME).
+Evidence: test-tools/issue10-memwatch-{lcopyout,timing,copyin}-260718.txt. Also landed en route:
+segvn fault-path Model-B conversion (11 sites, REAL bug, base 260717-05 — partial fix) and the
+SEGVND/SEGVVN/PTLFILE0/HASHINMAP/LIVE-STALE probes (AT_PHDR page 0x80000000 + text base 0x80002000
+identified as LEGIT off-0 homes). **NEXT: at hit time, walk the kvseg leaf for 0x404F2000 via IPC
+READ_MEM (who mapped it, what pfn) + audit the kmem_alloc/sptalloc page-translation path.**

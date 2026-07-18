@@ -1,5 +1,8 @@
 # ISSUE-10 chain (II): source-first PTE-registration audit + retained-030 code map
 
+> **STATUS 2026-07-18: sections below are historical trail. Current frontier = the memwatch
+> hunt in KNOWN-ISSUES.md (kvseg buffer PTE holds wrong PFN; KMA double-backing PRIME).**
+
 **2026-07-15 night.** After the reliable repro + smoking gun (disk-read ELF reuse,
 `b5e856a`) and the hat_pagesync040 test that ruled out chain (I) (`81779a3`), this maps
 where chain (II) lives, grounded in the Codex `amix-kernel-analysis/vm-map/` audits
