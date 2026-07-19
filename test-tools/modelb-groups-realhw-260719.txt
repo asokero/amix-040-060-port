@@ -71,3 +71,11 @@ levylla asti myos uusien ryhmien kanssa -- paketti A:n kohta 6 -regressio LAPI.
 PAKETTI B KOKONAAN AJETTU. Lopullinen verdikti: kaikki 4 Model-B-ryhmaa
 real-HW-hyvaksytty taydella listalla (probet + churn + pressure + burst4-kesto +
 ISSUE-22-jahti 5x0 + disk-truth + kmem-ENXIO + osm 0 bus).
+
+EMU-060-REGRESSIO (roadmap kohta 1; sama ilta, dual-CPU dbg 260719-16, banneri
+"68060-260719-16"): swapls PAGES 25600 FREE 24865; BIGARGV PASS x3; MINCORE PASS
+(8 vec-tavua + EINVAL 22); hat_dup_cow 64 RESULT PASS; burst4 ALLBURSTS-DONE
+24/24 sum 1570 8192 (~5 min, sama nopea profiili kuin 040 = ryhma-3 toimii myos
+060-polulla); 0 BUS ERROR, 0 4AFC005F, swapdiff-vs-golden 0->5 MB.
+=> Kaikki 4 Model-B-ryhmaa + ISSUE-23-serialfiksi regressoitu myos 060:lla.
+Molemmat CPU:t katettu emulla; 040 lisaksi real-HW:lla. Real-060 odottaa rautaa.

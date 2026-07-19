@@ -26,7 +26,8 @@
 > ISSUE-23 (serdbg TBE-race — FIKSATTU+HW-VERIFIED samana iltana, dbg -16/quiet -17, evidenssi issue23-serialfix-260719.txt) + ISSUE-24 (init-6-limbo, rc6-userland;
 > pehmoreboot = `reboot`). Automaattiboot unix-040:lle konfiguroitu. ISSUE-21 2/~9 boottia.
 > **SOVITTU SUUNTA (pohdintasessio 2026-07-19 ilta, IC-tuplauksen jälkeen — Dhrystone 11538/s):**
-> 1. **Emu-060-regressio** illan 4 Model-B-ryhmälle (halpa, sulkee aukon; dual-CPU-binääri on jo sama).
+> 1. ✅ **Emu-060-regressio TEHTY** (sama ilta, 68060-260719-16): probet + hat_dup_cow + burst4
+>    24/24 puhtaat, 0 bus / 0 4AFC, swapdiff 0→5 MB — molemmat CPU:t katettu emulla.
 > 2. **Yhtenäiskernel + dbg_flags** (= basen lokisiivous samalla): kaikki DBG-printit + clock_sampler
 >    + serdbg-peili `dbg_flags`-globaalin taakse; unix_boot pokettaa symbolin (parsii symtabin jo
 >    relokoidessaan) parametrista/näppäimestä → yksi binääri, debug valitaan bootissa. Poistaa
