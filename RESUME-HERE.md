@@ -25,7 +25,20 @@
 > ENXIO, osm 0 bus. Evidenssi test-tools/modelb-groups-realhw-260719.txt. UUDET:
 > ISSUE-23 (serdbg TBE-race — FIKSATTU+HW-VERIFIED samana iltana, dbg -16/quiet -17, evidenssi issue23-serialfix-260719.txt) + ISSUE-24 (init-6-limbo, rc6-userland;
 > pehmoreboot = `reboot`). Automaattiboot unix-040:lle konfiguroitu. ISSUE-21 2/~9 boottia.
-> **SEURAAVAKSI:** segdev+mmap-perimetri (Z3-portti) ja caches Step B (real-HW).
+> **SOVITTU SUUNTA (pohdintasessio 2026-07-19 ilta, IC-tuplauksen jälkeen — Dhrystone 11538/s):**
+> 1. **Emu-060-regressio** illan 4 Model-B-ryhmälle (halpa, sulkee aukon; dual-CPU-binääri on jo sama).
+> 2. **Yhtenäiskernel + dbg_flags** (= basen lokisiivous samalla): kaikki DBG-printit + clock_sampler
+>    + serdbg-peili `dbg_flags`-globaalin taakse; unix_boot pokettaa symbolin (parsii symtabin jo
+>    relokoidessaan) parametrista/näppäimestä → yksi binääri, debug valitaan bootissa. Poistaa
+>    kernelinvaihtokitkan ennen rautakampanjoita.
+> 3. **CM-bittipolku + DTT0-kavennus + segdev-auditti** — speksi ensin (Codex-tyyli), emu-savutestit;
+>    vaiheistus: tarrat cache-off (no-op-portti) → DC writethrough → copyback. Kolme hiljaista riskiä
+>    speksattava auki: laiteluokittelu, DMA-cpusha-polut (SDMAC), sivutaulujen koherenssi (040-walker
+>    lukee RAMia välimuistin ohi → PTE-kirjoitusten cpushl). Sama esityö palvelee DC:tä JA Z3:a.
+> 4. **Seuraava rautasessio: caches Step B** valmiilla spekseillä + hyväksyntäpaketilla (burst4 +
+>    hat_dup_cow + virtakatkaisu-disk-truth = DMA-koherenssin tappajatesti).
+> 5. **Z3-bringup + >16 Mt RAM** CM-bittien päälle (iso-RAM omana juonteenaan); **real-060** kun
+>    rauta saatavilla.
 
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-19)
 
