@@ -1452,6 +1452,21 @@ Lreplace (hat040.s) now harvests the OLD PTE's U/M into old_pp before a differen
 (same block as the hat_pageunload harvest; done regardless of the reverse-map unlink outcome) —
 was the one remaining unconditional HAT-side dirty-loss site.
 
+**★ MODEL-B-JÄÄNNÖSRYHMÄT LANDATTU 2026-07-19-ilta (Codex-speksit, analyysirepo cbbf40f
+vm-map/): kaikki 4 ryhmää emu-hyväksytty erikseen + yhdessä.** (1) swapadd-geometria
+(1475e16, `patch_swapgeom.py`, 12 sitea / 5 funktiota — yllä oleva "patch as its own set"
+-merkintä TEHTY; slottimäärä todistettu swapctl SC_LIST -probella `test-tools/swapls.c`:
+PAGES 25600, ei 51199-tuplausta). (2) exec_initialstk+extractarg (7f8ac6e,
+`patch_execstk.py`, 0x800→0x1000 symtab-resolvoitu + jaettu shift 11→12; hyväksyntä
+`test-tools/bigargv.c` = 4500 B argv execin yli tavuntarkasti ×3). (3) pageout-oletukset
+(7f36144, `patch_pageoutdefs.py`: lotsfree 128→64 / desfree 50→25 / minfree 16→8 =
+dokumentoidut TAVUkynnykset 4K-sivuina + vmmeter UPIO-fold 2→1 nelänä nop:ina —
+**burst4-thrash 8 min/bursti → 1,4 min/bursti**, freemem-129-jäätymä poissa). (4) mincore
+(9c4139c, `patch_mincore.py`: btoc-vektori + PAGEOFFSET-portti @0x585e2, joka speksissä
+jäi auki — varmistettu 3b2 grow.c:523:sta; hyväksyntä `test-tools/mincoretst.c`: tasan 8
+vec-tavua + EINVAL 2K-kohdistuksesta). Buildit 260719-04…-15; joka ryhmällä hat_dup_cow
+64 PASS, 0 bus-virhettä, 0 4AFC005F:ää. JÄLJELLÄ: real-HW-verify-delta (REALHW-VERIFY-tyyli).
+
 ## ISSUE-20: stock hat_swapout = MIINA jos prosessi-swapout koskaan palautetaan
 
 **DEFERRED BY POLICY — do NOT fix, do NOT re-enable (Codex UM-BIT-LIFECYCLE-CENSUS.md +

@@ -1,3 +1,27 @@
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-19 ilta)
+
+> ## ✅ 2026-07-19 ilta — MODEL-B-JÄÄNNÖSRYHMÄT: KAIKKI 4 CODEX-SPEKSIÄ LANDATTU (emu-hyväksytty per ryhmä)
+> Neljä erillistä committia, jokainen oma patch + oma emu-hyväksyntä (buildit 260719-04…-15):
+> **(1) swapadd-geometria** (1475e16, `patch_swapgeom.py` 12 sitea / 5 fn) — slottimäärä
+> todistettu uudella `test-tools/swapls.c`-probella (swapctl SC_LIST): **PAGES 25600** (ei
+> 51199-tuplausta); burst4 24/24 summaa, swapdiff 0→5 MB. **(2) exec_initialstk+extractarg**
+> (7f8ac6e, `patch_execstk.py`) — .data-init symtab-resolvoitu 0x800→0x1000 + jaettu shift
+> 11→12 (yksi moveq syöttää btoc/ctob/64-sivuryhmän); hyväksyntä `test-tools/bigargv.c`:
+> 4500 B argv execin yli tavuntarkasti ×3. **(3) pageout-oletukset** (7f36144,
+> `patch_pageoutdefs.py`) — lotsfree 128→64, desfree 50→25, minfree 16→8 (dokumentoidut
+> tavukynnykset 4K-sivuina), fastscan*PAGESIZE-shift, vmmeter UPIO-fold 2→1 (4× asll#1→nop);
+> **HEADLINE: burst4-thrash 8 min/bursti → 1,4 min/bursti** — freemem-129-jäätymä poissa,
+> täsmälleen ennustettu vaikutus. **(4) mincore** (9c4139c, `patch_mincore.py`) — btoc-vektori
+> + PAGEOFFSET-portti @0x585e2 (speksin avoin kysymys ratkaistu 3b2 grow.c:523:sta);
+> hyväksyntä `test-tools/mincoretst.c`: tasan 8 vec-tavua, sentinel-häntä ehjä, EINVAL 22
+> 2K-kohdistuksesta. Joka ryhmällä hat_dup_cow 64 PASS; koko illassa 0 bus-virhettä, 0
+> 4AFC005F:ää. EI koskettu (policy): tune-kentät, pages_pp_maximum, swap_maxcontig,
+> fastscan=200, segdev/SHM/memcntl.
+>
+> **SEURAAVAKSI:** real-HW-verify-delta (nämä 4 ryhmää + ISSUE-22-jahti kylmä-boot→pressure-
+> toistoilla samalla käynnillä; REALHW-VERIFY-260719.md-tyyli), sitten segdev+mmap-perimetri
+> (Z3-portti) ja caches Step B (real-HW).
+
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-19)
 
 > ## 🏆 2026-07-19 — ISSUE-10 SULJETTU EMU+REAL-HW; BARE BASE HYVÄKSYTTY ITSENÄISESTI
