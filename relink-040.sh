@@ -263,6 +263,9 @@ python3 "$HERE/prototypes/patch_execstk.py" "$OUT" | tail -2
 echo "[*] Model B pageout-policy defaults (SETUPCLOCK-VMETER-PATCH-SPEC.md: lotsfree/desfree/minfree + vmmeter UPIO fold)"
 python3 "$HERE/prototypes/patch_pageoutdefs.py" "$OUT" | tail -2
 
+echo "[*] Model B mincore vector (MINCORE-VECTOR-PATCH-SPEC.md: btoc + alignment gate; 0x40000 chunk unchanged)"
+python3 "$HERE/prototypes/patch_mincore.py" "$OUT" | tail -2
+
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/prototypes/patch_framesz060.py" "$OUT"
 
