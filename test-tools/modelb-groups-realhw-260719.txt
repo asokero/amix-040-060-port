@@ -60,3 +60,14 @@ ISSUE-22-JAHTI (sama ilta, bare base 260719-13, kylma boot -> valiton pressure):
   init 6 jaa runlevel-6-limboon (rc6-userland; manuaali-reboot limbosta toimii =
   kernel-uadmin OK). Kayttaja konfiguroi automaattibootin unix-040:lle (reset
   riittaa jatkossa, ei nappailyja).
+
+VIRTAKATKAISU-DISK-TRUTH (paketin viimeinen kohta, sama ilta): syklin 6 press-
+tiedostot (6 x 4 MiB) levylla ~15 min -> VIRTA POIS -> boot (ISSUE-21 osui: musta
+ruutu unix_bootin jalkeen, soft reset -> retry; illan tilasto 2 osumaa / ~9 boottia)
+-> fsck -> automaattinen reboot -> login -13. sum /press1..6.bin LEVYLTA:
+1570 8192 x6 TAYDELLISTA. Model-B-pfn-kirjoitukset osuvat oikeisiin lohkoihin
+levylla asti myos uusien ryhmien kanssa -- paketti A:n kohta 6 -regressio LAPI.
+
+PAKETTI B KOKONAAN AJETTU. Lopullinen verdikti: kaikki 4 Model-B-ryhmaa
+real-HW-hyvaksytty taydella listalla (probet + churn + pressure + burst4-kesto +
+ISSUE-22-jahti 5x0 + disk-truth + kmem-ENXIO + osm 0 bus).
