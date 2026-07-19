@@ -501,6 +501,25 @@ Lreplace:
 	mulsl	%d3,%d0
 	moveal	pages,%a0
 	addal	%d0,%a0			| a0 = old_pp
+|	--- 2026-07-19 ISSUE-10: harvest the OLD PTE's HW U/M bits into old_pp BEFORE the
+|	    different-PFN overwrite destroys them (same contract + bit layout as the
+|	    hat_pageunload harvest below: p_ref = pp bf-offset 6, p_mod = bf-offset 5;
+|	    PTE U = low-byte bit3 0x08 -> bf-offset 4, M = bit4 0x10 -> bf-offset 3).
+|	    Without this an in-slot replacement of a dirty mapping left old_pp->p_mod=0 ->
+|	    the old page could later be classified clean and freed with NO swap write
+|	    (Codex UM-BIT-LIFECYCLE-CENSUS.md: the one remaining unconditional HAT-side
+|	    dirty-loss site).  Done regardless of the unlink search outcome: the PTE
+|	    provably mapped this pfn, so the attribution is correct even if the
+|	    reverse-map node is missing. ---
+	lea	%a4@(3),%a1		| a1 = &old PTE low byte (U/M live here)
+	bfextu	%a0@{&6:&1},%d0
+	bfextu	%a1@{&4:&1},%d1
+	orl	%d1,%d0
+	bfins	%d0,%a0@{&6:&1}		| old_pp->p_ref |= old PTE U
+	bfextu	%a0@{&5:&1},%d0
+	bfextu	%a1@{&3:&1},%d1
+	orl	%d1,%d0
+	bfins	%d0,%a0@{&5:&1}		| old_pp->p_mod |= old PTE M
 	lea	%a0@(32),%a1		| a1 = &old_pp->p_mapping (list head slot)
 	movel	&256,%d3		| findmap safety counter
 Lrp_find:

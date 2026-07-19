@@ -251,6 +251,9 @@ python3 "$HERE/prototypes/patch_modelb_pager.py" "$OUT" | tail -3
 echo "[*] Model B writeback/putpage conversion (WRITEBACK-TASK.md; WRITEBACK_GROUPS=spec,pvn,ufs,callers)"
 python3 "$HERE/prototypes/patch_writeback.py" "$OUT" | tail -3
 
+echo "[*] Model B block-swap page-IN conversion (ISSUE-10: klustsize 0x800 data init + residuals)"
+python3 "$HERE/prototypes/patch_swapin.py" "$OUT" | tail -6
+
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/prototypes/patch_framesz060.py" "$OUT"
 

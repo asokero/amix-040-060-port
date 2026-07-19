@@ -1425,3 +1425,42 @@ hat_swapout audited statically: stock 030 body (030 PTE bit ops, >>11 leaf indic
 hat_pagesync's retired flush path) but MUST be audited: if it ever walks live 040 tables it
 corrupts them. Golden image's swap area contains ARCHAEOLOGICAL 2K-placed page images (pre-xlate-
 patch era) — do not mistake them for fresh evidence (bit us tonight; golden-vs-live diff settles it).
+
+**★★ ISSUE-10 SWAP-IN-POLKU KORJATTU 2026-07-19 (Codex 7739bf6: SPEC-SWAPIN-HOT-PATH-AUDIT.md +
+UM-BIT-LIFECYCLE-CENSUS.md).** The 260718-03 M-harvest made swap WRITES start; the avalanche then
+moved to the first-ever-hot swap-IN path. Census of ALL klustsize readers (6 relocs: spec_getapage
+×5 @0x66cc2/66e76/66e82/66eb8/66eca, spec_putpage ×1 @0x6733e; no writers): the decisive defect was
+the compiled DATA initializer `int klustsize = 0x800` (.data+0x7c98) — spec_getapage read 2 KiB into
+each freshly allocated 4 KiB page and EXPLICITLY ZEROED bytes 0x800..0xfff (destructive tail zero),
+so every swapped-in anon page lost its upper half. FIX = `prototypes/patch_swapin.py` (in
+relink-040.sh after the writeback group): klustsize data-init 0x800→0x1000 (resolved from the
+symtab, old-byte-asserted) + the coordinated contract residuals from the same audit — spec_getpage
+EOF allowance 0x6711a 0x7ff→0xfff, direct-provider gate 0x67186 0x800→0x1000, anon_getpage
+VOP_GETPAGE len 0xad9a6 pea 0x800→0x1000, pvn_fail per-node step 0xb1a28 0x800→0x1000. With the
+global at 0x1000 all six reader sites become source-correct (blkoff/blksz, read-ahead off2,
+putpage offlo/offhi klustering); io_len&0xfff==0 skips the pagezero. **HYVÄKSYTTY EMULLA
+2026-07-19 (build 260719-02): burst4 = 4×pressure ALLBURSTS-DONE, sum 1570 8192 ×6 joka
+burstissa, 0 uutta bus-virhettä, swapdiff-vs-golden 0→5 MB, EI YHTÄKÄÄN 4AFC005F:ää —
+vyöry kuollut; hat_dup_cow 64 RESULT PASS; implisiittiset anon-swap-roundtripit 4 kierrosta.
+Matkalla 2 false alarmia = AMIX tftp:n NETASCII-oletusmoodi söi tavuja binääreistä (AINA
+'binary' ennen get:iä!); burst-3:n näennäisjumi = laillista thrashia (live-diagnoosi:
+practive/wchan-kävely + loaderin COMMON-allokoinnin simulaatio). Täysi kirjaus
+test-tools/issue10-swapin-fix-260719.txt. JÄLJELLÄ: real-HW-verify.** Checked same pass:
+swap_maxcontig (.data+0xb544 = 0x200) left alone — sole reader is swap_alloc's area-rotation
+policy counter, a no-op with one swap area. ALSO FIXED (UM-census finding #2): hat_pteload::
+Lreplace (hat040.s) now harvests the OLD PTE's U/M into old_pp before a different-PFN overwrite
+(same block as the hat_pageunload harvest; done regardless of the reverse-map unlink outcome) —
+was the one remaining unconditional HAT-side dirty-loss site.
+
+## ISSUE-20: stock hat_swapout = MIINA jos prosessi-swapout koskaan palautetaan
+
+**DEFERRED BY POLICY — do NOT fix, do NOT re-enable (Codex UM-BIT-LIFECYCLE-CENSUS.md +
+HAT-SWAPOUT-AUDIT.md).** The linked `hat_swapout` 0xb4360 is the stock 030 body: 030 PTE bit
+ops, >>11 leaf indices, 0x800 strides, 0x20000 table hops against the retired ptdat machinery,
+and U/M-incorrect for the live 040 tree. It is currently UNREACHABLE: runtime040.s `sched` is a
+deliberate swtch-only loop and never calls `swapout()` (the only static route is swapout →
+as_swapout → hat_swapout). THE MINE: any future re-enabling of process swapout (restoring stock
+sched or calling swapout directly) would run this body against live 040 tables — best case inert
+030-tree reads, worst case corrupted live tables + silent dirty loss. Precondition for ever
+re-enabling: a native hat_swapout040 (or an explicit no-op policy) + segu/u-area swap-out
+validation. Until then sched STAYS overridden.

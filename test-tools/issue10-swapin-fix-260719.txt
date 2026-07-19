@@ -1,0 +1,87 @@
+ISSUE-10 SWAP-IN-POLKU KORJATTU + HYVAKSYTTY EMULLA: klustsize 0x800 -datainit oli
+vyoryn viimeinen tuottaja (2026-07-19 yo, buildit 260719-01 base / 260719-02 dbg, emu-040)
+
+LAHTOTILANNE: 260718-03:n hat_pageunload M-harvest oli valttamaton muttei riittava --
+swap-kirjoitukset alkoivat, mutta vyory syttyi heti kun swap-IN-liikenne alkoi.
+Codex-auditit (analyysirepo 7739bf6): SPEC-SWAPIN-HOT-PATH-AUDIT.md nimesi klustsizen,
+UM-BIT-LIFECYCLE-CENSUS.md nimesi hat_pteload::Lreplacen.
+
+KORJAUS 1 -- klustsize-census + Model B swap-in -ryhma (prototypes/patch_swapin.py):
+  Census: klustsize-lukijoita TASAN 6 (relokit, vanilla==build): spec_getapage x5
+  (0x66cc2 adj_klustsize, 0x66e76/82/b8/ca read-ahead), spec_putpage x1 (0x6733e
+  offlo/offhi-klusterointi). EI kirjoittajia. Kaikki 6 muuttuvat lahde-oikeiksi kun
+  globaali on 0x1000 (3b2: KLUSTSIZE = PAGESIZE).
+  Mekanismi: spec_getapage luki 2 KiB tuoreeseen 4 KiB-sivuun ja NOLLASI tavut
+  0x800..0xFFF (destructive tail zero, pagezero-kutsu 0x66e0a) -> JOKAINEN swap-in
+  menetti ylapuoliskonsa -> heap/pino-roskaa -> 4AFC005F-vyory heti swap-inien alettua.
+  Patchit (old-byte-assertit, klustsize symtab-resolvoitu):
+    .data klustsize            00000800 -> 00001000   (ratkaiseva)
+    0x6711a spec_getpage EOF   #0x7ff  -> #0xfff
+    0x67186 spec_getpage gate  #0x800  -> #0x1000     (len<=PAGESIZE -> suora provider)
+    0xad9a6 anon_getpage len   pea 0x800 -> pea 0x1000 (VOP_GETPAGE = 1 taysi sivu)
+    0xb1a28 pvn_fail step      #0x800  -> #0x1000     (virhepolun tavulaskuri)
+  io_len=0x1000 -> xlen&0xFFF==0 -> pagezero ohitetaan. Read-ahead offsetit 4K-oikein.
+  swap_maxcontig (.data+0xb544=0x200) EI kosketa: ainoa lukija swap_allocin
+  aluerotaatiopolitiikka = no-op yhdella swap-alueella.
+
+KORJAUS 2 -- hat_pteload::Lreplace U/M-harvest (hat040.s):
+  Eri-PFN-korvaus teki unlink+ylikirjoituksen harvestoimatta vanhan PTE:n U/M:aa ->
+  likaisena korvattu sivu luokiteltiin myohemmin puhtaaksi (sama luokka kuin
+  pageunloadin dirty-discard). Lisatty identtinen harvest-blokki (p_ref bf6/p_mod bf5,
+  PTE U bf4/M bf3 low-bytessa) old_pp:n laskennan jalkeen, ENNEN unlink-hakua --
+  harvest tehdaan vaikka reverse-map-solmua ei loytyisi (PTE todistetusti mappasi
+  pfn:n). Disasm-varmistettu lopullisesta imagesta (0xd7ac2..0xd7ade).
+
+KIRJAUS 3 -- ISSUE-20 (KNOWN-ISSUES.md): stock hat_swapout = miina jos prosessi-
+  swapout palautetaan. EI korjata; sched-override pysyy.
+
+HYVAKSYMISAJO (emu-reset-boot 040, dbg 260719-02, tftp-staus, pressure+burst4):
+  boot -> login: puhdas, 0 bus. pressure run: PRESSURE-DONE, 6/6 kopiota TAVUNTARKKOJA,
+  ei vyorya. burst4.sh: BURST-1..4 KAIKKI sum 1570 8192 x6, ALLBURSTS-DONE, 0 uutta
+  bus-virhetta, swapdiff-vs-golden 0 -> 5 MB (kasvaa = swap-kirjoitukset oikein).
+  hat_dup_cow 64: RESULT PASS (solo + jokaisen pressuren sisalla).
+  4AFC005F: EI YHTAKAAN koko sessiossa. Vyory on kuollut -- ensimmainen kerta kun
+  jarjestelma selviaa kestopaineesta kuuman swap-in-polun kanssa.
+  Implisiittinen swap-roundtrip: aiempien burstien idlaavat sh:t menettivat anon-
+  sivunsa varkaisiin ja refaultasivat ne swapista joka burstissa -- banneritulostukset
+  ja summat pysyivat oikeina 4 kierrosta = anon-roundtrip toimii.
+
+FALSE ALARMIT MATKALLA (TARKEA TYOKALU-GOTCHA -- TFTP NETASCII):
+  1. Ekan pressuren summat 1557 8192 x6 (po. 1570): AMIX tftp-client oletusmoodi on
+     NETASCII -> \r\0->\r ja \r\n->\n poistivat payload.binista TASAN 2 tavua
+     (0x1A01FF: 0x00, 0x1A15FE: 0x0D; kokonaissumman delta 13 = 0x00+0x0D tasmasi).
+     Paikannus: itsedokumentoiva payload (OFF<offset>-markkerit) + binaarihaku
+     512B-palasummilla (pieces*.sh) + hdf-raakaskannaus hostilla (sisalto siirtynyt
+     1 tavun, hannassa 2). Kopiokoneisto oli koko ajan TAVUNTARKKA lahteeseensa.
+  2. hat_dup_cow kaatui deterministisesti (FFFFFFF0, PC C1012142, 3x): SAMA syy --
+     binaarissa 2x \r\0 -> netascii soi 2 tavua -> koodi siirtyi. Binary-moodilla
+     haettu binaari: RESULT PASS valittomasti.
+  SAANTO JATKOSSA: tftp-stauksessa AINA 'binary' ennen get:eja. sum-referenssit:
+  payload.bin 1570 8192, hat_dup_cow 8071 tavua.
+
+BURST-3:N "JUMI" -DIAGNOOSI (livena, uusi menetelma -- EI ollut jumi):
+  Burst-3 kesti ~10 min (norm. ~1.5 min): konsoli+serial hiljaa, levykirjoitukset
+  tauolla, freemem jaatynyt 129 sivuun. Diagnosoitu ajossa IPC READ_MEM:lla:
+  practive-ketjukavelijaa (p_wchan=+28 varmistettu sleep():n disasmista, p_next=+276
+  pid_assignista, sizeof(proc)=0x128) + LOADERIN COMMON-ALLOKOINNIN OFFLINE-SIMULAATIO
+  (unix_boot rel.c allocbss: symtab-jarjestys, st_value=alignment) -> jokaisen
+  COMMON-symbolin runtime-osoite ilman IPC:ta (validointi: freemem/availsmem/runin/
+  sptmap 4/4). Tulos: 26 procia, 25 SSLEEP 1 SRUN; nukkujat normaaleilla kanavilla
+  (pollwait x10, tty, wait(2), 5x buf/page-kanavaa, fsflush omassa tickissa, pageout
+  omalla kanavallaan odottamassa heratysta) -> ei deadlockia, laillinen thrash:
+  freemem tasan pageout-kynnyksen paalla, 4x ylikirjattu paine etenee I/O-tahdilla.
+  Burst-3 ja -4 valmistuivat oikein. Tyokalut talteen: practive-walk + common-sim
+  (taman tiedoston menetelmakuvaus riittaa rekonstruktioon).
+
+SIVULOYDOKSET:
+  - segmap-map DBG: poff-arvot nyt 4K-rajaisia, pfn:t vaihtuvat tervesti.
+  - hardbus XPAGE addr=80000FFE -toistoja (n=3..B boottien yli): crossing-luvun
+    replay toimii, mutta taajuus kasvaa paineessa -- seurattava, ei akuutti.
+  - ptalloc DOUBLE / DOUBLE-STALE -probet: sh:n leaf-kierratys laillinen (ennallaan).
+
+BUILDIT: base 260719-01, dbg 260719-02. relink-040.sh ajaa patch_swapin.py:n
+writeback-ryhman jalkeen; dbg/quiet perivat basen. KVWALK_TEXTSIZE=0xdd0d0 (dbg).
+
+SEURAAVAKSI: real-HW-040-verifypaketti (pressure+burst4, writeback disk-truth,
+crash(1M) re-run, UFS-geometria, caches Step A writeback-verify) -- ks.
+REALHW-VERIFY-260719.md.
