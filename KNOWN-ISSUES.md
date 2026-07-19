@@ -1515,3 +1515,17 @@ resoluutio rinnakkaisessa paineessa) jonka dbg-instrumentoinnin viive peittää;
 kylmään page-cacheen. JAHTIRESEPTI: toista kylmä-boot→välitön pressure -sykliä basella;
 jos toistuu, lisää minimaalinen EFAULT-latch (u_error==EFAULT && syscall==read →
 latchaa faultannut VA+PC) baseen. Kirjattu test-tools/issue10-realhw-verify-260719.txt.
+
+## ISSUE-23: serdbg serial-merkkikato 9600:lla — juurisyy löydetty, fiksi DEFERRED
+**OPEN (kirjattu 2026-07-19 ilta; fiksi sovittu tehtäväksi myöhemmin).** Real-HW:lla serial
+pudottaa merkkejä dbg-floodissa (9584647:n sivulöydös). Juurisyy luettu `prototypes/serdbg.s`:stä:
+`serdbg_putc` kirjoittaa `SERDAT ← merkki` ENSIN ja odottaa TBE:tä (SERDATR 0x2000) vasta
+jälkeen, ILMAN keskeytyssuojaa. conputc-hookkia kutsutaan sekä prosessi- että
+KESKEYTYSKONTEKSTISTA (dbg clock_sampler!) → TBE-odotusikkunaan (~1 ms/merkki @9600) osuva
+keskeytyksen putc YLIKIRJOITTAA SERDAT-puskurin ennen siirtoa shift-rekisteriin = hiljainen
+merkkikato. Emu ei näytä tätä koskaan: Amiberryn serial-TCP ei mallinna baud-ajoitusta (ikkuna=0).
+FIKSI (kun tehdään): (1) odota TBE ENNEN kirjoitusta + lyhyt IPL7-maski odotus+kirjoituksen
+ympärille (max 1 merkkiaika; @115200 vain 87 µs); (2) valinnainen SERPER-nosto — PAL-arvot:
+19200=0xB8, 38400=0x5C, 57600=0x3D, 115200=0x1E (nyt 0x174=9600) — kapasiteetti 12× ja ikkuna
+kapenee, mutta EI yksin poista racea. HUOM: unix_boot040:n loader-diagit jäävät 9600:aan ellei
+nosteta molempia; vastaanottopää samaan nopeuteen. Verifiointi vain real-HW:lla.
