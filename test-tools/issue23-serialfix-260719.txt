@@ -1,0 +1,31 @@
+ISSUE-23 SERIAL-FIKSIN REAL-HW-VERIFY (2026-07-19 myohaisilta, A3000 + Mercury 040)
+
+FIKSI (commit: serdbg.s + serdbg_mark.s + mainmarks.s): kaikki 3 serial-
+kirjoittajaa (serdbg_putc, serdbg_mark, serdbg_hex x2 tiedostoa) -> SR talteen,
+IPL7-maski, bounded TBE-odotus ENNEN kirjoitusta (btst #5 SERDATR-ylatavuun =
+word-bitti 13), SERDAT-kirjoitus, SR-palautus. Nopeus pysyi 9600:ssa.
+Buildit: dbg 260719-16 (sum 45899 3041), quiet -17. Emu-regressio: boot+login+
+flood+hat_dup_cow 64 PASS (emu ei todista ajoitusta: TCP-serial, ikkuna=0).
+
+HW-MITTAUS: kayttajan serial-kaappaus /dev/ttyUSB0 9600 raw -> /tmp/amix-hw-fix.log
+talla koneella; boot -16 + login + hat_dup_cow 64 + pressure.sh (raskain dbg-flood,
+molemmat kontekstit kirjoittavat). 123 408 tavua aitoa 9600-kaappausta.
+
+ANALYYSI (seranalyze + kohdennettu interleave-metriikka):
+1. INTERLEAVE-TAPAHTUMAT (keskeytyksen C-token prosessikontekstin rivin SISALLA
+   = pre-fix-hukan tasmallinen mekanismi): 74 kpl -- jokainen nakyva C-token
+   TAYDELLINEN (27/27 merkkia), ymparoiva WARNING-teksti jatkuu ehjana.
+   Esim: 'WARNING: C00000001:0803E458:00002100 DBG ptload va=80800000 urp=8EEA000'
+2. Katkenneita sampler-muotoisia tokeneita: 0 koko kaappauksessa.
+3. Silputtuja WARNING-avainsanoja: 0 / 795 rivia.
+4. Aiemmat "broken"-kandidaatit varmistettiin vaariksi osumiksi (C07FFFxx =
+   exec-markerin user-osoitteet; va=C10xx800 = hat_dup_cow'n VA-argumentit).
+5. pressure 6/6 sum 1570 8192 myos -16:lla (regressio).
+
+VERDIKTI: merkkikatoa EI havaittavissa fiksin jalkeen raskaimmissakaan
+flood-olosuhteissa -> ISSUE-23 FIXED + REAL-HW-VERIFIED.
+Vertailu-baseline: pre-fix-HW-kaappausta ei ollut talteenotettuna; verify nojaa
+(a) mekanismin poistoon (atominen wait+write), (b) 74 selviytyneeseen
+interleave-tapahtumaan, (c) 0 katkosta 123 KB:ssa.
+SERPER-nosto (19200=0xB8 / 38400=0x5C / 57600=0x3D / 115200=0x1E PAL) jaa
+optioksi -- ei tarvetta nyt kun hukka on poissa.

@@ -1522,8 +1522,12 @@ kylmään page-cacheen. JAHTIRESEPTI: toista kylmä-boot→välitön pressure -s
 jos toistuu, lisää minimaalinen EFAULT-latch (u_error==EFAULT && syscall==read →
 latchaa faultannut VA+PC) baseen. Kirjattu test-tools/issue10-realhw-verify-260719.txt.
 
-## ISSUE-23: serdbg serial-merkkikato 9600:lla — FIKSATTU, real-HW-verify jäljellä
-**FIXED-PENDING-HW-VERIFY (fiksi 2026-07-19 myöhäisilta, buildit dbg 260719-16 /
+## ISSUE-23: serdbg serial-merkkikato 9600:lla — FIKSATTU + REAL-HW-VERIFIED
+**FIXED-HW-VERIFIED (2026-07-19 myöhäisilta): 123 KB aitoa 9600-kaappausta
+(boot+churn+pressure, dbg -16) → 74 interleave-tapahtumaa joissa keskeytys-token
+laskeutui prosessirivin sisään KAIKKI ehjinä, 0 katkennutta tokenia, 0 silputtua
+WARNING-riviä /795. Evidenssi test-tools/issue23-serialfix-260719.txt.**
+**(alkup. FIXED-PENDING-HW-VERIFY (fiksi 2026-07-19 myöhäisilta, buildit dbg 260719-16 /
 quiet -17; emu-regressio PASS: boot+login+serial-flood+hat_dup_cow 64).** Korjaus
 kaikkiin KOLMEEN kirjoittajaan (serdbg.s serdbg_putc; serdbg_mark.s + mainmarks.s
 serdbg_mark+serdbg_hex): SR talteen → IPL7-maski → bounded TBE-odotus ENNEN
