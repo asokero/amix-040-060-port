@@ -1487,3 +1487,16 @@ luuppi. SEURAAVA ASKEL kun tähän tartutaan: ktrap_latchin kenttien tarkka deco
 (f64/f76-semantiikka krnxmemflt040-kehyksestä) + serial-merkkikadon fixi jotta koko
 rekursioketju tallentuu; toistotilasto eri lämpötiloissa. Työkalu valmiina:
 serial2usb-kaappaus toimii nyt (stty 9600 raw + while-cat-luuppi | tee).
+
+## ISSUE-22: kertaluontoinen EFAULT (read: Bad address) paineessa bare basella (real-HW)
+
+**OPEN — 1 tapaus / 48 rinnakkais-cp:tä (2026-07-19 real-HW-verify, base 260719-01).**
+Ensimmäisessä bootin jälkeisessä pressure-ajossa yksi kuudesta `cp /payload.bin`
+-prosessista sai `read: Bad address` (EFAULT); /press6.bin jäi syntymättä. SIISTI
+epäonnistuminen: ei korruptiota (5 muuta tiedostoa + kaikki myöhemmät 3 pressurea ja
+burst4 24/24 summaa täydellisiä). dbg-kernelillä 0 tapausta koko sessiossa (6 kierrosta,
+emu+HW). Epäily: fault-polun harvinainen kilpailutilanne (copyout-puskurin faultin
+resoluutio rinnakkaisessa paineessa) jonka dbg-instrumentoinnin viive peittää; osui
+kylmään page-cacheen. JAHTIRESEPTI: toista kylmä-boot→välitön pressure -sykliä basella;
+jos toistuu, lisää minimaalinen EFAULT-latch (u_error==EFAULT && syscall==read →
+latchaa faultannut VA+PC) baseen. Kirjattu test-tools/issue10-realhw-verify-260719.txt.

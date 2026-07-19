@@ -1,0 +1,72 @@
+REAL-HW-VERIFY LAPI: ISSUE-10-korjaus + writeback + kmem-ENXIO + UFS-geometria + caches
+Step A vahvistettu A3000 + Mercury 68040:lla (2026-07-19 iltapaiva, buildit 260719-01/-02)
+
+KOKOONPANO: A3000 + Mercury 040, AMIX root SCSI c6d0s1 (UFS), swap c6d0s2 100 MiB.
+Kanavat: telnet 10.0.10.10 (ensisijainen; scratchpad real.py = emu.py + salasana) +
+serial2usb 9600 (panic-mustalaatikko; HUOM merkkikato, ks. sivulöydokset).
+Siirtotie: NFS nasu:Public/amix/hw260719 -- BINAARITURVALLINEN (payload 1570 8192,
+hat_dup_cow 18025 16 verifioitu molemmin puolin; ei tftp-netascii-riskia).
+
+AJOLISTA JA TULOKSET (REALHW-VERIFY-260719.md:n mukaan):
+
+1. Boot + login (dbg 260719-02): PUHDAS, 0 bus-virhetta serialissa.
+2. Staus-verifiointi: payload 1570 8192, hat_dup_cow 18025 16 seka NFS:lla etta /tmp:ssa.
+3. hat_dup_cow 64 solo: RESULT PASS (dense/sparse/table-boundary/isolation/fork+exec/
+   stress 64).
+4. pressure.sh (dbg): PRESSURE-DONE, sum 1570 8192 x6. Swap EI viela kaytossa (kone
+   ehti kirjoittaa levylle riittavan nopeasti / RAM riitti).
+5. burst4.sh (dbg): ALLBURSTS-DONE, sum 1570 8192 x6 KAIKISSA 4 burstissa, 0 bus-
+   virhetta, 0 panicia. SWAP KAVI KAYTOSSA kesken ajon (free 201500 -> 200492 -> 201500)
+   = swap-out JA swap-in -polut ajettiin korjatulla koodilla oikealla raudalla.
+   Syvan thrashin vaiheet (serial+telnet mykkia minuutteja) samat kuin emulla -- EI jumi.
+6. WRITEBACK DISK-TRUTH (virtakatkaisu): pressure ajettu loppuun -> ~1 min -> VIRTA
+   POIS kesken kaiken -> boot -> fsck -> sum LEVYLTA: /press1..6.bin 1570 8192 x6,
+   /msync_test.dat 32895 128 (= emu-referenssi tasmalleen), /payload.bin 1570 8192.
+   RAM tyhjeni katkossa = puhtaita levylukuja. Model-B-writeback kirjoittaa oikeat
+   blokit myos oikealla SCSI:lla. SULKEE writeback-ryhman viimeisen avoimen kohdan.
+7. msynctst: kaannos koneessa (cc) + MSYNC-OK sz=65536; cold-cache-summa kohta 6:ssa.
+8. dd if=/dev/kmem bs=4096 iseek=263974 (unmapattu 0x40326000): siisti "No such
+   device or address" (ENXIO), ei storm/panic -- ISSUE-13:n crash(1M)-luokan real-HW-
+   jaannosvahvistus TEHTY (odotti 2026-07-13 lahtien).
+9. UFS-GEOMETRIA fstyp -v: bsize 8192 / fsize 1024 / frag 8 -- REAL-HW VAHVISTETTU
+   (sulkee amix-root-fs-geometry-muistin aukon; mountfs >= 2048 -portin oletus pitaa).
+10. CACHES STEP A: koko sessio ajettiin IC paalla (CACR 0x8000 pstart040:ssa) --
+    kaikki yo. testit = Step A:n real-HW-writeback-verify implisiittisesti.
+
+VAIHE 6 -- BARE BASE unix-040 260719-01 ITSENAISESTI (pitkaan roikkunut kysymys):
+   Boot + login OK, hat_dup_cow 64 RESULT PASS, pressure 4 ajoa (3 puhdasta + 1
+   EFAULT-tapaus, ks. ISSUE-22), burst4: ALLBURSTS-DONE, 24/24 summaa 1570 8192,
+   0 EFAULTia. VERDIKTI: BASE ON ITSENAISESTI TOIMIVA JA HYVAKSYTTY RAUDALLA.
+
+UUDET LOYDOKSET (kirjattu KNOWN-ISSUES):
+  ISSUE-21 (kirjattu jo aiemmin tanaan): satunnainen boot-musta-ruutu ~1/4, ensimmainen
+    serial-evidenssi: kstack-rekursio 188 B kehyksin + LATCH1 f68=..7008 (fmt7/vec8
+    access error) @ f72=80DC830. Retry korjaa. EI blokkaa.
+  ISSUE-22: kertaluontoinen `cp: /payload.bin: read: Bad address` (EFAULT read(2):sta)
+    ENSIMMAISESSA bootin jalkeisessa paineajossa bare basella; 1 tapaus / 8 painekierrosta
+    (48 cp:ta) basella, 0 tapausta dbg:lla koko sessiossa (6 kierrosta). SIISTI
+    epaonnistuminen -- ei korruptiota (rinnakkaiset tiedostot taydellisia). Epaily:
+    fault-polun harvinainen kilpailu jonka dbg-instrumentoinnin viive peittaa;
+    huomaa myos etta tapaus osui kylmaan page-cacheen (1. ajo bootista).
+  Sivuloydos: hat_dup040:n DBG ENTER -printti tulostuu myos BASE-kernelin konsoliin
+    (asuu hat_dup040.s:ssa) -- kosmeettinen, gateataan/poistetaan seuraavassa
+    base-paivityksessa.
+  Sivuloydos: serial-merkkikato (esim. "WRIG B" po. "WARNING: DBG") 9600 baudilla
+    myos kevyella liikenteella -- epailty serdbg:n TBE-tahdistus oikealla raudalla
+    ja/tai beacon-spammi samalla kanavalla; telnet ensisijaiseksi, serial =
+    panic-mustalaatikko. Fixi (TBE-poll-audit) omana itemina.
+  Sivuloydos: `df -k` -> Bad System Call (userland-vanhus; plain `df` toimii).
+  Sivuloydos: `at now` -> "too late" (SVR4-klassikko; kayta `at now + 1 minute`);
+    AMIX telnetd HUPpaa koko prosessiryhman session sulkeutuessa (nohup EI riita --
+    ajot at-jonon kautta, sama opetus kuin emun "push workload as a FILE").
+
+VERDIKTI: ISSUE-10:n koko korjausketju (segvn 11-site + hat_pageunload M-harvest +
+klustsize-swap-in-setti + Lreplace-harvest) on nyt EMU- JA REAL-HW-HYVAKSYTTY.
+Vyorya ei nahty kummallakaan alustalla. Base- ja dbg-kernelit molemmat kelvollisia;
+base on ensisijainen ajokerneli, dbg debug-sessioihin.
+
+SEURAAVAKSI (prioriteetissa): Codexin patch-speksit HW-verifyn jalkeen -- swapadd-
+ryhma (SWAPADD-MODEL-B-PATCH-SPEC.md), exec_initialstk/extractarg, setupclock-
+pageout-oletukset (+lotsfree-yhteys thrash-kaytokseen), mincore-vektori; ISSUE-22:n
+toistojahti (kylma-cache-painetta bootin jalkeen, dbg-latch basessa); ISSUE-21:n
+LATCH-decode; serial-TBE-audit; hat_dup040-printin siivous.
