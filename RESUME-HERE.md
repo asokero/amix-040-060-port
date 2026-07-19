@@ -36,10 +36,20 @@
 >    (= RAM/laite-luokittelun referenssitotuus), (b) PTE-kirjoittajien täyscensus + cpushl-matriisi,
 >    (c) DTT-kavennusspeksi, (d) DMA-polkucensus (SDMAC/bp_map040; WT- ja CB-vaiheet erikseen),
 >    (e) segdev/mmap Model-B + CM-auditti (= samalla Z3-esityö).
-> 3. **CM-bittipolku + DTT0-kavennus + segdev-auditti** — speksi ensin (Codex-tyyli), emu-savutestit;
->    vaiheistus: tarrat cache-off (no-op-portti) → DC writethrough → copyback. Kolme hiljaista riskiä
->    speksattava auki: laiteluokittelu, DMA-cpusha-polut (SDMAC), sivutaulujen koherenssi (040-walker
->    lukee RAMia välimuistin ohi → PTE-kirjoitusten cpushl). Sama esityö palvelee DC:tä JA Z3:a.
+> 3. **CM-bittipolku + segdev-auditti** (Codex-tarkennukset 2026-07-20 yö): speksi ensin, sitten
+>    **B1 = writethrough-pilotti** (RAM CM=00 WT, MMIO CM=noncache-serialized, u-area NC,
+>    **DTT0 ENNALLAAN** — kavennus on OMA MYÖHEMPI MMU-milestone: ppcopy/pagezero/gen_strategy/
+>    HAT-kävelijät käyttävät sitä fyysisenä RAM-ikkunana; DMA-read-poluille invalidointi) →
+>    **B2 = copyback** (RAM CM=01; täydet DMA prepare/complete -hookit + low-physical-alias-koherenssi).
+>    KORJAUS aiempaan: stock-030:n CI on SDE-tasolla (pstart: 0x80000000+ = SG|S|CI 0xd0, alaosa ei
+>    CI:tä; CI_bit 0x10), EI per-PTE → aluepohjainen referenssi OK, mutta Z3-userspace-mappauksille
+>    EI valmista perittävää politiikkaa (segdev ei stockissa saa CI:tä). SEURAAVA CODEX-TYÖ:
+>    PTE-kirjoittajien TÄYSMATRIISI (kirjoituspaikka/nykyinen CM/tavoite-CM/cache-op; mukaan myös
+>    krnxmemflt040, segkmem_setprot, sptfree(flag=0), descriptorikirjoittajat) + stock-030 SDE/CI-census.
+>    DMA-täyscensus laajennettava: native hd, floppy, tape, audio, bitplane/copper/blitter (aen = todistettu
+>    CPU/PIO). segdev-toteutusryhmään: spec_segmap, kaikki segdev-metodit, ajurien d_mmap,
+>    hat_devload(pp=NULL), segkmem_mapin-MMIO. Pohjat: CACHE-STEP-B-PRESTUDY.md,
+>    BIO-PFN-PHYS-KVA-CENSUS.md, Z3-USER-MMAP-PFN-AUDIT.md (analyysirepo vm-map/).
 > 4. **Seuraava rautasessio: caches Step B** valmiilla spekseillä + hyväksyntäpaketilla (burst4 +
 >    hat_dup_cow + virtakatkaisu-disk-truth = DMA-koherenssin tappajatesti).
 > 5. **Z3-bringup + >16 Mt RAM** CM-bittien päälle (iso-RAM omana juonteenaan); **real-060** kun
