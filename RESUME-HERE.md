@@ -28,10 +28,14 @@
 > **SOVITTU SUUNTA (pohdintasessio 2026-07-19 ilta, IC-tuplauksen jälkeen — Dhrystone 11538/s):**
 > 1. ✅ **Emu-060-regressio TEHTY** (sama ilta, 68060-260719-16): probet + hat_dup_cow + burst4
 >    24/24 puhtaat, 0 bus / 0 4AFC, swapdiff 0→5 MB — molemmat CPU:t katettu emulla.
-> 2. **Yhtenäiskernel + dbg_flags** (= basen lokisiivous samalla): kaikki DBG-printit + clock_sampler
->    + serdbg-peili `dbg_flags`-globaalin taakse; unix_boot pokettaa symbolin (parsii symtabin jo
->    relokoidessaan) parametrista/näppäimestä → yksi binääri, debug valitaan bootissa. Poistaa
->    kernelinvaihtokitkan ennen rautakampanjoita.
+> 2. ~~Yhtenäiskernel + dbg_flags~~ → **SIIRRETTY TULEVAISUUSIDEAKSI** (päätös 2026-07-19 myöhäisilta:
+>    automaattiboot + `reboot`-komento poistivat kernelinvaihtokitkan jo; resurssit cache-työhön.
+>    Idea talessa: dbg_flags-bittimaski .datassa, unix_boot pokettaa symbolin parametrista/näppäimestä,
+>    yksi binääri. Basen harhaprinttien siivous erillinen ~1h mikrotehtävä jos häiritsee.)
+>    **TILALLE: Codex-esityöpaketti CM-bittikampanjalle** — (a) stock-030:n CI-bittilogiikan census
+>    (= RAM/laite-luokittelun referenssitotuus), (b) PTE-kirjoittajien täyscensus + cpushl-matriisi,
+>    (c) DTT-kavennusspeksi, (d) DMA-polkucensus (SDMAC/bp_map040; WT- ja CB-vaiheet erikseen),
+>    (e) segdev/mmap Model-B + CM-auditti (= samalla Z3-esityö).
 > 3. **CM-bittipolku + DTT0-kavennus + segdev-auditti** — speksi ensin (Codex-tyyli), emu-savutestit;
 >    vaiheistus: tarrat cache-off (no-op-portti) → DC writethrough → copyback. Kolme hiljaista riskiä
 >    speksattava auki: laiteluokittelu, DMA-cpusha-polut (SDMAC), sivutaulujen koherenssi (040-walker
