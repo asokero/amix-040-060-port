@@ -34,7 +34,8 @@
 >    yksi binääri. Basen harhaprinttien siivous erillinen ~1h mikrotehtävä jos häiritsee.)
 >    **TILALLE: Codex-esityöpaketti CM-bittikampanjalle** — (a) stock-030:n CI-bittilogiikan census
 >    (= RAM/laite-luokittelun referenssitotuus), (b) PTE-kirjoittajien täyscensus + cpushl-matriisi,
->    (c) DTT-kavennusspeksi, (d) DMA-polkucensus (SDMAC/bp_map040; WT- ja CB-vaiheet erikseen),
+>    (c) ~~DTT-kavennus~~ (siirretty omaksi myöhemmäksi milestoneksi, ks. kohta 3),
+>    (d) DMA-polkucensus (SDMAC/bp_map040; WT- ja CB-vaiheet erikseen),
 >    (e) segdev/mmap Model-B + CM-auditti (= samalla Z3-esityö).
 > 3. **CM-bittipolku + segdev-auditti** (Codex-tarkennukset 2026-07-20 yö): speksi ensin, sitten
 >    **B1 = writethrough-pilotti** (RAM CM=00 WT, MMIO CM=noncache-serialized, u-area NC,
