@@ -260,6 +260,9 @@ python3 "$HERE/prototypes/patch_swapgeom.py" "$OUT" | tail -3
 echo "[*] Model B exec initial-stack group (EXEC-INITIALSTK-PATCH-SPEC.md: extractarg + exec_initialstk data init)"
 python3 "$HERE/prototypes/patch_execstk.py" "$OUT" | tail -2
 
+echo "[*] Model B pageout-policy defaults (SETUPCLOCK-VMETER-PATCH-SPEC.md: lotsfree/desfree/minfree + vmmeter UPIO fold)"
+python3 "$HERE/prototypes/patch_pageoutdefs.py" "$OUT" | tail -2
+
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/prototypes/patch_framesz060.py" "$OUT"
 
