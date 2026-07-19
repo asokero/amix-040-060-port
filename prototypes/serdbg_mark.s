@@ -19,14 +19,17 @@ serdbg_mark:
 Lmk_go:
 	andiw	&0x00ff,%d0
 	oriw	&0x0100,%d0		| STOPBIT | ch
-	movew	%d0,%a0@(0x30)		| serdat <- byte (write FIRST, unconditional)
+	movew	%sr,%sp@-		| ISSUE-23: mask ints, TBE wait BEFORE write
+	oriw	&0x0700,%sr		| (interrupt putc overwrote SERDAT mid-window)
 	movel	&0x00010000,%d1		| bounded TBE wait
 Lmk_wait:
-	movew	%a0@(0x18),%d0		| serdatr
-	andiw	&0x2000,%d0		| TBE (transmit-buffer-empty)
-	bnew	Lmk_done
+	btst	&5,%a0@(0x18)		| TBE = word bit13 = bit5 of serdatr HIGH byte
+	bnew	Lmk_send
 	subql	&1,%d1
 	bnew	Lmk_wait
+Lmk_send:
+	movew	%d0,%a0@(0x30)		| serdat <- byte (buffer known empty)
+	movew	%sp@+,%sr		| restore IPL
 Lmk_done:
 	moveml	%sp@+,%d0-%d1/%a0-%a1
 	unlk	%fp
@@ -57,14 +60,17 @@ Lhx_alpha:
 Lhx_emit:
 	andiw	&0x00ff,%d0
 	oriw	&0x0100,%d0		| STOPBIT | digit
-	movew	%d0,%a1@(0x30)		| serdat <- digit
+	movew	%sr,%sp@-		| ISSUE-23: mask ints, TBE wait BEFORE write
+	oriw	&0x0700,%sr
 	movel	&0x00008000,%d1		| bounded TBE wait
 Lhx_wait:
-	movew	%a1@(0x18),%d0
-	andiw	&0x2000,%d0
-	bnew	Lhx_after
+	btst	&5,%a1@(0x18)		| TBE = word bit13 = bit5 of serdatr HIGH byte
+	bnew	Lhx_send
 	subql	&1,%d1
 	bnew	Lhx_wait
+Lhx_send:
+	movew	%d0,%a1@(0x30)		| serdat <- digit (buffer known empty)
+	movew	%sp@+,%sr		| restore IPL
 Lhx_after:
 	dbra	%d3,Lhx_next
 	moveml	%sp@+,%d0-%d3/%a0-%a1

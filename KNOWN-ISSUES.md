@@ -1522,8 +1522,15 @@ kylmään page-cacheen. JAHTIRESEPTI: toista kylmä-boot→välitön pressure -s
 jos toistuu, lisää minimaalinen EFAULT-latch (u_error==EFAULT && syscall==read →
 latchaa faultannut VA+PC) baseen. Kirjattu test-tools/issue10-realhw-verify-260719.txt.
 
-## ISSUE-23: serdbg serial-merkkikato 9600:lla — juurisyy löydetty, fiksi DEFERRED
-**OPEN (kirjattu 2026-07-19 ilta; fiksi sovittu tehtäväksi myöhemmin).** Real-HW:lla serial
+## ISSUE-23: serdbg serial-merkkikato 9600:lla — FIKSATTU, real-HW-verify jäljellä
+**FIXED-PENDING-HW-VERIFY (fiksi 2026-07-19 myöhäisilta, buildit dbg 260719-16 /
+quiet -17; emu-regressio PASS: boot+login+serial-flood+hat_dup_cow 64).** Korjaus
+kaikkiin KOLMEEN kirjoittajaan (serdbg.s serdbg_putc; serdbg_mark.s + mainmarks.s
+serdbg_mark+serdbg_hex): SR talteen → IPL7-maski → bounded TBE-odotus ENNEN
+kirjoitusta (btst #5,serdatr-ylätavu = word-bitti 13) → SERDAT-kirjoitus → SR-palautus.
+Bounded-odotus säilyy fail-safena (puuttuva serial = pudotettu merkki, ei jumi).
+Nopeus pidettiin 9600:ssa (SERPER-nosto edelleen optiona, arvot alla). Alkuperäinen
+juurisyy: Real-HW:lla serial
 pudottaa merkkejä dbg-floodissa (9584647:n sivulöydös). Juurisyy luettu `prototypes/serdbg.s`:stä:
 `serdbg_putc` kirjoittaa `SERDAT ← merkki` ENSIN ja odottaa TBE:tä (SERDATR 0x2000) vasta
 jälkeen, ILMAN keskeytyssuojaa. conputc-hookkia kutsutaan sekä prosessi- että
