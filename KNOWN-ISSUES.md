@@ -1573,11 +1573,18 @@ kernel-offsetista 0x260a). TULOKSET Amiberryssä (vain AMIX-hdf, KS 3.2.2):
   kontrakti (bootinfo/parametrit/load-base) eroaa unix_boot040:n tarjoamasta; auditoitava
   JOS natiivibootti joskus halutaan (boot2:n 040-portti + kontraktivertailu unix_boot040
   vs boot2). Ei estä mitään nykyistä: AmigaOS→unix_boot040 on virallinen boottipolku.
-SIVULÖYDÖS SAMASSA KOKEESSA (eri asia, kirjattava jahtiin sopivassa välissä): emu-040
-dbg -16: `shutdown -y -i0 -g0` EI haltannut vaan shutdown-PROSESSI kaatui bus-error-
-silmukkaan `User BUS ERROR at 4AFC0003 PC:800023FC FAULT:6` (11386 toistoa, sitten
-prosessi kuoli, järjestelmä jäi elämään runlevel 2:een). Ajettu heti raw-dd:n
-(1,5 MB → /dev/dsk/c6d0s3) jälkeen — epäselvää onko laukaisija halt-polku (jota ei ole
-koskaan ajettu näillä kerneleillä; vrt. ISSUE-24 rc6) vai raw-block-kirjoituspolun
-Model-B-residuaali. Eristys: tuore golden-boot → heti shutdown -i0 (ilman dd:tä) →
-toistuuko? Serial-evidenssi: durable-tools + scratchpad shutdown-i0-crash-serial.log.
+(Alkup. sivulöydös shutdown -i0:sta eriytetty omaksi ISSUE-26:ksi alle — eristetty samana yönä.)
+
+## ISSUE-26: shutdown -i0 (halt) → shutdown-prosessin deterministinen 4AFC0003-bus-error-silmukka
+**OPEN, HYVÄ REPRO (eristetty 2026-07-20 yö, emu-040 dbg -16).** `shutdown -y -i0 -g0`
+EI koskaan pääse halt-tilaan: shutdown-PROSESSI kaatuu silmukkaan `User BUS ERROR at
+4AFC0003, PC:800023FC FAULT:6` (tuhansia toistoja kunnes prosessi kuolee; järjestelmä
+jää elämään entiseen runleveliin). ERISTETTY: toistuu TUOREELTA golden-bootilta ILMAN
+mitään edeltävää kuormaa (13651 osumaa <2 min) → laukaisin on -i0-polku itse, EI
+raw-dd (alkup. epäily kumottu). Osoite 4AFC0003 = poison-kuvion deref = jokin -i0-
+haaran lukema roskapointteri. Rajaukset: shutdown -i6 / `reboot` toimivat emulla;
+real-HW:lla init 6 = ISSUE-24-limbo (eri mekanismi, rc6-userland). Halt-polkua (-i0 /
+uadmin A_SHUTDOWN -haara) ei ole koskaan ajettu/validoitu 040-porteilla ennen tätä.
+Deterministinen + halpa emu-repro = hyvä jahtikohde sopivassa välissä; ei blokkaa
+mitään nykyistä (halttia ei käytetä työnkuluissa). Serial-evidenssi:
+durable-tools/shutdown-i0-crash-serial.log (kopio myös scratchpadissa).
