@@ -1559,3 +1559,25 @@ eroa emu vs. real ei ole vielä rajattu (rc6:n sisältö / konsoli-tty-tila?). K
 käytä pehmoreboottiin `reboot`-komentoa, EI `init 6`:tta; kylmäboottiin reset (automaatti-
 boot unix-040:lle konfiguroitu 2026-07-19). Selvitys: aja rc6 kädestä (`sh -x /sbin/rc6`)
 ja katso mihin uadmin-haara kuolee.
+
+## ISSUE-25: natiivi boot-osiopolku (boot1/boot2) on 030-only — 040-portti buutataan unix_boot040:llä
+**DOCUMENTED-DEFERRED (koe 2026-07-20 yö, emu-040).** Kokeiltiin stock-asennuspolku:
+/stand/Makefile newboot-target dd:llä (boot1.boot + makeiblk + boot2.boot + makeiblk +
+kernel → /dev/dsk/c6d0s3; RDB: UNIX_Boot-osio bootable pri=2, boot1 = validi DOS\0-
+bootblock). Layout-verifiointi hostilta: dd osui täsmälleen oikein (ero goldeniin alkaa
+kernel-offsetista 0x260a). TULOKSET Amiberryssä (vain AMIX-hdf, KS 3.2.2):
+- STOCK-kernel natiivisti → GURU 8000 000B (Line-F) = 030-MMU-käskyt (pmove-perhe)
+  boot2:ssa/stock-pstartissa trappaavat 040:llä. Natiiviketju on 030-only.
+- unix-040 (260719-13) natiivisti → EI gurua (pstart040:n 040-käskyt valideja): boot2
+  latasi ja hyppäsi kerneliin, mutta MUSTA RUUTU ennen konsolialustusta — kernel-entry-
+  kontrakti (bootinfo/parametrit/load-base) eroaa unix_boot040:n tarjoamasta; auditoitava
+  JOS natiivibootti joskus halutaan (boot2:n 040-portti + kontraktivertailu unix_boot040
+  vs boot2). Ei estä mitään nykyistä: AmigaOS→unix_boot040 on virallinen boottipolku.
+SIVULÖYDÖS SAMASSA KOKEESSA (eri asia, kirjattava jahtiin sopivassa välissä): emu-040
+dbg -16: `shutdown -y -i0 -g0` EI haltannut vaan shutdown-PROSESSI kaatui bus-error-
+silmukkaan `User BUS ERROR at 4AFC0003 PC:800023FC FAULT:6` (11386 toistoa, sitten
+prosessi kuoli, järjestelmä jäi elämään runlevel 2:een). Ajettu heti raw-dd:n
+(1,5 MB → /dev/dsk/c6d0s3) jälkeen — epäselvää onko laukaisija halt-polku (jota ei ole
+koskaan ajettu näillä kerneleillä; vrt. ISSUE-24 rc6) vai raw-block-kirjoituspolun
+Model-B-residuaali. Eristys: tuore golden-boot → heti shutdown -i0 (ilman dd:tä) →
+toistuuko? Serial-evidenssi: durable-tools + scratchpad shutdown-i0-crash-serial.log.
