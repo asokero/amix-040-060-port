@@ -1505,7 +1505,13 @@ serial2usb-kaappaus toimii nyt (stty 9600 raw + while-cat-luuppi | tee).
 
 ## ISSUE-22: kertaluontoinen EFAULT (read: Bad address) paineessa bare basella (real-HW)
 
-**OPEN — 1 tapaus / 48 rinnakkais-cp:tä (2026-07-19 real-HW-verify, base 260719-01).**
+**OPEN (alennettu prioriteetti 2026-07-19 ilta): jahti ajettu — EI TOISTUNUT uusilla
+Model-B-ryhmillä.** 5 validia kylmä-boot→välitön-pressure-sykliä bare basella 260719-13
+(+1 lämmin): 0 EFAULTia, 0 Bad addressia, 0 bus-virhettä, 36/36 kopiosummaa tavuntarkkoja
+(evidenssi test-tools/modelb-groups-realhw-260719.txt). Joko swapadd/exec-stack-ryhmät
+poistivat tuottajan tai esiintymä on hyvin harvinainen — EFAULT-latch-instrumentointi
+(alla) tehdään vain jos oire palaa. Alkuperäinen havainto:
+1 tapaus / 48 rinnakkais-cp:tä (2026-07-19 real-HW-verify, base 260719-01).
 Ensimmäisessä bootin jälkeisessä pressure-ajossa yksi kuudesta `cp /payload.bin`
 -prosessista sai `read: Bad address` (EFAULT); /press6.bin jäi syntymättä. SIISTI
 epäonnistuminen: ei korruptiota (5 muuta tiedostoa + kaikki myöhemmät 3 pressurea ja
