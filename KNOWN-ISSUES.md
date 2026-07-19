@@ -1464,3 +1464,26 @@ sched or calling swapout directly) would run this body against live 040 tables �
 030-tree reads, worst case corrupted live tables + silent dirty loss. Precondition for ever
 re-enabling: a native hat_swapout040 (or an explicit no-op policy) + segu/u-area swap-out
 validation. Until then sched STAYS overridden.
+
+## ISSUE-21: satunnainen boot-musta-ruutu real-HW:llä (~1/4 booteista) — kstack-rekursio + LATCH1
+
+**OPEN — kirjattu 2026-07-19, EI blokkaa käyttöä (uusi yritys korjaa lähes aina).** A3000 +
+Mercury 040, unix_boot → kernel jää heti bootissa mustaan ruutuun ~kerran neljästä.
+ENSIMMÄINEN serial-evidenssi (260719-02, 9600 baud; rivien alut osin merkkikadon syömiä):
+
+```
+kstack 0x80DCFF4! / 0x80DCF38! / 0x80DCE7C! ... 0x80DC89C!   (askel -0xBC = 188 B)
+WARNING: DBG LATCH1 f64=23004EAE f68=FF0A7008 f72=80DC830 f76=1E60005
+```
+
+Luenta: sisäkkäisiä kernel-trap-kehyksiä (188 B/kehys) proc-0:n kernel-pinossa
+(0x080DCxxx), rekursio laskee kohti 0x80DC830:tä; ktrap_latch-proben LATCH1: f68:n
+alaosa 0x7008 = FORMAT 7 / VEKTORI 8 = access error, f72 = 0x080DC830 = pinoalueen
+osoite. Eli varhainen satunnainen access error jonka käsittely faultaa uudelleen →
+kstack-rekursiovahti tulostaa tasot. AJOITUS satunnainen (kylmä/lämmin-tyyppinen?) —
+sukua vanhalle cold-boot-perheelle mutta ERI mekanismi kuin a70e8df:n loader-overlap
+(se on fiksattu) ja mahdollisesti sama juuri kuin ISSUE-8:n deferred idle-Bus-Error-
+luuppi. SEURAAVA ASKEL kun tähän tartutaan: ktrap_latchin kenttien tarkka decode
+(f64/f76-semantiikka krnxmemflt040-kehyksestä) + serial-merkkikadon fixi jotta koko
+rekursioketju tallentuu; toistotilasto eri lämpötiloissa. Työkalu valmiina:
+serial2usb-kaappaus toimii nyt (stty 9600 raw + while-cat-luuppi | tee).
