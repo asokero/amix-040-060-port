@@ -1,0 +1,43 @@
+MODEL-B-JAANNOSRYHMIEN REAL-HW-VERIFY (2026-07-19 ilta, A3000 + Mercury 68040)
+Paketti: REALHW-VERIFY-260719B.md; kernel unix-040-dbg = 68040-260719-14
+(kaikki 4 ryhmaa: 1475e16 swapgeom / 7f8ac6e execstk / 7f36144 pageoutdefs /
+9c4139c mincore). Kanava: telnet 10.0.10.10 (real.py); siirrot NFS /mnt/nasu
+(nasu:Public) -- ei tftp-netascii-riskia; summat verifioitu silti.
+
+AJOLISTA JA TULOKSET (jarjestyksessa):
+1. Boot -14 + login: kayttajan buuttaamana, ei guruja. NFS mountattu valmiiksi.
+2. Siirtoverifiointi: payload.bin 1570 8192; hat_dup_cow 18025 16; pressure.sh
+   5613 2; burst4.sh 15017 1; swapls.c 628 2; bigargv.c 47140 4; mincoretst.c
+   51095 4 -- kaikki identtiset lahteen kanssa.
+3. RYHMA 1 / swapls (swapctl SC_LIST): /dev/dsk/c6d0s2 start 0 len 204800
+   PAGES 25600 FREE 24777 flags 0
+   => tasan 1 slotti / 4K-sivu 100 MiB:lle MYOS RAUDALLA (vanha bugi: 51199).
+4. RYHMA 2 / bigargv x3: BIGARGV PASS 45 args 4500 bytes -- joka kerta.
+   4,5 KiB argv siirtyy execin yli tavuntarkasti (ARG_MAX 5120).
+5. BONUS / mincoretst: MINCORE VEC rc 0 changed 8 tail intact;
+   MINCORE ALIGN2K rc -1 errno 22; MINCORE PASS.
+   => tasan 8 vec-tavua (ei 16), sentinelihanta ehja, PAGEOFFSET-portti toimii.
+6. hat_dup_cow 64: PASS isolation / fork+exec / stress -- RESULT PASS.
+7. pressure.sh (at-jonossa): PRESSURE-DONE, sum 1570 8192 x6. EI EFAULTIA
+   (vrt. ISSUE-22; huom. tama on dbg-kernel -- jahti kuuluu baselle).
+8. RYHMA 3 -mittari / burst4.sh (at-jonossa): ALLBURSTS-DONE, 24/24 summaa
+   1570 8192. KESTO ~10 min / 4 burstia (~2,5 min/bursti); pollaus 90 s valein
+   vastasi JOKA kerta -- EI yhtaan "serial+telnet mykkia minuutteja" -vaihetta,
+   joka edelliskaynnilla (260719-01/-02, ennen ryhmaa 3) oli burstien
+   normaalitila. lotsfree/desfree/minfree-puolituksen vaikutus nakyy raudalla.
+   (Emu-referenssi samalla kernelilla: ~4,5-5,5 min / 4 burstia.)
+9. Regressio / kmem-ENXIO: dd if=/dev/kmem bs=4096 iseek=263974 count=1 ->
+   "dd: read error: No such device or address", 0+0 records -- siisti ENXIO,
+   ei storm/panic (ISSUE-13-luokka pysyy kiinni).
+10. /dev/osm-puskuri: grep -c "BUS ERROR" = 0 koko session ajalta.
+
+EI AJETTU TALLA ETAISTUNNOLLA (vaativat kayttajan kadet / eri kernelin):
+- ISSUE-22-jahti: kylma boot bare baselle (unix-040 = 260719-13) -> valiton
+  pressure, x6 sykli. Vaatii kernel-vaihdon loaderiin + fyysiset bootit
+  (ISSUE-21 musta-ruutu ~1/4 -> retry).
+- Writeback disk-truth virtakatkaisulla (paketti A:n kohta 6 -regressio):
+  vaatii fyysisen virtakatkaisun.
+
+VERDIKTI: kaikki 4 Model-B-ryhmaa REAL-HW-VAHVISTETTU siltae osin kuin etana
+ajettavissa (probet = ryhmien suora HW-totuus; burst-kesto = ryhma-3:n
+kaytosmittari). 0 bus-virhetta, 0 EFAULTia, 24/24 + 6/6 summat.
