@@ -41,3 +41,22 @@ EI AJETTU TALLA ETAISTUNNOLLA (vaativat kayttajan kadet / eri kernelin):
 VERDIKTI: kaikki 4 Model-B-ryhmaa REAL-HW-VAHVISTETTU siltae osin kuin etana
 ajettavissa (probet = ryhmien suora HW-totuus; burst-kesto = ryhma-3:n
 kaytosmittari). 0 bus-virhetta, 0 EFAULTia, 24/24 + 6/6 summat.
+
+ISSUE-22-JAHTI (sama ilta, bare base 260719-13, kylma boot -> valiton pressure):
+- Sykli 1: kayttajan boot -> pressure ~2 min bootista: PRESSURE-DONE 6/6, 0 Bad
+  address, 0 bus. Syklit 2-6 ajettiin valvotulla silmukalla (reboot -> automaatti-
+  boot -> at-jonotettu pressure -> tulos).
+- VALIDIT KYLMASYKLIT: 1, 2, 3, 5, 6 = viisi kpl; sykli 4 LAMMIN (init-6-toimitus
+  epaonnistui -> ei kylma; ajettiin silti: puhdas, kesto ~8 min vs kylmien ~2,5 min).
+- TULOS: 0 EFAULTIA / 0 Bad addressia / 0 BUS ERRORia KAIKISSA sykleissa; 36/36
+  kopiosummaa tavuntarkkoja (6 syklia x 6 kopiota). Alkuperainen ISSUE-22 (1 tapaus
+  ensimmaisessa bootin jalkeisessa paineessa vanhalla basella -01) EI TOISTUNUT
+  uusilla Model-B-ryhmilla viidessa kylmassa ensipaineessa. Ei todiste fiksista,
+  mutta vahva signaali: joko swapadd/exec-stack-ryhmat poistivat sen tai esiintyma
+  on hyvin harvinainen. ISSUE-22 jaa auki alennetulla prioriteetilla.
+- SIVULOYDOKSET: ISSUE-21 osui kerran (sykli 6:n 1. boottiyritys, musta ruutu
+  unix_bootin jalkeen, kayttajan resetti + automaattibootin retry OK) = ~1/7
+  boottia taman illan otoksessa, linjassa ~1/4-arvion kanssa. UUSI ISSUE-24:
+  init 6 jaa runlevel-6-limboon (rc6-userland; manuaali-reboot limbosta toimii =
+  kernel-uadmin OK). Kayttaja konfiguroi automaattibootin unix-040:lle (reset
+  riittaa jatkossa, ei nappailyja).
