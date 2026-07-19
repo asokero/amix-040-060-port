@@ -1529,3 +1529,16 @@ ympärille (max 1 merkkiaika; @115200 vain 87 µs); (2) valinnainen SERPER-nosto
 19200=0xB8, 38400=0x5C, 57600=0x3D, 115200=0x1E (nyt 0x174=9600) — kapasiteetti 12× ja ikkuna
 kapenee, mutta EI yksin poista racea. HUOM: unix_boot040:n loader-diagit jäävät 9600:aan ellei
 nosteta molempia; vastaanottopää samaan nopeuteen. Verifiointi vain real-HW:lla.
+
+## ISSUE-24: init 6 jää runlevel-6-limboon real-HW:lla — rc6-userland, EI kernel-bugi
+**OPEN (kirjattu 2026-07-19 ilta, real-HW base 260719-13; sama havaittu ISSUE-22-jahdon
+sykleissä).** `init 6` (telnetistä tai konsolilta) vie koneen runlevel 6:een (`who -r` = 6),
+rc6 tappaa suurimman osan palveluista — mutta viimeinen uadmin-askel EI koskaan toteudu:
+kone jää käyttökelpoiseen limboon (telnetd+smtpd elävät, konsolilla "init 6"). RAJAUS
+(käyttäjän havainto): manuaalinen `reboot`-komento LIMBOSTA buuttaa koneen normaalisti →
+kernelin uadmin/haltsys040-polku on real-HW:lla KUNNOSSA; vika on rc6-skriptisekvenssissä
+(rc-taso, ei kernel-portti). Emulla shutdown -i6 toimii (writeback-hyväksyntä 060:lla) —
+eroa emu vs. real ei ole vielä rajattu (rc6:n sisältö / konsoli-tty-tila?). KÄYTÄNNÖSSÄ:
+käytä pehmoreboottiin `reboot`-komentoa, EI `init 6`:tta; kylmäboottiin reset (automaatti-
+boot unix-040:lle konfiguroitu 2026-07-19). Selvitys: aja rc6 kädestä (`sh -x /sbin/rc6`)
+ja katso mihin uadmin-haara kuolee.
