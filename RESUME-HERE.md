@@ -1,3 +1,26 @@
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-19)
+
+> ## 🏆 2026-07-19 — ISSUE-10 SULJETTU EMU+REAL-HW; BARE BASE HYVÄKSYTTY ITSENÄISESTI
+> Vyöryn kaksi tuottajaa fiksattu ja hyväksytty molemmilla alustoilla: hat_pageunload040
+> M-harvest (5569ea1) + klustsize 0x800 -data-init & swap-in-setti + hat_pteload::Lreplace
+> U/M-harvest (3b7afdc, `prototypes/patch_swapin.py`). Buildit 260719-01 (base) / -02 (dbg)
+> / -03 (quiet). EMU: burst4 ALLBURSTS-DONE, 0 uutta busia, EI 4AFC005F:ää. REAL-HW
+> (A3000+Mercury040, 9584647): dbg pressure+burst4 swap elävänä, virtakatkaisu-disk-truth
+> tavuntarkka, kmem-ENXIO (ISSUE-13-jäännös kiinni), UFS bsize 8192 HW-vahvistettu, caches
+> Step A ajossa koko session, **bare base burst4 24/24 summaa = itsenäisesti hyväksytty**.
+> Evidenssit: test-tools/issue10-swapin-fix-260719.txt + issue10-realhw-verify-260719.txt.
+> UUDET: ISSUE-21 (boot-musta-ruutu ~1/4, kstack-rekursioevidenssi), ISSUE-22 (1× siisti
+> EFAULT basella 1. paineessa bootista). Gotchat: AMIX tftp = NETASCII-oletus (aina
+> `binary`!), telnetd HUPpaa prosessiryhmät (→ `at now + 1 minute` -jono), serial pudottaa
+> merkkejä 9600:lla (telnet ensisijainen).
+>
+> **SEURAAVAKSI: Codex-patch-speksien toteutus** (analyysirepo cbbf40f, vm-map/):
+> SWAPADD-MODEL-B-PATCH-SPEC.md (valmis byte-speksi), exec_initialstk+extractarg ja
+> setupclock-pageout-oletukset (DATA-INITIALIZER-PAGESIZE-CENSUS.md action matrix),
+> mincore-vektori (MODEL-B-TEXT-RESIDUAL-CENSUS.md). Emu-testaus per ryhmä; kokoava
+> konversiojärjestys text-censuksen lopussa. Sitten: ISSUE-22-jahti, segdev+mmap-perimetri
+> (Z3-portti), caches Step B (CACHE-STEP-B-PRESTUDY.md).
+
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-15)
 
 > ## ✅★ 2026-07-15 (night) — CACHES-ON STEP A: INSTRUCTION CACHE ENABLED (emu-040+060 verified)
