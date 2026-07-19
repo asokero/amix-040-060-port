@@ -23,10 +23,9 @@
 > ILMAN mykkiä thrash-vaiheita, ISSUE-22-jahti 5 puhdasta kylmäsykliä basella -13 (ei
 > toistunut → prioriteetti alas), virtakatkaisu-disk-truth 1570 8192 ×6 levyltä, kmem-
 > ENXIO, osm 0 bus. Evidenssi test-tools/modelb-groups-realhw-260719.txt. UUDET:
-> ISSUE-23 (serdbg TBE-race, fiksi deferred) + ISSUE-24 (init-6-limbo, rc6-userland;
+> ISSUE-23 (serdbg TBE-race — FIKSATTU+HW-VERIFIED samana iltana, dbg -16/quiet -17, evidenssi issue23-serialfix-260719.txt) + ISSUE-24 (init-6-limbo, rc6-userland;
 > pehmoreboot = `reboot`). Automaattiboot unix-040:lle konfiguroitu. ISSUE-21 2/~9 boottia.
-> **SEURAAVAKSI:** segdev+mmap-perimetri (Z3-portti) ja caches Step B (real-HW);
-> ISSUE-23-serialfiksi sopivassa välissä.
+> **SEURAAVAKSI:** segdev+mmap-perimetri (Z3-portti) ja caches Step B (real-HW).
 
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-19)
 
