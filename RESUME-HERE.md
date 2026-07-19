@@ -18,9 +18,15 @@
 > 4AFC005F:ää. EI koskettu (policy): tune-kentät, pages_pp_maximum, swap_maxcontig,
 > fastscan=200, segdev/SHM/memcntl.
 >
-> **SEURAAVAKSI:** real-HW-verify-delta (nämä 4 ryhmää + ISSUE-22-jahti kylmä-boot→pressure-
-> toistoilla samalla käynnillä; REALHW-VERIFY-260719.md-tyyli), sitten segdev+mmap-perimetri
-> (Z3-portti) ja caches Step B (real-HW).
+> **✅ REAL-HW-AJETTU SAMANA ILTANA (A3000+Mercury040):** koko paketti B läpi — probet
+> (PAGES 25600 / bigargv ×3 / mincoretst), hat_dup_cow, pressure, burst4 24/24 ~10 min
+> ILMAN mykkiä thrash-vaiheita, ISSUE-22-jahti 5 puhdasta kylmäsykliä basella -13 (ei
+> toistunut → prioriteetti alas), virtakatkaisu-disk-truth 1570 8192 ×6 levyltä, kmem-
+> ENXIO, osm 0 bus. Evidenssi test-tools/modelb-groups-realhw-260719.txt. UUDET:
+> ISSUE-23 (serdbg TBE-race, fiksi deferred) + ISSUE-24 (init-6-limbo, rc6-userland;
+> pehmoreboot = `reboot`). Automaattiboot unix-040:lle konfiguroitu. ISSUE-21 2/~9 boottia.
+> **SEURAAVAKSI:** segdev+mmap-perimetri (Z3-portti) ja caches Step B (real-HW);
+> ISSUE-23-serialfiksi sopivassa välissä.
 
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-19)
 
