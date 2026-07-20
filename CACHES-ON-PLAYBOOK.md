@@ -91,9 +91,8 @@ MMU milestone).  What landed:
    only -- never invalidates the enabled IC); pre-existing hand sites keep bc.
 7. Legacy 030 writers stay unreachable (status quo: sched-override disables
    hat_swapout, hat_exec040 no-op, hat_map growsdt bounded -- no CM logic added).
-8. DMA-read completion invalidation = **NOT in this group**; gate for the real
-   WT/DC enable, waiting on the Codex DMA-initiator census (native hd/floppy/
-   tape/audio/bitplane; aen proven PIO).
+8. DMA-read completion invalidation = landed A3000-first as its own group, see
+   **Step B1-DMA** below.
 
 **Deliberate scope cuts (documented, not oversights):** `segkmem_alloc`/
 `segkmem_mapin` constructors keep emitting CM=00, which IS the B1 WT target;
@@ -106,6 +105,66 @@ fork/exec churn, burst4 pressure; **runtime CM census via Amiberry IPC**:
 kvsegu window leaves read `0x..61/0x..69/0x..79` (CM=11 NC -- the classifier's
 positive signal), fixed-u `0x..0F9` (NC), kvseg kernel RAM `0x..019` (CM=00 WT
 control).  All CM effects dormant (CACR DC off + DTT0 blanket-inhibit).
+
+### Step B1-DMA — FROM_DEVICE completion invalidation (A3000-first)  ✅ IMPLEMENTED AS DORMANT NO-OP PORT (2026-07-20, builds 260720-05/-06/-07)
+
+Census + contract: analyysirepo `vm-map/DMA-INITIATOR-CENSUS.md` +
+`DMA-PREPARE-COMPLETE-CONTRACT.md` (commit 58f1cda). This closes CM-B1 matrix
+item 8 for the hardware this project actually runs on.
+
+**Why DMA hooks are mandatory for DC (not optional):** the moment CACR DC turns
+on — even in writethrough — a FROM_DEVICE DMA (device writes RAM) can leave
+stale-but-valid CPU D-cache lines over the buffer; the CPU then reads the cache
+instead of the fresh device bytes → silent filesystem corruption. A completion
+invalidate is the fix. (TO_DEVICE/write-DMA is safe in WT without a hook because
+WT keeps RAM current; that's a B2/copyback concern.)
+
+**A3000-first scope (2026-07-20 decision):** of the four host-RAM DMA owners the
+census found (A2090, A2091 +chip-bounce, A3091/SDMAC, native A2090 ST-506 `hd`),
+an A3000 + Mercury 040 uses **only the A3091/SDMAC path** for disk I/O; the
+a3000ux emulator config drives exactly that controller. So only A3091 is hooked
+now. A2090/A2091/native-`hd` are Zorro-SCSI / ST-506 cards absent from this
+machine → **deferred, not designed out** (their anchors + old-byte assertions are
+fully recorded in the census; adding e.g. A2091 for an A2500UX later = one more
+wrapper calling the same shared primitive, no redesign).
+
+Implementation (`prototypes/dma_cache040.s` + `patch_a3091_dma.py`):
+- `dma_cache_fromdev_complete` — shared B1 FROM_DEVICE completion primitive:
+  whole-cache `cinva dc` (opcode 0xf458) + a pairing counter `dma_cmpl_count`.
+  Register-transparent. A2091/B2 reuse this same primitive.
+- `dma_a3091_stopdma` — wraps the A3091 `stopdma`: read `dma_on` (armed?),
+  call the real stopdma (quiesce SDMAC + clear dma_on), then if a transfer was
+  armed, invalidate. Fires after hardware quiesce, before the caller's
+  `sdcom.intr` callback (d1c0/d2f6) or disconnect re-arm (d21a) — exactly the
+  contract's "after stop, before exposure".
+- **Wiring by relocation retarget, not globalize+weaken:** `startdma`/`stopdma`
+  are file-LOCAL and appear THREE times (A2090/A2091/A3091), so globalize+weaken
+  is ambiguous. `patch_a3091_dma.py` retargets ONLY the four A3091 `jsr stopdma`
+  relocations (.rela.text 0xd170/0xd1c8/0xd2ce/0xd34a) to the wrapper (asserts
+  each is a `jsr` to `stopdma`@0xd4cc first); the real body stays reachable via
+  the `--add-symbol a3091_stopdma_orig=0xd4cc` alias. A2090/A2091 relocations are
+  provably untouched. `ld -r` preserves the retarget into the dbg/quiet variants.
+- **Whole-cache invalidate is intentional for B1** (the contract's blessed pilot
+  form): in WT it is correct on both directions (invalidating clean lines is a
+  harmless refetch), so it needs no per-range/per-direction precision and no
+  pre-arm prepare hook — those are B2 (copyback) work, designed with real-HW
+  validation. `dma_cache_prepare` and range metadata are deferred to B2.
+
+**Dormant until CACR DC-enable:** with DC off the cache is empty, so `cinva dc`
+is a pure no-op. The A3091 transcription IS exercised on the emulator (a3000ux =
+this controller), so boot/burst4/fsck validate the wrapper; the counter proves
+it is on the live completion path.
+
+**Emu-validated 2026-07-20 (dbg 260720-06, emu-040):** boot→login clean
+(retargeted stopdma on every SCSI completion), `dma_cmpl_count` = 3863 after
+boot alone, climbing to 8561 after hat_dup_cow+reads → the hook demonstrably
+fires per DMA completion. hat_dup_cow 1/64 PASS, payload sum 1570 8192, burst4
+pressure (see commit evidence). `cinva dc` dormant (DC off).
+
+**Real-HW Step B (the actual enable) still requires, per the contract's static
+acceptance list:** verify old-byte windows, confirm `hat_cm_ram==0` + no live
+copyback, DTT0 handling, then flip CACR DC; acceptance = disk/swap/NFS/fork-COW
++ power-cut disk-truth on real 040 (and separately real 060).
 
 ### Step B — Data cache (HW-GATED; do NOT validate on emulator)
 1. `hat_pteload` CM-bit path (this pilot's core): set the leaf CM field per map —

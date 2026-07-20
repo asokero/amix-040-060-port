@@ -104,6 +104,14 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/runtime040.s" -o "$HERE/build/ru
 # publication; sptfree(flag=0) teardown publication.  Companion READER byte patches
 # (checkprot/getprot) in patch_segkmem.py below.  Spec: CM-PTE-WRITER-MATRIX.md.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segkmem040.s" -o "$HERE/build/segkmem040.o"
+# dma_cache040 (2026-07-20, caches Step B / B1 DMA-coherency gate): shared
+# FROM_DEVICE completion primitive (cinva dc) + A3091/SDMAC stopdma wrapper.
+# A3000-first: only the A3000-internal SCSI controller (the sole host-RAM DMA
+# initiator on this machine) is hooked; A2090/A2091/native-hd are documented in
+# DMA-INITIATOR-CENSUS.md and DEFERRED (not in this HW).  Dormant no-op until
+# the real-HW Step-B CACR DC-enable.  Wired by relocation retarget (three
+# same-named local stopdma symbols block globalize+weaken) via patch_a3091_dma.py.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/dma_cache040.s" -o "$HERE/build/dma_cache040.o"
 # krnxmemflt040 (2026-07-13, ISSUE-13 capture 2): NATIVE kernel fault-resolver core.
 # Stock krnxmemflt_orig was a coupled 4-defect 030 remnant (user-FC ptest, frame+72
 # rw decode + prot gate, 030 leaf walk) + the k_trap landing-pad recursion window.
@@ -184,6 +192,8 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol resume \
 	--weaken-symbol hardbus \
 	--add-symbol hardbus_orig=.text:0x5b3c2,function,global \
+	--add-symbol a3091_stopdma_orig=.text:0xd4cc,function,global \
+	--add-symbol a3091_dma_on=.bss:0x3cc0,object,global \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -198,11 +208,11 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/inituname040.o" \
 	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" \
 	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
-	"$HERE/build/segkmem040.o"
+	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_cache_fromdev_complete a3091_stopdma_orig a3091_dma_on dma_cmpl_count; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
@@ -279,6 +289,9 @@ python3 "$HERE/prototypes/patch_mincore.py" "$OUT" | tail -2
 
 echo "[*] CM-B1 segkmem reader geometry (CM-PTE-WRITER-MATRIX.md: checkprot/getprot 2K->4K + stock-body canaries)"
 python3 "$HERE/prototypes/patch_segkmem.py" "$OUT" | tail -3
+
+echo "[*] B1 DMA hook: retarget A3091/SDMAC stopdma calls -> dma_a3091_stopdma (DMA-INITIATOR-CENSUS.md)"
+python3 "$HERE/prototypes/patch_a3091_dma.py" "$OUT" | tail -6
 
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/prototypes/patch_framesz060.py" "$OUT"

@@ -1,5 +1,37 @@
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-20)
 
+> ## ✅ 2026-07-20 (ilta) — B1-DMA-HOOK LANDATTU A3000-EDELLÄ (dormantti no-op, emu-hyväksytty)
+> DMA-census valmis+verifioitu (analyysirepo 58f1cda: `DMA-INITIATOR-CENSUS.md` +
+> `DMA-PREPARE-COMPLETE-CONTRACT.md`). Census sulkee CM-B1-matriisin kohdan 8. Kaikki 5
+> keskeistä väitettä tarkistettu binääristä (hash, 4 DMA-omistajaa, ei cache-oppeja
+> driver-textissä, old-byte-assertit, hat_cm_ram==0). Toteutus buildit **260720-05/-06/-07**.
+> **DMA-hookit ovat VÄLTTÄMÄTÖN esiehto DC:lle:** DC-on hetkellä FROM_DEVICE-DMA (laite→RAM)
+> jättää vanhentuneita valideja D-cache-rivejä → CPU lukisi cachea tuoreen datan sijaan →
+> hiljainen fs-korruptio. Invalidointi completessa = korjaus (TO_DEVICE turvallinen WT:ssä).
+> **A3000-EDELLÄ (sovittu 2026-07-20):** neljästä host-RAM-DMA-omistajasta A3000+Mercury040
+> käyttää levy-I/O:hon VAIN A3091/SDMAC-polkua (emun a3000ux ajaa juuri sen). Vain a3091
+> hookattu; A2090/A2091(+chip-bounce)/native-hd (Zorro-SCSI/ST-506, ei koneessa) LYKÄTTY —
+> ei suljettu pois: census dokumentoi niiden ankkurit+assertit, A2091:n lisäys myöhemmin =
+> yksi wrapper lisää samaan jaettuun primitiiviin.
+> Toteutus (`prototypes/dma_cache040.s` + `patch_a3091_dma.py`): jaettu
+> `dma_cache_fromdev_complete` (koko-cache `cinva dc` 0xf458 + `dma_cmpl_count`-laskuri,
+> rekisteriläpinäkyvä); `dma_a3091_stopdma` (lukee dma_on → kutsuu oikean stopdma:n →
+> invalidoi jos armattu, ENNEN callbackia d1c0/d2f6). **Kytkentä relokaatioretargetilla**
+> EI globalize+weakenilla: startdma/stopdma ovat lokaaleja JA niitä on 3 samannimistä
+> (A2090/A2091/A3091), joten nimipohjainen override monitulkintainen; patch_a3091_dma.py
+> retargetoi VAIN a3091:n 4 `jsr stopdma`-relokaatiota (0xd170/d1c8/d2ce/d34a), oikea runko
+> jää `a3091_stopdma_orig`-aliakseen (0xd4cc). ld -r säilyttää retargetin dbg/quiet:iin.
+> Koko-cache-invalidointi B1:ssä TAHALLINEN (contractin siunaama pilotti-muoto): WT:ssä oikea
+> molempiin suuntiin. prepare-hook + range-metadata = B2 (copyback).
+> **EMU-040 HYVÄKSYNTÄ (dbg -06):** boot→login (retargetoitu stopdma jokaisella SCSI-
+> completella), **dma_cmpl_count 3863 pelkän bootin jälkeen → 8561 hat_dup_cow+lukujen jälkeen
+> → 27272 burst-kopioissa** = hook todistetusti elävällä completion-polulla; hat_dup_cow 1/64
+> PASS, payload sum 1570 8192, burst4 (ks. commit). cinva dc dormantti (DC off).
+> Dokumentti: CACHES-ON-PLAYBOOK.md "Step B1-DMA". Evidenssi test-tools/cmb1dma-emu-verify-260720.txt.
+> **SEURAAVAKSI: rautasessio caches Step B (varsinainen enable):** contractin staattinen
+> hyväksyntälista (old-byte-ikkunat, hat_cm_ram==0, DTT0-käsittely) → CACR-DC-bitti →
+> hyväksyntä disk/swap/NFS/fork-COW + virtakatkaisu-disk-truth oikealla 040:llä (ja 060:llä).
+
 > ## ✅ 2026-07-20 — CM-KAMPANJA B1 LANDATTU DORMANTTINA NO-OP-PORTTINA (emu-hyväksytty)
 > Codex-täysmatriisin (analyysirepo f2b56cd: `vm-map/CM-PTE-WRITER-MATRIX.md` +
 > `STOCK030-SDE-CI-CENSUS.md`) koko 8-kohtainen B1-ryhmä toteutettu, buildit

@@ -1,0 +1,56 @@
+CM-campaign B1 DMA hook (A3091/SDMAC FROM_DEVICE completion invalidate) — emu acceptance
+=========================================================================================
+Date: 2026-07-20
+Builds: base 68040-260720-05 / dbg -06 / quiet -07
+Spec:  amix-kernel-analysis 58f1cda vm-map/DMA-INITIATOR-CENSUS.md
+       + DMA-PREPARE-COMPLETE-CONTRACT.md (target image 8c0772a, sha ef63f751...)
+Scope: A3000-first — only the A3091/SDMAC controller (the one host-RAM DMA path an
+       A3000+Mercury040 uses, and the one the a3000ux emulator drives).
+       A2090 / A2091 (+chip bounce) / native A2090 ST-506 hd = deferred (not in this
+       machine); census records their anchors for a later A2500UX/Zorro session.
+Note:  cinva dc is DORMANT (CACR DC off) — this proves transcription correctness +
+       that the hook is on the live completion path, NOT cache coherency (HW-gated).
+
+Static verification (kernel repo)
+---------------------------------
+* census claims re-verified against build/unix-040 before implementing:
+  target hash ef63f751; 4 DMA owners at claimed addrs; NO cinva/cpush mnemonics
+  in driver text 0xb000..0x19000; old-byte asserts 0xc5de/0xf484; hat_cm_ram==0.
+* dma_cache040.s disasm: dma_cache_fromdev_complete = cinva dc (0xf458) +
+  addql #1,dma_cmpl_count + rts; dma_a3091_stopdma = read a3091_dma_on, jsr
+  a3091_stopdma_orig, tst was-armed, jsr dma_cache_fromdev_complete.
+* patch_a3091_dma.py retargeted exactly 4 relocations (0xd170/0xd1c8/0xd2ce/0xd34a)
+  -> dma_a3091_stopdma; A2090 (0xc41c) + A2091 (0xc972/0xcac6) stopdma calls
+  provably UNCHANGED (still -> local stopdma).
+* original a3091 stopdma body at 0xd4cc byte-identical (now aliased a3091_stopdma_orig).
+* relink relocs: 0 complaints. Retarget preserved into dbg build (ld -r tracks symbol).
+
+emu-040 (Amiberry a2065-backport, a3000ux config = A3091/SDMAC SCSI, dbg 260720-06)
+----------------------------------------------------------------------------------
+* boot -> "The system is ready." -> login: clean; every SCSI completion during boot
+  went through the retargeted stopdma wrapper (transcription correct).
+* uname -a: ... 68040-260720-06 m68k
+* dma_cmpl_count (IPC READ_MEM 0x080f5830), demonstrating the hook is live:
+    after boot alone:                 3863
+    after hat_dup_cow 1/64 + reads:   8561
+    during burst4 copy pressure:     27272
+  -> the FROM_DEVICE completion primitive fires once per a3091 DMA completion.
+* hat_dup_cow 1 / 64: RESULT PASS (isolation + fork+exec + stress)
+* tftp (binary) payload.bin sum 1570 8192; /payload.bin sum 1570 8192
+* burst4 (6x4MiB concurrent cp + hat_dup_cow 64 per burst, 4 bursts, detached):
+    ALLBURSTS-DONE; grep -c "1570 8192" = 24 (24/24 byte-perfect sums);
+    dma_cmpl_count after burst4 = 51583; /dev/kmem read OK; no bus errors / no 4AFC.
+
+emu-060 (a3000ux060, same dual-CPU binary, dbg 260720-06)
+---------------------------------------------------------
+* boot -> "The system is ready." -> login: clean (dbg hardbus XPAGE retries =
+  known 060 crossing-page fix, expected).
+* uname -a: ... 68060-260720-06 m68k
+* tftp payload sum 1570 8192; copy -> sum 1570 8192
+* hat_dup_cow 1 / 64: RESULT PASS
+* dma_cmpl_count = 8173 after boot + smoke -> A3091 hook fires on the 060 path too.
+  (a3000ux060 also drives the A3091/SDMAC controller; same retargeted wrapper.)
+
+VERDICT: no regression; A3091 DMA completion hook demonstrably on the live SCSI path
+(counter climbs with disk I/O); cinva dc dormant. A2090/A2091/hd deferred, documented.
+Real WT/DC enable remains the HW Step-B session per the contract's acceptance list.
