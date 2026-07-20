@@ -1482,6 +1482,22 @@ validation. Until then sched STAYS overridden.
 
 ## ISSUE-21: satunnainen boot-musta-ruutu real-HW:llä (~1/4 booteista) — kstack-rekursio + LATCH1
 
+**PÄIVITYS 2026-07-20 (btrace-lokalisointi + FLT-työkalu):** Lisättiin flag-gated
+varhainen boot-trace (`prototypes/btrace.s`, vaihemerkit A–H/S/s/P; commit 235018a) ja
+one-shot FIRST-FAULT-latch (`prototypes/ktrap_latch.s` FLT-lohko, commit 8d4e1ee).
+Kaappaus dbg -11:llä (evidenssi /tmp/amix-hw-a3091-dbg*.log): epäonnistuva boot tulostaa
+**`A`** (kernel entry) → heti fault → stock kstack-rekursio (`kstack 0x080DCxxx`, askel
+0xBC=188 B). 'k'-virta = katkenneet kstack-rivit. **Fault on 'A':n ja 'B':n VÄLISSÄ =
+varhaisin 030-taulunrakennus, MMU POIS PÄÄLTÄ, koodi IDENTTINEN -13:n kanssa** → EI CM-B1/
+DMA-regressio (ne ajetaan vasta C:stä eteenpäin). Tilariippuvuus: jam säilyy lämminresetin
+yli, ~2 min virrat pois palauttaa (→ marginaalinen rautatila -hypoteesi, EI deterministinen
+ohjelmisto). Aiempi LATCH1 näytti fault-osoitteeksi pino-osoitteen (0x080DC830) → epäily:
+ajoittainen bus-error fyysisellä RAMilla ~0x080DCxxx (proc-0 kernel-pino). **SEURAAVA
+DATA: FLT-rivi epäonnistuvalta bootilta** (`FLT v<fmtvec> p<PC> a<fault-osoite>`): jos
+a≈0x080DCxxx → varmistaa RAM/väylä tuolla alueella (rauta); onnistuvan bootin FLT =
+normaali init-fault (v00007008 p080005C6 a80800000). Emu boottaa AINA puhtaasti (deterministinen
+malli, ei marginaalia). Työkalut standardina dbg-buildissa.
+
 **OPEN — kirjattu 2026-07-19, EI blokkaa käyttöä (uusi yritys korjaa lähes aina).** A3000 +
 Mercury 040, unix_boot → kernel jää heti bootissa mustaan ruutuun ~kerran neljästä.
 ENSIMMÄINEN serial-evidenssi (260719-02, 9600 baud; rivien alut osin merkkikadon syömiä):
