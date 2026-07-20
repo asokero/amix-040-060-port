@@ -1,0 +1,53 @@
+CM-campaign B1 (writethrough-pilot scaffolding, dormant no-op port) — emu acceptance
+=====================================================================================
+Date: 2026-07-20
+Builds: base 68040-260720-01 / dbg -02 / quiet -03 (kernel repo, relink-040*.sh)
+Spec:   amix-kernel-analysis f2b56cd vm-map/CM-PTE-WRITER-MATRIX.md
+        + STOCK030-SDE-CI-CENSUS.md (target image bc5a43e6... = kernel 4aad0a9)
+Note:   ALL CM effects dormant on both platforms (CACR DC off + DTT0 blanket
+        data-inhibit).  This acceptance proves "no regression + the classifier
+        provably emits the intended CM bits", NOT cache correctness (HW-gated).
+
+emu-040 (Amiberry a2065-backport, dbg kernel 260720-02)
+-------------------------------------------------------
+* boot -> "The system is ready." -> login: clean; console root login,
+  ping 10.0.2.2 slirp prime, telnet 2323 sessions OK
+* uname -a: ... 68040-260720-02 m68k
+* tftp (binary) payload.bin: sum 1570 8192 ✓; copy /tmp -> sum 1570 8192 ✓
+* hat_dup_cow 1 / 32 / 64: RESULT PASS (isolation + fork+exec + stress) x3
+* fork/exec churn: 3x ls -alR /usr -> LOOPDONE-RC0
+* burst4 (6x4MiB concurrent cp + hat_dup_cow 64 per burst, 4 bursts, detached
+  via nohup): ALLBURSTS-DONE, grep -c "1570 8192" burst4.log = 24 (24/24
+  byte-perfect sums), no bus errors, no 4AFC on console
+* /dev/kmem 4-byte read OK (ISSUE-13 regression check)
+
+runtime CM census (Amiberry IPC READ_MEM, dbg kernel, live tables)
+------------------------------------------------------------------
+kptr040 var @0x080ed180 -> array 0x080f2e00
+* kvsegu leaf (kptr040[0x211], leafbase 0x09ee4000), entries 0..15:
+    [0]=0x080ee069 [1]=0x080ef061   <- slot-0 u-area (prumap040 NC force):
+                                       low byte 0x69/0x61 = CM bits 11 (NC) ✓
+    [2..15]=0x......79              <- live segu windows via hat_pteload
+                                       classifier: status1|0x60 + HW U/M
+                                       = 0x79, CM=11 (NC) ✓  POSITIVE SIGNAL
+* fixed-u leaf (kptr040[0], leafbase from desc), entries 0,1:
+    0x09ed80f9 / 0x09ed90f9         <- CM=11 (NC) ✓ (resume normalize path)
+* kvseg kernel-RAM leaf (kptr040[1] -> kptbl start), entries 0..9:
+    0x0815x019                      <- low byte 0x19 = CM=00 (WT) ✓ negative
+                                       control: managed RAM stays B1 WT class
+
+emu-060 (Amiberry a3000ux060, same dual-CPU binary, dbg 260720-02)
+------------------------------------------------------------------
+* boot -> "The system is ready." -> login: clean (dbg hardbus XPAGE retry
+  messages = the known 060 crossing-page fix, expected)
+* uname -a: ... 68060-260720-02 m68k
+* tftp payload sum 1570 8192 ✓; copy -> sum 1570 8192 ✓
+* hat_dup_cow 1 / 64: RESULT PASS x2; churn LOOPDONE-RC0
+* runtime CM census (same IPC addresses, same live-table layout):
+    kvsegu leaf [0]=0x080ee069 [1]=0x080ef061 [2..7]=0x......79  -> CM=11 NC ✓
+    kvseg RAM leaf [0..3]=0x0815x019                             -> CM=00 WT ✓
+  identical to the 040 census.
+
+VERDICT: B1 group = no regression on either CPU; classifier + NC forcing
+provably active in the live tables; RAM class stays WT (dormant).  Real
+WT/DC enablement remains HW-gated (DMA census + Step-B session).

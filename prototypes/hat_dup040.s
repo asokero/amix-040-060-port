@@ -616,7 +616,10 @@ Lhd_cnodbg:
 	lsll	%d4,%d0
 	moveq	&1,%d4
 	orl	%d0,%d4
-	movel	%d4,%a0@		| *newpte = pfn<<12 | 1 (writable resident)
+	orl	hat_cm_ram,%d4		| CM-B1: explicit managed-RAM stage class (0x00 WT in
+					|   B1, 0x20 CB in B2 -- hat040.s data global; matrix
+					|   "hat_dup private child leaf" row)
+	movel	%d4,%a0@		| *newpte = pfn<<12 | 1 | CM (writable resident)
 | register the new PTE in newpp's p_mapping reverse-map (verbatim; +256 = Model B
 | unchanged 512B frag layout)
 	moveal	%fp@(-68),%a0

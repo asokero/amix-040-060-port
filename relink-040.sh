@@ -98,6 +98,12 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/bp_map040.s"  -o "$HERE/build/bp
 #                unvalidated); schedpaging override RETIRED 2026-07-15 -- writeback
 #                group converted (patch_writeback.py), stock pageout daemon runs
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/runtime040.s" -o "$HERE/build/runtime040.o"
+# segkmem040 (2026-07-20, CM-campaign B1): flushmmu = cpusha dc + pflusha (descriptor
+# publication for every bare-flushmmu caller); segkmem_setprot Model-B port (2 KiB
+# index/step was a live-PTE-corruption latent + stock cursor-advance defect) +
+# publication; sptfree(flag=0) teardown publication.  Companion READER byte patches
+# (checkprot/getprot) in patch_segkmem.py below.  Spec: CM-PTE-WRITER-MATRIX.md.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segkmem040.s" -o "$HERE/build/segkmem040.o"
 # krnxmemflt040 (2026-07-13, ISSUE-13 capture 2): NATIVE kernel fault-resolver core.
 # Stock krnxmemflt_orig was a coupled 4-defect 030 remnant (user-FC ptest, frame+72
 # rw decode + prot gate, 030 leaf walk) + the k_trap landing-pad recursion window.
@@ -114,6 +120,7 @@ cp "$STOCK" "$HERE/build/unix-stage1"
 # defs (the crashsw/crash_sync RELA-guru lesson).
 m68k-linux-gnu-objcopy \
 	--globalize-symbol sysseginit \
+	--globalize-symbol segkmem_setprot \
 	--globalize-symbol hat_pteload \
 	--globalize-symbol hat_ptalloc \
 	--globalize-symbol hat_sdtalloc \
@@ -127,6 +134,9 @@ m68k-linux-gnu-objcopy \
 m68k-linux-gnu-objcopy \
 	--weaken-symbol pstart \
 	--weaken-symbol sysseginit \
+	--weaken-symbol segkmem_setprot \
+	--weaken-symbol sptfree \
+	--weaken-symbol flushmmu \
 	--weaken-symbol vatosde \
 	--weaken-symbol vatopte \
 	--weaken-symbol uvatosde \
@@ -187,11 +197,12 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o" \
 	"$HERE/build/inituname040.o" \
 	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" \
-	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o"
+	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
+	"$HERE/build/segkmem040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
@@ -265,6 +276,9 @@ python3 "$HERE/prototypes/patch_pageoutdefs.py" "$OUT" | tail -2
 
 echo "[*] Model B mincore vector (MINCORE-VECTOR-PATCH-SPEC.md: btoc + alignment gate; 0x40000 chunk unchanged)"
 python3 "$HERE/prototypes/patch_mincore.py" "$OUT" | tail -2
+
+echo "[*] CM-B1 segkmem reader geometry (CM-PTE-WRITER-MATRIX.md: checkprot/getprot 2K->4K + stock-body canaries)"
+python3 "$HERE/prototypes/patch_segkmem.py" "$OUT" | tail -3
 
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/prototypes/patch_framesz060.py" "$OUT"

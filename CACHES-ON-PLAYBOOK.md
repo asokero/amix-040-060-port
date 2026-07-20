@@ -56,6 +56,57 @@ libc churn → `LOOPDONE-RC0`, no panic, no stale-IC crash. DC still OFF (Step B
   amixadm) on emu-040 AND emu-060. Clean run = IC coherency handled.
 - Risk: moderate (a missing cinv crashes, but is caught + localizable on emu).
 
+### Step B1 — Writethrough-pilot CM scaffolding  ✅ IMPLEMENTED AS DORMANT NO-OP PORT (2026-07-20, builds 260720-01/-02/-03)
+
+The whole Codex B1 atomic group (analyysirepo `vm-map/CM-PTE-WRITER-MATRIX.md`,
+"B1 implementation group" 1–8) is now in the tree, dormant while CACR DC stays
+off and DTT0 stands.  **DTT0 is UNCHANGED by design** (narrowing = its own later
+MMU milestone).  What landed:
+
+1. **Classifier** (`hat040.s` `Lcm_sel`, shared by all three `hat_pteload` leaf
+   constructors Lpfnok/Lwleaf/Lreplace): `seg==segu -> CM=0x60 NC` (highest
+   priority), `pp==NULL -> 0x40 NCS` (hat_devload/MMIO), else `hat_cm_ram`
+   (**new GLOBAL .data staging switch**: 0x00 WT in B1; B2 = flip to 0x20 CB).
+2. **u-area/segu NC everywhere**: `prumap040.s` stops inheriting CM from the
+   p0init shadow flags (mask + force 0x60, + pflusha); `resume` paths U and V
+   normalize `|0x60` (`runtime040.s` AND the `mainmarks.s` dbg twin).
+3. **Root/teardown publication ordering** (`hat040.s`): `hat_alloc` pushes the
+   zeroed root (`cpusha dc`) BEFORE storing `as->hat_root`; `hat_free` detaches
+   Bdesc + `cpusha dc` before each leaf `hat_ptfree`, clears `root[A]` +
+   `cpusha dc` before the pointer-table free, and retires the root
+   (clear as@(20), cpusha bc, pflusha) BEFORE `kmem_free(root)`.
+4. **Explicit constructor classes**: `hat_dup040.s` private child leaf and
+   `bp_map040.s` alias constructor OR in `hat_cm_ram`.
+5. **Direct-`kptbl` family ported as one unit**: `segkmem040.s` overrides
+   `segkmem_setprot` (2 KiB index/step -> 4 KiB, **stock cursor-advance defect
+   fixed** (prot!=0 loop rewrote PTE[0] forever), publication tail) --
+   vtable slot rebinds by symbol; `patch_segkmem.py` converts the READER
+   companions `segkmem_checkprot`/`segkmem_getprot` (4 sites, old-byte asserts
+   + stock-body canaries).
+6. **Publication census closed**: `flushmmu` override = `cpusha dc` + pflusha
+   (every bare-flushmmu caller = segkmem_alloc/free/mapin/mapout etc. now
+   publishes); `sysseginit` (kvm040.s) publishes its kptr040 pointer stores;
+   `sptfree(flag=0)` (segkmem040.s) publishes its direct clears before rmfree.
+   NEW-site rule: **new B1 flushes are `cpusha dc`** (descriptor publication
+   only -- never invalidates the enabled IC); pre-existing hand sites keep bc.
+7. Legacy 030 writers stay unreachable (status quo: sched-override disables
+   hat_swapout, hat_exec040 no-op, hat_map growsdt bounded -- no CM logic added).
+8. DMA-read completion invalidation = **NOT in this group**; gate for the real
+   WT/DC enable, waiting on the Codex DMA-initiator census (native hd/floppy/
+   tape/audio/bitplane; aen proven PIO).
+
+**Deliberate scope cuts (documented, not oversights):** `segkmem_alloc`/
+`segkmem_mapin` constructors keep emitting CM=00, which IS the B1 WT target;
+their B2 CB staging + the mapin unmanaged->NCS classification land with the
+segdev/Z3 group (roadmap: "segdev-toteutusryhmään ... segkmem_mapin-MMIO").
+
+**Emu-validated 2026-07-20 (dbg 260720-02, emu-040):** boot->login,
+hat_dup_cow 1/32/64 PASS, tftp payload sum 1570 8192 byte-perfect after copy,
+fork/exec churn, burst4 pressure; **runtime CM census via Amiberry IPC**:
+kvsegu window leaves read `0x..61/0x..69/0x..79` (CM=11 NC -- the classifier's
+positive signal), fixed-u `0x..0F9` (NC), kvseg kernel RAM `0x..019` (CM=00 WT
+control).  All CM effects dormant (CACR DC off + DTT0 blanket-inhibit).
+
 ### Step B — Data cache (HW-GATED; do NOT validate on emulator)
 1. `hat_pteload` CM-bit path (this pilot's core): set the leaf CM field per map —
    `0x20` (copyback) for normal RAM, `0x60` (noncachable) for device maps (`prot & 8`,

@@ -78,7 +78,14 @@ prumap:
 	movel	%a2@,%d4
 	beqw	Lpm_out			| not filled -> bail (retry later)
 	movel	%d4,%d5
-	andil	&0x00000fff,%d5		| d5 = live PTE flags (p0init wrote |1)
+| CM-B1 (2026-07-20, CM-PTE-WRITER-MATRIX.md prumap row): do NOT inherit the CM
+| field from the p0init-written flags (p0init is an 030-format shadow producer:
+| its low bits are software values, not an 040 cache policy) -- mask CM out of
+| the inherited flags and FORCE CM=0x60 (noncacheable).  The u-area/segu class
+| stays NC in both B1 and B2 (fixed u-area is 0xe1 = NC; every alias of the
+| same frames must agree or a cacheable alias would shadow the NC policy).
+	andil	&0x00000f9f,%d5		| d5 = live PTE flags, CM field (bits 6:5) cleared
+	oril	&0x60,%d5		| force CM=11 noncacheable (u-area class)
 	andil	&0xfffff000,%d4
 	orl	%d5,%d4
 	movel	%d4,%a3@		| leaf[0] = u-area page 0
@@ -87,6 +94,8 @@ prumap:
 	orl	%d5,%d4
 	movel	%d4,%a3@(4)		| leaf[1] = u-area page 1
 	.word	0xf4f8			| cpusha bc -- push the PTE writes to RAM for the HW tablewalk
+	.word	0xf518			| pflusha -- CM-B1: conservative PUB (matrix: "cpusha is enough
+					|   only for invalid slots" -- don't rely on that invariant)
 	moveq	&1,%d4
 	movel	%d4,Lpm_done
 Lpm_out:

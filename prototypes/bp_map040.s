@@ -85,7 +85,10 @@ Lbm_loop:
 	addl	pages_base,%d0
 	moveq	&12,%d1
 	lsll	%d1,%d0			| phys page base
-	oril	&0x19,%d0		| resident|W=0|U|M, CM=writethrough
+	oril	&0x19,%d0		| resident|W=0|U|M, CM=writethrough (base class)
+	orl	hat_cm_ram,%d0		| CM-B1: managed-RAM stage class (0x00 WT / B2 0x20 CB;
+					|   matrix bp_map row: temporary MANAGED page alias must
+					|   track the RAM class, not stay hardcoded)
 	movel	%d0,%a1@		| write live 040 leaf PTE
 Lbm_next:
 	moveal	%a3@(16),%a3		| next page in I/O list

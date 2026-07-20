@@ -1,3 +1,32 @@
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-20)
+
+> ## ✅ 2026-07-20 — CM-KAMPANJA B1 LANDATTU DORMANTTINA NO-OP-PORTTINA (emu-hyväksytty)
+> Codex-täysmatriisin (analyysirepo f2b56cd: `vm-map/CM-PTE-WRITER-MATRIX.md` +
+> `STOCK030-SDE-CI-CENSUS.md`) koko 8-kohtainen B1-ryhmä toteutettu, buildit
+> **260720-01 (base) / -02 (dbg) / -03 (quiet)**. Ydin: (1) `Lcm_sel`-luokittelija
+> hat_pteloadin kaikkiin kolmeen leaf-konstruktoriin (segu→NC 0x60 / pp==NULL→NCS 0x40 /
+> RAM→`hat_cm_ram`-DATA-globaali = **yhden longin B2-vipu**, B1-arvo 0x00 WT);
+> (2) u-area-NC joka aliasissa (prumap CM-periytys pois + pakko-0x60, resume U/V
+> normalize |0x60 runtime040+mainmarks); (3) hat_alloc juuren julkaisu ennen
+> as@(20)-storea + hat_free teardown-järjestys (Bdesc-detach+cpusha dc per leaf,
+> root[A]-clear ennen ptrtable-freetä, root-retire ennen kmem_freetä); (4) hat_dup-
+> private-leaf + bp_map lukevat hat_cm_ram; (5) segkmem-suoraperhe yhtenä yksikkönä:
+> `segkmem040.s`-override (setprot 2K→4K **+ stock-kursoribugin fiksi** (prot!=0-silmukka
+> kirjoitti ikuisesti PTE[0]:aa) + julkaisu; sptfree(flag=0)-julkaisu; **flushmmu =
+> cpusha dc + pflusha** = julkaisu kaikille bare-flushmmu-kutsujille) + `patch_segkmem.py`
+> (checkprot/getprot 4 sitea + stock-kanariat); (6) sysseginit-julkaisu. Uusi sääntö:
+> uudet flushit = **cpusha dc** (ei koske IC:tä); vanhat käsin kirjoitetut bc-sitet ennallaan.
+> **DTT0 EI KOSKETTU** (kavennus oma milestone). Scope-cutit dokumentoitu playbookissa:
+> segkmem_alloc/mapin-konstruktorien B2-CB + mapin-MMIO-NCS = segdev/Z3-ryhmä; DMA-read-
+> invalidointi = HW-DC-gaten osa, odottaa Codex-DMA-censusta.
+> **EMU-040 HYVÄKSYNTÄ (dbg -02):** boot→login, hat_dup_cow 1/32/64 PASS, payload-sum
+> 1570 8192 kopion yli, fork-churn LOOPDONE-RC0, burst4 ALLBURSTS-DONE summat tavuntarkkoja;
+> **runtime-CM-census IPC:llä**: kvsegu-leafit 0x..61/69/79 (CM=11 NC = luokittelijan
+> positiivinen signaali), fixed-u 0x..0F9 (NC), kvseg-RAM 0x..019 (CM=00 WT -kontrolli).
+> Kaikki CM-vaikutukset dormantteja (CACR DC off + DTT0-blanket). Emu-060-savu: ks. alla.
+> **SEURAAVAKSI:** Codex-DMA-initiaattoricensus (prepare/complete-omistajuus) → rautasessio
+> caches Step B (WT-enable + hyväksyntä burst4 + hat_dup_cow + virtakatkaisu-disk-truth).
+
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-19 ilta)
 
 > ## ✅ 2026-07-19 ilta — MODEL-B-JÄÄNNÖSRYHMÄT: KAIKKI 4 CODEX-SPEKSIÄ LANDATTU (emu-hyväksytty per ryhmä)

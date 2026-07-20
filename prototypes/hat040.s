@@ -396,6 +396,7 @@ Lp_noprop:
 	addqb	&1,%a0@(7)
 	addqw	&8,%sp
 Lp_nolock:
+	bsrw	Lcm_sel			| CM-B1: OR the cache-mode class into status (fp@-44)
 	movel	%fp@(20),%d0		| pfn
 	moveq	&12,%d3
 	lsll	%d3,%d0			| pfn<<12   [030: <<11]
@@ -442,6 +443,7 @@ Lw_rop:
 	moveq	&5,%d3
 	movel	%d3,%fp@(-44)
 Lw_st:
+	bsrw	Lcm_sel			| CM-B1: OR the cache-mode class into status (fp@-44)
 	movel	%fp@(20),%d0
 	moveq	&12,%d3
 	lsll	%d3,%d0			| pfn<<12   [030: <<11]
@@ -552,6 +554,7 @@ Lrp_rop:
 	moveq	&5,%d3
 	movel	%d3,%fp@(-44)		| read-only -> status 5
 Lrp_wr:
+	bsrw	Lcm_sel			| CM-B1: OR the cache-mode class into status (fp@-44)
 	movel	%fp@(20),%d0		| new pfn
 	moveq	&12,%d3
 	lsll	%d3,%d0			| pfn<<12
@@ -568,6 +571,39 @@ Lrp_flush:
 	movel	%d2,%sp@-
 	jsr	flushmmu		| flushmmu(va, 1)
 	bra	Lepi
+
+| --- Lcm_sel: CM-bit class selector (caches campaign B1, 2026-07-20; spec =
+| analyysirepo vm-map/CM-PTE-WRITER-MATRIX.md "Required cache-class selector").
+| Shared by all three complete leaf constructors (Lpfnok / Lwleaf / Lreplace).
+| ORs the 040 CM field (leaf bits 6:5) into the already-computed status word at
+| fp@(-44).  Status is always one of {0,1,5} here (CM bits clear), so a plain OR
+| composes correctly -- never OR into an unmasked template.
+|   seg == segu   -> 0x60 NC   (u-area/segu windows stay noncacheable in B1+B2;
+|                    highest priority: segu pages have pp!=NULL but must NOT get
+|                    the managed-RAM class -- resume/prumap alias the same frames)
+|   pp == NULL    -> 0x40 NCS  (hat_devload path: unmanaged PFN / MMIO;
+|                    noncacheable-serialized in B1+B2)
+|   else          -> hat_cm_ram (managed RAM stage class: 0x00 WT in B1;
+|                    B2 flips the DATA global to 0x20 copyback -- one switch)
+| Inputs: fp@(8) = seg (arg0), a2 = pp (live in all three paths).  Clobbers d0.
+| DORMANT until CACR DC-enable + DTT0 handling (Step B, HW-gated): with the data
+| cache off these bits are ignored by the 040, so this is a no-op port that can
+| run (and be byte-inspected) on the emulator.
+Lcm_sel:
+	movel	segu,%d0		| the global segu segment pointer
+	cmpl	%fp@(8),%d0
+	beq	Lcm_nc
+	tstl	%a2			| pp == NULL -> device/unmanaged
+	beq	Lcm_dev
+	movel	hat_cm_ram,%d0		| managed RAM: stage class (B1 0x00 / B2 0x20)
+	orl	%d0,%fp@(-44)
+	rts
+Lcm_nc:
+	oril	&0x60,%fp@(-44)		| segu window -> NC
+	rts
+Lcm_dev:
+	oril	&0x40,%fp@(-44)		| unmanaged PFN -> NCS
+	rts
 
 | ===========================================================================
 | hat_unlock (orig 0xb5d1e, GLOBAL T) -- 040 port.
@@ -1143,6 +1179,13 @@ Lhae_done:
 	pea	0x1000			| size 4KB (page-aligned, zeroed)
 	jsr	kmem_zalloc
 	addqw	&8,%sp			| a0 = root VA (page-aligned)
+| CM-B1 (2026-07-20, CM-PTE-WRITER-MATRIX.md "Whole-AS allocation/free ordering"):
+| publish the ZEROED root before exposing it via as->hat_root.  kmem_zalloc's
+| zero stores go through the normal kernel mapping (kvseg VA, not the DTT0
+| identity alias); under a copyback DC they could sit dirty while a context
+| switch already loads this root into URP.  cpusha dc pushes them to RAM first.
+| No-op while DC is off / WT; preserves a0 (cpusha touches no registers).
+	.word	0xf478			| cpusha dc -- push the zeroed root page to RAM
 	movel	%a0,%a2@(20)		| as->hat_root = 040 root VA (a0 = return value too)
 	| --- one-shot DBG marker: proves as_alloc/hat_alloc is reached (newproc returned) ---
 	movel	Lha_n,%d0
@@ -1395,6 +1438,16 @@ Lf_nextPTE:
 	cmpl	%a3,%d3			| d3 - a3
 	bhiw	Lf_PTE			| d3 > a3 -> more PTEs in this leaf
 | leaf table fully scanned -> free it (hat_ptfree preserves d4/a4/a5)
+| CM-B1 teardown ordering (2026-07-20, CM-PTE-WRITER-MATRIX.md "replacement or
+| teardown" protocol): DETACH the parent descriptor and PUBLISH the descriptor
+| stores BEFORE the leaf page can reach an allocator.  The stock order freed the
+| leaf first and pushed only once at Lf_done -- under a copyback DC the dirty
+| PTE-clear lines of an already-recycled leaf page could write back over the new
+| owner's data.  a2 = &Bdesc is still live here (the PTE loop and hat_ptfree
+| preserve a2).  cpusha dc is a no-op while DC is off / WT -- B2 scaffolding
+| that must NOT silently depend on DTT0 staying uncached.
+	clrl	%a2@			| Bdesc = 0 (detach the leaf from the tree)
+	.word	0xf478			| cpusha dc -- publish PTE clears + Bdesc clear
 	movel	%fp@(-4),%sp@-
 	jsr	hat_ptfree
 	addqw	&4,%sp
@@ -1404,13 +1457,17 @@ Lf_nextB:
 Lf_freeA:
 | V2: FREE the pointer-table page (hat_pteload V2 allocates it via hat_ptalloc = a whole
 | page).  hat_ptfree's guards (page-aligned + pfn bounds) leak anything else -- e.g. the
-| hat_exec/hat_growsdt 030-written relic tables -- exactly as V1 did.  Then clear root[A].
+| hat_exec/hat_growsdt 030-written relic tables -- exactly as V1 did.
+| CM-B1 reorder (2026-07-20): clear root[A] and publish BEFORE freeing the pointer
+| table -- the parent must be detached before its table page can be recycled
+| (same protocol as the per-leaf Bdesc detach above; stock order freed first).
+	movel	%fp@(-20),%d0
+	asll	&2,%d0
+	clrl	%a5@(0,%d0:l)		| root[A] = 0 (UDT invalid) -- detach FIRST
+	.word	0xf478			| cpusha dc -- publish root[A] clear before table reuse
 	movel	%fp@(-32),%sp@-		| pointer-table base (stashed at Lf_A)
 	jsr	hat_ptfree
 	addqw	&4,%sp
-	movel	%fp@(-20),%d0
-	asll	&2,%d0
-	clrl	%a5@(0,%d0:l)		| root[A] = 0 (UDT invalid)
 Lf_nextA:
 	addql	&1,%fp@(-20)
 	braw	Lf_A
@@ -1422,14 +1479,20 @@ Lf_done:
 | installed (exec installs the new as; exit -> resume loads the next proc's root).
 | Mirrors stock 030 hat_free, which frees the SDT here (3B2 vm_hat.c:245 + the
 | srama default-SDT switch kludge for the ublock).
+| CM-B1 reorder (2026-07-20): retire the root -- clear as->hat_root and publish
+| ALL teardown descriptor stores + flush the ATC -- BEFORE kmem_free hands the
+| root page back to the allocator.  The stock order (free, clear, push) left a
+| window where dirty root lines could write back over a reallocated page (B2)
+| and where a stale translation could still name the freed root (matrix: "a
+| final whole-cache operation after the frees is too late").
+	moveal	%fp@(8),%a0
+	clrl	%a0@(20)		| as->hat_root = 0 (detach before the free)
+	.word	0xf4f8			| cpusha bc
+	.word	0xf518			| pflusha
 	pea	0x1000			| size (kmem_free 2nd arg)
 	movel	%a5,%sp@-		| root VA (loaded from as@(20) at entry, callee-saved)
 	jsr	kmem_free
 	addqw	&8,%sp
-	moveal	%fp@(8),%a0
-	clrl	%a0@(20)		| as->hat_root = 0
-	.word	0xf4f8			| cpusha bc
-	.word	0xf518			| pflusha
 	moveml	%fp@(-60),%d2-%d4/%a2-%a5
 	moveal	%d0,%a0
 	unlk	%fp
@@ -1616,4 +1679,14 @@ Lhfa_msg:
 	.even
 Lhfa_n:
 	.long	0
+| --- hat_cm_ram: the managed-ordinary-RAM cache-mode class for the caches
+| campaign (CM-PTE-WRITER-MATRIX.md stage table).  B1 = 0x00 (writethrough),
+| B2 flips this ONE global to 0x20 (copyback).  Read by hat_pteload's Lcm_sel,
+| hat_dup040's private-leaf constructor and bp_map040's alias constructor.
+| GLOBAL + in .data so a future stage flip is a 4-byte initializer change (or a
+| boot-time poke) without touching the three consumers.
+	.globl	hat_cm_ram
+	.balign 4
+hat_cm_ram:
+	.long	0x00000000		| B1: CM=00 writethrough for managed RAM
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

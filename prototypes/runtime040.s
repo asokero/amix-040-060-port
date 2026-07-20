@@ -151,6 +151,8 @@ Lrt_remap:
 |	--- path U: p_ubptbl (proc 0 / static u-area); 2KB click -> 4KB 040 PTE, keep live flags ---
 	movel	%a2@,%d3
 	andil	&0x00000fff,%d3		| d3 = live 040 leaf status flags (e.g. 0x0F9)
+	oril	&0x60,%d3		| CM-B1: normalize CM=11 NC (u-area class; matrix resume
+					|   path-U row -- flags are normally NC already, enforce it)
 	movel	%a3@,%d4		| uarea_pt[0] = (p_ubptbl[0] phys & ~0xFFF) | flags
 	andil	&0xfffff000,%d4
 	orl	%d3,%d4
@@ -178,7 +180,10 @@ Lrt_kvsegu:
 	asll	&2,%d5
 	addl	%d5,%d4
 	moveal	%d4,%a3
-	movel	%a3@,%a2@		| uarea_pt[0] = kvsegu leaf PTE for p_segu
+	movel	%a3@,%d4		| kvsegu leaf PTE for p_segu
+	oril	&0x60,%d4		| CM-B1: normalize CM=11 NC (don't inherit the kvsegu
+					|   source CM wholesale; matrix resume path-V row)
+	movel	%d4,%a2@		| uarea_pt[0]
 	movel	%d1,%d3			| page 1: p_segu + 0x1000
 	addil	&0x1000,%d3
 	movel	%d3,%d4
@@ -197,7 +202,9 @@ Lrt_kvsegu:
 	asll	&2,%d5
 	addl	%d5,%d4
 	moveal	%d4,%a3
-	movel	%a3@,%a2@(4)		| uarea_pt[1] = kvsegu leaf PTE for p_segu+0x1000
+	movel	%a3@,%d4		| kvsegu leaf PTE for p_segu+0x1000
+	oril	&0x60,%d4		| CM-B1: normalize CM=11 NC (see uarea_pt[0] above)
+	movel	%d4,%a2@(4)		| uarea_pt[1]
 Lrt_flush:
 	.word	0xf4f8			| cpusha bc -- push the uarea_pt writes to RAM for the HW tablewalk
 	.word	0xf518			| pflusha -- invalidate the ATC (fixed-VA stack now remaps away!)
