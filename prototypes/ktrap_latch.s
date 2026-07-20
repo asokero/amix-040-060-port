@@ -50,6 +50,59 @@ k_trap:
 	movel	%a3,%sp@-		| save a3 (parity with ktrap_dbg.s discipline)
 	movel	%d2,%sp@-		| save d2 (KSTKCHAIN walk/line counter)
 	lea	%fp@(8),%a2		| a2 = frame pointer (&USP slot)
+| =================== FIRST-FAULT LATCH (btrace era, 2026-07-20) ===================
+| ONE-SHOT dump of the VERY FIRST kernel fault's frame, on ANY PC.  The gated
+| probes below only fire for PC in [0x40000000,0x4C000000) (the old ISSUE-5/7
+| u-area faults); the intermittent real-HW ISSUE-21 boot fault has PC in the
+| kernel image (~0x080xxxxx) so those MISS it, and they use cmn_err which needs
+| the console (dead pre-console -> that is why only the stock "kstack" recursion
+| showed).  This fires ONCE (Lkff_n) at k_trap entry, BEFORE the recursion, and
+| dumps via direct-serial serdbg_mark/serdbg_hex (pre-console-safe).  Output:
+|   FLT v<format/vector> p<fault PC> a<040 fault address>
+| Decodes the ISSUE-21 access error: v low word 7008 = format 7 / vector 2
+| (access fault); a = the faulting physical address (was suspected to be the
+| kernel stack ~0x080DCxxx -> intermittent RAM/bus fault there).  serdbg_*
+| preserve all registers + CCR, so the frame (a2) and k_trap state are untouched.
+	tstl	Lkff_n
+	bnew	Lkff_after
+	moveq	&1,%d0
+	movel	%d0,Lkff_n
+	pea	0x46			| 'F'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	pea	0x4c			| 'L'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	pea	0x54			| 'T'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	pea	0x20			| ' '
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	pea	0x76			| 'v'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	moveq	&0,%d0
+	movew	%a2@(70),%d0		| format/vector word (exception frame +6)
+	movel	%d0,%sp@-
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x70			| 'p'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%a2@(66),%sp@-		| fault PC (exception frame +2; unaligned long legal on 040)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x61			| 'a'
+	jsr	serdbg_mark
+	addqw	&4,%sp
+	movel	%a2@(84),%sp@-		| 040 fault address (exception frame +0x14)
+	jsr	serdbg_hex
+	addqw	&4,%sp
+	pea	0x0a			| newline
+	jsr	serdbg_mark
+	addqw	&4,%sp
+Lkff_after:
 | ======================= KSTKCHAIN probe (ISSUE-7) =======================
 | trigger: this k_trap entry runs critically deep in the u-area kernel stack
 	movel	%fp,%d0			| d0 = current depth (fp = entry sp - 4)
@@ -247,6 +300,9 @@ Lkl_m6:
 	.even
 Lkl_n:
 	.long	0
+	.even
+Lkff_n:
+	.long	0			| first-fault latch one-shot guard
 	.even
 Lks_m1:
 	.asciz	"DBG KSTKCHAIN sp=%x fv=%x pc=%x fa=%x"
