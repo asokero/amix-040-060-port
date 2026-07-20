@@ -23,6 +23,9 @@ pstart:
 | ---- 0xd44: prologue (frame + saved regs, verbatim) ----
 	linkw	%fp,&-40
 	moveml	%d2-%d6/%a2-%a3,%sp@-
+	pea	0x41			| btrace 'A' -- kernel entry reached (SP valid post-prologue)
+	jsr	btrace_mark
+	addqw	&4,%sp
 | NOTE: the original pstart's crash-dump prologue (0xd4c..0xd86) is OMITTED here.
 | It tests/sets `crashsw` and `crash_sync`, which are FILE-LOCAL symbols in the
 | kernel -- a relink (ld -r) cannot bind our GLOBAL UND references to them, so
@@ -198,6 +201,9 @@ Lpuarea:
 	movel	%a3,%d1
 	addql	&4,%d1
 	movel	%d1,ublksde
+	pea	0x42			| btrace 'B' -- 030 shadow tables built (pre-MMU-enable)
+	jsr	btrace_mark
+	addqw	&4,%sp
 
 | ================= 68040 MMU enable (replaces 0xfcc..0xfe6) =================
 | Build the 040 translation tree, NOW EXTENDED to cover the whole kvseg VA range
@@ -317,6 +323,9 @@ Lkroot:
 	.word	0xf518			| pflusha
 	movel	&0x00008000,%d0
 	.word	0x4e7b,0x0003		| movec %d0,%tc  (E=1, 4KB pages)
+	pea	0x43			| btrace 'C' -- paged MMU enabled (serial now via DTT0/ITT0)
+	jsr	btrace_mark
+	addqw	&4,%sp
 	| ---- caches-on Step A (2026-07-15): enable the INSTRUCTION cache (IC) ONLY.
 	| CACR bit15 = IE(040)/EIC(060) = 0x00008000 -- the SAME bit on both CPUs, so no
 	| cputype gate is needed.  DC stays OFF (bit31 clear): the 040 copyback data cache
@@ -338,9 +347,18 @@ Lkroot:
 	movel	%d0,sup_cacr		| supervisor CACR value (p1int..p6int restore per interrupt)
 	.word	0x4e7b,0x0002		| movec %d0,%cacr  (enable IC now; DC stays off)
 | =========================================================================
+	pea	0x44			| btrace 'D' -- instruction cache enabled (Step A)
+	jsr	btrace_mark
+	addqw	&4,%sp
 
 | ---- 0xfe6: tail (verbatim, except the Model B v-halving below) ----
+	pea	0x45			| btrace 'E' -- about to jsr vstart
+	jsr	btrace_mark
+	addqw	&4,%sp
 	jsr	vstart
+	pea	0x46			| btrace 'F' -- vstart returned
+	jsr	btrace_mark
+	addqw	&4,%sp
 	| MODEL B: d2 is the bootstrap high-water mark in 2KB clicks (the 030 table
 	| build computes it with `lsrl #11`).  Under Model B every downstream click
 	| consumer is 4KB (maxclick = memsize>>12, sysseginit does v<<12, kvm_init's
@@ -352,6 +370,9 @@ Lkroot:
 	lsrl	&1,%d2
 	movel	%d2,%sp@-
 	jsr	mlsetup
+	pea	0x47			| btrace 'G' -- mlsetup returned (kvm_init/sysseginit done)
+	jsr	btrace_mark
+	addqw	&4,%sp
 	| 040 kernel-hat root: kvm_init set kas@(0x14) = cpuroot+4 (the INERT 030 root).
 	| hat_pteload walks a kernel seg's root via seg@(12)@(20) = kas@(20) = kas@(0x14)
 	| (seg_attach sets seg@(12)=as; offset 0x14 == 20).  Re-point it at the LIVE 040
@@ -366,6 +387,9 @@ Lkroot:
 	andl	%d1,%d0
 	movel	%d0,%sp@-
 	jsr	svirtophys
+	pea	0x48			| btrace 'H' -- svirtophys done (pstart tail; d0/a0 = ret, preserved)
+	jsr	btrace_mark
+	addqw	&4,%sp
 	bra.w	Lpepi
 Lpepi:
 	moveml	%fp@(-68),%d2-%d6/%a2-%a3

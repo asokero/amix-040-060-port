@@ -129,6 +129,10 @@ echo "[*] sched is now a --weaken-symbol OVERRIDE (no detour patch -- detour-jmp
 echo "    into relinked code Line-F-crashes on this 040; jsr-override entry works)."
 
 echo
+echo "[*] enabling early-boot serial phase trace (btrace_on=1; base/quiet stay silent)"
+python3 "$HERE/prototypes/patch_btrace_on.py" "$OUT"
+
+echo
 echo "[*] stamping build id -> utsname.machine tag (inherits inituname040 from unix-040)"
 python3 "$HERE/prototypes/stamp_buildid.py" "$OUT"
 

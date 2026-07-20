@@ -33,6 +33,9 @@ sysseginit:
 	linkw	%fp,&-8
 	moveml	%d2-%d3,%sp@-
 	movel	%fp@(8),%d2		| v = 4KB-click leaf base
+	pea	0x53			| btrace 'S' -- sysseginit entry (CM-B1 cpusha dc is inside)
+	jsr	btrace_mark
+	addqw	&4,%sp
 	| 040 pointer slot for syssegs: &kptr040[(syssegs>>18) - 4096]  (VA decode,
 	| independent of click/page size)
 	movel	&syssegs,%d0
@@ -68,6 +71,9 @@ Lss_loop:
 	movel	%d2,kptbl		| kptbl = v<<12 (= seg->s_ptbl)
 	addil	&4095,%d0
 	lsrl	%d3,%d0			| d0 = end click past the leaf area
+	pea	0x73			| btrace 's' -- sysseginit exit (d0 return preserved)
+	jsr	btrace_mark
+	addqw	&4,%sp
 	moveml	%fp@(-16),%d2-%d3
 	moveal	%d0,%a0
 	unlk	%fp

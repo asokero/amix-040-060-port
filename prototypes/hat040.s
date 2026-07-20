@@ -35,6 +35,16 @@ hat_pteload:
 	moveml	%d2-%d3/%a2-%a4,%sp@-
 	movel	%fp@(12),%d2		| d2 = va
 	moveal	%fp@(16),%a2		| a2 = pp
+| --- btrace 'P' one-shot: the FIRST hat_pteload (exercises the CM-B1 Lcm_sel
+|     classifier path).  d0 is scratch here; d2(va)/a2(pp) preserved by btrace_mark. ---
+	tstl	Lbt_ptl_done
+	bnew	Lbt_ptl_skip
+	moveq	&1,%d0
+	movel	%d0,Lbt_ptl_done
+	pea	0x50			| 'P'
+	jsr	btrace_mark
+	addqw	&4,%sp
+Lbt_ptl_skip:
 
 | --- DBG (exec-header segmap collision, 2026-06-24): trace every map into the 8KB exec-
 |     header slot [0x40448000,0x4044a000) with the page's p_offset (pp@(8)) and pfn (arg@20).
@@ -1689,4 +1699,7 @@ Lhfa_n:
 	.balign 4
 hat_cm_ram:
 	.long	0x00000000		| B1: CM=00 writethrough for managed RAM
+	.balign 4
+Lbt_ptl_done:
+	.long	0			| btrace 'P' one-shot guard (first hat_pteload)
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
