@@ -1498,6 +1498,37 @@ a≈0x080DCxxx → varmistaa RAM/väylä tuolla alueella (rauta); onnistuvan boo
 normaali init-fault (v00007008 p080005C6 a80800000). Emu boottaa AINA puhtaasti (deterministinen
 malli, ei marginaalia). Työkalut standardina dbg-buildissa.
 
+**PÄIVITYS 2026-07-21 (FLT-ajo ~15 boottia dbg -11, evidenssi /tmp/amix-hw-a3091-dbg-latch.log):**
+KOLME signatuuria (`_start` → `jsr config` → `jsr pstart040` (='A') → `jsr main`):
+- **ILLEGAL @ memcpy 0x080002E4** (`v00000010`), EI 'A':ta edellä → fault `config()`:ssä ENNEN
+  pstart040:ää.
+- **ADDRERR @ bzero 0x0800033E** (`v0000200C`), 'A' AINA edellä → fault pstart040:n taulunrakennuksen
+  bzero-kutsuissa (st_top1/u-area), 'A':n jälkeen ennen 'B':tä.
+- **ACCESS-OK @ 0x080005C2 a=0x80800000** (`v00007008`) = NORMAALI init-text-demand-fault =
+  onnistuva boot (koko `ABCDEFSsGH` + login).
+Jakauma 15 bootilla: 5×ILLEGAL, 6×ADDRERR, 4×OK. Sekvenssi `IDIDODIOIDOIDDO` = ~50/50, EI tiukka
+vuorottelu (vain ensimmäiset 4 alternoivat → sampling-harha). Kaksi moodia selittyvät kahdella
+raskaalla varhaisella muistioperaatiolla (config-memcpy, pstart-bzero): marginaali pulpahtaa
+kumpaan tahansa kuumaan sisäsilmukkaan osuu ensin. **fault-`a`-kenttä ILLEGAL/ADDRERR-kehyksissä on
+roskaa (lyhyempi kehys, +84 kehyksen ohi); vain PC + vektori luotettavia.**
+
+**LEVY/ZuluSCSI POISSULJETTU:** `image checksum = 30add799` IDENTTINEN kaikilla 15 bootilla →
+ladattu kernel bitilleen sama joka kerta (levyluvun korruptio muuttaisi checksumia). Sama oikea
+image RAMissa myös 11 kaatuneella → **ei-deterministinen fault latauksen JÄLKEEN.** Levy, ZuluSCSI,
+image ja OHJELMISTO poissuljettu (fault stock-memcpy/bzero:ssa ennen mitään CM-B1/DMA-koodia,
+todistetusti oikeassa imagessa). **Johtopäätös: rauta CPU↔RAM-polulla latauksen jälkeen** —
+todennäköisin RAM-marginaali, mutta 040/Mercury-CPU, muistiväylä/RAMSEY tai PSU mahdollisia.
+
+**JATKOTESTIT (rautapuoli, odottaa käyttäjää):** (1) vanha -14-kernel tiheystesti (erottaa
+muutokset vs baseline; katso nouseeko rate session aikana = rauta oikuttelee ajallisesti);
+(2) **stock-030 Mercury-030-fallbackilla** — Mercury-RAM SÄILYY käytössä 030-tilassa (käyttäjän
+tieto), joten tämä ajaa SAMAA RAMia 030-nopeudella → puhdas CPU-vs-RAM-erottelu (RAM vakiona):
+030 vakaa → 040-CPU/040-nopeus-marginaali; 030 myös oikuttelee → RAM/väylä. Varaus: 030 hitaampi/ei
+burstia → ei täysin puhdista RAMia 040-nopeudella; (3) DiagROM / Mercuryn memtest Mercury PÄÄLLÄ =
+suora RAM-testi 040-nopeudella 0x08000000+. mem-pankit: mem[0] 0x08000000-0x09000000 (kernel tänne),
+mem[1] 0x07000000-0x08000000, mem[2] chip. FLT-tavudumppi-laajennus (RAM-sisältö vs CPU-glitch)
+pidetään varalla jos tarvitaan vielä ohjelmistodatapiste.
+
 **OPEN — kirjattu 2026-07-19, EI blokkaa käyttöä (uusi yritys korjaa lähes aina).** A3000 +
 Mercury 040, unix_boot → kernel jää heti bootissa mustaan ruutuun ~kerran neljästä.
 ENSIMMÄINEN serial-evidenssi (260719-02, 9600 baud; rivien alut osin merkkikadon syömiä):
