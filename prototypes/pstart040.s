@@ -26,6 +26,30 @@ pstart:
 	pea	0x41			| btrace 'A' -- kernel entry reached (SP valid post-prologue)
 	jsr	btrace_mark
 	addqw	&4,%sp
+| CACHE-STATE DUMP (ISSUE-21 diagnostic 2026-07-22): emit the INHERITED CACR +
+| RAMSEY control byte right at kernel entry, so a cpu-nocache boot (works) and a
+| stock-AmigaOS boot (faults) can be compared -- reveals what cache state the
+| kernel inherits (CACR IC=bit15 / DC=bit31) before pstart040 sets its own regime,
+| and exactly what `cpu nocache` changes.  Output: "C<cacr> R<ramsey>".  Reached on
+| OK boots and on ADDRERR boots (fault after 'A'); ILLEGAL boots fault in config()
+| before 'A' so they are not captured.  CACR via movec (supervisor, valid 040);
+| RAMSEY A3000 control @0x00DE0003.  d0/a0 scratch here (pre-table-build).
+	pea	0x43			| 'C' = CACR follows
+	jsr	btrace_mark
+	addqw	&4,%sp
+	.word	0x4e7a,0x0002		| movec %cacr,%d0
+	movel	%d0,%sp@-
+	jsr	btrace_hex
+	addqw	&4,%sp
+	pea	0x52			| 'R' = RAMSEY control byte follows
+	jsr	btrace_mark
+	addqw	&4,%sp
+	moveal	&0x00de0003,%a0
+	moveq	&0,%d0
+	moveb	%a0@,%d0
+	movel	%d0,%sp@-
+	jsr	btrace_hex
+	addqw	&4,%sp
 | NOTE: the original pstart's crash-dump prologue (0xd4c..0xd86) is OMITTED here.
 | It tests/sets `crashsw` and `crash_sync`, which are FILE-LOCAL symbols in the
 | kernel -- a relink (ld -r) cannot bind our GLOBAL UND references to them, so

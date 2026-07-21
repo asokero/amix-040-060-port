@@ -75,6 +75,55 @@ Lbt_off:
 	unlk	%fp
 	rts
 
+| ---------------------------------------------------------------------------
+| btrace_hex(val) -- arg fp@(8) = longword; emit it as 8 uppercase hex digits
+| (MSB first) on serial iff btrace_on != 0.  Register- and CCR-preserving, same
+| flag gate + bounded TBE wait as btrace_mark.  Used for the ISSUE-21 CACR/RAMSEY
+| cache-state dump at kernel entry.
+	.globl	btrace_hex
+btrace_hex:
+	linkw	%fp,&0
+	movew	%sr,%sp@-
+	moveml	%d0-%d3/%a0,%sp@-
+	tstl	btrace_on
+	beqw	Lbh_off
+	oriw	&0x0700,%sr
+	moveal	&0x00dff000,%a0
+	tstw	Lbt_init
+	bnew	Lbh_go
+	movew	&1,Lbt_init
+	movew	&0x0174,%a0@(0x32)	| serper = 9600 (shared init flag with btrace_mark)
+Lbh_go:
+	movel	%fp@(8),%d2		| value
+	moveq	&7,%d3			| 8 nibbles
+Lbh_loop:
+	roll	&4,%d2			| next nibble (MSB first) into low 4 bits
+	movel	%d2,%d0
+	andiw	&0x000f,%d0
+	cmpiw	&9,%d0
+	bhiw	Lbh_alpha
+	addiw	&0x30,%d0		| '0'..'9'
+	braw	Lbh_emit
+Lbh_alpha:
+	addiw	&0x37,%d0		| 'A'..'F'
+Lbh_emit:
+	andiw	&0x00ff,%d0
+	oriw	&0x0100,%d0		| STOPBIT | digit
+	movel	&0x00010000,%d1		| bounded TBE wait (fail-safe)
+Lbh_wait:
+	btst	&5,%a0@(0x18)
+	bnew	Lbh_send
+	subql	&1,%d1
+	bnew	Lbh_wait
+Lbh_send:
+	movew	%d0,%a0@(0x30)
+	dbra	%d3,Lbh_loop
+Lbh_off:
+	moveml	%sp@+,%d0-%d3/%a0
+	movew	%sp@+,%sr
+	unlk	%fp
+	rts
+
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.balign 4
