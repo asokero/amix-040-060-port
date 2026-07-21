@@ -1529,6 +1529,24 @@ suora RAM-testi 040-nopeudella 0x08000000+. mem-pankit: mem[0] 0x08000000-0x0900
 mem[1] 0x07000000-0x08000000, mem[2] chip. FLT-tavudumppi-laajennus (RAM-sisältö vs CPU-glitch)
 pidetään varalla jos tarvitaan vielä ohjelmistodatapiste.
 
+**PÄIVITYS 2026-07-21 (muistitestit puhtaat → CACHE-HANDOFF-FIX-hypoteesi + korjausehdokas):**
+Kolme muistitesteriä PUHTAAT, myös kernel-alue: AmigaTestKit ~9.5 kierrosta 0 virhettä (48 MB fast),
+Mercuryn oma testeri kaikki 8 SIMMiä (U505–U512) vihreä Passed, DiagROM `$07000000–$09FFFFFF` 0 errors
+(jäätyy loop-lopussa = tunnettu/vaaraton). RAM-piirit siis käytännössä poissuljettu → "marginaali-RAM"
+heikkenee. **Painavin johtolanka nyt: emu ei kaadu KOSKAAN, ja Amiberry EI mallinna 040:n copyback-DC:tä**
+(CACHES-ON-PLAYBOOK) → vika osoittaa perittyyn cache-tilaan. HYPOTEESI: kernel perii AmigaOS/68040.library:n
+IC+copyback-DC:n entryssä; `unix_boot/copyit` disabloi vain MMU:n muttei CACR:ää, ja kernel asettaa oman
+regiiminsä (pstart040 IC-on) vasta config()/pstart-bzeron JÄLKEEN → varhaiskoodi ajaa perityllä copyback-DC:llä
+→ ajoitusriippuvainen koherenssifault (satunnainen ✓, emu-clean ✓, memtest-clean ✓, kuumissa memcpy/bzero-
+silmukoissa ✓, myös -13:ssa = ei regressio ✓, Workbench-OK = handoff-ongelma ✓). **KORJAUSEHDOKAS (commit,
+odottaa HW-testiä): `unix_boot/src/copyit.s` flush040 → `moveq #0,d0; movec d0,cacr` (CACR=0, kaikki cachet
+pois) heti cpusha bc:n jälkeen ennen kerneliin hyppäämistä.** Kernel ajaa varhaiskoodin caches-off (kuten
+stock-030-regiimi), pstart040 laittaa IC:n takaisin 'D':ssä. Emu-040 SANITY: uusi loader boottaa puhtaasti
+(ABCDEFSsGH + normaali FLT v7008 + 197 WARNING-riviä), ei regressiota (emu ei voi validoida itse korjausta,
+koska ei mallinna copyback-DC:tä). HW-testi: deployaa uusi `unix_boot040` (NAS modelb-b/), boottaa SAMA dbg -11
+useita kertoja → jos ILLEGAL/ADDRERR-faultit katoavat = hypoteesi vahvistettu (mahdollinen KORJAUS); FLT jää
+paikoilleen näyttämään jos vielä faulttaa. Loaderin toolchain: LOCAL-BUILD-NOTES §3 (amiga-gcc, make CC=m68k-amigaos-gcc).
+
 **OPEN — kirjattu 2026-07-19, EI blokkaa käyttöä (uusi yritys korjaa lähes aina).** A3000 +
 Mercury 040, unix_boot → kernel jää heti bootissa mustaan ruutuun ~kerran neljästä.
 ENSIMMÄINEN serial-evidenssi (260719-02, 9600 baud; rivien alut osin merkkikadon syömiä):
