@@ -1547,6 +1547,23 @@ koska ei mallinna copyback-DC:tä). HW-testi: deployaa uusi `unix_boot040` (NAS 
 useita kertoja → jos ILLEGAL/ADDRERR-faultit katoavat = hypoteesi vahvistettu (mahdollinen KORJAUS); FLT jää
 paikoilleen näyttämään jos vielä faulttaa. Loaderin toolchain: LOCAL-BUILD-NOTES §3 (amiga-gcc, make CC=m68k-amigaos-gcc).
 
+**PÄIVITYS 2026-07-21 ilta (RATKAISEVA — cache/burst vahvistettu syyksi):** (1) copyit-CACR=0-fix
+EI auttanut raudalla. (2) Käyttäjä lisäsi startup-sequenceen **`cpu nocache`** (AmigaOS-tason cache- JA
+burst-disable ENNEN unix_boottia) → **automatisoitu reboot-survival-testi 15/15 selvisi** (evidenssi
+test-tools/issue21-nocache-reboot15-260721.txt; ajuri durable-tools/reboot_loop.py `reboot`-komennolla,
+EI init 6). Vrt. ilman nocachea FLT-ajossa ~4/15 OK. **Johtopäätös: intermittentti boot-fault johtuu
+040:n CACHE/BURST-tilasta varhaisessa kernel-suorituksessa** (config()/pstart-bzero ennen pstart040:n
+omaa regiimiä 'D'). Poissuljettu lopullisesti: RAM-piirit (3 testeriä puhtaat), levy (checksum vakio),
+CM-B1/DMA-koodi (fault ennen sitä, stock-koodissa). **`cpu nocache` startup-sequencessa = validoitu
+WORKAROUND** (kone bootaa+ajaa luotettavasti). AVOIN: miksi `cpu nocache` toimi mutta copyit-CACR=0 ei
+(molempien pitäisi ajaa varhaiskoodi cache-off; ero todennäk. BURST — cpu nocache disabloi burstin, ja/tai
+copyit-loaderia ei tosiasiassa käytetty). SELVITETTÄVÄ itsenäistä fixiä varten: dumppaa peritty CACR
+(+RAMSEY burst) kernel-entryssä, vertaa nocache vs ei → replikoi cpu nocachen tekemä tarkasti (burst mukaan).
+**IMPLIKAATIO DATA-CACHE-TAVOITTEELLE:** tämä on aito herkkyys 040-copyback-DC:lle/burstille varhaisbootissa
+— B2 (copyback DC kaikkialla) osuisi samaan laajemmin; B1 (writethrough) ehkä turvallisempi. IC (Step A) on
+päällä ja toimii bootin jälkeen, joten burst EI ole universaalisti rikki — ongelma on nimenomaan peritty
+copyback-DC/varhaisikkuna. Selvitettävä ennen DC-käyttöönottoa.
+
 **OPEN — kirjattu 2026-07-19, EI blokkaa käyttöä (uusi yritys korjaa lähes aina).** A3000 +
 Mercury 040, unix_boot → kernel jää heti bootissa mustaan ruutuun ~kerran neljästä.
 ENSIMMÄINEN serial-evidenssi (260719-02, 9600 baud; rivien alut osin merkkikadon syömiä):
