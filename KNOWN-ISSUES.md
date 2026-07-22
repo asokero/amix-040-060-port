@@ -1480,7 +1480,27 @@ sched or calling swapout directly) would run this body against live 040 tables �
 re-enabling: a native hat_swapout040 (or an explicit no-op policy) + segu/u-area swap-out
 validation. Until then sched STAYS overridden.
 
-## ISSUE-21: satunnainen boot-musta-ruutu real-HW:llä (~1/4 booteista) — kstack-rekursio + LATCH1
+## ISSUE-21: satunnainen boot-musta-ruutu real-HW:llä (~1/4 booteista) — RATKAISTU (config-wrapper, IC-handoff)
+
+**✅ RATKAISTU 2026-07-22 (config040.s cache-handoff-wrapper — self-contained, HW-verified 9/9):**
+Juurisyy = 68040:n INSTRUCTION CACHE peritään AmigaOS/68040.library:ltä PÄÄLLÄ kernel-entryssä, ja
+`config()`:n memcpy + pstart040:n bzero (ENNEN pstart040:n omaa 'D'-regiiminvaihtoa) ajavat likaisella/
+periytyneellä IC:llä → satunnainen ILLEGAL@memcpy / ADDRERR@bzero. Loader-side copyit-CACR=0 EI jäänyt
+voimaan (emu+HW: 'A':n CACR yhä 0x00008000). **FIX = kernel-side wrapper:** `patch_config_cachefix.py`
+uudelleenkohdistaa `_start`:n ainoan `jsr config`-relokaation (.rela.text r_offset 0x26) →
+`config_cachefix` (prototypes/config040.s), joka tekee `cinva ic` + `movec #0,cacr` (kaikki cachet pois)
+ja tail-callaa oikean configin (`config_orig`=0x18f5c). Varhaiskoodi ajaa siis IC-off; pstart040 'D'
+palauttaa IC:n (Step A / 2× nopeus säilyy). Loader-riippumaton (matkaa kernel-imagessa). **HW-VERIFIOINTI
+(dbg -04 260722, evidenssi /tmp/amix-hw-cachetest4.log + reboot_loop.py 8 kierrosta):** 9/9 boottia
+puhtaita — `K00000000` ×9 (wrapperin CACR-takaisinluku=0), `AC00000000` ×9 (pstart 'A' CACR=0 = nolla
+säilyi wrapperista 'A':han), `FLT v00007008` ×9 (kaikki OK-init, 0× ILLEGAL/ADDRERR). Vrt. ilman
+wrapperia IC-only (CACR=0x00008000) kaatui satunnaisesti parissa bootissa. **Ei enää tarvetta `cpu
+nocache`-workaroundille.** Landattu commit 6c8a929; wrapper base+quiet+dbg (K-dumppi flag-gated dbg-only).
+IMPLIKAATIO DC-tavoitteelle: ongelma oli nimenomaan IC-handoff, EI copyback-DC — B1/B2-kampanjan
+varhaisbootin herkkyys poistui (peritty IC hoidettu). Alla oleva tutkimushistoria säilytetty.
+
+---
+
 
 **PÄIVITYS 2026-07-20 (btrace-lokalisointi + FLT-työkalu):** Lisättiin flag-gated
 varhainen boot-trace (`prototypes/btrace.s`, vaihemerkit A–H/S/s/P; commit 235018a) ja

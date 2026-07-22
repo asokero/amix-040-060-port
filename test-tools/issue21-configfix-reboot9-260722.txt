@@ -1,0 +1,40 @@
+ISSUE-21 config-wrapper (config040.s) real-HW verification -- 2026-07-22
+Kernel: unix-040-dbg 260722-04 (commit 6c8a929), A3000 + Mercury 68040, dbg build -04.
+AmigaOS IC PAALLA (EI cpu nocache). Ajuri: durable-tools/reboot_loop.py 8 (reboot-komento).
+Serial-loki: /tmp/amix-hw-cachetest4.log (9600 baud).
+
+=== reboot_loop.py tulos (huom banner '(cpu nocache)' = skriptin vanha teksti, EI kaytossa) ===
+23:13:12 === reboot survival test: 8 iterations (cpu nocache) ===
+23:13:39 boot 0 (initial): ONLINE
+23:13:42 boot 1/8: reboot issued, waiting for return...
+23:16:44 boot 1/8: ONLINE (survived 1 in a row)
+23:16:47 boot 2/8: reboot issued, waiting for return...
+23:20:01 boot 2/8: ONLINE (survived 2 in a row)
+23:20:04 boot 3/8: reboot issued, waiting for return...
+23:23:14 boot 3/8: ONLINE (survived 3 in a row)
+23:23:17 boot 4/8: reboot issued, waiting for return...
+23:26:28 boot 4/8: ONLINE (survived 4 in a row)
+23:26:31 boot 5/8: reboot issued, waiting for return...
+23:29:36 boot 5/8: ONLINE (survived 5 in a row)
+23:29:39 boot 6/8: reboot issued, waiting for return...
+23:32:49 boot 6/8: ONLINE (survived 6 in a row)
+23:32:52 boot 7/8: reboot issued, waiting for return...
+23:35:55 boot 7/8: ONLINE (survived 7 in a row)
+23:35:58 boot 8/8: reboot issued, waiting for return...
+23:39:00 boot 8/8: ONLINE (survived 8 in a row)
+23:39:00 RESULT: 8/8 reboots ALL SURVIVED with cpu nocache
+
+=== Per-boot cache-state markkerit (grep -a -o cachetest4.log) ===
+K<hex> = config_cachefix CACR-takaisinluku (odotus 0); AC<hex>R<hex> = pstart 'A' CACR+RAMSEY;
+FLT v<fmtvec> = 1. fault (v00007008=normaali init OK, v00000010=ILLEGAL, v0000200C=ADDRERR).
+
+-- K (config_cachefix CACR read-back) --
+  count K00000000 = 9
+-- AC (pstart A CACR+RAMSEY) --
+  count AC00000000R00000038 = 9
+-- FLT vektorijakauma --
+      9 FLT v00007008
+
+JOHTOPAATOS: 9/9 boottia (alkuboot + 8 reboottia) puhtaita. CACR=0 sailyy wrapperista
+pstart 'A':han joka bootilla; 0x ILLEGAL/ADDRERR. Config-wrapper = self-contained ISSUE-21-fix,
+loader-riippumaton, Step A (IC pstart040 'D':ssa) sailyy. cpu nocache -workaround tarpeeton.
