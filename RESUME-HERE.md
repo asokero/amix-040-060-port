@@ -1,4 +1,27 @@
-# RESUME HERE — AMIX 68040/68060 port status (2026-07-20)
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-22)
+
+> ## ✅ 2026-07-22 — ISSUE-21 RATKAISTU (config-wrapper); VARHAISBOOT-CACHE-BLOKKERI POISSA → Step B voi edetä
+> Satunnainen real-HW boot-musta-ruutu (~1/4) johtui **68040:n INSTRUCTION CACHESTA**, joka
+> peritään AmigaOS/68040.library:ltä PÄÄLLÄ kernel-entryssä: `config()`:n memcpy
+> (ILLEGAL@0x080002E4) ja pstart040:n bzero (ADDRERR@0x0800033E) ajoivat likaisella IC:llä
+> ENNEN pstart040:n omaa 'D'-regiiminvaihtoa (cinva ic + IC-enable). **DC oli epäolennainen**
+> (kaikissa kaatumisissa yhteinen tekijä = IC päällä); ei rautavika (AmigaOS/Debian/OpenBSD/
+> RedHat ajavat samalla Mercuryllä DC päällä ongelmitta; 3 memtesteriä puhtaat; levy-checksum
+> vakio; emu ei toista — Amiberry ei mallinna 040-cache-koherenssia).
+> **FIX (self-contained, loader-riippumaton, commit 6c8a929+3d75a2e):** `prototypes/config040.s`
+> `config_cachefix` + `patch_config_cachefix.py` — uudelleenkohdistaa `_start`:n ainoan
+> `jsr config`-relokaation (.rela.text r_offset 0x26) → wrapperiin, joka tekee `cinva ic` +
+> `movec #0,cacr` (kaikki cachet pois) ja tail-callaa oikean configin (`config_orig`=0x18f5c).
+> Varhaiskoodi ajaa IC-off; pstart040 'D' palauttaa IC:n → **Step A / 2× nopeus säilyy**.
+> Reloc-retarget koska `config` ei uniikki (myös bss-objekti 0x10460) — sama kuin patch_a3091_dma.py.
+> **HW-VERIFIOINTI (dbg -04, /tmp/amix-hw-cachetest4.log + reboot_loop.py 8):** 9/9 boottia
+> puhtaita — `K00000000` ×9 (wrapperin CACR-takaisinluku=0), `AC00000000` ×9 (pstart 'A' CACR=0
+> säilyi), `FLT v00007008` ×9 (0× ILLEGAL/ADDRERR). `cpu nocache`-workaround tarpeeton.
+> Evidenssi test-tools/issue21-configfix-reboot9-260722.txt.
+> **MERKITYS Step B:lle:** aiempi "copyback-DC/burst-herkkyys varhaisbootissa" -tulkinta oli
+> VÄÄRÄ — syy oli peritty IC, ja se on nyt hoidettu. Varhaisboot ei enää kaadu periytyneeseen
+> cache-tilaan → **DC-käyttöönotto (Step B) ei enää törmää tähän blokkeriin.** Avoin Step-B-gate
+> on edelleen DTT0-kavennus (ks. kohta 3 alla + CACHES-ON-PLAYBOOK "Step B").
 
 > ## ✅ 2026-07-20 (ilta) — B1-DMA-HOOK LANDATTU A3000-EDELLÄ (dormantti no-op, emu-hyväksytty)
 > DMA-census valmis+verifioitu (analyysirepo 58f1cda: `DMA-INITIATOR-CENSUS.md` +

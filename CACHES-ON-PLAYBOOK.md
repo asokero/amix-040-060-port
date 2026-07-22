@@ -8,7 +8,7 @@ this records exactly where the code is so enablement + validation is fast when i
 
 | Control | Value | Meaning |
 |---|---|---|
-| **CACR** | never set → `0x00000000` | **both IC and DC globally DISABLED at the cache controller.** This is the master OFF switch. |
+| **CACR** | Step A: `0x00008000` (IC on, DC off) post-boot; config-wrapper forces `0` in the early-boot window | IC ENABLED since Step A (2026-07-15). **DC still globally DISABLED** — the master OFF switch for Step B. Early-boot (config memcpy / pstart bzero) runs with CACR=`0` via `config040.s` (ISSUE-21 fix); pstart040 'D' sets IC back. |
 | ITT0 | `0x003fc000` | E=1, 0–1GB, code, CM=00 (WT-cacheable) — **dormant while CACR IC-disable** |
 | DTT0 | `0x003fc060` | E=1, 0–1GB, data, CM=11 (cache-INHIBITED) — forces data 0–1GB inhibited, **masks per-page data CM even if DC enabled** |
 | DTT1 | `0x807fa060` | I/O ≥0x80000000, cache-inhibited, S=01 supervisor-only |
@@ -167,6 +167,16 @@ copyback, DTT0 handling, then flip CACR DC; acceptance = disk/swap/NFS/fork-COW
 + power-cut disk-truth on real 040 (and separately real 060).
 
 ### Step B — Data cache (HW-GATED; do NOT validate on emulator)
+
+**Early-boot cache-handoff cleared (2026-07-22, ISSUE-21 RESOLVED):** the intermittent real-HW
+boot fault that shadowed this work was the inherited 68040 **instruction** cache (AmigaOS leaves
+IC on; config/pstart-bzero ran on dirty IC before pstart040's regime), NOT copyback DC as first
+suspected. Fixed self-contained by `config040.s` (config-wrapper forces `cinva ic` + CACR=0 in the
+early window; pstart040 'D' restores IC — HW-verified 9/9 boots). **Consequence for Step B:** the
+DC flip is NOT blocked by any early-boot cache-state fragility; enabling DC is a clean, isolated
+CACR change at/after pstart040 'D' (post-MMU), with the early window already protected. The real
+risk is now purely DC↔DMA coherency (below), exactly as the contract framed it.
+
 1. `hat_pteload` CM-bit path (this pilot's core): set the leaf CM field per map —
    `0x20` (copyback) for normal RAM, `0x60` (noncachable) for device maps (`prot & 8`,
    the existing DEFERRED TODO in `hat040.s`). Mirrors `pstart040`'s static-table pattern
