@@ -1,0 +1,90 @@
+Caches Step B1 — WRITETHROUGH DATA-CACHE ENABLE (CACR 0x8000 -> 0x80008000) — acceptance
+=========================================================================================
+Date: 2026-07-23
+Builds: base 68040-260723-03 / dbg -04 / quiet -05
+  sha256 base : d3e1f80a65394f951ffe894eefe2efcfe7b862786937b0eaf0154440608e8404
+  sha256 dbg  : 410a6143097ce4d2394f9555d3f2c55cddbdf1c9a991126f43bf05d8676df117
+  sha256 quiet: f66d17f1407d9194ba1b22317e359cd43c87c35475be37f5c1fc071157194fc8
+Spec:  analyysirepo vm-map/DTT0-PHYS-WINDOW-CENSUS.md + DTT0-NARROWING-SPEC.md
+       (pinned kernel 6dc9a83, unix-040 sha fff91777...; only the buildid stamp differed
+       in the rebuilt baseline 260723-01 -- pstart @0xd71a8 and all census anchors matched)
+Marker: git tag `pre-dc-enable` = last IC-only commit (e952553).  Revert of the whole
+       B1 flip = pstart040.s CACR immediate 0x80008000 -> 0x00008000.
+
+What changed (per DTT0-NARROWING-SPEC.md "Decision" -- deliberately minimal)
+---------------------------------------------------------------------------
+* pstart040.s 'D' step: cinva dc (0xf458) BEFORE the enable (discards DC lines
+  inherited from AmigaOS -- the ISSUE-21 config wrapper disables caches WITHOUT
+  flushing, so a cpusha here would write stale AmigaOS data over kernel RAM);
+  cinva ic kept; CACR immediate 0x00008000 -> 0x80008000 (bit31 DE/EDC + bit15
+  IE/EIC, same bits on 040 and 060); both `cacr` and `sup_cacr` data globals get
+  the same value (p1..p4int/p6int/nullvect reload sup_cacr per interrupt; p5int
+  loads neither -- harmless, values equal); dbg-only serial evidence: after the
+  'D' btrace mark, movec %cacr,%d0 read-back printed via btrace_hex.
+* haltsys040.s: cpusha dc (0xf478) added after SR=0x2700, BEFORE the TC/TTR
+  teardown ("Shutdown ordering" spec item; pure invalidate in B1 WT, mandatory
+  push in a future B2 CB build -- one line covers both stages).
+* NOTHING else: DTT0 stays 0x003fc060, DTT1 0x807fa060, ITT0 0x003fc000
+  (census: TTRs match LOGICAL addresses; high PTE mappings already take leaf CM;
+  SRP has no low identity map so DTT0 E=0 would fault the kernel immediately).
+  hat_cm_ram stays 0x00 (WT).  No phys-window conversions (census: all D0 paths
+  stay NC via DTT0; 040 physically-tagged cache + NC-access matching-line rule
+  keeps the low NC alias coherent with high WT aliases; DMA covered by the
+  A3091 FROM_DEVICE completion invalidate).
+
+Static verification (build/unix-040, base -03)
+----------------------------------------------
+* 0xd7560: f458 f498 203c 8000 8000 (cinva dc; cinva ic; movel #0x80008000,d0)
+  + both global stores + 4e7b 0002 (movec d0,cacr); read-back + btrace_hex after 'D'.
+* DTT0/DTT1 immediates unchanged @0xd7532/0xd753c: 203c 003f c060 / 203c 807f a060.
+* haltsys: 46fc 2700 followed by f478 (cpusha dc), then Lhs_mmu040 movec teardown.
+* hat_cm_ram @.data 0x18300 = 0x00000000 (WT).
+* hat_pagesync publication tail intact: 0xd87d8 f4f8 f518 (cpusha bc; pflusha)
+  (shifted +0x10 from the pinned image by the 16-byte pstart growth).
+* check_relink_relocs.py: TOTAL complaints 0 (all three variants).
+
+emu-040 (Amiberry a3000ux, dbg 260723-04) -- REGRESSION ONLY (no DC model)
+--------------------------------------------------------------------------
+* boot -> login clean; early-boot serial trace shows K00000000 (config wrapper,
+  caches off) ... BCD80008000 = 'D' mark + CACR read-back 0x80008000 (DC+IC on).
+* IPC data-global read-back: cacr=0x80008000 sup_cacr=0x80008000 (0x080e4824/8),
+  hat_cm_ram=0 (0x080f5868), dma_cmpl_count=3800 after boot (0x080f5ac8).
+* runtime CM census (kvwalk.py, live PTE walk): fixed-u leaf 0x..0F9 (CM=11 NC),
+  kvseg RAM leaves 0x..019 (CM=00 WT) -- per-page CM exactly per the B1 matrix.
+* tftp (binary) payload.bin: sum 1570 8192; copy -> sum 1570 8192.
+* hat_dup_cow 1/32/64: RESULT PASS each.
+* burst4 (4 bursts x 6x4MiB concurrent cp + hat_dup_cow 64, nohup-detached):
+  ALLBURSTS-DONE, grep -c "1570 8192" burst4.log = 24 (24/24 byte-perfect).
+* dma_cmpl_count after burst4 = 49425 (3800 -> 49425; hook on live completion path).
+* serial log: 0 hits for 4AFC005F / BUS ERROR / PANIC.
+* Observation (not a B1 item): dd if=/dev/kmem at kvseg VA 0x40326000 now returns
+  data (RC=0) instead of the 260713-era ENXIO; kvwalk shows the leaf INVALID at
+  sample time, so the read is serviced by the kvseg fault path (fill-on-fault).
+  Deterministic, no fault storm, no panic; cannot be DC-related on the emulator
+  (Amiberry does not model DC and the CACR value is inert there).  The ISSUE-13
+  acceptance property that matters -- no krnxmemflt recursion storm -- holds.
+
+emu-060 (a3000ux060, same dual-CPU binary, dbg 260723-04) -- REGRESSION ONLY
+----------------------------------------------------------------------------
+* boot -> login clean; serial shows BCD80008000 = 'D' + CACR read-back 0x80008000
+  (bit31 EDC + bit15 EIC on the 060 -- same immediate serves both CPUs; branch
+  cache/store buffer bits stay off, conservative).
+* uname -m: 68060-260723-04.
+* tftp payload sum 1570 8192; copy -> sum 1570 8192.
+* hat_dup_cow 1/32/64: RESULT PASS each.
+* burst4: ALLBURSTS-DONE, 24/24 byte-perfect sums; serial log 0 hits for
+  4AFC005F / BUS ERROR / PANIC.
+* NOTE: this is regression evidence only.  Real-060 DC acceptance is a separate
+  later hardware milestone (census: do not generalize the 040 alias conclusion).
+
+real HW A3000 + Mercury 68040 (dbg 260723-04) -- THE ACCEPTANCE TARGET
+----------------------------------------------------------------------
+* User booted the B1 dbg kernel; boots and runs.  Dhrystone 11538/s (Step A,
+  IC only) -> 18292.7/s (B1, IC+WT-DC) = +59%.
+* /dev/kmem read-back on live machine: cacr=0x80008000 sup_cacr=0x80008000
+  (@0x080e4824/8), hat_cm_ram=0 (@0x080f5868), dma_cmpl_count=6378 and climbing
+  (@0x080f5ac8) -- A3091 FROM_DEVICE completion invalidate live on real HW.
+* /payload.bin sum 1570 8192 (4 MiB SCSI read through WT-DC byte-perfect).
+* hat_dup_cow 1/32/64: RESULT PASS each (fork/COW under WT-DC).
+* burst4 via at-queue (telnetd-HUP-safe): (filled in below)
+* POWER-CUT DISK-TRUTH: (user action pending -- the decisive DMA-coherency test)

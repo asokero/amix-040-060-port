@@ -350,10 +350,23 @@ Lkroot:
 	pea	0x43			| btrace 'C' -- paged MMU enabled (serial now via DTT0/ITT0)
 	jsr	btrace_mark
 	addqw	&4,%sp
-	| ---- caches-on Step A (2026-07-15): enable the INSTRUCTION cache (IC) ONLY.
-	| CACR bit15 = IE(040)/EIC(060) = 0x00008000 -- the SAME bit on both CPUs, so no
-	| cputype gate is needed.  DC stays OFF (bit31 clear): the 040 copyback data cache
-	| + DMA coherency is HW-gated (Amiberry does not model it; see CACHES-ON-PLAYBOOK.md).
+	| ---- caches-on Step B1 (2026-07-23): enable INSTRUCTION + DATA cache, DATA in
+	| WRITETHROUGH.  CACR = 0x80008000: bit31 DE(040)/EDC(060) + bit15 IE(040)/EIC(060)
+	| -- the SAME bits on both CPUs, so no cputype gate is needed.  Spec = analyysirepo
+	| vm-map/DTT0-NARROWING-SPEC.md "B1 CACR enable sequence": DTT0 (0x003fc060) is KEPT
+	| -- it matches LOGICAL 0-1GB only, so high PTE-backed kvseg/segmap/user mappings
+	| take CM from their leaf PTEs (hat_cm_ram=0x00 WT in B1) while the low identity
+	| window keeps direct phys/page-table/MMIO access NC.  The 040 DC is physically
+	| tagged and an NC access dislodges a matching cached line, so the low NC alias is
+	| coherent with a high WT alias; external DMA is covered by the A3091 FROM_DEVICE
+	| completion invalidate (dma_cache040.s).  Revert-to-Step-A = 0x80008000 ->
+	| 0x00008000 here (git tag pre-dc-enable marks the last IC-only commit).
+	|
+	| cinva dc BEFORE enabling: the ISSUE-21 config wrapper (config040.s) disables the
+	| caches WITHOUT flushing, so the DC can still hold valid (even dirty copyback)
+	| lines inherited from AmigaOS/68040.library.  They must be DISCARDED (cinva, NOT
+	| cpusha -- a push would overwrite kernel memory with stale AmigaOS data) before
+	| the enable makes them visible again.
 	|
 	| CRITICAL: a bare `movec ...,%cacr` here would be CLOBBERED by the first interrupt.
 	| The shared Amiga interrupt handlers (p1int..p6int, ttrap.s) reload CACR from the
@@ -365,14 +378,20 @@ Lkroot:
 	| IC-on; then enable CACR immediately.  cinva ic first so the IC starts clean.  IC
 	| coherence on code RELOAD (a reused physical page getting new code) is handled by a
 	| cinva ic at every context switch in resume040 (runtime040.s).
+	.word	0xf458			| cinva dc  -- discard inherited/disabled-window DC lines
 	.word	0xf498			| cinva ic  -- clear IC before enabling
-	movel	&0x00008000,%d0		| 040 CACR: bit15 IE/EIC = IC on, DC off (bit31 clear)
+	movel	&0x80008000,%d0		| 040 CACR: bit31 DE/EDC = DC on (WT via leaf CM), bit15 IE/EIC = IC on
 	movel	%d0,cacr		| user-mode CACR value (ttrap restores on return-to-user)
-	movel	%d0,sup_cacr		| supervisor CACR value (p1int..p6int restore per interrupt)
-	.word	0x4e7b,0x0002		| movec %d0,%cacr  (enable IC now; DC stays off)
+	movel	%d0,sup_cacr		| supervisor CACR value (p1int..p4int,p6int restore per
+					| interrupt; p5int loads neither = harmless, values equal)
+	.word	0x4e7b,0x0002		| movec %d0,%cacr  (enable IC + DC now)
 | =========================================================================
-	pea	0x44			| btrace 'D' -- instruction cache enabled (Step A)
+	pea	0x44			| btrace 'D' -- caches enabled (B1: IC + WT-DC)
 	jsr	btrace_mark
+	addqw	&4,%sp
+	.word	0x4e7a,0x0002		| movec %cacr,%d0 -- read back for the dbg serial evidence
+	movel	%d0,%sp@-		| (btrace is flag-gated: base/quiet stay silent; dbg prints
+	jsr	btrace_hex		|  'D' + 80008000, the HW-session acceptance line)
 	addqw	&4,%sp
 
 | ---- 0xfe6: tail (verbatim, except the Model B v-halving below) ----
