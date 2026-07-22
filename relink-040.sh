@@ -118,6 +118,13 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/dma_cache040.s" -o "$HERE/build/
 # btrace_on=1.  Diagnostic for the intermittent real-HW early-boot failure; kept
 # as a standing feature (see prototypes/btrace.s).
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/btrace.s" -o "$HERE/build/btrace.o"
+# config040 (2026-07-22, ISSUE-21 fix candidate): config() cache-handoff wrapper.
+# _start calls config() first (before pstart040); the intermittent early-boot fault
+# happens when the IC is on in that window (inherited from AmigaOS; the loader's
+# CACR=0 does not stick -- confirmed on emu too).  This kernel-side wrapper disables
+# the caches at config entry (cinva ic + CACR=0); pstart040 re-enables IC at 'D'
+# (Step A preserved).  Wired by retargeting _start's jsr-config reloc (patch below).
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/config040.s" -o "$HERE/build/config040.o"
 # krnxmemflt040 (2026-07-13, ISSUE-13 capture 2): NATIVE kernel fault-resolver core.
 # Stock krnxmemflt_orig was a coupled 4-defect 030 remnant (user-FC ptest, frame+72
 # rw decode + prot gate, 030 leaf walk) + the k_trap landing-pad recursion window.
@@ -200,6 +207,7 @@ m68k-linux-gnu-objcopy \
 	--add-symbol hardbus_orig=.text:0x5b3c2,function,global \
 	--add-symbol a3091_stopdma_orig=.text:0xd4cc,function,global \
 	--add-symbol a3091_dma_on=.bss:0x3cc0,object,global \
+	--add-symbol config_orig=.text:0x18f5c,function,global \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -214,11 +222,12 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/inituname040.o" \
 	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" \
 	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
-	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/btrace.o"
+	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/btrace.o" \
+	"$HERE/build/config040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_cache_fromdev_complete a3091_stopdma_orig a3091_dma_on dma_cmpl_count btrace_mark btrace_on; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_cache_fromdev_complete a3091_stopdma_orig a3091_dma_on dma_cmpl_count btrace_mark btrace_on config_cachefix config_orig; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
@@ -298,6 +307,9 @@ python3 "$HERE/prototypes/patch_segkmem.py" "$OUT" | tail -3
 
 echo "[*] B1 DMA hook: retarget A3091/SDMAC stopdma calls -> dma_a3091_stopdma (DMA-INITIATOR-CENSUS.md)"
 python3 "$HERE/prototypes/patch_a3091_dma.py" "$OUT" | tail -6
+
+echo "[*] ISSUE-21 fix: retarget _start jsr config -> config_cachefix (cache-off handoff)"
+python3 "$HERE/prototypes/patch_config_cachefix.py" "$OUT" | tail -3
 
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/prototypes/patch_framesz060.py" "$OUT"
