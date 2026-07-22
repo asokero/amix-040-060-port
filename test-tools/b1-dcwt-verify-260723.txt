@@ -86,5 +86,25 @@ real HW A3000 + Mercury 68040 (dbg 260723-04) -- THE ACCEPTANCE TARGET
   (@0x080f5ac8) -- A3091 FROM_DEVICE completion invalidate live on real HW.
 * /payload.bin sum 1570 8192 (4 MiB SCSI read through WT-DC byte-perfect).
 * hat_dup_cow 1/32/64: RESULT PASS each (fork/COW under WT-DC).
-* burst4 via at-queue (telnetd-HUP-safe): (filled in below)
-* POWER-CUT DISK-TRUTH: (user action pending -- the decisive DMA-coherency test)
+* burst4 via at-queue (telnetd-HUP-safe): ALLBURSTS-DONE, grep -c "1570 8192"
+  burst4.log = 24 (24/24 byte-perfect sums under 6x4MiB x4 burst SCSI pressure
+  + hat_dup_cow 64 per burst); dma_cmpl_count 6378 -> 52257 (0xcc21) across the
+  run; no bus errors in /usr/adm/messages.
+* POWER-CUT DISK-TRUTH (the decisive DMA-coherency killer test): fresh
+  pressure.sh run wrote /press1..6.bin (6/6 sums 1570 8192), sync;sync, then
+  the user CUT POWER mid-session.  Cold boot + fsck + normal boot, then all
+  sums re-read FROM DISK:
+      1570 8192 /press1..6.bin (6/6) + 1570 8192 /payload.bin  => 7/7 PASS
+  CACR read-back after the cold boot: cacr=sup_cacr=0x80008000 (B1 active).
+* clean soft reboot (`reboot`, ISSUE-24 rule) exercising the new haltsys
+  cpusha-dc shutdown ordering: machine came back to login cleanly.
+
+VERDICT
+-------
+B1 (writethrough data cache, DTT0 retained, hat_cm_ram=0x00) is HW-ACCEPTED on
+the real A3000 + Mercury 68040: +59% Dhrystone, byte-perfect heavy SCSI I/O,
+fork/COW clean, FROM_DEVICE completion invalidation live, disk truth held
+across a hard power cut.  Real-060 DC acceptance = separate later milestone.
+B2 (copyback, hat_cm_ram -> 0x20) may now be planned; it additionally needs
+the B2 items recorded in the census (per-range DMA prepare hooks, page-table
+memory policy, low-alias partial-line facts).

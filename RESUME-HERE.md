@@ -1,4 +1,28 @@
-# RESUME HERE — AMIX 68040/68060 port status (2026-07-22)
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-23)
+
+> ## ✅✅✅ 2026-07-23 — B1-DC-ENABLE LANDATTU + RAUTAHYVÄKSYTTY (5f745d5, tagit pre-dc-enable/b1-dc-enable): WRITETHROUGH-DATACACHE PÄÄLLÄ
+> **DC-tien lähtöcommit** — revert = `git tag pre-dc-enable` (e952553) tai minimirevert
+> pstart040.s CACR-immediate `0x80008000`→`0x00008000`. Codex-census (vm-map/
+> DTT0-PHYS-WINDOW-CENSUS.md + DTT0-NARROWING-SPEC.md) KUMOSI DTT0-oletuksen: TTR vertaa
+> LOOGISTA osoitetta → korkeat PTE-mappaukset saavat CM:n leafeista jo nyt; matala NC-alias
+> koherentti korkean WT:n kanssa (fyysiset tagit + NC-matching-line-sääntö); E=0 kaataisi
+> heti (SRP:llä ei low-identity-mappia). → **DTT0 SÄILYI `0x003fc060`**, muutos = pelkkä
+> pstart 'D': `cinva dc` + `cinva ic` + CACR `0x80008000` (+ globaalit + dbg-readback
+> 'D'+80008000 serialille) ja haltsys040 `cpusha dc` ennen TC/TTR-teardownia. Buildit
+> 260723-03/-04/-05; relocs 0.
+> **HYVÄKSYNTÄ (evidenssi test-tools/b1-dcwt-verify-260723.txt):** emu-040+060-regressio
+> vihreä (hat_dup_cow 1/32/64, burst4 24/24, CM-census NC/WT oikein). **RAUTA A3000+
+> Mercury040: Dhrystone 11538→18293/s (+59 %); kmem cacr=sup_cacr=0x80008000, hat_cm_ram=0,
+> dma_cmpl_count 6378→52257 burst4:n yli; hat_dup_cow PASS; burst4 24/24;
+> VIRTAKATKAISU-DISK-TRUTH 7/7 (press1..6+payload sum 1570 8192 levyltä kylmäbootin+fsck:n
+> yli); puhdas soft-`reboot` uuden haltsys-orderingin läpi.** NAS: va2000dev/b1dc/.
+> Havainto (ei blokkeri): /dev/kmem-luku kvseg-VA:sta 0x40326000 palauttaa dataa ENXIO:n
+> sijaan (kvseg fill-on-fault, deterministinen, ei myrskyä; ei DC:stä — emu-DC inertti).
+> **SEURAAVAKSI:** B2 = copyback (hat_cm_ram 0x00→0x20) VASTA oman suunnittelun jälkeen
+> (census-B2-vaateet: per-range-DMA-prepare, page-table-muistipolitiikka, partial-line-
+> faktat); real-060-DC oma erillinen hyväksyntä; DTT0-kavennus (N1/N2) oma physmap-milestone.
+
+# (edellinen tila: 2026-07-22)
 
 > ## ✅ 2026-07-22 — ISSUE-21 RATKAISTU (config-wrapper); VARHAISBOOT-CACHE-BLOKKERI POISSA → Step B voi edetä
 > Satunnainen real-HW boot-musta-ruutu (~1/4) johtui **68040:n INSTRUCTION CACHESTA**, joka

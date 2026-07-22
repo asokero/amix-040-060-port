@@ -166,7 +166,39 @@ acceptance list:** verify old-byte windows, confirm `hat_cm_ram==0` + no live
 copyback, DTT0 handling, then flip CACR DC; acceptance = disk/swap/NFS/fork-COW
 + power-cut disk-truth on real 040 (and separately real 060).
 
-### Step B — Data cache (HW-GATED; do NOT validate on emulator)
+### Step B1 — WRITETHROUGH DC ENABLE  ✅ DONE + REAL-HW-ACCEPTED (2026-07-23, commit 5f745d5, builds 260723-03/-04/-05)
+
+**The DC-road departure commit** (git tags `pre-dc-enable` = last IC-only tree /
+`b1-dc-enable` = this; minimal revert = pstart040.s CACR immediate `0x80008000`
+→ `0x00008000`).  Per the Codex census (analyysirepo `vm-map/DTT0-PHYS-WINDOW-
+CENSUS.md` + `DTT0-NARROWING-SPEC.md`), **DTT0 was KEPT at `0x003fc060`** — the
+original "DTT0 masks per-page CM" assumption was WRONG: a TTR matches LOGICAL
+addresses only, so high PTE-backed kvseg/segmap/user mappings already take CM
+from their leaf PTEs; the low NC identity window is coherent with high WT
+aliases (physically-tagged 040 cache + NC-access matching-line rule); and DTT0
+E=0 would fault instantly (SRP has no low identity map).  DTT0 narrowing (N1
+16MiB / N2 disable) = separate later low-identity-map/physmap milestone.
+
+What changed: pstart040 'D' = `cinva dc` (discard AmigaOS-inherited lines —
+config040 disables caches WITHOUT flushing; a cpusha would replay stale data)
++ `cinva ic` + CACR `0x80008000` (movec + both `cacr`/`sup_cacr` globals) +
+dbg-gated movec read-back ('D'+`80008000` on serial); haltsys040 = `cpusha dc`
+before the TC/TTR teardown (spec "Shutdown ordering"; pure invalidate in WT,
+mandatory push in B2).  Nothing else — no phys-window conversions needed.
+
+**Acceptance (evidence `test-tools/b1-dcwt-verify-260723.txt`):** emu-040+060
+regression green (boot→login, hat_dup_cow 1/32/64, burst4 24/24, CM census
+u-area NC / kvseg-RAM WT; no DC model = regression only).  **REAL A3000 +
+Mercury 040 (dbg -04): Dhrystone 11538 → 18293/s (+59%); kmem read-back
+cacr=sup_cacr=0x80008000, hat_cm_ram=0; dma_cmpl_count 6378→52257 over burst4;
+hat_dup_cow 1/32/64 PASS; burst4 24/24 byte-perfect; POWER-CUT disk-truth 7/7
+sums 1570 8192 from disk across cold boot + fsck; clean soft `reboot` through
+the new haltsys ordering.**  Real-060 DC = separate later acceptance (census:
+do not generalize the 040 alias conclusion).
+
+### Step B2 — copyback (NEXT; flip `hat_cm_ram` 0x00→0x20 ONLY after planning the B2 census items: per-range DMA prepare hooks, page-table-memory policy, low-alias partial-line facts)
+
+### Step B — original plan notes (superseded by B1 above; kept for history)
 
 **Early-boot cache-handoff cleared (2026-07-22, ISSUE-21 RESOLVED):** the intermittent real-HW
 boot fault that shadowed this work was the inherited 68040 **instruction** cache (AmigaOS leaves
