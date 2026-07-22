@@ -20,8 +20,13 @@
 > Evidenssi test-tools/issue21-configfix-reboot9-260722.txt.
 > **MERKITYS Step B:lle:** aiempi "copyback-DC/burst-herkkyys varhaisbootissa" -tulkinta oli
 > VÄÄRÄ — syy oli peritty IC, ja se on nyt hoidettu. Varhaisboot ei enää kaadu periytyneeseen
-> cache-tilaan → **DC-käyttöönotto (Step B) ei enää törmää tähän blokkeriin.** Avoin Step-B-gate
-> on edelleen DTT0-kavennus (ks. kohta 3 alla + CACHES-ON-PLAYBOOK "Step B").
+> cache-tilaan → **DC-käyttöönotto (Step B) ei enää törmää tähän blokkeriin.** Ainoa avoin
+> Step-B-analyysi-gate on **DTT0-kavennus** (DTT0=`0x003fc060` maskaa koko data 0–1GB:n per-sivun
+> CM:n → DC ei näy edes WT:ssä): Codex-toimeksianto kirjoitettu → **`DTT0-NARROWING-TASK.md`**
+> (fyysisen-ikkunan census: ppcopy/pagezero/gen_strategy/HAT-kävelijät/bp_map/tablewalk +
+> kavennusspeksi + CACR-DC-ordering). Muu Step-B-koneisto (B1-luokittelija, A3091-DMA-hook,
+> segkmem-julkaisu) landattu dormanttina + emu-verifioitu → Fable voi toteuttaa DC-enablen tämän
+> censuksen valmistuttua; ratkaiseva hyväksyntä = rautasessio (burst4 + hat_dup_cow + virtakatkaisu-disk-truth).
 
 > ## ✅ 2026-07-20 (ilta) — B1-DMA-HOOK LANDATTU A3000-EDELLÄ (dormantti no-op, emu-hyväksytty)
 > DMA-census valmis+verifioitu (analyysirepo 58f1cda: `DMA-INITIATOR-CENSUS.md` +
