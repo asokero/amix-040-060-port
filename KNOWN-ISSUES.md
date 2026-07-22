@@ -1564,6 +1564,24 @@ copyit-loaderia ei tosiasiassa käytetty). SELVITETTÄVÄ itsenäistä fixiä va
 päällä ja toimii bootin jälkeen, joten burst EI ole universaalisti rikki — ongelma on nimenomaan peritty
 copyback-DC/varhaisikkuna. Selvitettävä ennen DC-käyttöönottoa.
 
+**PÄIVITYS 2026-07-22 (RATKAISEVA: syyllinen on INSTRUCTION CACHE, EI data cache):** CACR/RAMSEY-dumppi
+lisätty pstart040 'A':han (btrace_hex; commit 7139bdc). Ristiin-OS-tieto (käyttäjä): AmigaOS/Debian/OpenBSD/
+RedHat ajavat tällä Mercuryllä datacache päällä ongelmitta → rautahypoteesi kumoutui, kyse OHJELMISTO. Kokeet
+(dbg -02, cpu-output SER:iin, evidenssi /tmp/amix-hw-cachetest*.log):
+- cpu nocache: CACR=0x00000000 (IC off, DC off) → 15/15 reboot OK.
+- IC-only (`INST: Cache Burst / DATA: NoCache NoBurst`): CACR=0x00008000 → boot1 OK, **boot2 ILLEGAL@memcpy
+  KAATUI**. RAMSEY vakio 0x38.
+- IC+DC (0x80008000): kaatuu ~11/15 (FLT-ajo).
+**Yhteinen tekijä KAIKISSA kaatumisissa = IC PÄÄLLÄ; DC epäolennainen. Ainoa luotettava = IC POIS.** Syy siis
+instruction cache AmigaOS→kernel-handoffin varhaisikkunassa (config/pstart-bzero ENNEN pstart040:n 'D':tä joka
+tekee cinva ic + IC-enable). Step A (IC päällä) toimii bootin JÄLKEEN → ongelma on nimenomaan peritty/likainen
+IC handoffissa, todennäk. IC-koherenssi copyitissä (juuri kopioitu koodi; muiden OS:ien loaderit hoitavat, AMIX
+ei). **FIX-SUUNTA:** copyit-CACR=0 disabloi myös IC:n varhaisikkunassa → pitäisi olla TÄYDELLINEN korjaus
+(varhainen IC-off → ei faultia, pstart040 'D' laittaa IC:n takaisin → Step A säilyy). cpu nocache todistaa
+periaatteen. Avoin: copyit-fix "ei auttanut" → todennäk. deployment (emu näytti CACR=0x80008000 vaikka build-
+loaderissa on CACR=0 → korjattua loaderia ei ajettu). TESTI: boottaa korjatulla unix_boot040:llä (ilman cpu
+nocachea, AmigaOS IC päällä), lue 'A':n CACR — 0x00000000 = fix toimi (self-contained), 0x00008000 = ei deployattu.
+
 **OPEN — kirjattu 2026-07-19, EI blokkaa käyttöä (uusi yritys korjaa lähes aina).** A3000 +
 Mercury 040, unix_boot → kernel jää heti bootissa mustaan ruutuun ~kerran neljästä.
 ENSIMMÄINEN serial-evidenssi (260719-02, 9600 baud; rivien alut osin merkkikadon syömiä):
