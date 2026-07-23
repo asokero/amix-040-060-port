@@ -1,5 +1,25 @@
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-23)
 
+> ## 🔶 2026-07-23 (myöhäisilta) — B2-CB-HOOKS LANDATTU + EMU-VERIFIOITU (0b84a65); RAUTA-AJO SEURAAVANA PÄIVÄNÄ
+> Codexin 3 B2-speksiä (analyysirepo 1823681) toteutettu: **(1)** `cb_release040.s`
+> copyback-release-barrier (cpushl×256/sivu; page_free @0xafb08 bsr.l + free_vp_pages
+> @0xafd98 reloc-retarget — molemmat ENNEN free-list-julkaisua, ehdottomasti), **(2)**
+> hat040.s `Lhl_dofree`-reorder (leaf-clear+cpusha dc+pflusha ennen page_freetä), **(3)**
+> dma_cache040.s A3091-ownership-protokolla (startdma-wrapperit 0xd0b2/0xd21a; prepare=
+> `cpusha dc` pilotti, FROM_DEVICE-complete=range-`cinvl`; kielletty completion-`cinva dc`
+> POISSA — censuksessa jäljellä vain turvallinen pstart-'D'-instanssi). `patch_b2_flip.py`
+> → KAKSI ARTEFAKTISETTIÄ: **WT+hookit 260723-06/-07/-08 (rautasession baseline)** +
+> **b2 -09/-10 (hat_cm_ram=0x20)**. Emu-040+060 molemmat: burst4 24/24, prepare/complete-
+> parit TASAN (49447/49447, 50135/50135), diagnostiikat 0, cb_rel_count 141-142k,
+> CM-census segu-NC/KMA-WT/hat_pteload-CB. Evidenssi test-tools/b2-cb-hooks-emu-verify-
+> 260723.txt; NAS va2000dev/b1dc/ (5 imagea).
+> **SEURAAVAKSI (rautasessio, kone verkossa seuraavana päivänä):** speksien runtime-
+> hyväksyntälistat = (a) boottaa WT-baseline -07 → savu+laskurit, (b) boottaa -b2-dbg -10
+> → kmem-readback hat_cm_ram=0x20, hat_dup_cow 1/32/256, burst4, laskuriparit+0-diagnostiikat,
+> reconn_arm kirjataan, (c) VIRTAKATKAISU-disk-truth dirty-writebackin jälkeen, (d) Dhrystone-
+> delta vs B1:n 18293/s, (e) soft-`reboot`. Epäonnistuminen → boottaa WT-baseline erottamaan
+> cache-altistus mappausregressiosta (speksin ohje).
+
 > ## ✅✅✅ 2026-07-23 — B1-DC-ENABLE LANDATTU + RAUTAHYVÄKSYTTY (5f745d5, tagit pre-dc-enable/b1-dc-enable): WRITETHROUGH-DATACACHE PÄÄLLÄ
 > **DC-tien lähtöcommit** — revert = `git tag pre-dc-enable` (e952553) tai minimirevert
 > pstart040.s CACR-immediate `0x80008000`→`0x00008000`. Codex-census (vm-map/
