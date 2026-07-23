@@ -37,6 +37,17 @@ A3091_STOPDMA_VALUE = 0xd4cc          # st_value of the a3091 local stopdma body
 WRAPPER = "dma_a3091_stopdma"
 R_68K_32 = 1
 
+# B2 (2026-07-23, A3091-B2-PREPARE-PATCH-SPEC.md): the TWO a3091 `jsr startdma`
+# relocations get prepare wrappers.  0xd0b2 = initial arm from startany;
+# 0xd21a = disconnect/reconnect re-arm (distinct wrapper entry that counts
+# dma_reconn_arm, then shares the prepare body).  The A2090/A2091 startdma
+# sites (0xc2b8/0xc87e/0xca2a) must remain untouched -- asserted by value.
+A3091_STARTDMA_VALUE = 0xd40a         # st_value of the a3091 local startdma body
+START_RETARGETS = [
+    (0xd0b2, "dma_a3091_startdma"),
+    (0xd21a, "dma_a3091_startdma_reconn"),
+]
+
 def u16(b, o): return struct.unpack(">H", b[o:o+2])[0]
 def u32(b, o): return struct.unpack(">I", b[o:o+4])[0]
 
@@ -136,7 +147,48 @@ def main():
     if done and skip:
         raise SystemExit("ABORT: partial retarget (%d done, %d already) -- group is atomic" % (done, skip))
 
+    # --- B2: retarget the two a3091 startdma relocations to prepare wrappers ---
+    sdone = sskip = 0
+    for r_target, wrap_name in START_RETARGETS:
+        widx = None
+        for i in range(sym_n):
+            if sym_name(i) == wrap_name:
+                widx = i
+                break
+        if widx is None:
+            raise SystemExit("ABORT: wrapper symbol %s not found (dma_cache040.o linked?)" % wrap_name)
+        hit = None
+        for i in range(rela_n):
+            o = rela_off + i * rela_ent
+            if u32(buf, o + 0) == r_target:
+                hit = o
+                break
+        if hit is None:
+            raise SystemExit("ABORT: a3091 startdma reloc 0x%05x not found" % r_target)
+        r_info = u32(buf, hit + 4)
+        cur_sym, r_type = r_info >> 8, r_info & 0xff
+        opc = bytes(buf[text_foff + (r_target - 2):text_foff + r_target])
+        if opc != b"\x4e\xb9":
+            raise SystemExit("ABORT @0x%05x: expected jsr(4eb9) at -2, found %s"
+                             % (r_target, opc.hex()))
+        if r_type != R_68K_32:
+            raise SystemExit("ABORT @0x%05x: reloc type %d != R_68K_32" % (r_target, r_type))
+        if cur_sym == widx:
+            print("  [skip] @0x%05x already -> %s" % (r_target, wrap_name)); sskip += 1
+            continue
+        nm, val = sym_name(cur_sym), sym_value(cur_sym)
+        if nm != "startdma" or val != A3091_STARTDMA_VALUE:
+            raise SystemExit("ABORT @0x%05x: target is %s@0x%x, expected startdma@0x%x"
+                             % (r_target, nm, val, A3091_STARTDMA_VALUE))
+        struct.pack_into(">I", buf, hit + 4, (widx << 8) | R_68K_32)
+        print("  [ok]   @0x%05x  startdma@0x%x -> %s (sym #%d)"
+              % (r_target, val, wrap_name, widx)); sdone += 1
+    if sdone and sskip:
+        raise SystemExit("ABORT: partial startdma retarget (%d done, %d already) -- group is atomic"
+                         % (sdone, sskip))
+
     open(KERNEL, "wb").write(buf)
-    print("A3091 DMA stopdma retarget: %d retargeted, %d already -> %s" % (done, skip, KERNEL))
+    print("A3091 DMA retarget: stop %d+%d, start %d+%d (done+already) -> %s"
+          % (done, skip, sdone, sskip, KERNEL))
 
 main()

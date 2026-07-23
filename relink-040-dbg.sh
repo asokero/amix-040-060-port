@@ -129,6 +129,10 @@ echo "[*] sched is now a --weaken-symbol OVERRIDE (no detour patch -- detour-jmp
 echo "    into relinked code Line-F-crashes on this 040; jsr-override entry works)."
 
 echo
+echo "[*] B2 page-release hooks: re-verify/re-fix the page_free bsr.l displacement for this link"
+python3 "$HERE/prototypes/patch_cb_release.py" "$OUT" | tail -3
+
+echo
 echo "[*] enabling early-boot serial phase trace (btrace_on=1; base/quiet stay silent)"
 python3 "$HERE/prototypes/patch_btrace_on.py" "$OUT"
 

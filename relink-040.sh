@@ -112,6 +112,13 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segkmem040.s" -o "$HERE/build/se
 # the real-HW Step-B CACR DC-enable.  Wired by relocation retarget (three
 # same-named local stopdma symbols block globalize+weaken) via patch_a3091_dma.py.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/dma_cache040.s" -o "$HERE/build/dma_cache040.o"
+# cb_release040 (2026-07-23, caches Step B2): copyback page-lifecycle release
+# barrier -- cpushl-per-line page push+invalidate (cb_page_release) + the two
+# free-list choke-point islands (page_free @0xafb08 via bsr.l, free_vp_pages
+# @0xafd98 via jsr/reloc-retarget; patch_cb_release.py installs both).  Spec:
+# CB-PAGE-LIFECYCLE-CLOSURE.md.  In the WT baseline the loop only invalidates
+# clean lines (harmless) -> hooks are regression-testable before the CM flip.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/cb_release040.s" -o "$HERE/build/cb_release040.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
@@ -206,6 +213,7 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol hardbus \
 	--add-symbol hardbus_orig=.text:0x5b3c2,function,global \
 	--add-symbol a3091_stopdma_orig=.text:0xd4cc,function,global \
+	--add-symbol a3091_startdma_orig=.text:0xd40a,function,global \
 	--add-symbol a3091_dma_on=.bss:0x3cc0,object,global \
 	--add-symbol config_orig=.text:0x18f5c,function,global \
 	"$HERE/build/unix-stage1"
@@ -222,12 +230,12 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/inituname040.o" \
 	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" \
 	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
-	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/btrace.o" \
+	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
 	"$HERE/build/config040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_cache_fromdev_complete a3091_stopdma_orig a3091_dma_on dma_cmpl_count btrace_mark btrace_on config_cachefix config_orig; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
@@ -310,6 +318,9 @@ python3 "$HERE/prototypes/patch_a3091_dma.py" "$OUT" | tail -6
 
 echo "[*] ISSUE-21 fix: retarget _start jsr config -> config_cachefix (cache-off handoff)"
 python3 "$HERE/prototypes/patch_config_cachefix.py" "$OUT" | tail -3
+
+echo "[*] B2 page-release barrier: page_free + free_vp_pages choke-point hooks (CB-PAGE-LIFECYCLE-CLOSURE.md)"
+python3 "$HERE/prototypes/patch_cb_release.py" "$OUT" | tail -3
 
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/prototypes/patch_framesz060.py" "$OUT"

@@ -1056,13 +1056,25 @@ Lhl_maybefree:
 	addqw	&4,%sp
 	braw	Lhl_maybefree
 Lhl_dofree:
-	orib	&-128,%a4@
+	orib	&-128,%a4@		| mark page gone
+| ---- caches Step B2 ordering fix (2026-07-23, CB-PAGE-LIFECYCLE-CLOSURE.md
+| "hat_unload(HAT_RELEPP) ordering"): the stock order freed the page while its
+| resident leaf PTE was still in memory -- the physical page entered a free
+| list with a live translation.  Retire the leaf FIRST, publish the descriptor
+| clear and drop the stale ATC entry, and only then hand the page to page_free
+| (whose central cb_page_release hook cleans the page DATA -- no second data
+| cleanup here by design).  The Lhl_cleared join skips the duplicate clear.
+	clrl	%a2@			| retire leaf PTE before allocator exposure
+	.word	0xf478			| cpusha dc -- publish the descriptor clear
+	.word	0xf518			| pflusha -- invalidate the stale ATC entry
 	clrl	%sp@-
 	movel	%a4,%sp@-
 	jsr	page_free
 	addqw	&8,%sp
+	braw	Lhl_cleared		| leaf already cleared -- skip duplicate clrl
 Lhl_clear:
 	clrl	%a2@			| *pte = 0
+Lhl_cleared:
 	addqw	&4,%a2
 	addil	&4096,%d2
 | ----- end verbatim block -----

@@ -1,0 +1,106 @@
+Caches Step B2 -- COPYBACK hook group + hat_cm_ram flip: emulator regression
+============================================================================
+Date: 2026-07-23 (implementation session immediately after B1 HW acceptance)
+Specs: analyysirepo 1823681 vm-map/PT-MEMORY-B2-POLICY.md +
+       CB-PAGE-LIFECYCLE-CLOSURE.md + A3091-B2-PREPARE-PATCH-SPEC.md
+       (pinned 5f745d5 / base sha d3e1f80a; all patch anchors re-verified here)
+Builds (all with the full B2 hook group; relocs 0 complaints each):
+  WT baseline (hat_cm_ram=0x00): base 260723-06 / dbg -07 / quiet -08
+    11b4f21f8a97d651730b631afb6e7eeafe8a2315055178226ed00f0965b26125  unix-040
+    9846010525a8c37cc3051681867a6a9c5c9cb08093759a88cd6aae6bf83af437  unix-040-dbg
+    1ae1e4fa147fbf49ebefe9d050e6bc8f3ee2cbdfbc021be618350da93b61020c  unix-040-quiet
+  B2 copyback (hat_cm_ram=0x20 via patch_b2_flip.py): -b2 260723-09 / -b2-dbg -10
+    562eccaced6ad9276aeb2513d5b6d1c0af97d79d61475aad84a53dac4bb3dfec  unix-040-b2
+    9b21ea5da88989f255b7cb5a067d43d2013a28fbd385302e50b7c0fdb68b22c9  unix-040-b2-dbg
+NOTE: the emulator does not model the 040 data cache -- everything below is
+control-flow/pairing/regression evidence ONLY.  DC-coherency acceptance is the
+real-HW session (see the runtime acceptance lists in the three specs).
+
+What was implemented (commit follows this evidence)
+---------------------------------------------------
+1. cb_release040.s + patch_cb_release.py -- the copyback page-release barrier
+   (CB-PAGE-LIFECYCLE-CLOSURE.md): cb_page_release = bounds-checked
+   pp->pa conversion (pages/pages_base, /60, <<12) + 256x `cpushl dc` line
+   loop; page_free hook @0xafb08 (displaced 40c346fc2400 -> bsr.l island;
+   PC-relative on purpose -- no raw absolute detour) and free_vp_pages hook
+   @0xafd98 (52b9+freemem reloc -> 4eb9 + reloc retargeted to the island,
+   which replays freemem++).  Both hooks run before free-list publication,
+   unconditionally (never skipped on p_mod).
+2. hat040.s hat_unload(HAT_RELEPP) ordering fix (source, Lhl_dofree): leaf
+   PTE clear + cpusha dc + pflusha now precede page_free (stock order freed
+   the page with a live resident descriptor).
+3. dma_cache040.s B2 protocol + patch_a3091_dma.py start retargets
+   (A3091-B2-PREPARE-PATCH-SPEC.md): dma_a3091_startdma[_reconn] wrappers on
+   the two arm relocations (0xd0b2 initial / 0xd21a reconnect; A2090/A2091
+   startdma sites asserted untouched); single-segment ownership record
+   (pa/len/dir/seq/state, PREPARED set before arm); PILOT prepare =
+   `cpusha dc` (safe whole-cache push) + complete = per-range `cinvl` loop
+   (FROM_DEVICE); the forbidden B1 completion-time `cinva dc` is GONE --
+   image-wide census: exactly one cinva dc remains, the pre-enable pstart 'D'
+   instance (safe: DC is off in that window).
+4. patch_b2_flip.py -- produces the -b2 variants by flipping hat_cm_ram
+   0x00 -> 0x20 (symbol-located, old-byte asserted); two artifact sets by
+   design ("baseline smoke before the CM flip" on real HW).
+
+Static verification (unix-040 260723-06 base image)
+---------------------------------------------------
+* hat_unload Lhl_dofree: 0014ff80 (mark gone) -> 4292 (clrl leaf) -> f478
+  (cpusha dc) -> f518 (pflusha) -> jsr page_free.  Reorder confirmed.
+* cb_page_release core: bounds gates vs pages/epages, divul #60, +pages_base,
+  <<12, wrap gate, 256-iteration f468 (cpushl dc) loop, counters.
+* page_free @0xafb08: 61ff 0002a682 = bsr.l -> cb_pgfree_enter @0xda18c exact.
+* free_vp_pages @0xafd9a reloc -> cb_vpfree_enter; opcode 4eb9.
+* start retargets: 0xd0b2 -> dma_a3091_startdma, 0xd21a -> _reconn;
+  A2090 0xc2b8 still R_68K_32 startdma (own body) -- untouched.
+* stop retargets: all four still -> dma_a3091_stopdma (extended body).
+* PT-policy anchors: 0xb68a2 = 6000 0078 (free_pts bypass); hat_cm_ram
+  .data+0x18300 = 0x00000000 (WT set) / 0x00000020 (-b2 set); DTT0 unchanged.
+
+emu-040, WT-hooks baseline (dbg 260723-07)
+------------------------------------------
+* boot -> login; uname 68040-260723-07; CACR globals 0x80008000.
+* counters after boot: prep_to/cmpl_to 1144/1144, prep_from/cmpl_from
+  2656/2656, seq=prep_whole=cmpl_count=3800 (PERFECT pairing);
+  zero_arm/reconn/prep_owned/cmpl_noprep/range_ovf/cb_rel_reject all 0;
+  cb_rel_count 15358 (release barrier live on every page free).
+* hat_dup_cow 32 PASS; payload sum 1570 8192; copy sum 1570 8192.
+
+emu-040, B2 copyback (b2-dbg 260723-10)
+---------------------------------------
+* boot -> login; uname 68040-260723-10; hat_cm_ram=0x20 read back.
+* runtime CM census (kvwalk): fixed-u 0x..0F9 (NC, unchanged); KMA/segkmem
+  control VAs 0x40162000/0x40163000/0x40100000 all 0x..019 (CM=00 WT -- the
+  PT-policy "user roots stay WT" condition holds); hat_pteload-constructed
+  kvseg mapping 0x404F2000 = 0x..039 (CM=01 COPYBACK -- the flip observably
+  lands via Lcm_sel, exactly the census B2-target).
+* hat_dup_cow 1/32/64: RESULT PASS each; payload + copy sums 1570 8192.
+* burst4: ALLBURSTS-DONE, 24/24 byte-perfect sums.
+* counters after burst4: prep_to/cmpl_to 33479/33479, prep_from/cmpl_from
+  15968/15968, seq=whole=cmpl_count=49447 -- pairing PERFECT under sustained
+  disk+fork pressure; ALL diagnostic counters still 0; cb_rel_count 141262;
+  seg_state EMPTY (dir=FROM_DEVICE from last segment).
+* serial log: 0 hits for 4AFC005F / BUS ERROR / PANIC.
+
+emu-060, B2 copyback (same dual-CPU binary, b2-dbg -10)
+-------------------------------------------------------
+* boot -> login; uname 68060-260723-10.
+* hat_dup_cow 1/32/64: RESULT PASS each; payload + copy sums 1570 8192.
+* burst4: ALLBURSTS-DONE, 24/24 byte-perfect; counters after: prep_to/cmpl_to
+  33412/33412, prep_from/cmpl_from 16723/16723 (pairing PERFECT), all
+  diagnostics 0, cb_rel_count 142099; serial 0 errors.
+* NOTE: regression only; real-060 DC/B2 acceptance is a separate milestone
+  (CPUSH/DPI semantics noted in the spec and in dma_cache040.s).
+
+Real-HW acceptance plan (next day -- Amiga unavailable tonight)
+---------------------------------------------------------------
+Per the three specs' runtime acceptance lists:
+1. boot WT-hooks baseline (-07 dbg or -06 base): baseline smoke + counters
+   (pairing, zero diagnostics) BEFORE any CM flip;
+2. boot -b2-dbg (-10): kmem read-back hat_cm_ram=0x20 + CACR + counters;
+3. hat_dup_cow 1/32/256, burst4, swap pressure, NFS-to-local if available;
+4. counters after: prep==cmpl per direction, prep_owned=cmpl_noprep=
+   range_ovf=cb_rel_reject=0, reconn_arm>=0 recorded, cb_rel_count climbing;
+5. POWER-CUT disk-truth after dirty writeback (the killer test);
+6. Dhrystone delta vs B1 (expect improvement from CB write-allocation);
+7. clean soft `reboot` (haltsys cpusha dc now mandatory-correct in CB).
+NAS deploy: va2000dev/b1dc/ (all five images + this evidence).

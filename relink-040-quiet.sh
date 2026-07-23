@@ -68,6 +68,10 @@ fi
 echo "[OK] .data size 0x$(printf %x $DSZ) is 4-aligned (bss placement safe)."
 
 echo
+echo "[*] B2 page-release hooks: re-verify/re-fix the page_free bsr.l displacement for this link"
+python3 "$HERE/prototypes/patch_cb_release.py" "$OUT" | tail -3
+
+echo
 echo "[*] stamping build id -> utsname.machine tag (inherits inituname040 from unix-040)"
 python3 "$HERE/prototypes/stamp_buildid.py" "$OUT"
 
