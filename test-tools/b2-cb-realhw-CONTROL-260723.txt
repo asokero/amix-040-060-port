@@ -135,3 +135,45 @@ shipped (measured, not a corruption blocker):
 
 The kernel DMA trace ring (Codex Part B) is NOT needed for this classification;
 it would only be built if a persistent V3+ class had appeared, which it did not.
+
+
+================================================================================
+UPDATE 2026-07-23 (WT control with b2verify) -- ISSUE-22 confirmed kernel-independent
+================================================================================
+The same F1 instrumented reproducer (b2repro-copy.sh, b2verify) was run on the
+WT-hooks baseline (unix-040-dbg, 68040-260723-07, hat_cm_ram=0x00) to confirm
+that B2 does not introduce or elevate the ISSUE-22 EFAULT.
+
+Result -- burst 2 (same burst as B2's failure), copies cp1..cp5 all
+CLASS=V0_COMPLETE_MATCH, then:
+
+    cp: /payload.bin: read: Bad address          (cp's source read EFAULTs)
+    B2V label=wtrun-...-cp6 CLASS=SOURCE_ERROR dst=/cp6.bin stat_errno=2 (ENOENT)
+    STOP burst=2 cp=6 class=20
+
+Interpretation:
+* `cp: read: Bad address` = errno EFAULT -- the ISSUE-22 signature, here on cp's
+  read of the source; cp aborts, so /cp6.bin is never created;
+* b2verify then reports SOURCE_ERROR/ENOENT because the destination is absent
+  (not a V-class -- the file does not exist to classify);
+* this is a cp-side clean abort with NO on-disk corruption, exactly the WT
+  failure mode seen in the original 16-burst control.
+
+Side-by-side (both under identical copy pressure, both first-failed at burst 2):
+
+| kernel        | ISSUE-22 EFAULT hit | manifestation           | on-disk truth     |
+|---------------|---------------------|-------------------------|-------------------|
+| WT  -07 (0x00)| cp's source read    | cp aborts, dest absent  | no file (clean)   |
+| B2  -10 (0x20)| verifier's read     | file full + intact      | correct, reopen OK|
+
+CONCLUSION
+----------
+ISSUE-22 (transient read(2) EFAULT under memory pressure) fires on BOTH kernels
+at the same exposure (~burst 2). It is a pre-existing, kernel-independent
+read-path / fault-resolver bug. Which read the EFAULT lands on (cp vs verifier)
+is incidental; neither kernel produces persistent disk corruption. B2 copyback
+does not introduce or amplify it, and B2's disk data is byte-correct.
+
+The B2 corruption alarm is fully resolved as ISSUE-22. B2 is not corruption-
+blocked. Remaining for a B2 flip is ordinary acceptance (a longer all-V0 run
+with b2verify + clean-reboot disk-truth); ISSUE-22 stays a separate open bug.
