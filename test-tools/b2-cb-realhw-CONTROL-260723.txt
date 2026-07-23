@@ -1,0 +1,84 @@
+Caches Step B2 -- COPYBACK real-HW controlled comparison (WT-baseline vs B2)
+===========================================================================
+Date: 2026-07-23
+Machine: real A3000 + Mercury 68040 (10.0.10.10)
+Builds: WT-hooks baseline unix-040-dbg 68040-260723-07 (hat_cm_ram=0x00)
+        B2 copyback   unix-040-b2-dbg 68040-260723-10 (hat_cm_ram=0x20)
+        (identical hook group; ONLY the CM class differs -- clean single variable)
+Workload: burstloop.sh R=4 = 4x burst4 = 16 bursts = 96 concurrent-4MiB copies
+          + hat_dup_cow 64 per burst.  Same script, same NAS payload (sum 1570 8192).
+
+VERDICT
+-------
+**B2 COPYBACK BLOCKED: it silently corrupts files on disk under sustained
+pressure; the WT baseline with the identical hook group does not.  Do NOT flip
+hat_cm_ram to 0x20 in a shipping kernel until the coherency gap is root-caused.**
+
+The controlled comparison separates two DISTINCT phenomena that a single run
+conflated:
+
+  1. ISSUE-22 EFAULT (pre-existing, NOT B2): `cp: read: Bad address` under
+     pressure -> the copy aborts cleanly, the dest file is NOT created
+     (`sum: Can't open`).  NOISY (cp reports the error), no on-disk corruption.
+     Appears on BOTH kernels -> pre-existing, unrelated to copyback.
+
+  2. B2 silent corruption (B2-ONLY): a dest file IS created, cp reports NO
+     error, but the on-disk file is SHORT + wrong checksum + gives a read error
+     on readback.  Appears ONLY on -10 (copyback), across two independent boots.
+
+Comparison
+----------
+| kernel        | boots | bursts | ISSUE-22 EFAULT (clean abort) | B2 SILENT on-disk corruption |
+|---------------|-------|--------|-------------------------------|------------------------------|
+| -07 WT        |   1   |   16   | 1 (cp read: Bad address, press4 absent) | 0                     |
+| -10 B2 (R=4)  |   1   |   16   | 0                             | 1 (press5: 32757 5328 + read error) |
+| -10 B2 (prior)|   1   |    8   | 1 (press6 absent)             | 1 (press6: 18645 7648 + read error) |
+
+Key qualitative fact (stronger than the raw counts): on WT the ONLY failure
+mode is a noisy clean-abort EFAULT (no file, no corruption).  On B2 the failure
+mode is a SILENT corrupt-and-unreadable on-disk file.  That difference tracks
+the copyback flip exactly -- same disk, same fs, same workload, same hooks; the
+only changed variable is hat_cm_ram 0x00->0x20.  The corrupt-file signature is
+reproduced on two independent -10 boots and is absent from 16 clean -07 bursts.
+
+The hooks that WERE installed are firing correctly
+--------------------------------------------------
+Counter read-back after the -10 runs: dma_prep_to==dma_cmpl_to and
+dma_prep_from==dma_cmpl_from (perfect pairing), and ALL diagnostic counters 0
+(dma_prep_owned / dma_cmpl_noprep / dma_range_ovf / cb_rel_reject).
+cb_rel_count climbs with every page free.  So the A3091 prepare/complete
+protocol and the cb_page_release barrier are internally consistent -- the gap
+is NOT a missed prepare/complete on the hooked path.  The corruption must come
+from a disk-write path NOT covered by the current hook set, or a subtler race.
+
+Leading root-cause hypotheses (for the next debugging round)
+------------------------------------------------------------
+* UFS metadata writeback (inode / indirect blocks) via the buffer cache whose
+  dirty cache line is not pushed before its A3091 DMA write -> on-disk block
+  map inconsistent -> short file + read error on readback.  Fits the signature
+  (silent, corrupt+unreadable, not just wrong data).
+* a FROM_DEVICE completion invalidate range that misses an endpoint/partial
+  line, leaving a stale dirty CPU line that later evicts over device data.
+* a disk-write initiator path that does not pass through the A3091 startdma
+  prepare retarget (needs a DMA-initiator re-census against the WRITE path
+  specifically, not just the read completion the B1 census focused on).
+* the pilot whole-cache `cpusha dc` prepare racing with async DMA + concurrent
+  CPU dirtying of an unrelated line in the same page.
+
+Actions taken / not taken
+-------------------------
+* POWER-CUT disk-truth NOT run: corruption already reproduces under normal
+  load; a power cut would only add a second variable.
+* No hat_cm_ram flip shipped.  The WT-hooks baseline (260723-06 base / -07 dbg,
+  hat_cm_ram=0x00) remains the current good real-HW state -- it passed 16 clean
+  bursts (only the pre-existing ISSUE-22 EFAULT, which also predates the hooks).
+* B1 (writethrough) remains HW-accepted and unaffected (commit 5f745d5).
+
+Next
+----
+1. Keep B2 code committed (0b84a65) but DORMANT: ship WT (hat_cm_ram=0x00).
+2. Root-cause the silent disk corruption -- Codex analysis round on the WRITE
+   path + targeted instrumentation (per-inode / per-buffer, which file, whether
+   the corrupt block is metadata or data, DMA-initiator write-path re-census).
+3. Re-run this exact controlled comparison after the fix; require -10 to match
+   -07 (0 silent corruptions / >=16 bursts) BEFORE any power-cut or flip.
