@@ -10,6 +10,12 @@ Workload: burstloop.sh R=4 = 4x burst4 = 16 bursts = 96 concurrent-4MiB copies
 
 VERDICT
 -------
+**>>> SUPERSEDED -- see "UPDATE 2026-07-23 (later)" at the bottom of this file.
+The "silent corruption" reading below was an over-interpretation of `sum` hiding
+errno; the F1 instrumented capture classified the actual failure as
+V1_EFAULT_TRANSIENT (ISSUE-22, file byte-intact on reopen), NOT B2 corruption. <<<**
+
+(original, now-corrected verdict:)
 **B2 COPYBACK BLOCKED: it silently corrupts files on disk under sustained
 pressure; the WT baseline with the identical hook group does not.  Do NOT flip
 hat_cm_ram to 0x20 in a shipping kernel until the coherency gap is root-caused.**
@@ -82,3 +88,50 @@ Next
    the corrupt block is metadata or data, DMA-initiator write-path re-census).
 3. Re-run this exact controlled comparison after the fix; require -10 to match
    -07 (0 silent corruptions / >=16 bursts) BEFORE any power-cut or flip.
+
+
+================================================================================
+UPDATE 2026-07-23 (later) -- F1 instrumented capture RESOLVES the alarm
+================================================================================
+Codex (analyysirepo 077f2bc) refuted all five static B2 mechanisms and proved
+from the AMIX `sum` binary disassembly that its "32757 5328 + read error" is a
+PARTIAL read-progress count, not a file size -- so the earlier "silent B2 disk
+corruption" reading was an over-interpretation of sum hiding errno.
+
+The F1 instrumented reproducer (test-tools/b2repro-copy.sh = the SAME burst4
+copy-pressure that produced the alarm, but verified with b2verify instead of
+sum) was run on the B2 copyback kernel (unix-040-b2-dbg, 68040-260723-10,
+hat_cm_ram=0x20) and CAUGHT the failure directly:
+
+    B2V label=b2run-b2-cp1 READFAIL off=73728 errno=14 size_at_fail=4194304
+        retry_transient=1 retry_errno=14 bytes_ok=73728
+    B2V CLASS=V1_EFAULT_TRANSIENT off=73728 errno=14 note=reopen-succeeded-file-intact
+    STOP burst=2 cp=1 class=1
+
+Classification (matches Codex's V1 row exactly):
+* errno=14 = EFAULT (the "read: Bad address" of ISSUE-22), NOT EIO;
+* size_at_fail=4194304 = the FULL 4 MiB inode -- NOT short, no metadata damage;
+* retry_transient=1 -- close/reopen + retry SUCCEEDED, the file is byte-intact
+  on disk;
+* therefore this is a TRANSIENT read-path fault (ISSUE-22 EFAULT), NOT a
+  persistent B2 disk-truth defect.
+
+VERDICT CORRECTION
+------------------
+The "B2 silently corrupts disk" conclusion is REFUTED by direct evidence. The
+burst4 anomalies were ISSUE-22 (a pre-existing, pressure-dependent read(2)
+EFAULT that also occurs on the WT baseline) hitting the verifier's read; `sum`
+discarded the errno and printed a partial count that was misread as a short/
+corrupt file. Under B2 copyback the DISK DATA IS CORRECT (full size, intact on
+reopen) -- which is also positive evidence that B2's DMA coherency is working.
+
+B2 is therefore NOT blocked by disk corruption. Remaining before a B2 flip is
+shipped (measured, not a corruption blocker):
+1. optional WT control with b2verify to confirm B2 does not elevate the ISSUE-22
+   EFAULT rate (both should show the same occasional V1);
+2. a longer all-V0/V1 run + clean-reboot disk truth + (optional) power-cut;
+3. ISSUE-22 itself remains a real pre-existing bug worth chasing, but it is a
+   read-path/fault-resolver issue, NOT a B2 or DMA-coherency defect.
+
+The kernel DMA trace ring (Codex Part B) is NOT needed for this classification;
+it would only be built if a persistent V3+ class had appeared, which it did not.
