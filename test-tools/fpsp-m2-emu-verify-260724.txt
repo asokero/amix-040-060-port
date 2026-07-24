@@ -1,0 +1,77 @@
+FPU Tier-2 M2 -- Motorola 040 FPSP integration: EMU-VERIFIED WORKING
+====================================================================
+Date: 2026-07-24
+Kernel: build/unix-040-fpsp-dbg  (68040-260724-07) = standard dbg 260724-04
+        + build/fpsp040.o (M1) + prototypes/fpsp_glue040.o (M2), M68Kvec[11]
+        retargeted nullvect -> fpsp_vec11.
+Loader: build/unix_boot040 REBUILT with the rel.c PC-relative relocation fix
+        (commit f0ed373) -- REQUIRED, see below.
+Emulator: Amiberry a3000ux (68040, Piccolo_Z2), one clean instance.
+
+THE BOOT BLOCKER AND ITS FIX
+----------------------------
+The FPSP kernel first refused to boot with an AmigaOS "Software Failure" Guru,
+Error D245 4C41 / Task 080D0040, 0 serial. That alert is NOT a crash: it is the
+loader's own error macro, rel.c:53
+    #define COMPLAIN(fmt,arg)  Alert(0x52454C41|AT_DeadEnd)
+and 0x52454C41 = ASCII "RELA", | 0x80000000 (AT_DeadEnd) = 0xD2454C41 = the
+displayed code. unix_boot was deliberately REJECTING the kernel.
+
+Which check: relocsection() implemented ONLY R_68K_32 and COMPLAINed on any
+other type. Reloc-type census:
+    standard kernel : 29154 R_68K_32 (only)                  -> loads
+    FPSP kernel     : 29796 R_68K_32 + 223 R_68K_PC16
+                      + 106 R_68K_PC32 + 1 R_68K_PC8         -> rejected
+All 330 PC-relative records come from fpsp040.o: the Motorola package must be
+assembled with the GNU m68k toolchain (the CBM assembler rejects its syntax),
+and GNU `ld -r` keeps cross-file bsr/bra/lea references as PC-relative
+relocations. Our own hand-written .s overrides are unaffected (the M2 glue
+object has R_68K_32 only).
+
+FIX (f0ed373): rel.c now implements R_68K_PC32/PC16/PC8 as S + A - P with
+P = relsechdr->sh_addr + r_offset (sh_addr is bound by bindsections, which runs
+before relocsections). Out-of-range PC16/PC8 still COMPLAIN, so a truncation can
+never be silent. Rebuilt with amiga-gcc per LOCAL-BUILD-NOTES §3.
+Generalizes beyond FPSP: any GNU-assembled object can now be linked in.
+
+M2 RESULTS (emu-040)
+--------------------
+* FPSP kernel LOADS and boots clean: serial flowing 68 KB @8s (was 0), loader
+  banner + "kernel cputype set to 40" + kernel running; no Guru, no panic.
+* login OK, uname 68040-260724-07.
+* test-tools/fputest (cross-compiled; uses fmovecr + fintrz, which the 68040 does
+  NOT implement in hardware and which made this exact binary die with
+  "Bad System Call" (SIGSYS, exit 140) on the pre-FPSP kernel):
+
+      FPUTEST add=10000 sub=4000 mul=21000 div=7000  (expect 10000 4000 21000 7000)
+      FPUTEST 1/3=333333 sqrt2=1414213  checksum=1747546 (expect .. / 1747546)
+      FPUTEST Test A PASS -- 040 hardware FP arithmetic correct
+      EXIT=0
+
+  -> the FPSP emulated the unimplemented instructions AND the delicate
+     fpsp_done -> ureturn return ABI works (many fmovecr/fintrz per run, each
+     returning correctly to user mode).
+* FP context across fork + scheduler pressure (fputest fork):
+      CHILD  1.5^12*1000    = 129746  (expected)
+      PARENT 1.25^-12*100000 = 6871   (expected)     FORK-EXIT=0
+* M3 BONUS -- NATIVE COMPILATION WORKS: `cc -o t t.c` on the guest returns 0
+  (cc1 previously died with SIGSYS on its own FP), and the compiled FP program
+  runs: "CC-FP 1000" (= (3.0+7.0)*100), exit 0.
+* FPSP diagnostic counters after all of the above, read via IPC:
+      fpsp_super_done = 0     (no supervisor-origin package entries)
+      fpsp_copy_fault = 0     (no mem_read/mem_write copy fault)
+      fpsp_fmt_err_cnt = 0    (no unclassifiable FPSP frame)
+  (dma_cmpl_count 4391 -- the A3091 hook is live as usual.)
+
+STATUS / WHAT REMAINS
+---------------------
+M1 (package build)  DONE, reproducible: build-fpsp040.sh (8d2a005).
+M2 (glue + vector 11) DONE and now VERIFIED (2b4c6ef + loader fix f0ed373).
+M3 (native cc)       DONE as a side effect.
+M4 (hardening) still open: vectors 48-55 retarget, per-class real_* FPSR
+   pending-bit cleanup, copyin/copyout fault unwind, enabled/masked exception
+   matrix, /proc + core + signal FP consumers.
+M5 (the original goal): Xsvga graphical display -- needs ONE kernel carrying
+   BOTH the FPSP (this build) and the Xsvga driver (relink-040-xsvga.sh); the
+   X server's F-line crash was exactly this FPSP gap.
+Real-040 hardware acceptance: separate, after M4.
