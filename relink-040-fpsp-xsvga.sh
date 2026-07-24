@@ -16,9 +16,12 @@ set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
 
+# $1 = base kernel (default: standard DEBUG base).  For a NON-debug build pass
+#   the plain base:   sh relink-040-fpsp-xsvga.sh build/unix-040 build/unix-040-fpsp-xsvga
+# $2 = output path (default: the debug output name).
 IN="${1:-$HERE/build/unix-040-dbg.STD-backup}"
 [ -f "$IN" ] || IN="$HERE/build/unix-040-dbg"
-OUT="$HERE/build/unix-040-fpsp-xsvga-dbg"
+OUT="${2:-$HERE/build/unix-040-fpsp-xsvga-dbg}"
 FPWORK="$HERE/build/fpsp-work/usr/src/sys/arch/m68k/fpsp"
 EXP="${EXP:-/tmp/claude-12044/-home-asokero-kehitys-amix-playground-kernelsupport/durable-tftp-payloads/xsvga/svga/exp}"
 
