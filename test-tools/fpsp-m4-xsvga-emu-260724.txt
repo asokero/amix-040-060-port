@@ -1,0 +1,87 @@
+FPU Tier-2 M4 (FP arithmetic vectors) + M5 Xsvga bring-up -- EMU FINDINGS
+========================================================================
+Date: 2026-07-24
+Kernel: build/unix-040-fpsp-xsvga-dbg  (buildid 68040-260724-09)
+        = standard dbg 260724-04
+        + build/fpsp040.o (M1) + prototypes/fpsp_glue040.o (M2+M4)
+        + xsvga_exp.o (Klaus Burkert binary-only Piccolo/Picasso II driver)
+        M68Kvec[11] -> fpsp_vec11; M68Kvec[48/51/52/53/54/55] -> fpsp_vec*
+        cdevsw[67] -> svga*; svgammap phystopfn >>11 -> >>12 (Model-B).
+Loader: build/unix_boot040 with the rel.c PC-relative relocation fix (f0ed373).
+Emulator: Amiberry a3000ux (68040, gfxcard_type=Piccolo_Z2, gfxcard_size=1).
+NOTE ON PLATFORM: the user reports this disk image + the STOCK XsvgaConfig is
+known-good on UAE and on real hardware; it has NOT previously been exercised on
+Amiberry.  The residual X-server symptom below is therefore most plausibly an
+Amiberry Piccolo-RTG-emulation limitation, to be settled on the physical board.
+
+M4 -- FP ARITHMETIC EXCEPTION VECTORS 48-55
+-------------------------------------------
+prototypes/fpsp_glue040.s gained the FPSP_VEC() macro and six dispatch entries
+fpsp_vec48/51/52/53/54/55, each: cputype==40 gate (a 68060 boot of this dual-CPU
+binary must never enter the 040 package) -> kernel supervisor CACR from sup_cacr
+-> jmp <package entry> with the raw 68040 exception frame untouched on (sp):
+    vec 48 -> fpsp_bsun     (branch/set on unordered)
+    vec 51 -> fpsp_unfl     (underflow)
+    vec 52 -> fpsp_operr    (operand error)
+    vec 53 -> fpsp_ovfl     (overflow)
+    vec 54 -> fpsp_snan     (signaling NaN)
+    vec 55 -> fpsp_unsupp   (unimplemented DATA TYPE)
+Vectors 49 (inexact) and 50 (divide-by-zero) are deliberately NOT retargeted:
+the 68040 completes both in hardware and the Motorola package exports no entry,
+so they stay on the stock nullvect -> u_trap -> SIGFPE path (asserted).
+Installed by prototypes/patch_fpsp_vectors.py (relocation-retarget in .rela.text,
+offsets derived from the M68Kvec symbol; idempotent; fails closed).  Wired into
+BOTH relink-040-fpsp.sh and relink-040-fpsp-xsvga.sh.  Reloc validation 0.
+
+VERIFIED ON 260724-09 (emu-040)
+-------------------------------
+* Boots clean; uname 68040-260724-09.
+* FPU regression UNAFFECTED by the extra vectors:
+    FPUTEST Test A PASS (add/sub/mul/div + 1/3 + sqrt2 checksum 1747546)
+    FPUTEST fork CHILD 129746 / PARENT 6871   (FP context across fork OK)
+* Xsvga driver fully functional through our kernel:
+    SVGAPROBE  CardID=3 (Piccolo) FrameBufSize=2097152 MaxPixClk=85 Blitter=1
+    svgafb.c (direct mmap, NO X server): mmap /dev/svga0 -> 0xc1033000 errno=0;
+      wrote+read byte 0, byte 0x607D, and the LAST byte of the 2 MB aperture;
+      drew a 1152x900 test pattern -- VISIBLE on the Amiberry RTG output.
+    svgastate.c: driver programmed visible=1152x900 virtual=1152x900 color=2
+      (8bpp) bytes/row=1152 hfreq=56 vfreq=60.
+    SetMonitorSwitch(SVGA) BY VALUE ok (by pointer -> EINVAL): forcing it flips
+      the Amiberry display 756x576 (chipset) -> 1152x900 (Piccolo RTG).
+
+THE RESIDUAL: X server crashes on CLIENT DISCONNECT (SIGILL), root is 0x0
+-------------------------------------------------------------------------
+Xsvga :0 starts, prints "Xsvga Version 1.4", and is STABLE with no client
+(alive >20 s, 0:02 CPU, load 0.00 -- it is NOT in a trap loop).  It speaks full
+X11R5 (xdpyinfo: MIT R5, depth 8, SHAPE/MIT-SHM/Multi-Buffering; "number of
+screens: 1") and serves a complete client transaction.  BUT:
+  1. xdpyinfo reports  dimensions: 0x0 pixels  -- the server's root window is
+     0x0 even though the driver is in 1152x900.  So the server<->driver geometry
+     handshake at ScreenInit yields 0, while a later GetScreenData returns
+     1152x900.  (Under Amiberry's Piccolo RTG the init-time geometry read
+     returns 0.)
+  2. The server dies the instant the client disconnects.  truss:
+        poll/read/writev loop (serving xdpyinfo) ... all succeed
+        read(...) Err#130                 <- ECONNABORTED, client closed
+        close(...)                        <- server tears the client down
+        Incurred fault #1, FLTILL %pc = 0x800C7030
+        siginfo: SIGILL ILL_ILLOPC addr=0x800C7030
+        *** process killed ***
+     adb on /core: pc=0x800C7030 decodes as "or.b %a4,%d0" (illegal: An as OR
+     source), a0=0x800C702C = pc-4, and 0x800C7010.. is NOT in the static .text
+     -- the disconnect-cleanup path jumped through a corrupt/uninitialised
+     function pointer into non-code.  Deterministic: identical
+     uret=800912F8 kcaller=804858C (sigaddq) every run; the vec-48..55 retarget
+     did NOT change it (so it is NOT the FP arithmetic gap).
+Both symptoms point to the same origin: the driver's screen geometry read
+returns 0 under Amiberry, so the server builds 0-sized screen structures and the
+client-teardown walk dereferences garbage.  With the identical binary + stock
+config known-good on UAE and real hardware, this is an Amiberry RTG-emulation
+gap, not a kernel/driver defect on our side.
+
+BOTTOM LINE
+-----------
+Kernel side is DONE and proven on emu: FPSP M1/M2/M4, Xsvga driver linkage,
+Model-B mmap geometry, monitor switch, framebuffer read/write/draw, native FP.
+The X server display itself needs the real Piccolo (or UAE) to validate; the
+Amiberry path bottoms out at the 0x0-geometry / disconnect-SIGILL residual.

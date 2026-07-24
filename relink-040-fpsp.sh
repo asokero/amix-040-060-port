@@ -11,11 +11,17 @@ set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
 
-IN="${1:-$HERE/build/unix-040-dbg}"
+# Base must be a STANDARD dbg kernel.  Prefer the STD-backup: the live
+# build/unix-040-dbg boot slot is frequently swapped to an FPSP/Xsvga kernel,
+# and linking the package on top of a base that already has it yields
+# "multiple definition of fpsp_*".
+IN="${1:-$HERE/build/unix-040-dbg.STD-backup}"
+[ -f "$IN" ] || IN="$HERE/build/unix-040-dbg"
 OUT="$HERE/build/unix-040-fpsp-dbg"
 FPWORK="$HERE/build/fpsp-work/usr/src/sys/arch/m68k/fpsp"   # fpsp.defs lives here
 
 [ -f "$IN" ] || { echo "ERROR: base kernel missing: $IN"; exit 1; }
+m68k-linux-gnu-nm "$IN" | grep -qE " [Tt] fpsp_vec11$" && { echo "[FAIL] base already has FPSP linked -- pass a STANDARD dbg kernel as \$1"; exit 1; }
 
 echo "[*] M1: (re)build the FPSP package body build/fpsp040.o"
 sh "$HERE/build-fpsp040.sh" >/dev/null
@@ -39,6 +45,8 @@ echo "      fpsp_vec11 / fpsp_done / mem_read / mem_write / fpsp_fline / fpsp_un
 
 echo "[*] retarget M68Kvec[11] -> fpsp_vec11"
 python3 "$HERE/prototypes/patch_fpsp_vec11.py" "$OUT" | tail -2
+echo "[*] M4: FP arithmetic vectors 48/51/52/53/54/55 -> FPSP"
+python3 "$HERE/prototypes/patch_fpsp_vectors.py" "$OUT" | tail -8
 
 echo "[*] reloc validation:"
 ( cd "$HERE" && python3 prototypes/check_relink_relocs.py "$OUT" 2>/dev/null | tail -1 ) || true

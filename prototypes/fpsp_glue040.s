@@ -4,8 +4,8 @@
 | leaves unresolved, plus the vector-11 dispatch entry.  Spec: analyysirepo
 | vm-map/FPSP-INTEGRATION-PLAN.md.  MINIMAL M2 scope: get a previously-crashing
 | unimplemented FP instruction (fmovecr / fintrz / transcendental) emulated and
-| returned to the user.  Vectors 48-55 (arithmetic exceptions) are NOT retargeted
-| yet; full real_* pending-bit cleanup + copy-fault unwind = M4.
+| returned to the user.  M4 (2026-07-24) adds the arithmetic-exception vectors
+| 48/51/52/53/54/55; full real_* pending-bit cleanup + copy-fault unwind remain.
 |
 | Assembled with m68k-linux-gnu-gcc -x assembler-with-cpp -m68040 (same as the
 | FPSP body), #including fpsp.defs for EXC_SR.  Kernel symbols (cputype, sup_cacr,
@@ -39,6 +39,41 @@ fpsp_vec11:
 	jmp	fpsp_fline		| master F-line dispatcher (raw frame on sp)
 Lv11_stock:
 	jmp	nullvect		| non-040: existing F-line / SIGSYS path
+
+| ============================================================================
+| M4: the FP ARITHMETIC exception vectors 48-55.  Same shape as fpsp_vec11:
+| cputype gate (a 68060 boot of this dual-CPU binary must never enter the 040
+| package), kernel supervisor cache mode, then the package entry with the raw
+| 68040 exception frame untouched on (sp).
+|
+| Vector 55 (unimplemented data type) is the one that MATTERS in practice: the
+| 68040 traps there whenever an FP instruction meets a denormalized or packed
+| operand, and with the slot left on nullvect that arrives in user land as
+| SIGILL.  Observed 2026-07-24: `DBG SIG sig=4 pid=208 psargs=/usr/X/bin/Xsvga`
+| -- the Xsvga X server dying on exactly this.
+|
+| Vectors 49 (inexact) and 50 (divide-by-zero) are NOT retargeted: the 68040
+| completes both in hardware and the Motorola package exports no entry for them,
+| so they stay on the stock nullvect -> u_trap -> SIGFPE path.
+| ============================================================================
+#define FPSP_VEC(name, target)		\
+	.globl	name			;\
+name:					;\
+	cmpl	#40,cputype		;\
+	bne	9f			;\
+	movel	%d0,%sp@-		;\
+	movel	sup_cacr,%d0		;\
+	.word	0x4e7b,0x0002		;\
+	movel	%sp@+,%d0		;\
+	jmp	target			;\
+9:	jmp	nullvect
+
+	FPSP_VEC(fpsp_vec48, fpsp_bsun)		| FP branch/set on unordered
+	FPSP_VEC(fpsp_vec51, fpsp_unfl)		| FP underflow
+	FPSP_VEC(fpsp_vec52, fpsp_operr)	| FP operand error
+	FPSP_VEC(fpsp_vec53, fpsp_ovfl)		| FP overflow
+	FPSP_VEC(fpsp_vec54, fpsp_snan)		| FP signaling NaN
+	FPSP_VEC(fpsp_vec55, fpsp_unsupp)	| FP unimplemented DATA TYPE
 
 | ============================================================================
 | fpsp_done -- the package fully emulated the instruction (PC already advanced
