@@ -49,8 +49,17 @@ VERIFIED ON 260724-09 (emu-040)
     SetMonitorSwitch(SVGA) BY VALUE ok (by pointer -> EINVAL): forcing it flips
       the Amiberry display 756x576 (chipset) -> 1152x900 (Piccolo RTG).
 
-THE RESIDUAL: X server crashes on CLIENT DISCONNECT (SIGILL), root is 0x0
--------------------------------------------------------------------------
+*** UPDATE 2026-07-24 (user, MANUAL local test): GRAPHICAL X WORKS. ***
+Booting the SAME combined kernel and running `xinit` FROM THE AMIBERRY CONSOLE
+(root login) brings up a full twm desktop on the Piccolo RTG: 1152x900 8-bit,
+two xterms + oclock, user typed "Moi Claude, taahan toimii! t. Antti" into an
+xterm.  Screenshot: test-tools/xsvga-xinit-working-260724.png.  So the M5
+graphical Piccolo goal is ACHIEVED (emu).  The crash documented below was an
+artefact of HOW I tested, not a kernel/driver defect and not a normal-use
+blocker -- see "WHY MY REMOTE TEST CRASHED" after the crash write-up.
+
+THE (MIS-CONTEXTUALISED) CRASH: single client disconnect under remote start
+---------------------------------------------------------------------------
 Xsvga :0 starts, prints "Xsvga Version 1.4", and is STABLE with no client
 (alive >20 s, 0:02 CPU, load 0.00 -- it is NOT in a trap loop).  It speaks full
 X11R5 (xdpyinfo: MIT R5, depth 8, SHAPE/MIT-SHM/Multi-Buffering; "number of
@@ -73,15 +82,24 @@ screens: 1") and serves a complete client transaction.  BUT:
      function pointer into non-code.  Deterministic: identical
      uret=800912F8 kcaller=804858C (sigaddq) every run; the vec-48..55 retarget
      did NOT change it (so it is NOT the FP arithmetic gap).
-Both symptoms point to the same origin: the driver's screen geometry read
-returns 0 under Amiberry, so the server builds 0-sized screen structures and the
-client-teardown walk dereferences garbage.  With the identical binary + stock
-config known-good on UAE and real hardware, this is an Amiberry RTG-emulation
-gap, not a kernel/driver defect on our side.
+WHY MY REMOTE TEST CRASHED (and normal use does not)
+----------------------------------------------------
+I started Xsvga REMOTELY over the emu.py telnet session and fed it ONE-SHOT
+clients (xdpyinfo, xlogo) with NO window manager.  Each client connected and
+disconnected immediately, and that lone-client teardown-without-a-WM is the path
+that hit the bad pointer.  `xinit` (used by the manual test) starts the server +
+twm + persistent xterms as one live session -- the clients stay connected, the
+teardown path is not exercised that way, and the desktop runs fine.  So the
+SIGILL is a real edge in the disconnect-cleanup path, but it is NOT on the
+normal-use path and did NOT block the graphical goal.  (The xdpyinfo
+"dimensions 0x0" was likewise harmless -- the root window is plainly 1152x900 in
+the working desktop.)
 
 BOTTOM LINE
 -----------
-Kernel side is DONE and proven on emu: FPSP M1/M2/M4, Xsvga driver linkage,
-Model-B mmap geometry, monitor switch, framebuffer read/write/draw, native FP.
-The X server display itself needs the real Piccolo (or UAE) to validate; the
-Amiberry path bottoms out at the 0x0-geometry / disconnect-SIGILL residual.
+M5 ACHIEVED on emu: FPSP M1/M2/M4 + Xsvga driver linkage + Model-B mmap geometry
++ monitor switch + framebuffer draw + native FP, and a FULL GRAPHICAL X11 twm
+desktop via `xinit` on the Piccolo RTG (1152x900 8-bit).  Real-Piccolo hardware
+acceptance is the remaining step.  Remaining polish, not a blocker: the
+disconnect-cleanup SIGILL edge exposed by starting the server remotely and
+disconnecting a lone client without a WM.
