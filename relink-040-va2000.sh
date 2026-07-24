@@ -1,0 +1,120 @@
+#!/bin/sh
+# relink-040-va2000.sh -- EXPERIMENTAL: build an 040 kernel carrying BOTH
+#   (a) the Motorola 68040 FPSP + AMIX glue (M1/M2/M4) -- the XRTG X11 server
+#       is compiled natively by `cc` on AMIX, which emits fmovecr/fintrz that
+#       the 68040 does not implement in hardware; without FPSP it crashes/traps.
+#   (b) the MNT VA2000 RTG graphics driver (major 68, /dev/va2000), so the
+#       user's XRTG server and wolf3d (both open /dev/va2000 and mmap it) can
+#       be tested on the real Amiga 3000 + VA2000 board.
+#
+# NOT the standard kernel. VA2000 is NOT emulatable in Amiberry -- the
+# emulator smoke test can only prove "boots clean, no board found, FPU intact".
+# Real hardware validation is the user's job on the A3000.
+#
+# Driver source: ~/kehitys/va2000-amix/src/va2000.c (SEPARATE repo, untouched
+# by this script). va2000_modelb.py copies it into build/ and converts the
+# ONE 2 KiB-page phystopfn shift (va2000mmap, >>11) to the 4 KiB Model-B shift
+# (>>12) that this kernel's device-mmap handlers all use (see
+# patch_devmmap_pfn.py / patch_xsvga.py for the same class of fix elsewhere).
+#
+# io_init[] = { parinit, 0 } has no spare relocation to retarget to
+# va2000init, so va2000init is invoked from a `parinit` WRAPPER instead
+# (prototypes/parinit_va2000.s): weaken the base's strong `parinit`,
+# add-symbol parinit_orig at its known address, ld -r in a new strong
+# `parinit` that calls va2000init() then tail-jmps parinit_orig.
+#
+# Requires the PC-relative-relocation loader fix (unix_boot rel.c, commit
+# f0ed373) for the FPSP body's ~330 PC-relative relocs -- same requirement as
+# relink-040-fpsp-xsvga.sh.
+#
+# Usage: sh relink-040-va2000.sh [base-kernel] [output]
+#   sh relink-040-va2000.sh                                    # debug base -> debug output
+#   sh relink-040-va2000.sh build/unix-040 build/unix-040-va2000   # non-debug
+set -e
+HERE=$(cd "$(dirname "$0")" && pwd)
+. "/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
+
+# $1 = base kernel (default: standard DEBUG base). $2 = output path.
+IN="${1:-$HERE/build/unix-040-dbg.STD-backup}"
+[ -f "$IN" ] || IN="$HERE/build/unix-040-dbg"
+OUT="${2:-$HERE/build/unix-040-va2000-dbg}"
+FPWORK="$HERE/build/fpsp-work/usr/src/sys/arch/m68k/fpsp"
+PARINIT_ADDR=0xfe6c
+
+[ -f "$IN" ] || { echo "ERROR: base kernel missing: $IN"; exit 1; }
+echo "[*] base: $(basename "$IN")"
+m68k-linux-gnu-nm "$IN" | grep -qE " [Tt] fpsp_vec11\$" && { echo "[FAIL] base already has FPSP linked -- use a plain (non-FPSP) base"; exit 1; }
+m68k-linux-gnu-nm "$IN" | grep -qE " [Tt] va2000init\$" && { echo "[FAIL] base already has va2000 linked -- use a plain base"; exit 1; }
+
+PARINIT_LINE=$(m68k-linux-gnu-nm "$IN" | grep -E " T parinit\$") || { echo "ERROR: parinit not found in $IN"; exit 1; }
+PARINIT_CUR=$(echo "$PARINIT_LINE" | awk '{print $1}')
+PARINIT_EXPECT=$(printf '%08x' $PARINIT_ADDR)
+[ "$PARINIT_CUR" = "$PARINIT_EXPECT" ] || {
+	echo "ERROR: parinit @0x$PARINIT_CUR != expected 0x$PARINIT_EXPECT -- base layout drifted, re-verify address"
+	exit 1
+}
+echo "      parinit @0x$PARINIT_CUR OK (matches expected 0x$PARINIT_EXPECT)"
+
+echo "[*] M1: FPSP package body"
+sh "$HERE/build-fpsp040.sh" >/dev/null
+echo "[*] M2: assemble the AMIX FPSP glue"
+m68k-linux-gnu-gcc -x assembler-with-cpp -m68040 -I"$FPWORK" \
+	-c "$HERE/prototypes/fpsp_glue040.s" -o "$HERE/build/fpsp_glue040.o"
+
+echo "[*] VA2000: Model-B source copy (>>11 -> >>12, exactly one site)"
+python3 "$HERE/prototypes/va2000_modelb.py"
+echo "[*] VA2000: cross-compile build/va2000_040.c"
+VA2000_CFLAGS=$(echo "$AMIX_KERNEL_CFLAGS" | sed 's/-m68020/-m68040/')
+m68k-cbm-sysv4-gcc $VA2000_CFLAGS -I"$HERE/build" \
+	-c "$HERE/build/va2000_040.c" -o "$HERE/build/va2000_040.o"
+echo "[*] VA2000: assemble the parinit wrapper"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/parinit_va2000.s" -o "$HERE/build/parinit_va2000.o"
+
+echo "[*] checking va2000_040.o has no surprise unresolved refs:"
+LEAK0=$(m68k-linux-gnu-nm "$HERE/build/va2000_040.o" | grep ' U ' | grep -vE '^\s*U (autocon|printf|uiomove|copyin|copyout)$' || true)
+[ -z "$LEAK0" ] && echo "      only expected kernel imports (autocon/printf/uiomove/copyin/copyout)" \
+	|| { echo "[FAIL] unexpected unresolved refs in va2000_040.o:"; echo "$LEAK0"; exit 1; }
+
+echo "[*] weaken base parinit + expose parinit_orig -> build/unix-stage-va2000"
+STAGE="$HERE/build/unix-stage-va2000"
+cp "$IN" "$STAGE"
+m68k-linux-gnu-objcopy \
+	--weaken-symbol parinit \
+	--add-symbol parinit_orig=.text:$PARINIT_ADDR,function,global \
+	"$STAGE"
+
+echo "[*] ld -r: base(weakened) + fpsp040.o + fpsp_glue040.o + va2000_040.o + parinit_va2000.o"
+m68k-cbm-sysv4-ld -r -o "$OUT" "$STAGE" \
+	"$HERE/build/fpsp040.o" "$HERE/build/fpsp_glue040.o" \
+	"$HERE/build/va2000_040.o" "$HERE/build/parinit_va2000.o"
+
+echo "[*] symbols from both features must be defined:"
+for s in fpsp_vec11 fpsp_done fpsp_fline fpsp_unimp \
+	va2000init va2000open va2000close va2000read va2000write va2000ioctl va2000mmap va2000_boards \
+	parinit parinit_orig; do
+	m68k-linux-gnu-nm "$OUT" | grep -qE " [A-Za-z] $s\$" || { echo "[FAIL] $s missing"; exit 1; }
+done
+echo "      fpsp_vec11/done/fline/unimp + va2000* + parinit/parinit_orig OK"
+LEAK=$(m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'fpsp_|mem_read|mem_write|real_|va2000' || true)
+[ -z "$LEAK" ] && echo "      no unresolved FPSP/va2000 symbols" || { echo "[FAIL] unresolved:"; echo "$LEAK"; exit 1; }
+
+# parinit must be a SINGLE strong def (our override), not still resolving to the stock body.
+PCOUNT=$(m68k-linux-gnu-nm "$OUT" | grep -cE " T parinit\$")
+[ "$PCOUNT" -eq 1 ] || { echo "[FAIL] expected exactly 1 strong 'parinit' def, found $PCOUNT"; exit 1; }
+
+echo "[*] patch 1/3: M68Kvec[11] -> fpsp_vec11"
+python3 "$HERE/prototypes/patch_fpsp_vec11.py" "$OUT" | tail -2
+echo "[*] patch 2/3: FP arithmetic vectors 48/51/52/53/54/55 -> FPSP"
+python3 "$HERE/prototypes/patch_fpsp_vectors.py" "$OUT" | tail -8
+echo "[*] patch 3/3: cdevsw[68] -> va2000* (major 68 = /dev/va2000)"
+python3 "$HERE/prototypes/patch_va2000_cdevsw.py" "$OUT" | tail -8
+
+echo "[*] reloc validation:"
+( cd "$HERE" && python3 prototypes/check_relink_relocs.py "$OUT" 2>/dev/null | tail -1 ) || true
+DSZ=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print strtonum("0x"$6)}')
+[ $((DSZ % 4)) -eq 0 ] && echo "[OK] .data 4-aligned" || { echo "[FAIL] .data misaligned"; exit 1; }
+echo "[*] PC-relative relocs present (loader MUST have the f0ed373 fix):"
+m68k-linux-gnu-readelf -rW "$OUT" 2>/dev/null | awk '$3 ~ /^R_68K_PC/{n++} END{print "      "n" PC-relative records"}'
+
+python3 "$HERE/prototypes/stamp_buildid.py" "$OUT" || true
+echo "[OK] built $OUT"

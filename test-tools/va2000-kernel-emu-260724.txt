@@ -1,0 +1,173 @@
+VA2000 EXPERIMENTAL kernel (FPSP + MNT VA2000 driver): EMU-VERIFIED
+====================================================================
+Date: 2026-07-24
+Purpose: build an EXPERIMENTAL 68040 kernel carrying the MNT VA2000 RTG
+driver (driver source: ~/kehitys/va2000-amix/src/va2000.c, SEPARATE repo,
+untouched) so the user can test the XRTG X11 server and wolf3d (both open
+/dev/va2000 and mmap it) on the real Amiga 3000 + real VA2000 board. VA2000
+is NOT emulatable in Amiberry, so this emulator test can only prove "boots
+clean, no board found, FPU still intact" -- NOT hardware behavior.
+
+BUILT ARTIFACTS
+---------------
+build/unix-040-va2000-dbg   buildid " 68040-260724-13"   (debug base:
+                            build/unix-040-dbg.STD-backup)
+build/unix-040-va2000       buildid " 68040-260724-14"   (non-debug base:
+                            build/unix-040, for later real-HW deploys once
+                            debugging is no longer needed)
+
+Both are: base kernel + Motorola 68040 FPSP package (build/fpsp040.o, M1) +
+AMIX FPSP glue (prototypes/fpsp_glue040.s, M2) with M68Kvec[11] and the FP
+arithmetic vectors 48/51/52/53/54/55 retargeted to FPSP (M4, same as
+relink-040-fpsp-xsvga.sh) + the MNT VA2000 driver compiled from a Model-B
+(4 KiB page) adapted copy of va2000.c, registered at cdevsw major 68 (the
+parallel-port `parinit` hook now also calls va2000init() at boot -- io_init[]
+has no spare relocation, so a wrapper was used instead of a table edit).
+
+NEW FILES IN THIS REPO
+-----------------------
+prototypes/va2000_modelb.py      Copies va2000.c (READ-ONLY source, untouched)
+                                  into build/va2000_040.c, converting the ONE
+                                  page-size-dependent shift in va2000mmap()
+                                  from >>11 (vanilla 2 KiB PNUMSHFT) to >>12
+                                  (this kernel's 4 KiB Model-B PNUMSHFT).
+                                  Asserts exactly 1 replacement; fails hard on
+                                  any drift from the expected source line.
+prototypes/parinit_va2000.s       `parinit` override: jsr va2000init, then
+                                  tail-jmp the original parinit (parinit_orig,
+                                  exposed via objcopy --add-symbol at 0xfe6c).
+                                  Every parallel-port init still runs exactly
+                                  as before; va2000init just runs first.
+prototypes/patch_va2000_cdevsw.py Retargets cdevsw[68]'s six d_open..d_mmap
+                                  R_68K_32 relocations from `nodev` to
+                                  va2000open/close/read/write/ioctl/mmap.
+                                  Offset is DERIVED from the cdevsw symbol
+                                  (cdevsw + 68*52) and asserted == 0xaba4
+                                  (the empirically-verified address) rather
+                                  than hardcoded blind. Idempotent, fails
+                                  closed on any mismatch.
+relink-040-va2000.sh               Driver script: $1=base $2=output, same
+                                  parameterization as relink-040-fpsp-xsvga.sh.
+                                  Hard-fails if the base already carries FPSP
+                                  or va2000; verifies the parinit address
+                                  matches the expected 0xfe6c before touching
+                                  it; asserts every va2000/FPSP symbol is
+                                  defined and nothing unexpected is left
+                                  unresolved; runs check_relink_relocs.py
+                                  (0 complaints both builds); asserts .data
+                                  4-aligned; stamps the buildid.
+test-tools/va2000probe.c           K&R C guest-side probe: open("/dev/va2000",
+                                  O_RDWR), report errno. Prints a clean ENXIO
+                                  message when no board is found (expected on
+                                  the emulator) instead of hanging; on real
+                                  hardware with a VA2000 board present it goes
+                                  on to read VA2IOC_GETFW.
+
+COMPILE PROBLEM HIT AND HOW IT WAS RESOLVED
+--------------------------------------------
+First cross-compile attempt (m68k-cbm-sysv4-gcc -m68040 -O -traditional
+-fno-builtin -D_KERNEL -DSVR40 -DSVR4 -I<vanilla/usr/include> -c
+build/va2000_040.c) failed with "syntax error before `void'" inside the
+cross-toolchain's OWN bundled sys/immu.h and sys/inline.h (NOT the vanilla
+copies -- the amix-cross gcc wrapper script always prepends
+-I$sysroot/usr/include ahead of any user -I, so the vanilla headers named in
+the task were shadowed; both copies are textually identical here, so this
+was a flag problem, not a header problem). Root cause: those headers gate
+their AmigaOS-glue routines behind `#ifdef __GNUC__` using `static inline`,
+and this build did not define `inline` -- the standard AMIX_KERNEL_CFLAGS
+(from gcc-cross-amix/build/env.sh) already carries the fix used by every
+other kernel C compile in this project: `-Dinline=__inline__`. Re-running
+with the full AMIX_KERNEL_CFLAGS (substituting -m68040 for its default
+-m68020) compiled clean with zero errors/warnings of note. This is now baked
+into relink-040-va2000.sh (VA2000_CFLAGS = AMIX_KERNEL_CFLAGS with -m68020 ->
+-m68040).
+
+Object build/va2000_040.o defines: va2000init, va2000open, va2000close,
+va2000read, va2000write, va2000ioctl, va2000mmap, va2000_boards (COMMON).
+Unresolved (all confirmed present in the base kernel, per the task's verified
+facts plus a copyout check I added): autocon, printf, uiomove, copyin,
+copyout. No other unresolved symbols -- no inline-asm/68030-specific residue
+from sys/inline.h made it into the object.
+
+EMULATOR SMOKE TEST (build/unix-040-va2000-dbg)
+-------------------------------------------------
+Procedure: backed up build/unix-040-dbg (was the FPSP+Xsvga kernel,
+buildid 68040-260724-09) to a temp copy, copied unix-040-va2000-dbg into its
+place (DH2: in the Amiberry config is a live directory-filesystem mount of
+this repo's build/, so build/unix-040-dbg IS the file the AmigaOS
+startup-sequence loads via unix_boot040), ran emu-reset-boot.sh 040 for a
+clean golden-image boot, verified, then RESTORED the original
+build/unix-040-dbg byte-for-byte from the backup and deleted the temp copy.
+Confirmed post-restore: nm shows fpsp_vec11/svgaopen present, va2000init
+ABSENT -- the FPSP+Xsvga kernel is back exactly as it was.
+
+Results (all PASS):
+1. Boot: buildid banner "68040-260724-13" appeared in the serial capture;
+   `uname -a` on the guest reported
+     UNIX_System_V amix 4.0 2.1c 0800430 Amiga (Unlimited) 68040-260724-13 m68k
+   matching the build. Reached a normal multiuser login prompt; `uptime`
+   showed "up 9 mins" with load 0.00 and pageout/fsflush/init running
+   normally (`ps -ef`). Serial log shows only the KNOWN dbg-build debug
+   spam (hat_dup040 ENTER, as_fault STREAM, sched idle C/G/W markers -- see
+   KNOWN-ISSUES ISSUE-2, all previously characterized as harmless) -- no
+   PANIC, no BUS ERROR, no unexpected trap text anywhere in the capture.
+2. /dev/va2000 did not pre-exist (expected -- nothing creates it
+   automatically); `mknod /dev/va2000 c 68 0` succeeded, `ls -l` showed
+   `crw-r--r-- 1 root root 68, 0 ... /dev/va2000`.
+3. va2000probe.c (fetched via tftp, compiled with the native `cc`) ran:
+     open(/dev/va2000) failed: errno=6
+     ENXIO -- clean 'no board' result (expected on emulator)
+   Exit code 0 (probe recognizes ENXIO as the expected pass case). No hang,
+   no panic -- va2000open()'s autocon() lookup cleanly fails (no Zorro board
+   in the emulator) and returns ENXIO exactly as va2000.c's source says it
+   should.
+4. FPU/FPSP layer still intact in this combined kernel: fetched the existing
+   test-tools/fputest binary via tftp and ran it:
+     FPUTEST add=10000 sub=4000 mul=21000 div=7000  (expect ... same)
+     FPUTEST 1/3=333333 sqrt2=1414213  checksum=1747546 (expect ... same)
+     FPUTEST Test A PASS -- 040 hardware FP arithmetic correct
+   Confirms adding the VA2000 driver + parinit wrapper did not disturb the
+   FPSP vector wiring inherited from the FPSP+Xsvga base line.
+
+NOT VERIFIED (needs the real A3000 + VA2000 board)
+-----------------------------------------------------
+* va2000open() actually finding the board via autocon(0x6D6E0001, ...) and
+  va2000_present() reading a real firmware-version byte (>= 5) at
+  VA2_FW_VERSION -- cannot be exercised without real Zorro hardware.
+* va2000mmap()'s corrected >>12 phystopfn shift actually landing the
+  framebuffer at the right physical page under Model-B (the class of bug
+  this fix targets is only visible as a wrong/garbled image on real glass --
+  the scrmmap/svgammap history shows the emulator's own graphics path does
+  not reproduce this bug, so this needs real-hardware eyes on the screen).
+  The Model-B geometry fix mirrors the already-validated scrmmap/svgammap
+  method exactly (patch_devmmap_pfn.py / patch_xsvga.py), and the same
+  >>11->>12 substitution technique is used, so it is high-confidence but
+  UNTESTED end to end.
+* The XRTG X11 server and wolf3d actually running against /dev/va2000 --
+  the FPSP dependency (native `cc`-compiled fmovecr/fintrz) was validated
+  generically by fputest and by the existing Xsvga X-server bring-up
+  (memory: amix-xsvga-driver-feasibility), not by running XRTG itself.
+* Whether the VA2000 firmware minimum-version gate (VA2000_FW_MIN = 5) is
+  satisfied by the user's actual board revision.
+
+WHAT THE USER MUST DO ON THE REAL MACHINE
+--------------------------------------------
+1. Copy build/unix-040-va2000-dbg (debug, verbose boot output -- recommended
+   for the FIRST real-HW attempt) or build/unix-040-va2000 (quiet, once the
+   debug build is confirmed working) to the AMIX root filesystem alongside
+   the existing unix-040/unix-040-dbg kernels.
+2. Boot with the 040-aware loader, exactly like every other 040 kernel in
+   this project: `unix_boot040 unix-040-va2000-dbg` (or the non-debug name).
+   Requires the loader with the PC-relative-relocation fix (commit f0ed373)
+   -- the FPSP body carries ~330 PC-relative relocations, same requirement
+   as every FPSP-bearing kernel already in the field.
+3. Create the device node once (not persisted across a fresh filesystem):
+     mknod /dev/va2000 c 68 0
+4. Test with va2000probe (test-tools/va2000probe.c, compile with
+   `cc -o va2000probe va2000probe.c`) first -- on real hardware it should
+   report `open(/dev/va2000) OK` and a firmware version, not ENXIO. If it
+   still reports ENXIO, check autocon() is actually finding manufacturer
+   0x6D6E product 1 (compare against `lszorro -v` if available) before
+   suspecting the driver.
+5. Only after va2000probe confirms a working open+ioctl path, try XRTG /
+   wolf3d against /dev/va2000.
