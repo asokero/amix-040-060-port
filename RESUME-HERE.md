@@ -1,4 +1,58 @@
-# RESUME HERE — AMIX 68040/68060 port status (2026-07-23)
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-24)
+
+> ## ✅✅✅ 2026-07-24 — FPU TIER-2 (FPSP) M1–M4 VALMIS + GRAAFINEN X11 TOIMII PICCOLOLLA + VA2000-KERNELI RAUTATESTIIN
+> **1. LOADER-FIX (f0ed373) — infrastruktuurivoitto.** FPSP-kerneli ei latautunut: Guru
+> `D245 4C41` EI ollut kaatuminen vaan **loaderin oma virhemakro** (rel.c:53
+> `COMPLAIN = Alert(0x52454C41|AT_DeadEnd)`, 0x52454C41 = ASCII "RELA"). `relocsection()`
+> osasi VAIN `R_68K_32`. Census: standardi 29154×R_68K_32 vs FPSP + **330 PC-suhteellista**
+> (223 PC16 + 106 PC32 + 1 PC8, kaikki fpsp040.o:sta — Motorolan paketti on pakko assembloida
+> GNU-toolchainilla). FIX: rel.c toteuttaa nyt R_68K_PC32/PC16/PC8 = **S + A − P**, range-
+> tarkistettuna. **Yleistyy: mikä tahansa GNU-assembloitu objekti linkittyy nyt kerneliin.**
+> `build/unix_boot040` = PAKOLLINEN näille kerneleille.
+> **2. FPSP M1–M4 (8d2a005 + 2b4c6ef + 2c223e4 + 92818e5).** M1 `build-fpsp040.sh` (Motorolan
+> 040-FPSP-runko 39250 t netbsd/syssrc.tgz:stä). M2 `prototypes/fpsp_glue040.s` = 12 OS-symbolia
+> + `fpsp_vec11` (M68Kvec[11]-dispatch); herkin kohta = `fpsp_done`→`ureturn`-paluu-ABI (60-t
+> reg-blokki + USP-pseudoreg + u_ar0 @0x40000864 ILMAN u_trapia). M4 = `FPSP_VEC()`-makro +
+> vektorit **48/51/52/53/54/55** (49 inexact + 50 div0 JÄTETTY nullvectiin: 040 tekee raudassa,
+> paketti ei vie entryä), `patch_fpsp_vectors.py`. **VERIFIOITU:** `fputest` (fmovecr+fintrz,
+> kuoli ennen SIGSYS:iin) PASS, fork-FP-konteksti PASS, ja **natiivi `cc` toimii taas (M3)** —
+> cc1 kaatui aiemmin omaan FP:hensä. Kaikki FPSP-diagnostiikkalaskurit 0.
+> **3. 🎉 M5: GRAAFINEN X11 TOIMII (käyttäjän käsitesti).** Yhdistetty kerneli
+> `relink-040-fpsp-xsvga.sh` → **68040-260724-09**; `xinit` Amiberryn konsolista → **täysi
+> twm-työpöytä Piccolo RTG:llä 1152x900 8-bit** (kuva `test-tools/xsvga-xinit-working-260724.png`).
+> ⚠️ VIRHEDIAGNOOSI KORJATTU: aiempi "X-serveri kaatuu client-disconnectissa (SIGILL
+> pc=0x800C7030)" oli **ETÄTESTAUS-ARTEFAKTI** (etä-X emu.py-telnetistä + kertaluontoinen
+> client ILMAN window manageria) — EI normaalikäytön este eikä Amiberry-RTG-raja, ja
+> xdpyinfo "dimensions 0x0" samoin harmiton. Ajuripuoli erikseen todistettu: `svgafb.c`
+> (suora mmap, ei X:ää) kirjoitti+luki koko 2 MB aukon ja piirsi näkyvän 1152x900-kuvion;
+> `SetMonitorSwitch(SVGA)` BY VALUE (pointerilla EINVAL) vaihtaa näytön chipset→RTG.
+> **4. EI-DEBUG-VARIANTIT (d5a531c).** `relink-040-fpsp-xsvga.sh` sai `$2`=OUT-parametrin →
+> `unix-040-fpsp-xsvga` (**260724-11**, base `unix-040`) rinnalle `-dbg`:n (**260724-09**).
+> Emu-verifioitu: bootaa puhtaasti, FPUTEST Test A PASS.
+> **5. VA2000-KERNELI RAUTATESTIIN (2193ff2).** MNT VA2000 RTG -ajuri (`~/kehitys/va2000-amix`
+> `src/va2000.c`, K&R C **lähdekoodina** — helpompi kuin Xsvga:n binary-only exp) käännetty
+> sisään: `relink-040-va2000.sh` = base + FPSP + va2000_040.o + `parinit`-wrapper.
+> **Kolme oivallusta:** (a) `KERNEL_CHANGES.md`:n raskaat scrdev type=2 -muutokset ovat
+> VANHENTUNEITA — XRTG (`xrtg-ready-to-build/.../rtg/rtgInit.c`) ajaa korttia suoraan
+> `/dev/va2000`-mmapilla ja käyttää /dev/screen VAIN syötteeseen (`DefaultScrType`); ei yhtään
+> SIOCSETTYPE/type=2-viittausta koko puussa. Sama wolf3d (`id_vl_amix.c:132`). (b) **Model-B:**
+> `va2000mmap`in `>>11` → `>>12` (`va2000_modelb.py`, assertoi tasan 1 korvauksen; lähderepoa
+> EI muokata — se kohdistuu 030/2KB:hen). (c) `io_init[]` = `{parinit,0}` eikä nolla-
+> terminaattorissa ole vararelokaatiota → `va2000init` kutsutaan `parinit`-wrapperista.
+> cdevsw[68] @.data+0xABA4 (6 relokaatiota nodev→va2000*, `patch_va2000_cdevsw.py`).
+> Buildit **260724-13 (dbg)** + **260724-14 (ei-debug)**; relocs 0.
+> **EMU-SAVU (VA2000 ei ole emuloitavissa):** bootaa puhtaasti, `mknod /dev/va2000 c 68 0` +
+> `va2000probe` → open() **errno=6 (ENXIO)** siististi, ei jumia/panikkia; FPUTEST PASS.
+> Evidenssi `test-tools/va2000-kernel-emu-260724.txt`.
+> **SEURAAVAKSI (suositus, arvio 040 ~80 % / 060 ~55 %):** **(1) Model-B-jäännösten häntä
+> (ISSUE-15/16/17/18)** = paras vakaus/vaiva-suhde, Codex-speksit valmiina, sama luokka kuin
+> korruption aiheuttanut ISSUE-10. **(2) Pitkä rauta-soak** (ainoa tapa löytää ISSUE-22/ISSUE-9
+> -luokan tuntemattomat). **(3) 060 FPU Tier-1** (4 routinen override). Isommat myöhemmin:
+> natiivi boot-polku (ISSUE-25), B2-copyback-flip, DTT0-kavennus, Z3+iso-RAM, real-060.
+> **RAUTATESTIT ODOTTAVAT:** FPSP/Xsvga real-HW-hyväksyntä + **VA2000 fyysisellä kortilla**
+> (boot `unix_boot040 unix-040-va2000-dbg`, `mknod /dev/va2000 c 68 0`, aja `va2000probe`
+> ENSIN, sitten XRTG/wolf3d). Riski kirjattu: käyttäjätilan mmap-rekisterilukujen cache-moodi
+> (PTE-CM-polku puuttuu; kernelin puoli on DTT0:n kautta CI, siksi turvassa).
 
 > ## 🔶 2026-07-23 (myöhäisilta) — B2-CB-HOOKS LANDATTU + EMU-VERIFIOITU (0b84a65); RAUTA-AJO SEURAAVANA PÄIVÄNÄ
 > Codexin 3 B2-speksiä (analyysirepo 1823681) toteutettu: **(1)** `cb_release040.s`
