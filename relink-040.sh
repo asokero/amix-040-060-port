@@ -310,6 +310,9 @@ python3 "$HERE/prototypes/patch_pageoutdefs.py" "$OUT" | tail -2
 echo "[*] Model B mincore vector (MINCORE-VECTOR-PATCH-SPEC.md: btoc + alignment gate; 0x40000 chunk unchanged)"
 python3 "$HERE/prototypes/patch_mincore.py" "$OUT" | tail -2
 
+echo "[*] Model B /dev/screen framebuffer mmap PFN (scrmmap phystopfn >>11 -> >>12; fractal/julia black-screen fix)"
+python3 "$HERE/prototypes/patch_scrmmap.py" "$OUT" | tail -2
+
 echo "[*] CM-B1 segkmem reader geometry (CM-PTE-WRITER-MATRIX.md: checkprot/getprot 2K->4K + stock-body canaries)"
 python3 "$HERE/prototypes/patch_segkmem.py" "$OUT" | tail -3
 
