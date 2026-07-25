@@ -1903,3 +1903,33 @@ Aiempi latentti KMA-stomp (juuri se mitä `kmem_validate.s` kirjoitettiin jahtaa
 ISSUE-5:lle, ei koskaan suljettu) on vähintään yhtä todennäköinen, nyt paljastuneena
 siirtyneen layoutin takia. Jahti lopetettu projektin oman säännön mukaan; kirjattu
 arvaamisen sijaan. Evidenssi `test-tools/modelb-tail-emu-verify-260725.txt`.
+
+## ISSUE-30: pvn_vptrunc katkaisun häntänollaus oli 2 KiB — 🔶 MUUNNETTU, saavutettavuus TODISTAMATTA
+
+**MUUNNETTU 2026-07-25 (`patch_pvntrunc.py`, 2 sitettä + 2 kanariaa, buildit
+260725-11/-12), mutta vikaa EI saatu toistettua UFS:llä.** Codexin
+`PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md` luokitteli tämän P1:ksi.
+Lähdekontrakti `svr4-src-3b2/.../vm/vm_pvn.c` `pvn_vptrunc()`:
+`kzero(addr + (vplen & MAXBOFFSET), MAX(zbytes, PAGESIZE - (vplen & PAGEOFFSET)))`.
+Tarkoitus (ufs_inode.c): *"the contents of the pages following the end of the file must
+be zero'ed in case it ever become accessable again because of subsequent file growth"*.
+Vain `PAGESIZE`/`PAGEOFFSET`-termi on sivugeometriaa — **`MAXBMASK`/`MAXBOFFSET`
+(0xb2474 `andiw #-8192`, 0xb24aa `andil #8191`) ovat 8 KiB segmap-slotti ja ne
+assertoidaan KANARIOINA**, koska ne ovat naapuriosoitteissa ja näyttävät samanlaisilta.
+Muunnetut: **0xb248c** `andil #2047`→`#4095`, **0xb2492** `subil #2048`→`#4096`
+(niitä seuraa `negl` → `PAGESIZE - (vplen & PAGEOFFSET)`).
+**Termi EI ole kuollut `MAX()`:n alla:** `ufs_itrunc` antaa `zbytes = bsize - offset`, ja
+NDADDR-suorien lohkojen sisällä `bsize = fragroundup(fs, offset)`, joten 1 KiB
+-fragmenteilla `zbytes <= 1023` → sivutermi dominoi. Katkaisu 4 KiB -sivun ALAPUOLISKOON
+nollaa siis pre-fix vain seuraavaan 2 KiB -rajaan asti.
+**⚠️ SAAVUTETTAVUUS TODISTAMATTA:** `test-tools/trunctest.c` (32 KiB P1 → truncate 8692
+→ kasvata takaisin 12287:ään → lue [8692,12288)) antoi **0 osumaa 8/8 sekä ennen että
+jälkeen** korjauksen. Syy on rakenteellinen: `truncate` **vapauttaa** lohkot yli
+`fragroundup(uusi koko)`:n, joten se alue jota termi ei nollaa on deallokoitua, ja
+takaisinkasvatus allokoi sen uudelleen nollattuna (`fbzero`). Sama peittomekanismi kuin
+ISSUE-27:n A/B-koettimissa. Landattu siis **kontraktikorjauksena**, ei todistettuna
+vikakorjauksena. NFS- (`nfs_vnops.c:842`, joka laskee `zbytes`:n ITSE `PAGESIZE`stä) ja
+s5-kutsujat (`s5alloc.c:481`) eivät ole mountattuina eikä negatiivinen tulos kata niitä.
+**Regressio OK:** `proctest`/`mlocktest`/`trunctest` PASS ja levytotuus `sum 8320 5763`
+`reboot`+`fsck`:n yli, emu-040 **ja** emu-060; ISSUE-27 ei regressoinut (pgcold E
+PRESERVED). Serialit puhtaat.

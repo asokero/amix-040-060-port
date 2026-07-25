@@ -353,6 +353,12 @@ python3 "$HERE/prototypes/patch_memcntl.py" "$OUT" | tail -3
 echo "[*] ISSUE-27: segmap_pagecreate consumer tail-zero + as_iolock geometry (PAGECREATE_GROUPS=live,fbzero,spec)"
 python3 "$HERE/prototypes/patch_pagecreate.py" "$OUT" | tail -3
 
+# pvn_vptrunc final-page tail zeroing (Codex P1, PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md).
+# MAX(zbytes, PAGESIZE - (vplen & PAGEOFFSET)) still used 2 KiB while clearing a 4 KiB
+# page.  The 8 KiB segmap-slot constants next to it are asserted as canaries.
+echo "[*] pvn_vptrunc: final-page tail zeroing PAGESIZE term (2 sites + 2 segmap-slot canaries)"
+python3 "$HERE/prototypes/patch_pvntrunc.py" "$OUT" | tail -3
+
 echo
 echo "[*] reloc validation:"
 ( cd "$HERE" && python3 prototypes/check_relink_relocs.py | tail -1 )
