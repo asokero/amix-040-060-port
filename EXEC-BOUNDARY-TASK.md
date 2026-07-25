@@ -1,6 +1,15 @@
 # TASK for Codex: exec boundary census and conversion spec
 
-**Status: CENSUS + SPEC REQUESTED (2026-07-25). No kernel changes by this document.**
+**Status: ✅ ANSWERED AND IMPLEMENTED (2026-07-25) → `vm-map/EXEC-BOUNDARY-CENSUS.md`.**
+Implemented as ISSUE-32, `prototypes/patch_execboundary.py` (21 sites in 3 atomic groups
++ 5 canaries), builds 68040-260725-15/-16.
+**One correction to the census:** it lists only the CONSUMER of `*execsz`
+(`elfexec` 0xb8440) and marks it "convert or prove byte-unit exception". Discharging that
+proof showed the PRODUCER is also still 2 KiB — `mapelfexec` @0xb85f0, a LOCAL symbol
+that fell outside the raw candidate scan in this brief. Both sides had to flip together;
+converting only the consumer would have made the exec size limit twice as strict.
+Deferred as the census recommends: `coffcore` (9 sites), the COFF-side `*execsz`
+producers in `getcoffhead`, and `grow`/`brk`.
 
 Requested deliverable: an analysis note in `amix-kernel-analysis/vm-map/`, suggested
 name `EXEC-BOUNDARY-CENSUS.md`. Do not patch the kernel.

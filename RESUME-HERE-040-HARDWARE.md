@@ -1,5 +1,87 @@
 # RESUME HERE — AMIX 68040 REAL-HARDWARE line
 
+> ## ▶▶ NEXT HW SESSION (checklist current as of 2026-07-25) — THE BIGGEST OPEN ITEM IN THE PROJECT
+>
+> **Why this outranks any further conversion work.** 2026-07-25 changed **127 byte-patch
+> sites plus one new .s override** across the UFS write path, the exec path and device
+> mmap (ISSUE-15, 17/18, 27, 28, 30, 31, 32, 33). **None of it has run on real silicon.**
+> Four of those were proven defects — one was a kernel PANIC on every /proc access, one
+> was deterministic destruction of valid file data. History says hardware finds what the
+> emulator does not: ISSUE-8, 11, 13 and 21 all surfaced only on real HW.
+>
+> ### Kernels to bring (ALL rebuilt 2026-07-25 on the same base — do not mix eras)
+> | Artifact | buildid | Contains |
+> |---|---|---|
+> | `build/unix-040` | 68040-260725-17 | base, all of today's fixes |
+> | `build/unix-040-dbg` | 68040-260725-18 | + probes (use this for the battery) |
+> | `build/unix-040-fpsp-xsvga-dbg` | 68040-260725-19 | + FPSP + Xsvga/Piccolo RTG |
+> | `build/unix-040-va2000-dbg` | 68040-260725-20 | + FPSP + MNT VA2000 RTG |
+>
+> ⚠️ **The graphics kernels were previously built from `unix-040-dbg.STD-backup`
+> (260724-04) and contained NONE of today's fixes.** They were rebuilt on 2026-07-25 on
+> top of `...DEVMMAP-260725-18`; 260725-19 is emulator-smoke-verified (boot, `fputest`
+> Test A PASS, `exectest` PASS, `devmaptest` PASS). If you rebuild any of them again,
+> pass the base explicitly — the scripts still DEFAULT to the old STD-backup:
+> `sh relink-040-fpsp-xsvga.sh build/unix-040-dbg build/unix-040-fpsp-xsvga-dbg`
+>
+> Boot with `unix_boot040` (rel.c PC-rel reloc fix f0ed373) — mandatory for any kernel
+> carrying FPSP. Use `reboot`, never `init 6` (ISSUE-24).
+>
+> ### Run order (fail fast: if exec or /proc is broken, nothing else matters)
+> Push `test-tools/*.c`, build each with the native `cc`. See `test-tools/README.md`
+> for what each one proves and its discriminating signal.
+> 1. `exectest 20 /tmp/exectest` — ELF exec mapping. Also run it once COLD, i.e. from a
+>    binary under `/` that has not been read since boot.
+> 2. `proctest` — /proc process memory. **On a kernel without ISSUE-17 this PANICS**, so
+>    a clean run is itself the headline result.
+> 3. `bmaptest /pgc` — UFS direct/fragment/indirect/sync-write allocation.
+> 4. `pgcold D 24 /pgc` → `sync; sync; reboot` → rebuild → `pgcold E 24 /pgc`.
+>    **PASS = `PGCOLD-E-RESULT PRESERVED`.** This is the ISSUE-27 proof; on the real
+>    disk it also exercises a different fragment/writeback timing than the emulator.
+> 5. `mlocktest`, `trunctest` — cheap, run them.
+> 6. `devmaptest` — device mmap PFN. Expect `kernel-base window non-zero bytes: >0`.
+> 7. **Disk truth:** `cat /stand/unix /stand/unix > /big.dat; sync; sum /big.dat`, then
+>    `reboot`, `fsck`, `sum` again. Must match. Then repeat with a POWER CUT instead of
+>    a clean reboot (the 2026-07-23 B1 acceptance did 7/7 this way).
+> 8. Regression from earlier lines: `hat_dup_cow` 1/32/256, `burst4`, Dhrystone
+>    (B1 baseline 18293/s), `bigargv`, `msynctst`.
+>
+> ### Then the graphics/FPU items that have been waiting since 2026-07-24
+> 9. `unix-040-fpsp-xsvga-dbg`: `fputest` (Test A), native `cc` self-host, then `xinit`
+>    on the physical Piccolo. The emulator already shows a full twm desktop at
+>    1152x900 8-bit (`test-tools/xsvga-xinit-working-260724.png`).
+> 10. `unix-040-va2000-dbg` on the PHYSICAL MNT VA2000: `mknod /dev/va2000 c 68 0`,
+>     run `va2000probe` FIRST (emulator gives a clean ENXIO — on real HW it must
+>     succeed), only then XRTG/wolf3d. Known risk, unchanged: user-space mmap'd
+>     register reads have no PTE CM path yet; the kernel side is CI via DTT0.
+> 11. `devmaptest` on the VA2000 kernel — it is the only test with a direct line to the
+>     RTG aperture mapping (ISSUE-33 fixed the PFN that path depends on).
+>
+> ### Still pending from the caches line (2026-07-23)
+> 12. B2 copyback (`hat_cm_ram` 0x00→0x20) acceptance was written but never run on HW:
+>     boot the WT baseline first to separate cache exposure from a mapping regression,
+>     then the b2 image; check `hat_cm_ram=0x20` via kmem, counter pairs exactly equal,
+>     zero diagnostics, and power-cut disk truth. See `CACHES-ON-PLAYBOOK.md`.
+>
+> ### Long soak — the only way to reach the unknowns
+> 13. Leave the machine up under load for hours. Three open items are only reachable
+>     this way: **ISSUE-9** (idle bus-error loop), **ISSUE-22** (one-off EFAULT under
+>     pressure), **ISSUE-29** (KMA free-list report, seen 3× in the emulator, never
+>     attributed). Capture serial throughout; `KMEMCORRUPT` lines are ISSUE-29.
+>
+> ### What NOT to do
+> - Do not run `emu-reset-boot.sh` semantics on the real disk — the two-phase tests need
+>   a soft `reboot`, and there is no golden image to restore there.
+> - Do not test RFS. ISSUE-16 is 72 unconverted sites; RFS on this port is UNSAFE.
+> - Do not enable S5 or COFF; both are deliberately unconverted.
+> - `shutdown -i0` (halt) still loops on a bus error (ISSUE-26) — use `reboot`.
+>
+> ### Recording
+> Write the evidence file as `test-tools/realhw-verify-2607NN.txt` in the style of
+> `b1-dcwt-verify-260723.txt`: what was built, buildids, every result, and — most
+> importantly — **what was NOT validated**.
+
+
 > ## ✅ 2026-07-12 — ISSUE-13 FIXED + VERIFIED ON REAL HW; COW ACCEPTANCE PASSES ON REAL HW
 > **Build 260712-03 (unix-040 + unix-040-dbg) is the current real-HW line.** Two real-HW
 > validations landed this session (full detail: RESUME-HERE.md top banner + KNOWN-ISSUES

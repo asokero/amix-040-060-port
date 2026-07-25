@@ -1,7 +1,20 @@
 # TASK for Codex: `segmap_pagecreate` family — Model-B tail-zero / `as_iolock` contract
 
-**Status: SPEC REQUESTED (2026-07-25). Nothing implemented. No kernel changes made by
-this document. Tracked as ISSUE-27 in `KNOWN-ISSUES.md`.**
+**Status: ✅ ANSWERED AND IMPLEMENTED (2026-07-25). Tracked as ISSUE-27.**
+Codex delivered `vm-map/PAGECREATE-TAILZERO-{CENSUS,SPEC}.md`; implemented as
+`prototypes/patch_pagecreate.py` (28 sites, 3 atomic groups, 4 producer canaries),
+builds 68040-260725-09/-10.
+
+⚠️ **ONE SEVERITY CLAIM BELOW IS WRONG AND IS LEFT ONLY AS THE RECORD OF WHAT I THOUGHT
+AT THE TIME.** This brief calls ISSUE-27 a "silent data leak / stale-data exposure".
+It is worse than that: the defect **OVERWRITES VALID EXISTING FILE DATA** with the
+contents of a recycled page. Trigger: a page-aligned write whose length is a multiple of
+2048 but NOT of 4096, entirely inside an already-allocated file whose pages are cold —
+`as_iolock`'s `n &= PAGEMASK` is the guard against a PARTIAL pagecreate, and at 2 KiB it
+does not fire. Proven 24/24 vs 0/24, marker-verified.
+The proof, and the three probe designs that could NOT see it, are in
+`test-tools/pagecreate-issue27-COLD-PROOF-260725.txt`. Follow-up brief:
+`PAGECREATE-REPRO-UFSBMAP-TASK.md`.**
 
 Requested deliverable: a census + conversion spec in the analysis repo
 (`amix-kernel-analysis/vm-map/`), suggested name

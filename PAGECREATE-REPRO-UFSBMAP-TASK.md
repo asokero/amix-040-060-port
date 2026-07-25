@@ -1,6 +1,13 @@
 # TASK for Codex: why doesn't the ISSUE-27 probe fire, and is `ufs_bmap` safe?
 
-**Status: FOLLOW-UP REQUESTED (2026-07-25). Follows
+**Status: ✅ ANSWERED (2026-07-25) → `vm-map/PAGECREATE-REACHABILITY-AND-UFSBMAP.md`.**
+Q1: the probe was masked by page-cache lifetime; a cold-cache in-file partial-page probe
+reproduced the defect 24/24 (see `test-tools/pagecreate-issue27-COLD-PROOF-260725.txt`).
+Q2: `ufs_bmap` has ELEVEN page-geometry sites, not the eight this brief listed, and three
+of the eight I listed are `NDADDR-1` direct-block thresholds that must NEVER change.
+Implemented as ISSUE-31, `prototypes/patch_ufsbmap.py`, builds 68040-260725-13/-14.
+
+Original request follows
 `vm-map/PAGECREATE-TAILZERO-{SPEC,CENSUS}.md`, which were implemented in full.
 Tracked against ISSUE-27 in `KNOWN-ISSUES.md`.**
 

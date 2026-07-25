@@ -41,11 +41,11 @@
 > **5. ISSUE-16: EI muunnettu, ja tiivistelmä oli väärässä** — todellinen census on
 > **72 sitea 27 funktiossa** (ei 5), koko RFS/DUsys-alue. Luokittelematon; RFS-polkua ei
 > voi ajaa → sokkomuunnos olisi latentin bugin istuttamista. **RFS-testaus on epäturvallista.**
-> **6. KOLME UUTTA ISSUEA.** **ISSUE-27 (korkea prio, ELÄVÄ):** `as_iolock` (0xaee34) +
-> koko `segmap_pagecreate`-kutsujaperhe (`rwip` = UFS-juuri, `rwvp`, `writei`,
-> `spec_write`, `fbzero`) pyöristää häntänollauksen 2 KiB:iin vaikka `segmap_pagecreate`
-> on JO 4 KiB → hiljainen kierrätetyn sivun datavuoto juuritiedostojärjestelmään.
-> Codex-brief kirjoitettu → **`PAGECREATE-TAILZERO-TASK.md`** (Codex aloitti työn 25.7.).
+> **6. KOLME UUTTA ISSUEA.** **ISSUE-27:** `as_iolock` (0xaee34) + koko
+> `segmap_pagecreate`-kutsujaperhe pyöristää häntänollauksen 2 KiB:iin vaikka
+> `segmap_pagecreate` on JO 4 KiB. (Kuvasin tämän aluksi "hiljaiseksi datavuodoksi";
+> myöhemmin samana päivänä se TODISTETTIIN ja osoittautui pahemmaksi — se **ylikirjoittaa
+> voimassa olevaa tiedostodataa**. Ks. lohko alempana.)
 > **ISSUE-28: ✅ KORJATTU SAMANA PÄIVÄNÄ** (`patch_memcntl.py`, 17 sitea + 5 kanariaa,
 > buildit 260725-05/-06) — ja se osoittautui **samaksi tuottaja/kuluttaja-epäsymmetriaksi
 > kuin ISSUE-27:** `as_ctl` + `segvn_lockop` täyttävät mlock-bittikartan jo 4 KiB
@@ -83,6 +83,45 @@
 > vakaus/vaiva-suhde, ja aidosti testattavissa). (2) Rautasessio: FPSP/Xsvga-hyväksyntä +
 > VA2000 fyysisellä kortilla + **`proctest` ja ISSUE-15 raudalla**. (3) 060 FPU Tier-1.
 > ⚠️ Rautatesti puuttuu KAIKESTA tästä — kaikki yllä on Amiberry-emulaatiota.
+
+> **7. NELJÄ LISÄÄ SAMASTA LUOKASTA (Codexin tuottaja/kuluttaja-census).** Census
+> `vm-map/PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md` osoitti että ISSUE-27 ja -28 eivät olleet
+> erillisiä: sama vika toistuu siellä missä kontraktin toinen puoli on muunnettu ja toinen ei.
+> **ISSUE-30** `pvn_vptrunc` (2 sitettä, 260725-11/-12) — 🔶 muunnettu, **saavutettavuus
+> todistamatta**: `truncate` vapauttaa juuri ne lohkot joita termi ei nollaa.
+> **ISSUE-31** `ufs_bmap` (11 sitettä + **3 NDADDR-1-kanariaa**, 260725-13/-14) — ISSUE-27:n
+> UFS-provider-puolisko; patch assertoi että ISSUE-27 on landattu ENSIN, koska muunnos saa
+> kernelin ohittamaan luvun jonka se nyt tekee. **Toimeksiantoni listasi ne kolme kanariaa
+> muunnettaviksi** — ne olisivat siirtäneet UFS:n suoralohkorajaa; Codex korjasi sen.
+> **ISSUE-32** ELF-exec (21 sitettä 3 ryhmässä + 5 kanariaa, 260725-15/-16) — ja **korjaus
+> censukseen**: se listasi vain kuluttajan (`elfexec`), mutta todistusvelvollisuuden
+> purkaminen paljasti että tuottaja (`mapelfexec`, LOKAALI symboli) on myös 2 KiB → pelkän
+> kuluttajan muuntaminen olisi tehnyt rajatarkistuksesta kaksi kertaa tiukemman.
+> **ISSUE-33** laitemmap (7 sitettä, 260725-17/-18) — **TODISTETTU:** `/dev/mem` osui
+> kaksinkertaiseen fyysiseen osoitteeseen; ikkuna kernelin latausosoitteessa **0/4096** →
+> **3186/4096** nollasta poikkeavaa tavua. Loput segdev-perheestä jätettiin 2 KiB:iin
+> tarkoituksella ja assertoidaan kanarioina (sisäisesti johdonmukainen; `hat_devload`in
+> tuplakutsut ovat idempotentteja).
+> **TODISTUSASTEET (tärkein rivi tässä lohkossa):** vika JA korjaus todistettu =
+> **ISSUE-17, 27, 28, 33**. Muunnettu + ei regressiota mutta vikaa EI näytetty =
+> **ISSUE-15, 18b, 30, 31, 32** ja 33:n `incore`-ryhmä. **Mikään tästä ei ole ajanut raudalla.**
+> **TESTIKALUSTO:** 8 uutta ohjelmaa `test-tools/`-hakemistossa (`proctest`, `mlocktest`,
+> `pgcold`, `pgcreatetest`, `trunctest`, `bmaptest`, `exectest`, `devmaptest`) — mitä kukin
+> todistaa ja niiden erotteleva signaali: `test-tools/README.md`.
+> **METODIOPPI:** viisi koetinta epäonnistui peräkkäin (residentti sivu / UFS-reikä jonka
+> `getapage` nollaa / lämmin cache / nolla-alue vertailukohtana / väärä sivunsisäinen
+> oletus). Toimiva kuvio: tee vikasignaaliksi **"alkuperäinen data hävisi"** — se on
+> provenienssiriippumaton. Ja raakahaku tuotti kampanjassa **neljä errno-valeosumaa**
+> (`moveq #11/#12` = `EAGAIN`/`ENOMEM`) → jokainen patch assertoi nyt kanariat.
+>
+> **SEURAAVAKSI — SUOSITUS: RAUTASESSIO, EI LISÄÄ MUUNNOKSIA.** Päivä muutti 127 sitettä
+> UFS-kirjoituspolulla, exec-polulla ja laitemmapissa, eikä mikään niistä ole ajanut
+> raudalla. Täysi ajolista, kernelit ja ansat: **`RESUME-HERE-040-HARDWARE.md` ylälohko.**
+> Grafiikkakernelit rakennettiin 25.7. UUDELLEEN tämän päivän pohjalle (**260725-19**
+> FPSP+Xsvga, **260725-20** VA2000) — aiemmat olivat 260724-pohjalta eivätkä sisältäneet
+> yhtäkään päivän korjausta. Jäljellä olevat censuskohteet (RFS 72 sitettä, S5, COFF,
+> NFS-providerit, SHM, suojausvektorin perimetri) ovat kaikki joko ajokelvottomia tai
+> matalan saavutettavuuden — ne kasvattaisivat validoimatonta deltaa ilman vastaavaa hyötyä.
 
 > ## ✅✅✅ 2026-07-24 — FPU TIER-2 (FPSP) M1–M4 VALMIS + GRAAFINEN X11 TOIMII PICCOLOLLA + VA2000-KERNELI RAUTATESTIIN
 > **1. LOADER-FIX (f0ed373) — infrastruktuurivoitto.** FPSP-kerneli ei latautunut: Guru

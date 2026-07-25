@@ -1,6 +1,13 @@
 # TASK for Codex: census of remaining 4 KiB-producer / 2 KiB-consumer asymmetries
 
-**Status: CENSUS REQUESTED (2026-07-25). No kernel changes by this document.**
+**Status: ✅ ANSWERED (2026-07-25) → `vm-map/PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md`.**
+Outcome: four further instances of the class were found and closed the same day —
+ISSUE-30 (`pvn_vptrunc`), ISSUE-31 (`ufs_bmap`), ISSUE-32 (ELF exec), ISSUE-33 (device
+mmap PFN, PROVEN). Two of the census's own P2 entries were stale and have been corrected
+in it: `kmem_avail` was already fixed by ISSUE-15 the same day, and the `vmmeter`/
+`maxpgio` fold by `patch_pageoutdefs.py`. Remaining open from it: NFS providers (no
+mount), the protection-vector perimeter (`as_getprot` is itself still 2 KiB at 0xaed36/
+0xaed68), SysV SHM, Xenix shared data, and RFS/S5 (not mounted).
 
 Requested deliverable: an analysis note in `amix-kernel-analysis/vm-map/`, suggested
 name `PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md`. Do not patch the kernel.

@@ -28,6 +28,48 @@ Grep gotcha: these markers are packed with hex digits, so a pattern like
 `grep -ao "DBG FOO.\{0,120\}"` silently truncates at the first `C`/`A`/`E`. Use a
 plain byte count and `cat -v`, not a negated character class.
 
+## Test programs — what to run, and what each one actually proves
+
+All are K&R C for the native AMIX `cc`. Build on the guest with `cc -o NAME NAME.c`.
+Push the sources with `tftp_onesock.py` (the guest disk is wiped by every
+`emu-reset-boot.sh`). **`/tmp` is cleared on every AMIX boot** — put anything that has
+to survive a reboot under `/` (the two-phase tests use `/pgc`).
+
+Model-B / VM correctness (all added 2026-07-25 unless noted):
+
+| Program | Proves | Discriminating signal |
+|---|---|---|
+| `proctest.c` | ISSUE-17/18 — /proc process memory | pre-fix kernel PANICS in `prfastmapin`; T1 reads the child's pattern where the parent's own page is zeros |
+| `mlocktest.c` | ISSUE-28 — `memcntl`/`plock` mlock bitmap | T1: `memcntl(base+2048, MC_LOCK)` must return EINVAL; pre-fix returns 0 |
+| `pgcold.c` | ISSUE-27 — `segmap_pagecreate` tail | **modes D/E**: 24/24 files lose valid data pre-fix, 0/24 post-fix. Modes A/B/C are kept as the record of three probe designs that could NOT see it |
+| `pgcreatetest.c` | ISSUE-27, superseded | the spec's original probe; inert on this filesystem (see the COLD-PROOF evidence file for why) |
+| `trunctest.c` | ISSUE-30 — `pvn_vptrunc` tail | truncate + regrow; **does not reproduce** (truncate frees the very blocks the term fails to clear) |
+| `bmaptest.c` | ISSUE-31 — `ufs_bmap` | direct/fragment-growth/indirect/sync-write, whole-file byte check; the 4097..6144 interval is where the read is now skipped |
+| `exectest.c` | ISSUE-32 — ELF exec mapping | verifies its OWN data+BSS and re-execs itself 20 generations; "the binary runs" would pass on a broken kernel |
+| `devmaptest.c` | ISSUE-33 — device mmap PFN | maps `/dev/mem` at the kernel base: pre-fix 0/4096 non-zero bytes, post-fix 3186/4096 |
+
+Older, still useful:
+
+| Program | Proves |
+|---|---|
+| `bigargv.c` | 4500 B argv byte-exact across `exec` (`exec_initialstk` + `extractarg`) |
+| `msynctst.c` | `mmap` MAP_SHARED + `msync(MS_SYNC)` → `ufs_putpage` disk truth |
+| `swapls.c` | `swapctl(SC_LIST)` slot count (proved PAGES 25600, not the 51199 double) |
+| `fputest.c` | FPU/FPSP: `fmovecr`+`fintrz` emulation, fork FP context |
+| `mincoretst.c` | generic `mincore` vector |
+| `b2verify.c` | B2 copyback counters |
+| `svgaprobe.c`, `va2000probe.c` | RTG board probes (VA2000 is **not** emulatable — expect a clean ENXIO) |
+
+Two-phase tests need a **soft `reboot` inside the guest**, never `emu-reset-boot.sh`:
+that restores the golden image and destroys the files the first phase created.
+
+```sh
+./pgcold D 24 /pgc      # phase A: create, sync
+sync; sync; reboot      # cold the page cache
+cc -o pgcold pgcold.c   # /tmp was cleared, rebuild
+./pgcold E 24 /pgc      # phase B: probe.  PASS = PRESERVED
+```
+
 ## proctest.c — /proc process-memory acceptance test (ISSUE-17/18)
 Forks a child and reads+writes its memory through `/proc/<pid>` in three regions that
 hit three different kernel paths (resident-private, COW, never-touched), plus a
