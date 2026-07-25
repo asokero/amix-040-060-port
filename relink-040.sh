@@ -366,6 +366,14 @@ python3 "$HERE/prototypes/patch_pvntrunc.py" "$OUT" | tail -3
 echo "[*] ISSUE-31: ufs_bmap page geometry (11 sites + 3 NDADDR canaries + ISSUE-27 precondition)"
 python3 "$HERE/prototypes/patch_ufsbmap.py" "$OUT" | tail -3
 
+# ISSUE-32: live ELF exec mapping boundary (EXEC-BOUNDARY-CENSUS.md).  Three atomic
+# groups: exhd (header-cache ranges), execmap (VOP_MAP eligibility + mapping inputs),
+# elfsz (*execsz producer AND consumer -- the census listed only the consumer; the
+# producer in the LOCAL symbol mapelfexec was found while discharging its proof
+# obligation).  COFF core/exec and grow/brk stay deferred.
+echo "[*] ISSUE-32: ELF exec mapping boundary (EXECBOUNDARY_GROUPS=exhd,execmap,elfsz)"
+python3 "$HERE/prototypes/patch_execboundary.py" "$OUT" | tail -3
+
 echo
 echo "[*] reloc validation:"
 ( cd "$HERE" && python3 prototypes/check_relink_relocs.py | tail -1 )

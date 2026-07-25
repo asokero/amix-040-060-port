@@ -1965,3 +1965,46 @@ mukaan lukien erotteleva väli 4097..6144 jossa luku nyt ohitetaan. Lisäksi `pr
 levytotuus `sum 8320 5763` `reboot`+`fsck`:n yli — **emu-040 ja emu-060**. Serialit puhtaat.
 ⚠️ EI testattu: `fs_bsize == PAGESIZE` tai pienempi (speksi: ei saa päätellä 8192-tuloksesta).
 Ei rautaa.
+
+## ISSUE-32: ELF-execin mäppäysrajapinta — ✅ MUUNNETTU (2026-07-25, emu-040+060)
+
+**21 sitettä kolmessa atomisessa ryhmässä + 5 kanariaa (`patch_execboundary.py`),
+buildit 260725-15/-16.** Codexin `EXEC-BOUNDARY-CENSUS.md` luokitteli tämän P1:ksi
+("*more important than its raw site count because every normal `exec` exercises some
+part of this boundary*").
+- **`exhd`** (11): `exhd_getfbuf` + `exhd_nomap` ovat YKSI range-omistajuusyksikkö —
+  molemmat operoivat samalla `exhdmap_t`-listalla, joten toisen muuntaminen yksin
+  jättäisi listan ja sen vapautuspuolen eri sivugeometrioihin.
+- **`execmap`** (6): tärkein on 0x57a68/0x57a72 = `(offset & PAGEOFFSET) == (addr &
+  PAGEOFFSET)` -kelpoisuustesti. 2 KiB -maskilla loader voi pitää tiedosto-offsettia ja
+  virtuaaliosoitetta samoin kohdistettuina vaikka ne EIVÄT ole samat modulo 4 KiB, ja
+  valita suoran `VOP_MAP`-polun väärässä sivusuhteessa.
+- **`elfsz`** (4) — **KORJAUS CENSUKSEEN.** Census listasi vain KULUTTAJAN (`elfexec`
+  0xb8440/0xb8446, `if (*execsz > btopr(u+0x7d4)) ENOMEM`) ja merkitsi sen ehdolliseksi:
+  *"convert or prove byte-unit exception"*. Todistus tehtiin ja se **muutti vastauksen**:
+  `u+0x7d4` ON tavuarvo (`as_map` @0xae52a vertaa sitä suoraan tavumäärään), MUTTA
+  **tuottaja on myös yhä 2 KiB** — `mapelfexec` @0xb85f0 kerryttää
+  `*execsz += btoc(p_memsz)` kohdissa 0xb86fe/0xb8704. Nykyisin molemmat laskevat
+  2 KiB -yksiköissä eli **rajatarkistus on oikein**; pelkän kuluttajan muuntaminen olisi
+  tehnyt siitä kaksi kertaa tiukemman → turhia ENOMEM-execejä. Siksi ryhmä on 4 sitettä,
+  ei 2. `mapelfexec` on LOKAALI symboli (`t`), minkä takia se jäi toimeksiannon
+  raakahakulistalta pois ja census peri puutteen.
+**KANARIAT:** 0x5677a (`exhd_getfbuf boff & MAXBMASK` = 8 KiB fbuf-ikkuna), 0x57c1c/
+0x57c22 (`execmap` BSS-häntä, jo muunnettu), 0xb842c (`AT_PAGESZ = 4096`), 0xb8406
+(`elfexec & MAXBMASK`). Näistä kaksi ensimmäistä ovat 8 KiB -ikkunoita jotka näyttävät
+kuviohaussa täsmälleen sivumaskeilta.
+**LYKÄTTY:** `coffcore` (9 sitettä, COFF-core-tiedostomuoto — vioittunut diagnostiikka-
+artefakti, ei elävä osoiteavaruus), `getcoffhead`in COFF-puolen `*execsz`-tuottajat
+(saavutettavissa vain `coffexec`in kautta; `getcoffshlibs`, joka ON saavutettavissa
+ELF-execistä `PT_SHLIB`:n kautta, ei sisällä omaa `btoc`-sitettä, joten ELF-ryhmä ei
+desynkronoidu), sekä `grow`/`brk` (jo 4 KiB, oma user-VM-yksikkönsä).
+**Hyväksyntä:** uusi `test-tools/exectest.c` — ohjelma **tarkistaa oman alustetun
+datansa ja BSS:nsä** joka käynnistyksessä ja **exec-ketjuttaa itsensä 20 sukupolvea**,
+koska "binääri käynnistyy yhä" läpäisisi rikkinäiselläkin kernelillä. PASS sekä
+kylmänä (rebootin jälkeen, binääri `/exectest.cold` jota ei ole luettu bootin jälkeen)
+että residenttinä. Lisäksi `proctest`, `mlocktest`, `trunctest`, `bmaptest` PASS,
+ISSUE-27 ei regressoinut (pgcold E PRESERVED), levytotuus `sum 8320 5763`
+`reboot`+`fsck`:n yli — **emu-040 ja emu-060**. Serialit puhtaat.
+⚠️ EI testattu: ELF-binäärit joiden `p_offset`/`p_vaddr` on tarkoituksella ristiriidassa
+modulo 4 KiB (vaatisi käsin rakennetun ELF:n; natiivi `cc` ei anna kontrollia
+segmenttikohdistukseen). Ei dynaamisesti linkitettyä `PT_INTERP`-polkua. Ei rautaa.
