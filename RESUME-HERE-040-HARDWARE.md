@@ -2,6 +2,12 @@
 
 > ## ▶▶ NEXT HW SESSION (checklist current as of 2026-07-25) — THE BIGGEST OPEN ITEM IN THE PROJECT
 >
+> ### ▶ The run list is a separate, self-contained file: **`REALHW-VERIFY-260725.md`**
+> Take that one to the machine. It has the exact artifacts (with the two build traps
+> spelled out), every command, the expected output string per step, the acceptance
+> table, what not to do, and the `burst4.sh` source. What follows here is the same
+> material in summary form plus the historical context.
+>
 > **Why this outranks any further conversion work.** 2026-07-25 changed **127 byte-patch
 > sites plus one new .s override** across the UFS write path, the exec path and device
 > mmap (ISSUE-15, 17/18, 27, 28, 30, 31, 32, 33). **None of it has run on real silicon.**

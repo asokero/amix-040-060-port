@@ -116,7 +116,9 @@
 >
 > **SEURAAVAKSI — SUOSITUS: RAUTASESSIO, EI LISÄÄ MUUNNOKSIA.** Päivä muutti 127 sitettä
 > UFS-kirjoituspolulla, exec-polulla ja laitemmapissa, eikä mikään niistä ole ajanut
-> raudalla. Täysi ajolista, kernelit ja ansat: **`RESUME-HERE-040-HARDWARE.md` ylälohko.**
+> raudalla. **Ajolista on omana tiedostonaan: `REALHW-VERIFY-260725.md`** (artefaktit +
+> tarkat komennot + odotettu tuloste per kohta + hyväksymistaulukko + burst4.sh);
+> taustat ja koneen fysiikka: `RESUME-HERE-040-HARDWARE.md` ylälohko.
 > Grafiikkakernelit rakennettiin 25.7. UUDELLEEN tämän päivän pohjalle (**260725-19**
 > FPSP+Xsvga, **260725-20** VA2000) — aiemmat olivat 260724-pohjalta eivätkä sisältäneet
 > yhtäkään päivän korjausta. Jäljellä olevat censuskohteet (RFS 72 sitettä, S5, COFF,
