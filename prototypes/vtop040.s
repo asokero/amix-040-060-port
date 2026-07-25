@@ -16,22 +16,87 @@
 | vtop(va, proc): va @ fp@(8), proc @ fp@(12); returns paddr in d0 (and a0).
 | (--add-symbol vtop_orig=.text:0xb7568; --weaken-symbol vtop so this strong def wins.)
 
+| ===========================================================================
+| ISSUE-18 (2026-07-25): dispatch is now PROC-AWARE, but deliberately proc-LAST so that
+| every proc == 0 path keeps its previous behaviour byte-for-byte.
+|
+| The trap this avoids: `mmmmap` (0x2067e) maps /dev/mem and calls vtop(addr, 0) where
+| `addr` is a PHYSICAL address -- on an Amiga that legitimately reaches 0x80000000+
+| (Zorro III space).  Classifying >= 0x80000000 as "user VA" on address alone would break
+| /dev/mem for high physical space, because stock svirtophys returns any non-SCN1 address
+| UNCHANGED (0xb7744: it only walks SECNUM == 1).  So the user walk is entered only when a
+| proc is actually supplied.
+|
+|   proc == 0   va <  0x40000000  -> identity (DTT0)                  [unchanged]
+|               va >= 0x40000000  -> vtop_orig -> svirtophys          [unchanged]
+|   proc != 0   va <  0x40000000  -> identity                         [unchanged; this is
+|                                    the live shape -- dma_pageio 0x20c90 COPIES b_proc
+|                                    into its ngeteblk bounce buffer, whose b_addr is
+|                                    SCN0 identity RAM (amiga_dma_pageio 0xdbee clears
+|                                    b_proc instead)]
+|               va in SCN1        -> force proc = 0 -> svirtophys      [FIX + capped log:
+|                                    a kernel VA is not per-process, and stock vtop_orig
+|                                    tests the PROC ARGUMENT FIRST (0xb7592), so a stale
+|                                    b_proc sent kernel addresses into the dead 030 walk]
+|               va >= 0x80000000  -> uvatopte040 per-proc 040 walk    [FIX: ISSUE-18a.
+|                                    This is prmapin's path (0x63462 = vtop(addr, p)),
+|                                    i.e. /proc process memory, plus any raw I/O that
+|                                    passes a user VA with a proc.  Stock vtop_orig
+|                                    0xb75c0 walked the retired 030 SDE tree with >>11
+|                                    indices, PFN<<11 and a 0x7ff offset.]
+| ===========================================================================
 	.text
 	.globl	vtop
 vtop:
 	linkw	%fp,&0
 	movel	%d2,%sp@-		| save d2 (callee-saved; holds the result)
+	movel	%fp@(12),%d0		| proc
+	bnew	Lvt_proc
+| ---- proc == 0: unchanged ------------------------------------------------
 	movel	%fp@(8),%d0		| d0 = va
 	cmpil	&0x40000000,%d0
 	bccw	Lvt_stock
 	movel	%d0,%d2			| identity: phys == va
 	braw	Lvt_log
 Lvt_stock:
-	movel	%fp@(12),%sp@-		| proc
+	clrl	%sp@-			| proc (0 here by construction)
 	movel	%fp@(8),%sp@-		| va
 	jsr	vtop_orig
 	addqw	&8,%sp
-	movel	%d0,%d2			| stock result (svirtophys / user walk)
+	movel	%d0,%d2			| stock result (svirtophys)
+	braw	Lvt_log
+| ---- proc != 0 -----------------------------------------------------------
+Lvt_proc:
+	movel	%fp@(8),%d0		| d0 = va
+	cmpil	&0x40000000,%d0
+	bccw	Lvt_phigh
+	movel	%d0,%d2			| SCN0 identity (bounce buffer with a stale b_proc)
+	braw	Lvt_log
+Lvt_phigh:
+	cmpil	&0x80000000,%d0
+	bccw	Lvt_user
+	bsrw	Lvt_viol		| SCN1 + proc: contract violation, log (capped)
+	clrl	%sp@-			| force proc = 0 -> svirtophys (040-correct)
+	movel	%fp@(8),%sp@-
+	jsr	vtop_orig
+	addqw	&8,%sp
+	movel	%d0,%d2
+	braw	Lvt_log
+Lvt_user:
+	movel	%fp@(12),%sp@-		| proc
+	movel	%fp@(8),%sp@-		| va
+	jsr	uvatopte040		| prfastmap040.s: real 040 per-proc walk
+	addqw	&8,%sp
+	tstl	%d0
+	beqw	Lvt_zero		| not resident -> 0 (stock's failure value)
+	movel	%d0,%d2
+	andil	&0xfffff000,%d2		| 040 PTE bits 31:12 = physical page
+	movel	%fp@(8),%d0
+	andil	&0xfff,%d0		| + PAGOFF (4 KiB; stock used 0x7ff)
+	addl	%d0,%d2
+	braw	Lvt_log
+Lvt_zero:
+	clrl	%d2
 Lvt_log:
 	cmpil	&0x07c00000,%d2		| user-page region (below the 0x7EEx buffer cache)
 	bcsw	Lvt_done
@@ -94,6 +159,28 @@ Lvt_ret:
 	movel	%fp@(-4),%d2		| restore d2
 	unlk	%fp
 	rts
+
+| ---------------------------------------------------------------------------
+| Lvt_viol -- capped (8) diagnostic for the ISSUE-18b contract violation "kernel VA
+| arrived with proc != 0".  Reached via bsr from inside vtop, so %fp still addresses
+| vtop's frame.  cmn_err clobbers only d0/d1/a0/a1; d2 (the result) is untouched and the
+| caller re-reads its args from %fp@ afterwards.  If this never fires, the stale-b_proc
+| shape does not occur in practice and the forced proc = 0 above is a pure no-op.
+Lvt_viol:
+	movel	Lvv_n,%d0
+	cmpil	&8,%d0
+	bccw	Lvv_out
+	addql	&1,%d0
+	movel	%d0,Lvv_n
+	movel	%fp@(4),%sp@-		| caller
+	movel	%fp@(12),%sp@-		| proc
+	movel	%fp@(8),%sp@-		| va
+	pea	Lvv_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(20),%sp
+Lvv_out:
+	rts
 	nop				| pad .text to a 4-byte multiple
 
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
@@ -108,5 +195,10 @@ Lva_n:
 	.long	0
 Lva_msg:
 	.asciz	"DBG VTOPALIAS va=%x phys=%x map=%x caller=%x (DMA target page has a LIVE mapping!)"
+	.even
+Lvv_n:
+	.long	0
+Lvv_msg:
+	.asciz	"DBG vtop KERNVA-WITH-PROC va=%x proc=%x caller=%x (ISSUE-18b: forced proc=0)"
 	.even
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
