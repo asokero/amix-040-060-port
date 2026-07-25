@@ -374,6 +374,13 @@ python3 "$HERE/prototypes/patch_ufsbmap.py" "$OUT" | tail -3
 echo "[*] ISSUE-32: ELF exec mapping boundary (EXECBOUNDARY_GROUPS=exhd,execmap,elfsz)"
 python3 "$HERE/prototypes/patch_execboundary.py" "$OUT" | tail -3
 
+# ISSUE-33: remaining device-mmap crossings.  d_mmap must return a 4 KiB PFN because
+# hat_devload maps it as pfn<<12; mmmmap//dev/mem and resmmap still produced phys>>11.
+# Plus segdev_incore's vector stride, which crosses into the already-4-KiB mincore.
+# The rest of the segdev family stays 2 KiB on purpose and is asserted unchanged.
+echo "[*] ISSUE-33: device-mmap PFN + segdev_incore vector (DEVMMAP2_GROUPS=pfn,incore)"
+python3 "$HERE/prototypes/patch_devmmap2.py" "$OUT" | tail -3
+
 echo
 echo "[*] reloc validation:"
 ( cd "$HERE" && python3 prototypes/check_relink_relocs.py | tail -1 )

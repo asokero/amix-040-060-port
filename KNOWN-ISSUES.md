@@ -2008,3 +2008,43 @@ ISSUE-27 ei regressoinut (pgcold E PRESERVED), levytotuus `sum 8320 5763`
 ⚠️ EI testattu: ELF-binäärit joiden `p_offset`/`p_vaddr` on tarkoituksella ristiriidassa
 modulo 4 KiB (vaatisi käsin rakennetun ELF:n; natiivi `cc` ei anna kontrollia
 segmenttikohdistukseen). Ei dynaamisesti linkitettyä `PT_INTERP`-polkua. Ei rautaa.
+
+## ISSUE-33: /dev/mem-mmapin PFN oli 2 KiB — ✅ TODISTETTU JA KORJATTU (2026-07-25, emu-040+060)
+
+**7 sitettä kahdessa ryhmässä + 7 kanariaa (`patch_devmmap2.py`), buildit 260725-17/-18.**
+Kaventaa censuksen "P2: device mmap and PFN boundary" -kohdan niihin kahteen ylitykseen
+jotka ovat oikeasti saavutettavissa. Lähdekontrakti `svr4-src-3b2/.../vm/seg_dev.c`.
+**Ryhmä `pfn` (3 sitettä) — TODISTETTU ELÄVÄ VIKA.** `d_mmap` palauttaa PFN:n, ja
+040-natiivi `hat_devload` (0xb4cec) mäppää sen `pfn << 12`. `mmmmap` (`/dev/mem`,
+0x20688/0x2068e) ja `resmmap` (0xd7186) laskivat yhä `phys >> 11` = **kaksinkertainen
+PFN** → mäppäys osui kaksinkertaiseen fyysiseen osoitteeseen. Sama vika jonka
+`patch_devmmap_pfn.py` jo korjasi kolmelle sisarfunktiolle (`scrmmap`/`ammmap`/`timmap`,
+fractal/julia-mustaruutu); ne assertoidaan nyt kanarioina.
+**TODISTE (`test-tools/devmaptest.c` T1):** mmapataan `/dev/mem` fyysiseen 0x08000000
+(kernelin latausosoite, siis varmasti nollasta poikkeavaa sisältöä).
+`btop_2k(0x08000000) = 0x10000` → `hat_devload` mäppäisi `0x10000<<12` = 0x10000000 =
+256 MB, RAM:n ulkopuolella → **nollia**. Mitattu: korjaamattomalla **0/4096** nollasta
+poikkeavaa tavua, korjatulla **3186/4096**. Deterministinen, ja signaali on
+provenienssiriippumaton.
+**Ryhmä `incore` (4 sitettä).** `segdev_incore` (0xa838a/0xa8390/0xa839e/0xa83a4)
+kirjoitti yhden tavun per **2048** tavua, mutta julkinen `mincore(2)` on jo 4 KiB
+(`patch_mincore.py`), joten kutsuja mitoittaa vektorin `btopr_4k(len)`:iin →
+kaksinkertainen kirjoitus. ⚠️ **Tätä EI saatu toistettua**: `devmaptest` T2 (kanaria
+heti odotetun pituuden jälkeen) PASS sekä ennen että jälkeen. Staattinen argumentti on
+aritmetiikkaa, mutta jokin estää ylivuodon — todennäköisesti `as_incore` rajaa. Landattu
+kontraktikorjauksena, ei todistettuna vikakorjauksena.
+**TARKOITUKSELLA MUUNTAMATTA JA ASSERTOITU ENNALLAAN:** loput segdev-perheestä
+(`segdev_fault`/`dup`/`unmap`/`free`/`setprot`/`checkprot`/`getprot`, `spec_segmap`in
+silmukka-askel 0x6766a). Se on **sisäisesti johdonmukainen** — vpage-taulukko mitoitetaan
+ja indeksoidaan samalla `seg_page()`-shiftillä läpi perheen — ja sen kaksi ulkoista
+ylitystä ovat harmittomia: (a) 2 KiB-askeleinen fault-silmukka kutsuu `hat_devload`ia
+kahdesti per 4 KiB -sivu, mutta koska `d_mmap` palauttaa nyt 4 KiB PFN:n molemmat kutsut
+kantavat SAMAA pfn:ää ja `hat_devload` pyöristää osoitteen sivulle → **idempotentti**
+(tämä selittää miksi jo landattu scrmmap-korjaus toimi muuntamattoman segdevin kanssa);
+(b) `segdev_getprot`in vektoritäyttö ajetaan vain kun `len > 0`, ja sen ainoa kutsuja
+`as_getprot` (0xaecfc, vm_as.c:945) antaa `len = 0` ja osoittimen yhteen `int`:iin.
+`spec_segmap` 0x67694 `moveq #12` on `return ENOMEM`, **neljäs errno-valeosuma** tässä
+kampanjassa.
+**Hyväksyntä:** `devmaptest` PASS, ja koko patteri (`exectest`, `proctest`, `mlocktest`,
+`trunctest`, `bmaptest`) PASS + levytotuus `sum 8320 5763` — **emu-040 ja emu-060**.
+Serialit puhtaat. ⚠️ Ei rautaa; VA2000/Piccolo-kortteja ei testattu tällä.
