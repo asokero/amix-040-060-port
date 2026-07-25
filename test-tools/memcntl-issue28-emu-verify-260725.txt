@@ -1,0 +1,151 @@
+================================================================================
+ISSUE-28: memcntl(2) / mem_unlock Model-B page geometry
+Emulator verification, 2026-07-25
+================================================================================
+
+WHAT WAS BUILT
+
+  prototypes/patch_memcntl.py   NEW  17 sites + 5 canaries
+  relink-040.sh                 MOD  wiring after patch_procio.py
+  test-tools/mlocktest.c        NEW  acceptance test (memcntl + plock)
+
+  Builds:  68040-260725-05 (base) / 68040-260725-06 (dbg)
+  Previous (negative control): 68040-260725-04 (ISSUE-15 + ISSUE-17/18, no ISSUE-28)
+
+  Static gates: patch 17/17 [ok], 0 aborts; idempotent on a copy (17 [skip]);
+                check_relink_relocs.py TOTAL complaints: 0; .data 4-aligned.
+
+================================================================================
+WHY THIS IS A REAL DEFECT (and it is the SAME shape as ISSUE-27)
+================================================================================
+
+The mlock bitmap has a producer and a consumer, and only the producer was converted:
+
+  as_ctl        0xaeafe   ALREADY 4 KiB   (patch_modelb.py:333-337)
+  segvn_lockop  0xad2f0   ALREADY 4 KiB   (patch_modelb.py:302-307)
+      ^ these FILL and index the bitmap in 4 KiB page units
+
+  memcntl       0x4319a   was 2 KiB       <- SIZES the bitmap
+  mem_unlock    0x434b6   was 2 KiB       <- WALKS the bitmap
+
+Consequences on the pre-fix build:
+
+  (a) `if (((int)addr & PAGEOFFSET) != 0) return EINVAL` used 2047, so a 2048-aligned
+      but NOT 4096-aligned address passed the gate; as_ctl then masked it down to a
+      4 KiB boundary and operated on a DIFFERENT range than the caller requested.
+      *** This is what mlocktest T1 measures, and it is a clean discriminator. ***
+  (b) mlock_size = BT_BITOUL(btoc(rlen)) with >>11 allocated twice the bits needed.
+      Harmless over-allocation by itself, but the same divergence.
+  (c) On the MC_LOCK / MC_LOCKAS FAILURE path, mem_unlock got 2 KiB-based bit indices
+      (inlined btoc(seg->s_size)) for bits that were SET with 4 KiB indices, and its
+      own ctob() halved both the byte offset and the byte length passed to
+      as_ctl(MC_UNLOCK) -- so the rollback unlocked the WRONG address range: pages
+      stay locked forever (pages_pp_locked/availrmem drift) while MC_UNLOCK is issued
+      against ranges that were never locked.
+
+Source contract: svr4-src-3b2/usr/src/uts/3b2/os/lock.c:266-415.
+
+================================================================================
+CLASSIFICATION -- 21 raw pattern matches, 17 real sites, 4 FALSE POSITIVES
+================================================================================
+
+A naive "#2047 / #2048 / #-2048 / moveq #11" scan over 0x42e7c..0x43544 returns 21
+hits.  Four of them are NOT page geometry; each was read in context:
+
+  0x42f58  textlock      moveq #11,%d0  = return EAGAIN (errno 11), then braw to exit
+  0x42fde  datalock      moveq #11,%d0  = return EAGAIN
+  0x43080  ublock        moveq #11,%d0  = return EAGAIN
+  0x43212  memcntl       moveq #12,%d0  = return ENOMEM (errno 12), after
+                                          valid_usr_range() fails
+  (+ 0xad54e segvn_lockop moveq #11 = return EAGAIN, outside this range)
+
+Converting any of those would silently change the errno a lock path returns.  The
+patch script therefore asserts all five as CANARIES on every run.
+
+Also deliberately NOT touched:
+  ublock/ubunlock `subql #4` / `addql #4` on availrmem + pages_pp_locked = USIZE in
+    PAGES.  It MATCHES segu_release @0xaa78e, which charges the same 4 pages.
+    Changing one without the other would break u-area accounting.
+  memcntl 0x4339a `addaw #31` + 0x433a0 `lsrl #5` = BT_BITOUL(), bits -> longs.
+  segvn_lockop 0xad482 / 0xad536 `pea 0x800` = segvn_fault LENGTH args, deliberately
+    withdrawn 2026-07-03 after the seg-family fault-len batch hung the boot
+    (patch_modelb.py:576-582).  Not part of the bitmap contract (segvn_lockop's loop
+    step and bit indices are already 4 KiB) -- they stay withdrawn.
+
+The 17 converted sites: 0x431f4 (PAGEOFFSET gate); 0x4331c/0x43328/0x4332e
+(MC_LOCKAS rlen); 0x43348/0x43352/0x43358 (MC_LOCK normalize); 0x4338e/0x43394
+(btoc(rlen) for mlock_size); 0x43420/0x43428/0x4342e/0x43450/0x43456 (MC_LOCKAS
+failure-path rollback); 0x43472/0x43478 (MC_LOCK failure-path btoc); 0x434ee
+(mem_unlock ctob -- ONE moveq feeds BOTH lsll: byte offset AND byte length).
+
+================================================================================
+RUNTIME RESULTS (test-tools/mlocktest.c, K&R C, native AMIX cc, run as root)
+================================================================================
+
+--- FIXED 68040-260725-06, emu-040 --------------------------------------------
+mlocktest: arena=80003158 base=80004000 (page-aligned)
+T1 PASS: memcntl(base+2048) -> EINVAL (4 KiB PAGEOFFSET gate)
+T2 PASS: MC_LOCK + MC_UNLOCK round trip on 2 pages
+T3 PASS: 20 MC_LOCK/MC_UNLOCK cycles, no accounting drift
+T4 PASS: plock(PROCLOCK) + plock(UNLOCK)
+T5 PASS: 10 plock lock/unlock cycles
+MLOCKTEST-RESULT PASS
+
+--- FIXED 68060-260725-06, emu-060 --------------------------------------------
+identical: T1-T5 PASS, MLOCKTEST-RESULT PASS
+plus ISSUE-17/18 regression on the same kernel: proctest PROCTEST-RESULT PASS
+
+--- NEGATIVE CONTROL 68040-260725-04 (pre-ISSUE-28), emu-040 ------------------
+mlocktest: arena=80003158 base=80004000 (page-aligned)
+T1 FAIL: memcntl(base+2048) -> r=0 errno=0 (expected -1/EINVAL; a
+         2 KiB gate lets this through and locks the wrong range)
+T2 PASS  T3 PASS  T4 PASS  T5 PASS
+MLOCKTEST-RESULT FAIL
+
+So the discriminator behaves exactly as predicted: the pre-fix kernel ACCEPTS a
+half-page-aligned MC_LOCK (returning success while locking a different range); the
+fixed kernel rejects it with EINVAL.
+
+Serial on both fixed runs: no PANIC, no Guru, no Bus Error, no KMEMCORRUPT, and the
+ISSUE-18b KERNVA-WITH-PROC diagnostic still never fires.
+
+================================================================================
+!! HONEST GAPS !!
+================================================================================
+
+1) THE FAILURE PATH (defect (c) above) IS NOT DIRECTLY EXERCISED.  mlocktest proves
+   the alignment gate and the success-path round trip plus accounting stability over
+   30 lock/unlock cycles.  It does NOT force an MC_LOCK/MC_LOCKAS failure, which is
+   what makes mem_unlock walk the bitmap -- doing that deterministically needs
+   lockable memory to be exhausted mid-operation, which I could not arrange safely.
+   The failure-path conversion is therefore argued statically (it now matches the
+   already-4 KiB as_ctl/segvn_lockop indices) and is NOT runtime-proven.
+
+2) T2-T5 pass on BOTH kernels.  Only T1 discriminates.  That is expected -- the
+   success path does not diverge -- but it means the runtime evidence for 16 of the
+   17 sites is "no regression", not "proven correct".
+
+3) NOT DONE: real hardware.  Amiberry emulation only.
+
+4) memcntl(2)/plock(2) are not used by anything in the normal AMIX workload, so this
+   fix removes a latent defect rather than a symptom anyone was seeing.
+
+================================================================================
+BOOT SLOT
+================================================================================
+build/unix-040-dbg restored to the FPSP+Xsvga kernel 68040-260724-09 (verified
+byte-identical to its backup).  Kernels kept:
+  build/unix-040-dbg.ISSUE15-260725-02      ISSUE-15 only
+  build/unix-040-dbg.ISSUE1718-260725-04    + ISSUE-17/18
+  build/unix-040-dbg.ISSUE28-260725-06      + ISSUE-28
+  build/unix-040-dbg.STD-backup             pre-work reference 260724-04
+  build/unix-040-dbg.FPSP-XSVGA-260724-09-backup
+
+NOTE FOR THE ISSUE-27 WORK: build/unix-040 has been rebuilt three times today, so the
+SHA-256 pinned in PAGECREATE-TAILZERO-TASK.md
+(5bd37386d9c5a0f89be451b187fa5dfe9e4f05bcf2f1c37accdc22177a225b38) is stale.
+Current build 68040-260725-05 is
+  709263b200486ed3e426ead57eeaff5606e5327cb562898bcb29c5383bfbc104
+None of today's patches (ISSUE-15 KMA, ISSUE-17/18 procfs, ISSUE-28 memcntl) touch
+any function in the segmap_pagecreate family, so the ISSUE-27 anchor addresses are
+expected to be unchanged -- but re-verify against the new hash before implementing.

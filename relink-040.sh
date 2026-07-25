@@ -341,6 +341,9 @@ python3 "$HERE/prototypes/patch_kmapools.py" "$OUT" | tail -3
 echo "[*] ISSUE-17/18: procfs user-memory I/O geometry (prfastmapout shift + prusrio page loop)"
 python3 "$HERE/prototypes/patch_procio.py" "$OUT" | tail -3
 
+echo "[*] ISSUE-28: memcntl/mem_unlock mlock-bitmap geometry (as_ctl + segvn_lockop are ALREADY 4K)"
+python3 "$HERE/prototypes/patch_memcntl.py" "$OUT" | tail -3
+
 echo
 echo "[*] reloc validation:"
 ( cd "$HERE" && python3 prototypes/check_relink_relocs.py | tail -1 )

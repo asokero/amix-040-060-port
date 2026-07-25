@@ -46,7 +46,14 @@
 > `spec_write`, `fbzero`) pyöristää häntänollauksen 2 KiB:iin vaikka `segmap_pagecreate`
 > on JO 4 KiB → hiljainen kierrätetyn sivun datavuoto juuritiedostojärjestelmään.
 > Codex-brief kirjoitettu → **`PAGECREATE-TAILZERO-TASK.md`** (Codex aloitti työn 25.7.).
-> **ISSUE-28:** `memcntl`/`lock_mem`/`mem_unlock` 8 muuntamatonta sitea (ei bootpolulla).
+> **ISSUE-28: ✅ KORJATTU SAMANA PÄIVÄNÄ** (`patch_memcntl.py`, 17 sitea + 5 kanariaa,
+> buildit 260725-05/-06) — ja se osoittautui **samaksi tuottaja/kuluttaja-epäsymmetriaksi
+> kuin ISSUE-27:** `as_ctl` + `segvn_lockop` täyttävät mlock-bittikartan jo 4 KiB
+> -indekseillä, mutta `memcntl` mitoitti ja `mem_unlock` käveli sitä 2 KiB:llä →
+> virhepolun rollback vapautti väärän alueen. Luokittelussa **4 valeosumaa 21:stä**
+> (`moveq #11/#12` = `return EAGAIN`/`ENOMEM`), jotka patch assertoi kanarioina.
+> Hyväksyntä `test-tools/mlocktest.c` T1–T5 PASS 040+060; erotteleva T1 FAIL
+> korjaamattomalla. ⚠️ virhepolkua ei ajettu suoraan — ks. evidenssitiedosto.
 > **ISSUE-29:** kertaluontoinen KMA 128-tavuluokan vapaalista-hälytys — **attribuutio
 > TODISTAMATTA**, ei toistunut 4 seuraavassa ajossa (2 samalla kernelillä); ks. tiedosto.
 > **SEURAAVAKSI:** (1) Codexin ISSUE-27-speksi → toteutus (paras jäljellä oleva

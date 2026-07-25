@@ -1799,15 +1799,36 @@ Codex on aiemmin auditoinut saman muodon erikseen `rwvp`:lle
 (`MODEL-B-TEXT-RESIDUAL-CENSUS.md:63` "Definite active UFS helper defect") — mutta
 UFS:n oma `rwip` ja `as_iolock`in rooli `pagecreate`-lipun TUOTTAJANA puuttuivat.
 
-## ISSUE-28: memcntl / lock_mem / mem_unlock — muuntamaton 2 KiB sivupyöristys
+## ISSUE-28: memcntl / mem_unlock mlock-bittikartan geometria — ✅ FIXED (2026-07-25, emu-040+060)
 
-**OPEN, ei bootpolulla (löytyi 2026-07-25).** `memcntl` 0x4319a … `mem_unlock` 0x434b6
-pyöristävät sivuja yhä 2 KiB:llä: **0x4331c** (`andiw #-2048`), **0x43328**/**0x4332e**
-(`+2047` / `&-2048`), **0x43348**/**0x43352**/**0x43358**, **0x4338e** (`addaw #2047`),
-**0x43394** (`moveq #11`). Polku = `memcntl(2)` / `plock(2)` -sivulukitus. Ei ajeta
-booteissa eikä nykyisissä testeissä, joten ei kiireellinen — mutta se on aito
-Model-B-jäännös ja kuuluu samaan luokkaan kuin ISSUE-10 (väärä sivumäärä/-osoite
-lukituslaskennassa). Isätön; ei censusta tehty.
+**RATKAISTU `prototypes/patch_memcntl.py` (17 sitea + 5 kanariaa), buildit 260725-05/-06.**
+**Sama tuottaja/kuluttaja-epäsymmetria kuin ISSUE-27:ssä:** `as_ctl` (0xaeafe) ja
+`segvn_lockop` (0xad2f0) on JO muunnettu 4 KiB:iin (patch_modelb.py:333-337 ja
+302-307) — ne TÄYTTÄVÄT ja indeksoivat mlock-bittikartan 4 KiB -sivuina. Mutta
+`memcntl` (0x4319a) MITOITTI sen ja `mem_unlock` (0x434b6) KÄVELI sitä 2 KiB:llä.
+Seuraukset: (a) `(int)addr & PAGEOFFSET` -portti päästi läpi 2048-alignatun mutta
+ei-4096-alignatun osoitteen → `as_ctl` maskasi sen 4 KiB -rajalle ja operoi ERI
+alueella kuin kutsuja pyysi; (b) `mlock_size` tuplasti tarpeellista (harmiton);
+(c) **VIRHEPOLULLA** `mem_unlock` sai 2 KiB -bittiindeksit biteille jotka oli
+asetettu 4 KiB -indekseillä, ja sen `ctob()` puolitti sekä osoitteen että pituuden
+→ rollback vapautti VÄÄRÄN alueen: osa sivuista jäi pysyvästi lukituiksi
+(`pages_pp_locked`/`availrmem` valuu) ja `MC_UNLOCK` osui alueille joita ei ollut
+lukittu. Lähdekontrakti `svr4-src-3b2/.../os/lock.c:266-415`.
+**LUOKITTELU: 21 raakaa osumaa, 17 aitoa sitea, 4 VALEOSUMAA** — `textlock` 0x42f58,
+`datalock` 0x42fde, `ublock` 0x43080 (`moveq #11` = `return EAGAIN`) ja `memcntl`
+0x43212 (`moveq #12` = `return ENOMEM`); lisäksi `segvn_lockop` 0xad54e (EAGAIN).
+Patch-skripti assertoi kaikki viisi **kanarioina** joka ajolla. EI myöskään koskettu:
+`ublock`/`ubunlock` `#4` = USIZE sivuina joka TÄSMÄÄ `segu_release` @0xaa78e:n kanssa;
+`BT_BITOUL` (0x4339a/0x433a0); `segvn_lockop` 0xad482/0xad536 (`segvn_fault`-pituudet,
+vedetty pois 2026-07-03 boot-jumin takia — pysyvät ennallaan).
+**Hyväksyntä `test-tools/mlocktest.c`:** T1–T5 PASS emu-040 **ja** emu-060; erotteleva
+T1 (`memcntl(base+2048)` → EINVAL) **FAIL korjaamattomalla 260725-04:llä** jossa se
+palautti r=0 eli hyväksyi puolisivukohdistetun lukituksen.
+⚠️ **VIRHEPOLKUA (c) EI ajettu suoraan** — sen deterministinen laukaisu vaatisi
+lukittavan muistin loppumisen kesken operaation; konversio on perusteltu staattisesti
+(täsmää nyt jo-4-KiB:n `as_ctl`/`segvn_lockop`-indekseihin). T2–T5 läpäisevät
+MOLEMMILLA kerneleillä eli 16/17 siten runtime-näyttö on "ei regressiota", ei
+"todistettu oikeaksi". Evidenssi `test-tools/memcntl-issue28-emu-verify-260725.txt`.
 
 ## ISSUE-29: kertaluontoinen KMA 128-tavuluokan vapaalista-hälytys (attribuutio TODISTAMATTA)
 
