@@ -1764,29 +1764,39 @@ Deterministinen + halpa emu-repro = hyvä jahtikohde sopivassa välissä; ei blo
 mitään nykyistä (halttia ei käytetä työnkuluissa). Serial-evidenssi:
 durable-tools/shutdown-i0-crash-serial.log (kopio myös scratchpadissa).
 
-## ISSUE-27: segmap_pagecreate-perheen häntänollaus — 🔶 KONVERTOITU 2026-07-25, MUTTA VIKAA EI SAATU TOISTETTUA
+## ISSUE-27: segmap_pagecreate-perheen häntänollaus — ✅✅ TODISTETTU JA KORJATTU (2026-07-25, emu-040+060)
 
-**KOODI MUUNNETTU (`patch_pagecreate.py`, 28 sitettä, buildit 260725-09/-10, emu-040+060),
-MUTTA STATUS EI OLE "verified fixed" — lue tämä ennen kuin siteeraat sitä korjatuksi.**
+**VIKA TOISTETTU DETERMINISTISESTI JA KORJAUS TODISTETTU.**
+| kerneli | mode E | tulos |
+|---|---|---|
+| 260725-06 (ei ISSUE-27) | 24/24 osumaa, offset **14336**, arvo **0xC5 = pool MARKER**, odotettu 0x2e | **DATA-DESTROYED** |
+| 260725-10 (ISSUE-27), 040 ja 060 | 0/24 | **PRESERVED** |
+**JA VIKA ON PAHEMPI KUIN "VUOTO": se YLIKIRJOITTAA voimassa olevaa tiedostodataa**
+kierrätetyn fyysisen sivun sisällöllä. Laukaisin vaatii kolme ehtoa: (1) sivukohdistettu
+kirjoitus, (2) pituus on 2048:n monikerta mutta EI 4096:n, (3) kokonaan jo allokoidun
+tiedoston sisällä jonka sivut ovat KYLMIÄ. Mekanismi: `as_iolock`in
+`if (uio_offset+n < to_filesize) n &= PAGEMASK` on juuri se suoja joka estää OSITTAISEN
+pagecreaten — ja `PAGEMASK` oli 0xF800, joten 6144 ei typisty; `segmap_pagecreate` luo
+KAKSI alustamatonta sivua, `uiomove` täyttää vain 8192..14335, ja häntänollauksen portti
+`roundup(14336,2048) == 14336 == uio_offset` on epätosi → **nollausta ei ajeta lainkaan**.
+Korjattuna 6144 typistyy 4096:een (yksi täysi sivu) ja loput 2048 tulee toisena
+kierroksena jossa `2048 & ~4095 == 0` → pagecreate=0 → tavallinen read-modify-write.
+Toistoprosessi ja kolmen aiemman epäonnistuneen koettimen analyysi:
+`test-tools/pagecreate-issue27-COLD-PROOF-260725.txt`.
+Muunnos: `patch_pagecreate.py`, 28 sitettä, buildit 260725-09/-10.
 Codexin speksi + census (`vm-map/PAGECREATE-TAILZERO-{SPEC,CENSUS}.md`) toteutettiin
 sellaisenaan: ryhmä `live` = `as_iolock` 12 + `rwip` 5 + `rwvp` 5 (atominen), `fbzero` 2,
 `spec_write` 4. Tuottaja (`segmap_pagecreate` 0xa9742/0xa97a0/0xa9892/0xa9898) assertoidaan
 **kanarioina jo-4-KiB:ksi** joka ajolla. EI mukana: S5 `writei` (AMIX-hybridi, ei tarkkaa
 lähdettä, S5 ei mountattuna) eikä `ufs_bmap`in oma aritmetiikka (speksi: erillinen audit).
-**⚠️ VIKAA EI SAATU TOISTETTUA.** Speksin oma hyväksyntätesti toteutettiin
-(`test-tools/pgcreatetest.c`: 100 B@8192, 10 B@11192, luettava alue nollaksi) ja ajettiin
-KORJAAMATTOMALLA kernelillä 260725-06 → **0 osumaa 64 kierroksella**. Kaksi vahvistusta ei
-muuttanut tulosta: (a) laajennettu ikkuna [10240,12288) lisäkirjoituksella tavuun 12287,
-(b) osuvampi sivujen likaus (markkeri­sivuja scratch-tiedoston kautta, ei anon-muistia).
-Mekanismi varmistettiin binääristä olevan olemassa: **`page_get` (0xaffa4) ja `page_free`
-(0xaf9ea) EIVÄT nollaa sivuja** (nollaus vain getapage-providereissa ja `anon_zero`ssa).
-**SEURAUS:** korjatun kernelin "CLEAN" ei todista mitään — molemmat kernelit käyttäytyvät
-tällä koettimella identtisesti. Väite "elävä hiljainen datavuoto" **ei ole runtime-todistettu
-tässä kokoonpanossa**; se nojaa vain staattiseen lukemiseen. Kunnes joku toistaa sen,
-ISSUE-27 on **rakenteellisesti todistettu korrektiusvika jonka elävä saavutettavuus on
-tuntematon**, EI havaittu vuoto. Todennäköisin peittävä mekanismi (ja avoin kysymys
-Codexille): toinen, ei-sivukohdistettu kirjoitus menee `ufs_bmap(alloc_only=0)`:aan joka
-voi tehdä `fbread`-luvun levyltä ja täyttää sivun uudelleen.
+**Aiemmat epäonnistuneet koettimet (säilytetty, koska ne opettavat):** speksin oma
+`pgcreatetest.c` luki hännän SAMASSA prosessissa heti kirjoituksen jälkeen → näki vain
+residentin sivun; `pgcold` A/B jahtasi häntää EOF:n takaa → UFS-reikä jonka
+`ufs_getapage` nollaa eksplisiittisesti; `pgcold` C oli oikea muoto mutta LÄMMIN cache →
+`segmap_pagecreate`in `page_lookup` osui. Vasta D/E (oikea muoto + kylmä cache) toisti.
+Ratkaiseva suunnittelumuutos: vikasignaali on "ALKUPERÄINEN kuvio hävisi", ei "häntä on
+nollasta poikkeava" — se on provenienssiriippumaton, koska nollatkaan eivät ole
+alkuperäistä dataa.
 **Mitä ON verifioitu:** ei regressiota. `proctest` PASS, `mlocktest` PASS, ja
 **levytotuus** `/big.dat` 2950288 t `sum = 8320 5763` identtinen `sync`+pehmeä `reboot`+
 `fsck`:n yli — sekä emu-040 että emu-060, molemmat sekä pelkällä `live`-ryhmällä että

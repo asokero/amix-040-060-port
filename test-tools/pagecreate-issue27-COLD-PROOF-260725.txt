@@ -1,0 +1,133 @@
+================================================================================
+ISSUE-27 PROVEN: deterministic, data-DESTROYING, and the fix eliminates it
+Cold-cache reproducer, 2026-07-25
+================================================================================
+
+RESULT IN ONE TABLE
+
+  kernel                       mode E result
+  ---------------------------  ----------------------------------------------
+  68040-260725-06  (pre-fix)   hits 24/24  offset 14336  value 0xC5 = MARKER
+                               expected 0x2e (original data)  -> DATA-DESTROYED
+  68040-260725-10  (fixed)     hits  0/24                     -> PRESERVED
+  68060-260725-10  (fixed)     hits  0/24                     -> PRESERVED
+
+Deterministic (24 of 24, not a rare race), discriminating (opposite outcomes on the
+two kernels), and provenance-proven (the observed byte is the marker this test wrote
+into a scratch file, so it can only have come from a recycled page).
+
+================================================================================
+THE DEFECT IS WORSE THAN "A LEAK"
+================================================================================
+
+Earlier wording -- mine and the spec's -- described ISSUE-27 as stale data leaking into
+a file. What actually happens is that VALID EXISTING FILE DATA IS OVERWRITTEN with the
+contents of a recycled physical page.
+
+Trigger, all three conditions required:
+
+  1. a page-aligned write
+  2. whose length is a multiple of 2048 but NOT of 4096
+  3. entirely inside an already-allocated region of a file whose pages are COLD
+
+Mechanism, pre-fix:
+
+  as_iolock:  if (uio_offset + n < to_filesize) { if ((n &= PAGEMASK) == 0) return; }
+              PAGEMASK was 0xF800, so 6144 & ~2047 = 6144 -> NOT trimmed
+  rwip:       segmap_pagecreate(base+on, 6144) creates TWO uninitialised 4 KiB pages,
+              [8192,12288) and [12288,16384)
+              uiomove fills 8192..14335 only
+              tail-zero gate: roundup(8192+6144, 2048) = 14336 == uio_offset
+              -> the zero-fill does not run AT ALL
+  result:     [14336,16384) keeps the recycled frame's contents and is now file content
+
+Post-fix:
+
+  PAGEMASK 0xF000: 6144 & ~4095 = 4096 -> trimmed to exactly one full page, which
+  uiomove fills completely.  The leftover 2048 bytes return as a second rwip iteration
+  where 2048 & ~4095 == 0, so as_iolock returns early with pagecreate = 0 and the write
+  is an ordinary read-modify-write.  [14336,16384) is never re-created and is preserved.
+
+Note that the 2 KiB PAGEMASK is not merely "a smaller rounding": it is the guard that
+was supposed to prevent a PARTIAL pagecreate in the first place. That is why the
+consequence is destruction rather than exposure.
+
+================================================================================
+WHY THE TWO EARLIER PROBES SAW NOTHING (both were wrong, in different ways)
+================================================================================
+
+pgcreatetest.c (the spec's own acceptance test) -- 0 hits in 64 iterations:
+  It reads the tail back in the SAME process immediately after writing it.  Codex's
+  reachability analysis (vm-map/PAGECREATE-REACHABILITY-AND-UFSBMAP.md) showed fbread
+  enters through as_fault(..., F_SOFTLOCK, ...) and reuses a still-resident page, so
+  the read can only ever see the page the write just modified.  It measured page-cache
+  lifetime, not the tail.
+
+pgcold.c modes A/B (cold cache, but past EOF) -- 0 hits in 32 files:
+  Chasing a tail PAST EOF cannot work on this filesystem.  With i_size 8292 the bytes
+  beyond the last allocated 1024-byte fragment are a HOLE, and ufs_getapage zero-fills
+  holes explicitly (it is one of the few pagezero callers).  Confirmed empirically:
+  after the reboot the cold read at 8292 returned 0 bytes, i.e. i_size was still 8292,
+  so ufs_putpage had not extended the file.
+
+pgcold.c mode C (in-file partial page, but WARM) -- 0 hits in 16 files:
+  Right shape, wrong cache state.  segmap_pagecreate does a page_lookup first; the file
+  had just been written so its pages were still resident and were reused WITH their
+  contents.  sync() flushes, it does not evict.
+
+pgcold.c modes D/E (in-file partial page, COLD) -- 24/24 hits:
+  Both conditions together.  D creates the files and syncs, a REBOOT drops the page
+  cache, E poisons the free list and does the partial-page write.  page_lookup misses,
+  page_get returns a poisoned frame, and the pre-fix kernel never zeroes it.
+
+The decisive design change is that mode E's failure signal is "the ORIGINAL pattern is
+gone", not "the tail is non-zero".  That is provenance-independent: a zeroed page would
+also be a failure, because zeros are not the original data either.  It removes the page
+provenance problem that made every earlier probe inconclusive.
+
+================================================================================
+PROCEDURE (reproducible)
+================================================================================
+
+  boot the kernel under test
+  cc -o pgcold pgcold.c
+  mkdir /pgc                       (NOT /tmp -- AMIX clears /tmp on boot)
+  ./pgcold D 24 /pgc               24 files of 32768 B, pattern P1, sync
+  sync; sync; reboot               soft reboot; do NOT use emu-reset-boot.sh, it
+                                   restores the golden image and destroys the files
+  cc -o pgcold pgcold.c            /tmp was cleared, rebuild
+  ./pgcold E 24 /pgc               poison pool, write 6144 B at 8192, verify
+
+  PASS = PGCOLD-E-RESULT PRESERVED
+  FAIL = PGCOLD-E-RESULT DATA-DESTROYED, with the offending offset and byte value
+
+================================================================================
+STATUS CHANGE
+================================================================================
+
+ISSUE-27 was recorded earlier today as "a proven-by-construction correctness defect of
+unknown live reachability". That is now obsolete. It is a live, deterministic,
+data-destroying bug on the UFS root filesystem, and the 28-site conversion
+(prototypes/patch_pagecreate.py) is a verified fix for it on both 68040 and 68060.
+
+Still true and unchanged:
+  * No real hardware.  Amiberry emulation only.
+  * NFS (rwvp) and spec_write were converted but not exercised.
+  * S5 writei and ufs_bmap remain deliberately unconverted; ufs_bmap is an 11-site
+    unit (plus 3 NDADDR-1 canaries) per PAGECREATE-REACHABILITY-AND-UFSBMAP.md.
+  * The regression evidence (proctest, mlocktest, disk truth across reboot+fsck on
+    both CPUs) is in pagecreate-issue27-emu-verify-260725.txt and still stands.
+
+================================================================================
+SIDE OBSERVATION: ISSUE-29 recurred
+================================================================================
+
+The pre-fix run (serial-040-G.log, 68040-260725-06) produced one more KMEMCORRUPT:
+
+  DBG KMEMCORRUPT bin=80E3E8C blk=40247900 next=8 prev=6 caller=8042334 size=8C
+
+Same shape as the two seen on 260725-02: caller kmem_zalloc+0x18, size 0x8C, links
+8/6.  bin 0x80E3E8C is Km_FreeLists + 0x22C = index 27, i.e. a DIFFERENT size class
+from the earlier index-4 (128-byte) sightings.  Occurrences so far are all on kernels
+containing ISSUE-15, but the ISSUE-15-only kernel also ran clean twice, so attribution
+remains UNPROVEN.  Recorded, not concluded.

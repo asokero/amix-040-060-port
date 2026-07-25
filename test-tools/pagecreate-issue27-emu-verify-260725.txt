@@ -3,7 +3,10 @@ ISSUE-27: segmap_pagecreate consumer tail-zero + as_iolock geometry
 Emulator verification, 2026-07-25
 ================================================================================
 
-READ THE "DEFECT NOT REPRODUCED" SECTION BEFORE QUOTING THIS AS A PROVEN FIX.
+*** SUPERSEDED IN PART: THE DEFECT WAS SUBSEQUENTLY REPRODUCED. ***
+The "not reproduced" sections below are kept as the record of two probe designs that
+could NOT see it, and why.  The proof is in
+test-tools/pagecreate-issue27-COLD-PROOF-260725.txt.
 
 WHAT WAS BUILT
 

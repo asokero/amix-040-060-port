@@ -56,7 +56,7 @@
 > korjaamattomalla. ⚠️ virhepolkua ei ajettu suoraan — ks. evidenssitiedosto.
 > **ISSUE-29:** kertaluontoinen KMA 128-tavuluokan vapaalista-hälytys — **attribuutio
 > TODISTAMATTA**, ei toistunut 4 seuraavassa ajossa (2 samalla kernelillä); ks. tiedosto.
-> **🔶 ISSUE-27 KONVERTOITU SAMANA PÄIVÄNÄ — MUTTA VIKAA EI SAATU TOISTETTUA.**
+> **✅✅ ISSUE-27 TODISTETTU JA KORJATTU SAMANA PÄIVÄNÄ.**
 > Codexin speksi valmistui 25.7. (`vm-map/PAGECREATE-TAILZERO-{SPEC,CENSUS}.md`) ja
 > toteutettiin sellaisenaan: `patch_pagecreate.py`, **28 sitettä** kolmessa ryhmässä
 > (`live` = `as_iolock` 12 + `rwip` 5 + `rwvp` 5 atomisena, `fbzero` 2, `spec_write` 4),
@@ -64,11 +64,16 @@
 > **260725-09/-10** (kaikki). **MUTTA:** speksin oma hyväksyntätesti
 > (`test-tools/pgcreatetest.c`) ajettiin KORJAAMATTOMALLA kernelillä → **0 osumaa
 > 64 kierroksella**, myös laajennetulla ikkunalla ja osuvammalla sivujen likauksella.
-> Mekanismi on olemassa (`page_get`/`page_free` eivät nollaa sivuja — varmistettu
-> binääristä), mutta koetin on inertti tässä kokoonpanossa → **korjatun kernelin
-> "CLEAN" ei todista mitään.** ISSUE-27 on siis *rakenteellisesti todistettu
-> korrektiusvika jonka elävä saavutettavuus on tuntematon*, EI havaittu vuoto — korjasin
-> tämän myös aamun omaan yliarviooni. Verifioitu on **ei-regressio**: `proctest` +
+> **Codexin jatkoanalyysi selitti miksi, ja kolmas koetinsukupolvi toisti vian
+> deterministisesti: 24/24, offset 14336, arvo 0xC5 = testin oma pool-markkeri.
+> Korjatulla 0/24 sekä 040:llä että 060:llä.** Ja vika on PAHEMPI kuin "vuoto": se
+> **ylikirjoittaa voimassa olevaa tiedostodataa**. Laukaisin: sivukohdistettu kirjoitus,
+> jonka pituus on 2048:n monikerta mutta ei 4096:n, kokonaan jo allokoidun tiedoston
+> sisällä jonka sivut ovat kylmiä. `as_iolock`in `n &= PAGEMASK` on juuri se suoja joka
+> estää OSITTAISEN pagecreaten, ja 2 KiB-maskilla se ei laukea → häntänollaus ei aja
+> lainkaan. Aiemmat kolme koetinta epäonnistuivat kukin eri syystä (residentti sivu /
+> UFS-reikä jonka getapage nollaa / lämmin cache) — ks.
+> `test-tools/pagecreate-issue27-COLD-PROOF-260725.txt`. Verifioitu on **ei-regressio**: `proctest` +
 > `mlocktest` PASS ja **levytotuus** `sum = 8320 5763` `sync`+`reboot`+`fsck`:n yli,
 > emu-040 JA emu-060, sekä pelkällä `live`-ryhmällä että kaikilla kolmella.
 > **Avoin riski + seuraava Codex-brief:** `rwip` välittää `pagecreate`in eteenpäin
