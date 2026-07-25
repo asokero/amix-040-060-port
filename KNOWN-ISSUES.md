@@ -1764,7 +1764,43 @@ Deterministinen + halpa emu-repro = hyvä jahtikohde sopivassa välissä; ei blo
 mitään nykyistä (halttia ei käytetä työnkuluissa). Serial-evidenssi:
 durable-tools/shutdown-i0-crash-serial.log (kopio myös scratchpadissa).
 
-## ISSUE-27: as_iolock + segmap_pagecreate-perheen häntänollaus on 2 KiB — ELÄVÄ hiljainen datavuoto
+## ISSUE-27: segmap_pagecreate-perheen häntänollaus — 🔶 KONVERTOITU 2026-07-25, MUTTA VIKAA EI SAATU TOISTETTUA
+
+**KOODI MUUNNETTU (`patch_pagecreate.py`, 28 sitettä, buildit 260725-09/-10, emu-040+060),
+MUTTA STATUS EI OLE "verified fixed" — lue tämä ennen kuin siteeraat sitä korjatuksi.**
+Codexin speksi + census (`vm-map/PAGECREATE-TAILZERO-{SPEC,CENSUS}.md`) toteutettiin
+sellaisenaan: ryhmä `live` = `as_iolock` 12 + `rwip` 5 + `rwvp` 5 (atominen), `fbzero` 2,
+`spec_write` 4. Tuottaja (`segmap_pagecreate` 0xa9742/0xa97a0/0xa9892/0xa9898) assertoidaan
+**kanarioina jo-4-KiB:ksi** joka ajolla. EI mukana: S5 `writei` (AMIX-hybridi, ei tarkkaa
+lähdettä, S5 ei mountattuna) eikä `ufs_bmap`in oma aritmetiikka (speksi: erillinen audit).
+**⚠️ VIKAA EI SAATU TOISTETTUA.** Speksin oma hyväksyntätesti toteutettiin
+(`test-tools/pgcreatetest.c`: 100 B@8192, 10 B@11192, luettava alue nollaksi) ja ajettiin
+KORJAAMATTOMALLA kernelillä 260725-06 → **0 osumaa 64 kierroksella**. Kaksi vahvistusta ei
+muuttanut tulosta: (a) laajennettu ikkuna [10240,12288) lisäkirjoituksella tavuun 12287,
+(b) osuvampi sivujen likaus (markkeri­sivuja scratch-tiedoston kautta, ei anon-muistia).
+Mekanismi varmistettiin binääristä olevan olemassa: **`page_get` (0xaffa4) ja `page_free`
+(0xaf9ea) EIVÄT nollaa sivuja** (nollaus vain getapage-providereissa ja `anon_zero`ssa).
+**SEURAUS:** korjatun kernelin "CLEAN" ei todista mitään — molemmat kernelit käyttäytyvät
+tällä koettimella identtisesti. Väite "elävä hiljainen datavuoto" **ei ole runtime-todistettu
+tässä kokoonpanossa**; se nojaa vain staattiseen lukemiseen. Kunnes joku toistaa sen,
+ISSUE-27 on **rakenteellisesti todistettu korrektiusvika jonka elävä saavutettavuus on
+tuntematon**, EI havaittu vuoto. Todennäköisin peittävä mekanismi (ja avoin kysymys
+Codexille): toinen, ei-sivukohdistettu kirjoitus menee `ufs_bmap(alloc_only=0)`:aan joka
+voi tehdä `fbread`-luvun levyltä ja täyttää sivun uudelleen.
+**Mitä ON verifioitu:** ei regressiota. `proctest` PASS, `mlocktest` PASS, ja
+**levytotuus** `/big.dat` 2950288 t `sum = 8320 5763` identtinen `sync`+pehmeä `reboot`+
+`fsck`:n yli — sekä emu-040 että emu-060, molemmat sekä pelkällä `live`-ryhmällä että
+kaikilla kolmella. Serialit puhtaat.
+**RISKI joka jää auki:** `rwip` välittää `pagecreate`in eteenpäin `ufs_bmap`ille
+`alloc_only`-argumenttina, joten muutos koskee UFS:n **allokointia ja read-before-writea**,
+ei vain nollausta — ja `ufs_bmap` (0x79d48) on itse yhä 2 KiB kahdeksassa kohdassa
+(0x79d74, 0x79d7e, 0x79d96, 0x79da4, 0x79daa, 0x79ec0, 0x79ee2, 0x7a030). Speksi rajaa ne
+tietoisesti ulos. Se on uusi tuottaja/kuluttaja-raja = sama vikaluokka joka puri kahdesti
+samana päivänä → **`ufs_bmap`-audit on seuraava Codex-toimeksianto.**
+Evidenssi: `test-tools/pagecreate-issue27-emu-verify-260725.txt`.
+
+<details><summary>Alkuperäinen kirjaus (2026-07-25 aamu) — säilytetty, koska sen
+vakavuusarvio ("ELÄVÄ hiljainen datavuoto") ei ole runtime-todistettu</summary>
 
 **OPEN, KORKEA PRIORITEETTI (löytyi 2026-07-25 ISSUE-15/16/17/18 -diffauksen sivussa;
 Codex-toimeksianto kirjoitettu → `PAGECREATE-TAILZERO-TASK.md`).**
@@ -1798,6 +1834,7 @@ Codex on aiemmin auditoinut saman muodon erikseen `rwvp`:lle
 (`NFS-FOREGROUND-WRITE-RWVP-AUDIT.md`) ja `fbzero`lle
 (`MODEL-B-TEXT-RESIDUAL-CENSUS.md:63` "Definite active UFS helper defect") — mutta
 UFS:n oma `rwip` ja `as_iolock`in rooli `pagecreate`-lipun TUOTTAJANA puuttuivat.
+</details>
 
 ## ISSUE-28: memcntl / mem_unlock mlock-bittikartan geometria — ✅ FIXED (2026-07-25, emu-040+060)
 

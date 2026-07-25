@@ -56,6 +56,24 @@
 > korjaamattomalla. ⚠️ virhepolkua ei ajettu suoraan — ks. evidenssitiedosto.
 > **ISSUE-29:** kertaluontoinen KMA 128-tavuluokan vapaalista-hälytys — **attribuutio
 > TODISTAMATTA**, ei toistunut 4 seuraavassa ajossa (2 samalla kernelillä); ks. tiedosto.
+> **🔶 ISSUE-27 KONVERTOITU SAMANA PÄIVÄNÄ — MUTTA VIKAA EI SAATU TOISTETTUA.**
+> Codexin speksi valmistui 25.7. (`vm-map/PAGECREATE-TAILZERO-{SPEC,CENSUS}.md`) ja
+> toteutettiin sellaisenaan: `patch_pagecreate.py`, **28 sitettä** kolmessa ryhmässä
+> (`live` = `as_iolock` 12 + `rwip` 5 + `rwvp` 5 atomisena, `fbzero` 2, `spec_write` 4),
+> tuottaja assertoidaan kanarioina jo-4-KiB:ksi. Buildit **260725-07/-08** (live) ja
+> **260725-09/-10** (kaikki). **MUTTA:** speksin oma hyväksyntätesti
+> (`test-tools/pgcreatetest.c`) ajettiin KORJAAMATTOMALLA kernelillä → **0 osumaa
+> 64 kierroksella**, myös laajennetulla ikkunalla ja osuvammalla sivujen likauksella.
+> Mekanismi on olemassa (`page_get`/`page_free` eivät nollaa sivuja — varmistettu
+> binääristä), mutta koetin on inertti tässä kokoonpanossa → **korjatun kernelin
+> "CLEAN" ei todista mitään.** ISSUE-27 on siis *rakenteellisesti todistettu
+> korrektiusvika jonka elävä saavutettavuus on tuntematon*, EI havaittu vuoto — korjasin
+> tämän myös aamun omaan yliarviooni. Verifioitu on **ei-regressio**: `proctest` +
+> `mlocktest` PASS ja **levytotuus** `sum = 8320 5763` `sync`+`reboot`+`fsck`:n yli,
+> emu-040 JA emu-060, sekä pelkällä `live`-ryhmällä että kaikilla kolmella.
+> **Avoin riski + seuraava Codex-brief:** `rwip` välittää `pagecreate`in eteenpäin
+> `ufs_bmap`ille `alloc_only`-argumenttina → muutos koskee UFS:n allokointia, ei vain
+> nollausta, ja `ufs_bmap` (0x79d48) on itse yhä 2 KiB kahdeksassa kohdassa.
 > **SEURAAVAKSI:** (1) Codexin ISSUE-27-speksi → toteutus (paras jäljellä oleva
 > vakaus/vaiva-suhde, ja aidosti testattavissa). (2) Rautasessio: FPSP/Xsvga-hyväksyntä +
 > VA2000 fyysisellä kortilla + **`proctest` ja ISSUE-15 raudalla**. (3) 060 FPU Tier-1.

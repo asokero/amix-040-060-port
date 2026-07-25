@@ -344,6 +344,15 @@ python3 "$HERE/prototypes/patch_procio.py" "$OUT" | tail -3
 echo "[*] ISSUE-28: memcntl/mem_unlock mlock-bitmap geometry (as_ctl + segvn_lockop are ALREADY 4K)"
 python3 "$HERE/prototypes/patch_memcntl.py" "$OUT" | tail -3
 
+# ISSUE-27 (PAGECREATE-TAILZERO-SPEC.md).  segmap_pagecreate is ALREADY a 4 KiB producer;
+# its consumers still rounded their zero-fill to 2 KiB, leaving
+# [roundup(end,2048), roundup(end,4096)) of a freshly created page holding the recycled
+# physical page's contents -- a live silent data leak on the UFS root write path.
+# Groups: PAGECREATE_GROUPS=live,fbzero,spec (default all).  'live' (as_iolock+rwip+rwvp)
+# is ATOMIC.  S5 writei and ufs_bmap's own arithmetic are deliberately NOT in this patch.
+echo "[*] ISSUE-27: segmap_pagecreate consumer tail-zero + as_iolock geometry (PAGECREATE_GROUPS=live,fbzero,spec)"
+python3 "$HERE/prototypes/patch_pagecreate.py" "$OUT" | tail -3
+
 echo
 echo "[*] reloc validation:"
 ( cd "$HERE" && python3 prototypes/check_relink_relocs.py | tail -1 )

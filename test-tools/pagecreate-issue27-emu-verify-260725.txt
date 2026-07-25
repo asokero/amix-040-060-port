@@ -1,0 +1,181 @@
+================================================================================
+ISSUE-27: segmap_pagecreate consumer tail-zero + as_iolock geometry
+Emulator verification, 2026-07-25
+================================================================================
+
+READ THE "DEFECT NOT REPRODUCED" SECTION BEFORE QUOTING THIS AS A PROVEN FIX.
+
+WHAT WAS BUILT
+
+  prototypes/patch_pagecreate.py   NEW  28 sites in 3 groups + 4 producer canaries
+  relink-040.sh                    MOD  wiring after patch_memcntl.py
+  test-tools/pgcreatetest.c        NEW  defect probe (spec's acceptance test)
+
+  Spec:   amix-kernel-analysis/vm-map/PAGECREATE-TAILZERO-SPEC.md
+  Census: amix-kernel-analysis/vm-map/PAGECREATE-TAILZERO-CENSUS.md
+
+  Builds:
+    live group only   68040-260725-07 (base) / -08 (dbg)
+    all three groups  68040-260725-09 (base) / -10 (dbg)
+  Baseline (pre-ISSUE-27): 68040-260725-06
+
+  NOTE ON THE PIN: the census pinned SHA-256 5bd37386...b35 (an image from before
+  ISSUE-15/17/18/28 landed).  All 32 addresses in the spec were RE-VERIFIED
+  byte-identical against the current image 68040-260725-05
+  (709263b200486ed3e426ead57eeaff5606e5327cb562898bcb29c5383bfbc104) before any
+  patching.  Codex flagged the stale pin; it was correct to flag and it does not
+  invalidate the addresses.
+
+  Static gates: 22 sites (live) then 6 more (fbzero+spec) = 28/28 [ok]; idempotent;
+  producer canaries 0xa9742/0xa97a0/0xa9892/0xa9898 asserted ALREADY 4 KiB on every
+  run (the patch refuses to convert consumers against a 2 KiB producer);
+  check_relink_relocs.py TOTAL complaints: 0; .data 4-aligned.
+
+  Groups (PAGECREATE_GROUPS, default all), per the spec's atomic units:
+    live   as_iolock(12) + rwip(5) + rwvp(5)   -- ATOMIC, landed and tested alone first
+    fbzero fbzero(2)                            -- the only softlock=1 caller
+    spec   spec_write(4)
+  NOT included: S5 writei (AMIX hybrid, no exact source, S5 not mounted) and
+  ufs_bmap's own arithmetic (spec: separate provider/allocation audit).
+
+================================================================================
+!! THE DEFECT WAS NOT REPRODUCED -- THIS IS THE HEADLINE, NOT A FOOTNOTE !!
+================================================================================
+
+The spec's own acceptance test was implemented faithfully (test-tools/pgcreatetest.c)
+and run on the PRE-FIX kernel.  It found NOTHING.
+
+  probe (spec section "Acceptance test"):
+    file with a fully written first 8 KiB UFS block
+    write 100 B at 8192   -> start of a new UFS block, page-aligned -> pagecreate=1
+    write  10 B at 11192  -> 8192+3000, not page-aligned -> no pagecreate
+    read back and require the never-written bytes to be zero
+    pre-fix zero-fill stops at roundup(8292,2048) = 10240, so [10240,...) should be
+    the recycled physical page's old contents
+
+  results, pre-fix kernel 68040-260725-06:
+    64 iterations, page pool churned before each batch:   0 hits
+    (an earlier 32-iteration run with a different churn method: 0 hits)
+
+Two independent strengthenings were applied and neither changed the outcome:
+
+  1. A wider observation window.  The spec's window [8292,11192) is only 952 bytes.
+     Adding a third write of 1 byte at 12287 -- still inside the SAME 4 KiB page and
+     not page-aligned, so it takes no pagecreate and no zero-fill -- makes the whole
+     rest of the page file contents and widens the window to [10240,12288).
+  2. Better-targeted page poisoning.  The first version dirtied anonymous memory in a
+     forked child; that is both very slow under emulation and the wrong population.
+     It was replaced by churning MARKER (0xC5) pages through a scratch file that is
+     then unlinked -- file cache pages, which is exactly what the probe's page_get
+     recycles.
+
+It was separately confirmed from the binary that the mechanism is not defeated by
+zeroing somewhere else: page_get (0xaffa4) and page_free (0xaf9ea) contain NO
+pagezero/bzero/kzero call.  The only pagezero callers are the getapage providers
+(spec/s5/ufs, for holes) and anon_zero.  So a page recycled into segmap_pagecreate
+genuinely carries its previous contents.
+
+WHAT THIS MEANS, STATED PLAINLY:
+
+  * Per the spec itself ("A pre-fix hit is expected but not guaranteed; a no-hit
+    pre-fix run is inconclusive"), this does NOT disprove the defect.
+  * But it does mean the post-fix "CLEAN" result is NOT evidence that anything was
+    fixed -- both kernels behave identically on this probe.
+  * The claim "live silent data leak on the root filesystem" is therefore NOT
+    supported by runtime evidence on this configuration.  It is supported only by
+    static reading (mine and Codex's).  Until someone reproduces it, ISSUE-27 should
+    be described as a proven-by-construction correctness defect of unknown live
+    reachability -- not as an observed leak.
+  * The most likely masking mechanism, and the open question for Codex, is the
+    second write: with pagecreate=0 it goes to ufs_bmap with alloc_only=0, which can
+    do a read-before-write (fbread) of the block and refill the page from disk.
+    Codex already anticipated masking of this general kind ("it can be masked by UFS
+    fragment growth and fbread") and gave the 8192/11192 probe as the stronger
+    alternative -- and that stronger probe does not fire either.
+
+FOLLOW-UP QUESTION FOR CODEX (concrete, not a guess):
+  Why does the specified probe not fire on this image?  Specifically: for the second
+  (non-page-aligned) write into a page created by an earlier pagecreate, does
+  ufs_bmap(alloc_only=0) issue an fbread that refills the page from disk and thereby
+  overwrite the un-zeroed tail?  If so, what probe WOULD expose the tail -- e.g. is
+  the exposure only reachable via mmap, via a reader that faults the page before the
+  second write, or via putpage writing the full page to disk?
+
+================================================================================
+WHAT WAS ACTUALLY VERIFIED (regression, not demonstration)
+================================================================================
+
+--- 68040-260725-08 (live group only), emu-040 --------------------------------
+  proctest      PROCTEST-RESULT PASS      (ISSUE-17/18 unaffected)
+  mlocktest     MLOCKTEST-RESULT PASS     (ISSUE-28 unaffected)
+  pgcreatetest  0 hits / 64 iters         (same as pre-fix; probe inert)
+  DISK TRUTH    /big.dat 2950288 bytes, sum = 8320 5763
+                identical after sync + soft reboot + fsck -F ufs -m
+  serial        no PANIC, no Guru, no Bus Error, no KMEMCORRUPT
+
+--- 68040-260725-10 (live + fbzero + spec), emu-040 ---------------------------
+  proctest      PASS
+  mlocktest     PASS
+  pgcreatetest  0 hits / 64 iters
+  DISK TRUTH    sum = 8320 5763, size 2950288, identical across reboot + fsck
+  serial        clean
+
+--- 68060-260725-10 (live + fbzero + spec), emu-060 ---------------------------
+  proctest      PROCTEST-RESULT PASS
+  mlocktest     MLOCKTEST-RESULT PASS
+  pgcreatetest  0 hits / 64 iters
+  DISK TRUTH    /big.dat 2950288 bytes, sum = 8320 5763, identical across
+                sync + soft reboot + fsck -F ufs -m
+  serial        no PANIC, no Guru, no Bus Error, no KMEMCORRUPT
+
+The disk-truth gate matters most here: it is the check for RISK #1 below, because it
+exercises heavy allocation plus writeback through the converted path and then reads
+the bytes back from the platter after fsck.
+
+================================================================================
+RISK #1 -- ufs_bmap, deliberately left unconverted
+================================================================================
+
+rwip does not merely zero a tail: it passes `pagecreate` onward as ufs_bmap's
+`alloc_only` argument, so this conversion changes UFS ALLOCATION and
+read-before-write behaviour, not only zeroing.  And ufs_bmap (0x79d48) is itself
+still 2 KiB in eight places:
+
+  0x79d74  cmpil #2048      0x79d7e  movel #2048      0x79d96  cmpil #2047
+  0x79da4  addil #2047      0x79daa  moveq #11        0x79ec0  moveq #11
+  0x79ee2  moveq #11        0x7a030  moveq #11
+
+The spec is explicit that these are a separate provider/allocation audit and must NOT
+be converted by matching constants mechanically, while still requiring the pagecreate
+decision itself to move to the 4 KiB contract.  That is a defensible call, but it
+creates a new producer/consumer boundary -- the exact defect class that bit twice in
+one day (ISSUE-27 itself and ISSUE-28).  The disk-truth + fsck gate is the mitigation,
+and the ufs_bmap audit is the natural next Codex brief.
+
+================================================================================
+OTHER GAPS
+================================================================================
+
+  * No real hardware.  Amiberry emulation only.
+  * NFS (rwvp) was converted but NOT exercised: no NFS mount was available.
+  * spec_write was converted but NOT exercised: no scratch block-device test was run.
+  * fbzero was converted; it is reached by ordinary UFS activity, so the boot + battery
+    + disk truth cover it indirectly, but there is no targeted fbzero test.
+  * S5 writei remains unconverted by design; S5 is not mounted anywhere.
+  * The 256-iteration count the spec asks for was reduced to 64 per run because each
+    iteration costs a compile-free but emulated 8 KiB write plus page-pool churn; with
+    a probe that produces 0 hits on BOTH kernels, more iterations of an inert probe
+    would not have added information.
+
+================================================================================
+BOOT SLOT
+================================================================================
+build/unix-040-dbg is restored to the FPSP+Xsvga kernel 68040-260724-09 at the end of
+the session.  Kernels kept:
+  build/unix-040-dbg.ISSUE15-260725-02        ISSUE-15
+  build/unix-040-dbg.ISSUE1718-260725-04      + ISSUE-17/18
+  build/unix-040-dbg.ISSUE28-260725-06        + ISSUE-28   (= ISSUE-27 baseline)
+  build/unix-040-dbg.ISSUE27live-260725-08    + ISSUE-27 live group
+  build/unix-040-dbg.ISSUE27all-260725-10     + ISSUE-27 all groups
+  build/unix-040-dbg.STD-backup               pre-work reference 260724-04
+  build/unix-040-dbg.FPSP-XSVGA-260724-09-backup
