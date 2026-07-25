@@ -359,6 +359,13 @@ python3 "$HERE/prototypes/patch_pagecreate.py" "$OUT" | tail -3
 echo "[*] pvn_vptrunc: final-page tail zeroing PAGESIZE term (2 sites + 2 segmap-slot canaries)"
 python3 "$HERE/prototypes/patch_pvntrunc.py" "$OUT" | tail -3
 
+# ISSUE-31: ufs_bmap VM-page geometry -- the UFS provider half of the ISSUE-27 boundary.
+# rwip now feeds it a 4 KiB-derived alloc_only; its own PAGESIZE arithmetic must match.
+# 11 sites; the three moveq #11 NDADDR-1 direct-block thresholds are asserted UNCHANGED,
+# and the patch refuses to run unless ISSUE-27 (as_iolock) is already 4 KiB.
+echo "[*] ISSUE-31: ufs_bmap page geometry (11 sites + 3 NDADDR canaries + ISSUE-27 precondition)"
+python3 "$HERE/prototypes/patch_ufsbmap.py" "$OUT" | tail -3
+
 echo
 echo "[*] reloc validation:"
 ( cd "$HERE" && python3 prototypes/check_relink_relocs.py | tail -1 )

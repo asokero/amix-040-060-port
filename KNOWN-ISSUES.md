@@ -1933,3 +1933,35 @@ s5-kutsujat (`s5alloc.c:481`) eivät ole mountattuina eikä negatiivinen tulos k
 **Regressio OK:** `proctest`/`mlocktest`/`trunctest` PASS ja levytotuus `sum 8320 5763`
 `reboot`+`fsck`:n yli, emu-040 **ja** emu-060; ISSUE-27 ei regressoinut (pgcold E
 PRESERVED). Serialit puhtaat.
+
+## ISSUE-31: ufs_bmap sivugeometria — ✅ MUUNNETTU (2026-07-25, emu-040+060)
+
+**11 sitettä + 3 kanariaa (`patch_ufsbmap.py`), buildit 260725-13/-14.**
+Tämä on ISSUE-27:n rajapinnan **UFS-provider-puolisko**: `rwip` syöttää `ufs_bmap`ille
+4 KiB-johdetun `pagecreate`in `alloc_only`-argumenttina, mutta `ufs_bmap`in oma
+`PAGESIZE`-aritmetiikka oli yhä 2 KiB. Lähdekontrakti
+`svr4-v4/usr/src/uts/i386/fs/ufs/ufs_bmap.c`. Käyttäytymistä muuttava kohta on
+rivit 398-399 ja 448: `} else if (!alloc_only || roundup(size, PAGESIZE) < bsize)`.
+`fs_bsize` 8192:lla vanha 2 KiB -pyöristys vie koot **4097..6144** arvoon 6144 (< 8192 →
+**LUE lohko**), uusi 4 KiB -pyöristys arvoon 8192 (→ **OHITA luku**). Ohitus on turvallinen
+VAIN koska kutsuja täyttää nyt kokonaisia 4 KiB -sivuja — eli **ISSUE-27:n on pakko olla
+landattuna ensin**, ja patch-skripti assertoi sen (`as_iolock` @0xaeeba = `andiw #-4096`)
+ja kieltäytyy muuten ajamasta.
+Muunnetut: 0x79d74, 0x79d7e (`blkpp`), 0x79d96, 0x79da4, 0x79daa (`nblks`), sekä
+0x7a494/0x7a49e/0x7a4a4 (epäsuora allokointi) ja 0x7a520/0x7a52a/0x7a530 (synkroninen
+kirjoitus) — kummassakin kaksi `addil` + `andiw` on YKSI `roundup`-lauseke
+(etumerkkikorjausidiomi `+PAGEOFFSET / bpl / +PAGEOFFSET / &-PAGESIZE`).
+**KANARIAT 0x79ec0, 0x79ee2, 0x7a030** (`moveq #11`) ovat **`NDADDR-1`
+-suoralohkorajavertailuja**, EIVÄT `PAGESHIFT`iä — verifioitu disassemblysta muodossa
+`moveq #11,%d7 ; cmpl <lbn>,%d7 ; blt`. Niiden muuntaminen siirtäisi UFS:n suoralohkorajaa
+ja korruptoisi allokointialgoritmin. **Alkuperäinen toimeksiantoni listasi juuri nämä
+kolme muunnettaviksi ja jätti kuusi oikeaa pois** — Codexin census korjasi sen.
+**Hyväksyntä:** uusi `test-tools/bmaptest.c` ajaa Codexin listan (suora allokointi,
+fragmenttikasvu, epäsuora allokointi, synkroninen kirjoitus, `fs_bsize` 8192) ja
+tarkistaa KOKO tiedoston tavu tavulta: jokaisen tavun on oltava joko P1 (koskematon) tai
+P2 (kirjoitettu). 11/11 OK sekä ENNEN (baseline 260725-12) että JÄLKEEN muunnoksen,
+mukaan lukien erotteleva väli 4097..6144 jossa luku nyt ohitetaan. Lisäksi `proctest`,
+`mlocktest`, `trunctest` PASS, ISSUE-27 ei regressoinut (pgcold E PRESERVED) ja
+levytotuus `sum 8320 5763` `reboot`+`fsck`:n yli — **emu-040 ja emu-060**. Serialit puhtaat.
+⚠️ EI testattu: `fs_bsize == PAGESIZE` tai pienempi (speksi: ei saa päätellä 8192-tuloksesta).
+Ei rautaa.
