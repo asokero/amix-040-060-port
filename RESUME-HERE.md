@@ -1,4 +1,58 @@
-# RESUME HERE — AMIX 68040/68060 port status (2026-07-24)
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-25)
+
+> ## ✅✅✅ 2026-07-25 — MODEL-B-JÄÄNNÖSTEN HÄNTÄ: ISSUE-15 + ISSUE-17/18 LANDATTU (emu-040+060); ISSUE-17 OLI KERNEL-PANIKKI; 3 UUTTA ISSUEA
+> Buildit **260725-01/-02** (ISSUE-15) ja **260725-03/-04** (+ ISSUE-17/18); relocs 0,
+> .data 4-aligned, patchit idempotentteja. Evidenssi
+> `test-tools/modelb-tail-emu-verify-260725.txt`.
+> **1. ISSUE-17 EI OLLUT "väärä page_t" VAAN KERNEL-PANIKKI.** Negatiivinen kontrolli
+> korjaamattomalla 260724-04:llä: `PANIC: KERNEL FAULT psw=0x2400, pc=0x8063504, fmt=0x7,
+> vector=0x2 (Bus Error)` — `pc` = teksti 0x63504 = **stock `prfastmapin`in sisällä**
+> (`btst #0,%a2@(3)` = PTE-dereferenssi kuolleen 030 SDE-kävelyn jälkeen), `psw=0x2400`
+> = sen oma `splhi`. Ennen panikkia /proc palautti hiljaa väärää dataa (4080/4096 tavua
+> väärin). Juurisyy: `hat_alloc` (hat040.s:1211) tallettaa **040-root-taulun VA:n**
+> kohtaan `as@(20)`, ja stock `prfastmapin` lukee sen 8-tavuisten 030-SDE:iden taulukkona
+> → villi pointteri. **Immediate-patchaus ei olisi auttanut** — rakenne on väärä.
+> **FIX:** `prototypes/prfastmap040.s` = `uvatopte040` (040 per-proc root→ptr→leaf,
+> UDT/PDT tarkistetaan JOKA tasolla ennen seuraavaa dereferenssiä) + `prfastmapin`-
+> override (0x63484 → 0xd97f0) + kovennus (stock kirjoitti hallitsemattomalle PFN:lle
+> osoitteeseen 2; me kieltäydymme nopeasta polusta). `prfastmapout` = 11 shift-sitea ja
+> `prusrio` = 4 sitea KOKONAISENA joukkona (`patch_procio.py`) — `patch_modelb.py:583-591`
+> dokumentoi että vain pituuksien flippaus jumitti bootin 2026-07-03.
+> **2. ISSUE-18(a) korjattu samalla kävelijällä; (b) kovennettu ja MITATTU no-opiksi.**
+> Suunnittelun aikana löytyi ansa joka muutti dispatchin: **`mmmmap` (0x2067e) kutsuu
+> `vtop(addr, 0)`** /dev/memille ja Amigalla se osoite ulottuu laillisesti 0x80000000+
+> (Zorro III) → pelkkä osoiteperustainen "user"-luokittelu olisi rikkonut /dev/memin.
+> Lisäksi binääristä: **`startio` (0xc100) välittää `bp->b_proc`** ja **`dma_pageio`
+> (0x20c90) KOPIOI sen** bounce-puskuriin → proc-ENSIN-dispatch olisi rikkonut levy-DMA:n.
+> Siksi dispatch on **proc-VIIMEISENÄ**: jokainen `proc==0` -polku ennallaan. Capattu
+> `KERNVA-WITH-PROC`-diagnostiikka **ei laukennut kertaakaan** → muoto ei esiinny.
+> **3. Hyväksyntä: uusi `test-tools/proctest.c`** (K&R C, natiivi `cc`) — forkkaa lapsen ja
+> lukee+kirjoittaa sen muistia `/proc/<pid>`:n kautta KOLMESSA alueessa jotka osuvat eri
+> kernel-polkuihin (private-resident = nopea polku; COW = W-bitin kieltäytyminen →
+> `as_fault`; koskematon = ei-residentti → `prmapin`→`vtop`), + sivurajan ylittävä luku
+> joka nimenomaan ajaa `prusrio`n sivusilmukkaa. T1 on erotteleva: vanhemman oma vastaava
+> sivu on nollia, joten väärä osoiteavaruus näkyisi heti. **T1–T7 + molemmat lapsen
+> kirjoitustarkistukset PASS emu-040 JA emu-060.**
+> **4. ISSUE-15 landattu** (`patch_kmapools.py`, 26 sitea): `SMALLCLICKS`/`BIGCLICKS`
+> 2/8→1/4 kolmessa funktiossa + **`kmem_avail` @0x42d7a jota Codexin taulukossa EI ollut**
+> (raportoi puolet todellisista tavuista STREAMS `bufcall`ille). Todistettu lähteestä että
+> hallittu alue päättyy tasan mäppäyksen loppuun → tuplamäppäys poistuu ilman että
+> käytettävissä oleva KMA-muisti pienenee.
+> **5. ISSUE-16: EI muunnettu, ja tiivistelmä oli väärässä** — todellinen census on
+> **72 sitea 27 funktiossa** (ei 5), koko RFS/DUsys-alue. Luokittelematon; RFS-polkua ei
+> voi ajaa → sokkomuunnos olisi latentin bugin istuttamista. **RFS-testaus on epäturvallista.**
+> **6. KOLME UUTTA ISSUEA.** **ISSUE-27 (korkea prio, ELÄVÄ):** `as_iolock` (0xaee34) +
+> koko `segmap_pagecreate`-kutsujaperhe (`rwip` = UFS-juuri, `rwvp`, `writei`,
+> `spec_write`, `fbzero`) pyöristää häntänollauksen 2 KiB:iin vaikka `segmap_pagecreate`
+> on JO 4 KiB → hiljainen kierrätetyn sivun datavuoto juuritiedostojärjestelmään.
+> Codex-brief kirjoitettu → **`PAGECREATE-TAILZERO-TASK.md`** (Codex aloitti työn 25.7.).
+> **ISSUE-28:** `memcntl`/`lock_mem`/`mem_unlock` 8 muuntamatonta sitea (ei bootpolulla).
+> **ISSUE-29:** kertaluontoinen KMA 128-tavuluokan vapaalista-hälytys — **attribuutio
+> TODISTAMATTA**, ei toistunut 4 seuraavassa ajossa (2 samalla kernelillä); ks. tiedosto.
+> **SEURAAVAKSI:** (1) Codexin ISSUE-27-speksi → toteutus (paras jäljellä oleva
+> vakaus/vaiva-suhde, ja aidosti testattavissa). (2) Rautasessio: FPSP/Xsvga-hyväksyntä +
+> VA2000 fyysisellä kortilla + **`proctest` ja ISSUE-15 raudalla**. (3) 060 FPU Tier-1.
+> ⚠️ Rautatesti puuttuu KAIKESTA tästä — kaikki yllä on Amiberry-emulaatiota.
 
 > ## ✅✅✅ 2026-07-24 — FPU TIER-2 (FPSP) M1–M4 VALMIS + GRAAFINEN X11 TOIMII PICCOLOLLA + VA2000-KERNELI RAUTATESTIIN
 > **1. LOADER-FIX (f0ed373) — infrastruktuurivoitto.** FPSP-kerneli ei latautunut: Guru

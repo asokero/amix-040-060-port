@@ -1320,49 +1320,104 @@ NOT yet verified: the REAL A3000's disk geometry (machine was powered off on
 `df -n` + the UFS superblock on the next hardware visit BEFORE trusting the conversion
 there.
 
-## ISSUE-15: KMA pool builders double-map their backing (2 KiB counts to a 4 KiB sptalloc)
+## ISSUE-15: KMA pool builders double-map their backing — ✅ FIXED (2026-07-25, emu-040+060)
 
-**OPEN — memory waste, not corruption (Codex `STREAMS-MBLK-LIFETIME-AUDIT.md`).**
-`kmem_allocspool` (0x41b7e) and `kmem_allocbpool` (0x41d96) still request 2/8 PAGES
-from the now-4-KiB `sptalloc`: the small pool maps 8 KiB but manages 4096 bytes, the
-big pool maps 32 KiB but manages 16384. `kmem_freepool` symmetrically returns the
-same 2/8 slots, so alloc/free counts match — no overlap, no early unmap; just doubled
-backing + sptmap churn. Fix when convenient: halve the requested page counts (or
-convert the byte math); verify against `kmem_alloc`/`kmem_free` direct >4096 paths
-which are ALREADY 4-KiB-converted (do not touch those).
+**RATKAISTU `prototypes/patch_kmapools.py` (26 sitea), buildit 260725-01/-02.**
+`SMALLCLICKS = btoc(4096)` ja `BIGCLICKS = btoc(16384)` ovat compile-time-vakioita
+(`svr4-src-3b2/.../os/kma.c:67-70`) → 030:llä 2/8, Model-B:ssä **1/4**. Muunnetut:
+`kmem_allocspool` (8 sitea), `kmem_allocbpool` (9, ml. `kmem_alloc`-failure-polun
+`sptfree`), `kmem_freepool` (8, molemmat haarat symmetrisesti) — ja **lisäksi
+`kmem_avail` @0x42d7a**, jota Codexin KMA-taulukossa EI ollut: se laski
+`ptob(availrmem - t_minarmem)` shiftillä 11 eli raportoi **puolet** todellisista
+tavuista STREAMS `bufcall`-vastapaineelle.
+EI muutettu (puskuri-/hash-vakioita): `SMALLBYTES` 4096, `BIGBYTES` 16384,
+`MAXASMALL` 256, `MAXABIG` 4096, bitmapkoot, `HASH`-shift 14, kmeminfon
+tavukirjanpito. `kmem_alloc`/`kmem_free` >4096-polut olivat jo muunnetut
+(`patch_modelb.py:606-610`) eikä niihin koskettu.
+Todistettu lähteestä että puolitus on turvallinen: molemmat bitmapit ovat tarkalleen
+mitoitettuja (`BIGBYTES/MAXBIG` = 1 long = 4 B = varatut 4 B; `SMALLBYTES/MAXSMALL`
+= 16 longia = 64 B) ja hallittu alue päättyy **tasan** mäppäyksen loppuun (pieni
+1×4096, iso 4×4096) → tuplamäppäys poistuu ILMAN että käytettävissä oleva KMA-muisti
+pienenee tavuakaan.
+Emu-hyväksyntä (040 + 060): boot multiuseriin (~22 prosessia), telnet-login,
+60× fork/exec-churn, ei panikkia. ⚠️ Kvantitatiivista sivumäärädeltaa EI mitattu
+runtimessa (`sar`/`sadc` ei toimi relinkattua ET_REL-kerneliä vasten) — alloc/free-
+symmetria on todistettu vain staattisesti. Evidenssi
+`test-tools/modelb-tail-emu-verify-260725.txt`. Ks. myös **ISSUE-29**.
 
-## ISSUE-16: RFS client cache still converts PFN with <<11 (5 live sites)
+## ISSUE-16: RFS client cache 2 KiB page geometry — OPEN, ja se on 72 sitea, EI 5
 
-**OPEN — real Model-B bugs, dormant while RFS is unused (Codex `BIO-PFN-PHYS-KVA-CENSUS.md`).**
-`rfesb_fbread` 0x8f56c, `rfc_readend` 0xa102c, `rfc_plmove` 0xa11ba, `rfc_writefill`
-0xa1322, `rfc_readfill` 0xa1bd0: correct page-descriptor division but `PFN<<11` byte
-addresses + 0x800 bounds -> read/write the WRONG physical page whenever the RFS
-client cache is active. Not on the NFS or local-disk paths despite the "remote file"
-naming. Port as a group if RFS is ever exercised; until then treat any RFS testing
-on 040 as unsafe.
+**OPEN — aidot Model-B-bugit, dormantteja koska RFS:ää ei käytetä.**
+Codexin `BIO-PFN-PHYS-KVA-CENSUS.md` listaa **5 PFN-konversiota** (`rfesb_fbread`
+0x8f56c, `rfc_readend` 0xa102c, `rfc_plmove` 0xa11ba, `rfc_writefill` 0xa1322,
+`rfc_readfill` 0xa1bd0): oikea sivudeskriptorijako mutta `PFN<<11`-tavuosoitteet →
+luku/kirjoitus VÄÄRÄLLE fyysiselle sivulle kun RFS-client-cache on aktiivinen.
+**KORJAUS TIIVISTELMÄÄN (census 2026-07-25, build/unix-040):** todellinen 2 KiB
+-sivugeometria RFS/DUsys-alueella 0x8f4f0..0xa3900 on **72 sitea 27 funktiossa**
+(kuvio `#2047`/`#2048`/`#-2048`/`moveq #11`) — täysi per-funktio-erittely
+`test-tools/modelb-tail-emu-verify-260725.txt`:ssä. Mukana mm. `rfc_plmove` 7,
+`rfcl_esbwrmsg` 6, `rfc_readend`/`rfc_writefill`/`rfc_readfill`/`rfcl_write_op` 5 kpl
+kukin, sekä koko `rfsr_*`/`dusr_*`/`du_fcntl*`-perhe. Census on TARKOITUKSELLA
+LUOKITTELEMATON: osa `#2048`-vakioista on varmasti viesti-/puskurikokoja eikä
+sivugeometriaa, ja juuri se luokittelu on se työ jota ei saa ohittaa.
+**EI muunneta sokkona:** RFS-polkua ei voi ajaa emussa eikä raudalla, joten 72 siten
+muuntaminen olisi latentin bugin istuttamista ilman havaitsemiskeinoa.
+**STATUS: RFS-testaus 040/060-portilla on EPÄTURVALLISTA.** Lykätty, ei korjattu.
 
-## ISSUE-17: procfs prfastmapin/prfastmapout retain the full stock 2 KiB walk
+## ISSUE-17: procfs prfastmapin/prfastmapout — ✅ FIXED (2026-07-25); oli KERNEL-PANIKKI
 
-**OPEN — live risk for /proc users (Codex `BIO-PFN-PHYS-KVA-CENSUS.md`).**
-`prfastmapin` 0x63484 / `prfastmapout` 0x63592 still do the 030 SDE/PTE walk,
-`phys>>11`, `PFN<<11`, 0x7ff offsets -> can hold/release/abort the wrong page_t under
-Model B. Anything that pokes /proc process memory (debuggers, some ps variants,
-crash tooling) can trip this. Port as ONE unit together with the deferred
-`prusrio`/`as_iolock` geometry — not immediate-by-immediate.
+**RATKAISTU. Ja se oli PALJON pahempi kuin kirjattu "väärä page_t".**
+Aiempi tiivistelmä sanoi "can hold/release/abort the wrong page_t". Todellisuudessa
+**mikä tahansa /proc-prosessimuistin käyttö panikoi kernelin.** Todistettu
+negatiivisella kontrollilla (`test-tools/proctest.c` korjaamattomalla 260724-04:llä):
 
-## ISSUE-18: vtop_orig raw-I/O user walker is stock 2 KiB + vtop040 dispatches by ADDRESS
+```
+PANIC: KERNEL FAULT psw=0x2400, pc=0x8063504, fmt=0x7, vector=0x2 (Bus Error)
+```
+`pc 0x8063504` = teksti 0x63504 = **stock `prfastmapin`in sisällä** (0x63484..0x63590),
+kohdassa `btst #0,%a2@(3)` = PTE-dereferenssi kuolleen 030 SDE-kävelyn jälkeen;
+`psw=0x2400` on tismalleen `prfastmapin`in oma `splhi` (0x63492). Ennen panikkia
+/proc palautti **hiljaa väärää dataa** (4080/4096 tavua väärin).
+**Juurisyy:** `hat_alloc` (hat040.s:1211) tallettaa **040-root-taulun VA:n** kohtaan
+`as@(20)`, ja stock `prfastmapin` lukee sen 8-tavuisten 030-SDE:iden taulukkona
+(0x634ba `moveal %a0@(4,%d0:l:8),%a0`) → villi pointteri. Immediate-patchaus ei
+olisi auttanut: rakenne on väärä, ei vain shiftit.
+**KORJAUS:** `prototypes/prfastmap040.s` = uusi `uvatopte040` (040 per-proc
+root→ptr→leaf-kävely, UDT/PDT-tarkistus JOKA tasolla ennen seuraavaa dereferenssiä) +
+`prfastmapin`-override (`--weaken-symbol`, siirtyi 0x63484 → 0xd97f0). Lisäksi
+kovennus stockiin verrattuna: hallitsemattomalle PFN:lle stock teki `pp = NULL` ja
+sitten silti `addqw #1,%a0@(2)` = kirjoitus osoitteeseen 2 → bus error; me
+kieltäydymme nopeasta polusta ja `prusrio` ottaa `as_fault`+`prmapin`-reitin.
+`prfastmapout` EI tarvinnut overridea — sen ainoa vika oli `phys>>PNUMSHFT`
+(11 sitea) → `patch_procio.py`. Samassa yksikössä muunnettiin **`prusrio`
+kokonaisena joukkona** (0x64580 PAGEMASK, 0x64586 nextpage, 0x645d8/0x6467a
+`as_fault`-pituudet) — `patch_modelb.py:583-591` dokumentoi että VAIN pituuksien
+flippaus jumitti bootin 2026-07-03 (overlapping softlocks).
+**Hyväksyntä:** `proctest.c` T1–T7 + molemmat lapsen kirjoitustarkistukset PASS
+emu-040 **ja** emu-060 (260725-04); korjaamattomalla panikki. Buildit 260725-03/-04.
+Evidenssi `test-tools/modelb-tail-emu-verify-260725.txt`.
 
-**OPEN — two coupled residuals (Codex census + own review 2026-07-12).**
-(a) `vtop_orig` 0xb7568 (reached for VA >= 0x40000000, e.g. via `svirtophys` with a
-process argument) still uses stock 2 KiB indices/masks -> wrong DMA target for raw
-per-process I/O. (b) Our `vtop040.s` dispatches on the ADDRESS (`< 0x40000000` ->
-identity), NOT on the proc argument -- a USER VA passed with a proc pointer would be
-returned as if it were an identity physical address. This currently never fires
-because raw user I/O goes through the `dma_pageio` bounce path (kernel bounce buffer
--> vtop sees a kernel address), but it is an unchecked contract. Cheap hardening: log
-(capped) any vtop call with proc != NULL and VA < 0x40000000. Related dormant-wrong
-helpers (no inbound calls in the current link, do NOT use): `pptophys` 0xb1570
-(PFN<<11), `phystopp` 0xb1532 (>>11), `uvirtophys` 0xb7860 (expects &SDE + 2 KiB).
+## ISSUE-18: vtop user-VA walker — ✅ (a) FIXED, (b) hardened + mitattu no-op (2026-07-25)
+
+**(a) RATKAISTU.** `vtop_orig` 0xb7568:n proc-haara (stock 2 KiB indeksit/maskit,
+`PFN<<11`, 0x7ff) ohitetaan nyt kokonaan käyttäjä-VA:lle: `vtop040.s` reitittää sen
+uuteen `uvatopte040`-kävelijään. Tämä on `prmapin`in (0x63462 = `vtop(addr, p)`) polku
+eli /proc:n hidas reitti — sama korjaus kattaa siis ISSUE-17:n fallbackin.
+**(b) KOVENNETTU, ja mittaus sanoo että se on no-op.** Dispatch tehtiin
+**proc-VIIMEISENÄ** tarkoituksella, jotta JOKAINEN `proc==0` -polku säilyy ennallaan.
+Syy löytyi suunnittelussa: **`mmmmap` (0x2067e) kutsuu `vtop(addr, 0)`** /dev/memille,
+ja Amigalla se osoite ulottuu laillisesti 0x80000000+ (Zorro III) — pelkkä
+osoiteperustainen "user"-luokittelu olisi rikkonut /dev/memin korkealle fyysiselle
+tilalle, koska stock `svirtophys` palauttaa ei-SCN1-osoitteen muuttumattomana
+(0xb7744). Binääristä varmistettiin myös: **`startio` (0xc100) VÄLITTÄÄ `bp->b_proc`**
+ja **`dma_pageio` (0x20c90) KOPIOI `b_proc`in** bounce-puskuriin
+(`amiga_dma_pageio` 0xdbee sen sijaan nollaa sen) → proc-ENSIN-dispatch olisi
+rikkonut levy-DMA:n. Nyt: `proc!=0` + SCN1 → pakotettu `proc=0` → `svirtophys`, ja
+capattu diagnostiikka (`Lvt_viol`, cap 8) **ei laukennut kertaakaan** yhdessäkään
+ajossa (boot/login/churn/proctest, molemmat CPU:t) → vanhentunut-`b_proc`-muoto ei
+esiinny käytännössä tässä kokoonpanossa.
+Yhä dormantit väärät apurit (ei sisääntulevia kutsuja, ÄLÄ käytä): `pptophys` 0xb1570
+(`PFN<<11`), `phystopp` 0xb1532 (`>>11`), `uvirtophys` 0xb7860 (odottaa &SDE + 2 KiB).
 
 ## ISSUE-19: context-switch residual edges (szombflag overwrite; resume path-U partial p_ubptbl)
 
@@ -1708,3 +1763,75 @@ uadmin A_SHUTDOWN -haara) ei ole koskaan ajettu/validoitu 040-porteilla ennen t�
 Deterministinen + halpa emu-repro = hyvä jahtikohde sopivassa välissä; ei blokkaa
 mitään nykyistä (halttia ei käytetä työnkuluissa). Serial-evidenssi:
 durable-tools/shutdown-i0-crash-serial.log (kopio myös scratchpadissa).
+
+## ISSUE-27: as_iolock + segmap_pagecreate-perheen häntänollaus on 2 KiB — ELÄVÄ hiljainen datavuoto
+
+**OPEN, KORKEA PRIORITEETTI (löytyi 2026-07-25 ISSUE-15/16/17/18 -diffauksen sivussa;
+Codex-toimeksianto kirjoitettu → `PAGECREATE-TAILZERO-TASK.md`).**
+`segmap_pagecreate` (0xa9722) on **jo muunnettu 4 KiB:iin** (`patch_modelb_pager.py:195-197`,
+`patch_modelb.py:557`), mutta **jokainen sen kutsuja pyöristää häntänollauksen yhä
+2048:aan**. Tuottaja on 4 KiB, kuluttajat 2 KiB — juuri se epäsymmetria on vika:
+
+```
+write(2) 2048-alignatulla offsetilla, ei-täysi sivu, EOF:ssa/sen jälkeen
+  -> as_iolock (0xaee34, KAIKKI 12 sitea 2 KiB) -> *pagecreate_p = 1
+  -> segmap_pagecreate luo KOKO 4 KiB sivun, tarkoituksella alustamatta
+  -> uiomove kirjoittaa vain pyydetyt tavut
+  -> kutsuja nollaa vain roundup(off+on+n, 2048):een
+  => [roundup(end,2048), roundup(end,4096)) = KIERRÄTETYN fyysisen sivun vanhaa
+     sisältöä; i_size:n kasvaessa se valuu tiedostoon ja levylle
+```
+
+Kutsujat ja niiden sitet (build/unix-040): `fbzero` 0x3fa8a (0x3fa90/0x3fa96),
+`spec_write` 0x665f2 (4 sitea), `writei` 0x70cfa (s5, ei mountattu, 14 sitea),
+**`rwip` 0x7f8ac = UFS = ELÄVÄ juuri-fs** (0x7f9b6/0x7f9bc/0x7f9d6/0x7f9e0/0x7f9e6),
+`rwvp` 0x88f28 = NFS (5 sitea). `as_iolock`ia kutsuvat vain `rwip` (0x7f6b2) ja
+`rwvp` (0x88edc), ja `rwip`in häntänollauksen portti on juuri se `pagecreate`-
+out-param jonka `as_iolock` sille antaa (`pea %fp@(-28)` @0x7f69c) → sama yksikkö.
+`as_iolock`in 12 siten lista on jo enumeroitu `patch_modelb.py:588-591`:ssä.
+**VAROITUS:** juuri tämän luokan OSITTAINEN muunnos jumitti bootin 2026-07-03
+(vain pituudet flipattu, step jäi 2 KB:iin = overlapping softlocks). Siksi Codexille
+on pyydetty lukko-omistajuuskontrakti + `pl[]`-mitoitustodistus + minimaalinen atominen
+yksikkö ENNEN toteutusta. `rwip`in MAXBSIZE-geometria (0x7f5d6 `&-8192`, 0x7f5e2
+`&8191`, 0x7fb5c/0x7fbba `#8192`) on OIKEIN eikä siihen kosketa.
+Codex on aiemmin auditoinut saman muodon erikseen `rwvp`:lle
+(`NFS-FOREGROUND-WRITE-RWVP-AUDIT.md`) ja `fbzero`lle
+(`MODEL-B-TEXT-RESIDUAL-CENSUS.md:63` "Definite active UFS helper defect") — mutta
+UFS:n oma `rwip` ja `as_iolock`in rooli `pagecreate`-lipun TUOTTAJANA puuttuivat.
+
+## ISSUE-28: memcntl / lock_mem / mem_unlock — muuntamaton 2 KiB sivupyöristys
+
+**OPEN, ei bootpolulla (löytyi 2026-07-25).** `memcntl` 0x4319a … `mem_unlock` 0x434b6
+pyöristävät sivuja yhä 2 KiB:llä: **0x4331c** (`andiw #-2048`), **0x43328**/**0x4332e**
+(`+2047` / `&-2048`), **0x43348**/**0x43352**/**0x43358**, **0x4338e** (`addaw #2047`),
+**0x43394** (`moveq #11`). Polku = `memcntl(2)` / `plock(2)` -sivulukitus. Ei ajeta
+booteissa eikä nykyisissä testeissä, joten ei kiireellinen — mutta se on aito
+Model-B-jäännös ja kuuluu samaan luokkaan kuin ISSUE-10 (väärä sivumäärä/-osoite
+lukituslaskennassa). Isätön; ei censusta tehty.
+
+## ISSUE-29: kertaluontoinen KMA 128-tavuluokan vapaalista-hälytys (attribuutio TODISTAMATTA)
+
+**OPEN, EI TOISTUNUT (havaittu 2026-07-25).** ISSUE-15-kernelin (260725-02) ENSIMMÄISESSÄ
+ajossa dbg-overlayn `kmem_validate`-probe laukesi kahdesti, idlen JÄLKEEN:
+
+```
+DBG KMEMCORRUPT bin=80E3CB0 blk=4024E880 next=8 prev=6 caller=8042334 size=8C
+DBG KMEMCORRUPT bin=80E3CB0 blk=4024C280 next=8 prev=6 caller=8042334 size=8C
+```
+Dekoodattu: `Km_FreeLists` runtime-base **0x080E3C60** (luettu relokoiduista operandeista
+teksti 0x41c2a/0x41e16 Amiberry-IPC:llä) → bin-offset +0x50 = **vapaalista-indeksi 4 =
+pienen poolin 128 TAVUN kokoluokka**. Ei MAX-lista, joten sen lohkot ovat tavallisia
+buddyja joiden `fb_next`/`fb_prev` pitäisi olla oikeita osoitteita; 8 ja 6 eivät ole.
+`caller 0x8042334` = `kmem_zalloc+0x18`, pyyntö 0x8C = 140 tavua.
+**Attribuutioyritykset — KAIKKI NEGATIIVISIA:** korjaamaton 260724-04 (sama kuorma +
+11 telnet-sessiota + sar/sadc/df + churn60) → 0; 260725-02 samalla kuormalla → 0;
+260725-02 + 20 äkillistä connect/close → 0; yhdistetty 260725-04 emu-040 → 0;
+emu-060 → 0. Eli 2 raporttia yhdessä bootissa viidestä, ei koskaan toistunut — myöskään
+samalla kernelillä joka ne tuotti. **EI ole osoitettu että ISSUE-15 aiheuttaisi tämän.**
+Rakenteellinen vasta-argumentti: puolitetut sivumäärät eivät muuta hallittua tavualuetta,
+lohkojen osoitteita eikä listoja joille ne menevät — ainoa runtime-ero on että pooli
+kuluttaa yhden sptmap-slotin kahden sijaan, mikä siirtää myöhempiä kvseg-osoitteita.
+Aiempi latentti KMA-stomp (juuri se mitä `kmem_validate.s` kirjoitettiin jahtaamaan
+ISSUE-5:lle, ei koskaan suljettu) on vähintään yhtä todennäköinen, nyt paljastuneena
+siirtyneen layoutin takia. Jahti lopetettu projektin oman säännön mukaan; kirjattu
+arvaamisen sijaan. Evidenssi `test-tools/modelb-tail-emu-verify-260725.txt`.

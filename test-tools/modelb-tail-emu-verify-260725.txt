@@ -1,0 +1,271 @@
+================================================================================
+Model-B residual tail: ISSUE-15 (KMA pool clicks) + ISSUE-17/18 (procfs user-memory I/O)
+Emulator verification, 2026-07-25
+================================================================================
+
+WHAT WAS BUILT
+
+  prototypes/patch_kmapools.py   NEW  26 sites  ISSUE-15 + kmem_avail
+  prototypes/prfastmap040.s      NEW  uvatopte040 + prfastmapin 040 override
+  prototypes/patch_procio.py     NEW  15 sites  prfastmapout(11) + prusrio(4)
+  prototypes/vtop040.s           MOD  proc-aware dispatch, user branch -> uvatopte040
+  relink-040.sh                  MOD  assemble/weaken/link/patch wiring
+
+  Base kernel analysed:  build/unix-040
+                         SHA-256 5bd37386d9c5a0f89be451b187fa5dfe9e4f05bcf2f1c37accdc22177a225b38
+  Builds:
+    ISSUE-15 only        68040-260725-01 (base)  / 68040-260725-02 (dbg)
+    + ISSUE-17/18        68040-260725-03 (base)  / 68040-260725-04 (dbg)
+  Reference (pre-work)   68040-260724-04 (dbg, build/unix-040-dbg.STD-backup)
+
+  Static gates, both builds:  check_relink_relocs.py TOTAL complaints: 0
+                              .data size 4-aligned (0x185fc base / 0x19944 dbg)
+                              patch scripts idempotent (re-run on a copy -> all [skip])
+                              exactly one strong def of prfastmapin / uvatopte040 /
+                              vtop / vtop_orig; prfastmapin moved 0x63484 -> 0xd97f0
+
+  Independently re-verified in the final artifact (not just trusting the patch output):
+    0x635a0=720c 0x6377a=720c   prfastmapout phys>>PNUMSHFT (first/last of 11)
+    0x64580=0245f000            prusrio  page = a & PAGEMASK
+    0x64586=068100001000        prusrio  nextpage = page + PAGESIZE
+    0x645d8=48781000            prusrio  as_fault F_SOFTLOCK len
+    0x6467a=48781000            prusrio  as_fault F_SOFTUNLOCK len
+    0x41be4=48780001            ISSUE-15 SMALLCLICKS 2 -> 1
+    0x41dfe=48780004            ISSUE-15 BIGCLICKS  8 -> 4
+    0x42d7a=740c                ISSUE-15 kmem_avail ptob <<11 -> <<12
+
+================================================================================
+ISSUE-17/18 -- THE HEADLINE RESULT
+================================================================================
+
+ISSUE-17 was recorded as "can hold/release/abort the wrong page_t".  It is worse than
+that: on the pre-fix kernel any /proc process-memory access is a HARD KERNEL PANIC.
+
+Proven with a discriminating test (test-tools/proctest.c, K&R C, native AMIX cc).
+It forks a child, then reads and writes the child's memory through /proc/<pid> in three
+regions chosen to hit three different kernel paths:
+
+  R1 priv   child fills it AFTER fork -> private, resident, writable
+            => prfastmapin fast path, read AND write
+            DISCRIMINATING: the parent's own copy of that page is ZEROS, so if the walk
+            resolved the wrong address space T1 would read zeros, not the child's pattern
+  R2 cow    parent fills it BEFORE fork, child never touches it -> COW, write-protected
+            => read succeeds on the fast path (W set, writing==0);
+               write must DECLINE on the W bit -> as_fault COW -> prmapin -> vtop user branch
+  R3 absent never touched by either -> not resident
+            => prfastmapin declines (PDT==0) -> as_fault faults it in; must read as zeros
+  T7        deliberately PAGE-CROSSING unaligned window -> exercises prusrio's own page
+            loop (0x64580/0x64586), the two sites whose half-conversion hung the kernel
+            on 2026-07-03
+
+Regions are 3 pages of .bss and the window is the page-ALIGNED middle page, so "absent"
+really is a page nobody touched (an unaligned window would share a page with a filled
+neighbour and make the zero check lie).
+
+--- FIXED kernel 68040-260725-04, emu-040 -------------------------------------
+proctest: child pid=237 priv=80004000 cow=80007000 absent=8000a000
+T1 PASS: read private resident page (bad=0)
+T2 PASS: read COW page (bad=0)
+T3 PASS: read absent page as zeros (bad=0)
+T4 PASS: write private page n=4096 errno=0
+T5 PASS: write COW page n=4096 errno=0
+T6a PASS: re-read private after write (bad=0)
+T6b PASS: re-read COW after write (bad=0)
+T7 PASS: page-crossing read, first 3072 bytes (bad=0)
+CHILD-PRIV-WRITE PASS          <- the child itself confirms the write landed in ITS pages
+CHILD-COW-WRITE PASS
+PROCTEST-RESULT PASS
+
+--- FIXED kernel 68060-260725-04, emu-060 -------------------------------------
+identical: T1..T7 PASS, CHILD-PRIV-WRITE PASS, CHILD-COW-WRITE PASS,
+PROCTEST-RESULT PASS (run twice, second time after a 60x fork/exec churn)
+
+--- NEGATIVE CONTROL, pre-fix kernel 68040-260724-04, emu-040 -----------------
+proctest: child pid=194 priv=80004000 cow=80007000 absent=8000a000
+  T1: mismatch at 0: got 4a want 33
+T1 FAIL: read private resident page (bad=4080)     <- 4080/4096 bytes WRONG
+  T2: mismatch at 0: got 4a want 11
+T2 FAIL: read COW page (bad=4088)
+  T3: nonzero at 0: 4a
+[TIMEOUT] ... and on the serial console:
+
+  PANIC: KERNEL FAULT psw=0x2400, pc=0x8063504, fmt=0x7, vector=0x2 (Bus Error)
+
+  pc 0x8063504 = kernel base 0x08000000 + text 0x63504, which is INSIDE stock
+  prfastmapin (0x63484..0x63590), at the `btst #0,%a2@(3)` PTE dereference that
+  follows the dead 030 SDE walk.  psw=0x2400 is exactly prfastmapin's own splhi
+  (0x63492 `movew #0x2400,%sr`).  The guest did not recover.
+
+So the pre-fix behaviour is: /proc silently returns the WRONG memory contents, and then
+panics the kernel.  Root cause as predicted statically: hat_alloc (hat040.s:1211) stores
+the 040 ROOT TABLE VA at as@(20), and stock prfastmapin reads that table as an array of
+8-byte 030 SDEs (0x634ba `moveal %a0@(4,%d0:l:8),%a0`), producing a wild pointer.
+
+This closes ISSUE-17 and the reachable half of ISSUE-18 (18a: vtop_orig's stock 2 KiB
+per-process walker is now bypassed for user VAs).
+
+--- ISSUE-18b hardening, measured ---------------------------------------------
+vtop040's dispatch was deliberately made proc-LAST so that EVERY proc==0 path keeps its
+previous behaviour byte-for-byte.  Reason found during design: mmmmap (0x2067e) calls
+vtop(addr, 0) for /dev/mem, and on an Amiga that address legitimately reaches
+0x80000000+ (Zorro III).  Classifying >=0x80000000 as "user VA" on address alone would
+have broken /dev/mem for high physical space, because stock svirtophys returns any
+non-SCN1 address unchanged (0xb7744).  Also verified from the binary: startio (0xc100)
+DOES pass bp->b_proc, and dma_pageio (0x20c90) COPIES b_proc into its bounce buffer
+(amiga_dma_pageio 0xdbee clears it instead) -- so a proc-FIRST dispatch would have
+broken disk DMA.
+The capped diagnostic for "kernel VA arrived with proc != 0" (Lvt_viol, cap 8) NEVER
+FIRED in any run -- boot, login, churn, proctest, on either CPU.  The forced proc=0 is
+therefore a pure no-op safety net today, and the stale-b_proc shape does not occur in
+practice on this configuration.
+
+================================================================================
+ISSUE-15 -- KMA pool clicks + kmem_avail
+================================================================================
+
+Source contract: svr4-src-3b2/usr/src/uts/3b2/os/kma.c:67-70
+  SMALLCLICKS = btoc(SMALLBYTES=4096)   030: 2   Model B: 1
+  BIGCLICKS   = btoc(BIGBYTES=16384)    030: 8   Model B: 4
+26 sites: kmem_allocspool(8) + kmem_allocbpool(9) + kmem_freepool(8) + kmem_avail(1).
+
+Deliberately NOT changed (buffer/hash constants, not page sizes): SMALLBYTES 4096,
+BIGBYTES 16384, MAXASMALL 256, MAXABIG 4096, bitmap sizes, HASH shift 14, and the
+kmeminfo BYTE bookkeeping.  Verified from source that both bitmaps are exactly sized
+(BIGBYTES/MAXBIG = 16384/16384 = 1 long = 4 bytes = the 4 bytes allocated inside the
+72-byte kmem_alloc; SMALLBYTES/MAXSMALL = 16 longs = 64 bytes = the 64-byte bitmap), and
+that with the halved counts each managed region ends EXACTLY at the end of its mapping
+(small 1x4096, big 4x4096) -- so halving removes double-mapping without shrinking usable
+KMA memory by a single byte.
+kmem_alloc/kmem_free oversize paths were already converted (patch_modelb.py:606-610,
+moveq #12 at 0x42002/0x420b6/0x4246a) and were not touched.  No address overlaps any
+existing patch script.
+
+kmem_avail (0x42d68) was NOT in Codex's KMA table (STREAMS-MBLK-LIFETIME-AUDIT.md lists
+only allocspool/allocbpool/alloc/free/freepool).  It computes
+ptob(availrmem - tune.t_minarmem) with <<11, i.e. it reported HALF the true available
+bytes to STREAMS bufcall back-pressure.  Found by this session's own binary diff.
+
+RUNTIME (emu-040 68040-260725-02, and again in the combined 260725-04 on 040 + 060):
+  boot to multiuser: ~22 processes (pid 0xA1), all SSLEEP at idle -> kmem_init built both
+  pools; telnet login works -> STREAMS + KMA + networking healthy
+  60x fork+exec+directory-read churn: completes, no panic
+  df: 970942 free blocks (so `sadc: Not enough space` is an internal sadc failure, not
+  ENOSPC; sar/sadc cannot be used here anyway -- no namelist matches a relinked ET_REL
+  kernel, so the quantitative pool-page delta was NOT measured; see HONEST GAPS)
+
+================================================================================
+!! HONEST GAPS AND ONE UNRESOLVED OBSERVATION !!
+================================================================================
+
+1) UNEXPLAINED KMA FREE-LIST REPORT (recorded as ISSUE-29, attribution UNPROVEN)
+
+   In the FIRST run of the ISSUE-15 dbg kernel (68040-260725-02) the dbg overlay's
+   kmem_validate probe fired twice, after the system had reached idle (log offsets
+   116603 / 121154 vs idle at 89628):
+
+     DBG KMEMCORRUPT bin=80E3CB0 blk=4024E880 next=8 prev=6 caller=8042334 size=8C
+     DBG KMEMCORRUPT bin=80E3CB0 blk=4024C280 next=8 prev=6 caller=8042334 size=8C
+
+   Decoded (Km_FreeLists runtime base 0x080E3C60, read from the relocated operands at
+   text 0x41c2a/0x41e16 via Amiberry IPC): bin offset +0x50 = freelist index 4 = the
+   128-BYTE size class of the small pool.  Not a MAX list, so its blocks are ordinary
+   buddies whose fb_next/fb_prev must be real pointers; 8 and 6 are not.
+   caller 0x8042334 = kmem_zalloc+0x18, request size 0x8C = 140 bytes.
+
+   Attempts to attribute it -- ALL NEGATIVE:
+     pre-fix kernel 260724-04, matched exercise + 11 telnet sessions + sar/sadc/df
+        + churn60                                             -> 0 reports
+     ISSUE-15 kernel 260725-02, exercise matched to the above  -> 0 reports
+     ISSUE-15 kernel 260725-02, + 20 abrupt connect/close      -> 0 reports
+     combined kernel 260725-04, emu-040 (boot+churn+proctest)  -> 0 reports
+     combined kernel 260725-04, emu-060 (boot+churn+proctest)  -> 0 reports
+
+   So: 2 reports in 1 boot out of 5 boots total, never reproduced, including twice on
+   the very kernel that produced them.  It is NOT established that ISSUE-15 caused it.
+   Structural argument that it probably did not: the halved counts do not change the
+   managed byte region, the block addresses, or which lists they land on -- the only
+   runtime difference is that each pool consumes one sptmap slot instead of two, which
+   shifts subsequent kvseg addresses.  A pre-existing latent KMA stomp (exactly what
+   kmem_validate.s was written to hunt for ISSUE-5, never closed) is at least as likely,
+   newly exposed by the shifted layout.  Hunting was stopped after these hypotheses per
+   the project's own rule; recorded rather than guessed at.
+
+2) NOT MEASURED: the quantitative pool-page-count delta at runtime (availrmem /
+   pages_pp_kernel / Km_pools before vs after).  sar/sadc do not work against a relinked
+   ET_REL kernel.  The alloc/free symmetry is proven statically only.
+
+3) NOT DONE: real hardware.  Everything here is Amiberry emulation.  No claim is made
+   about the A3000+Mercury040.
+
+4) NOT DONE: ISSUE-16 (RFS).  Census below; deliberately not converted.
+
+5) prusrio/prfastmapout/prfastmapin/vtop were verified for /proc process memory.  Other
+   procfs entry points that reach the same helpers via different callers (adb/crash
+   tooling, PIOC* ioctls) were NOT exercised.
+
+================================================================================
+ISSUE-16 CENSUS (documented, NOT converted)
+================================================================================
+
+Codex's BIO-PFN-PHYS-KVA-CENSUS.md lists 5 PFN conversion sites.  The actual 2 KiB page
+geometry in the RFS/DUsys client range 0x8f4f0..0xa3900 of build/unix-040 is
+72 SITES IN 27 FUNCTIONS (pattern: #2047 / #2048 / #-2048 / moveq #11):
+
+  rfesb_fbread     4   0x8f514 0x8f51a 0x8f56c 0x8f572
+  rfsys_clients    1   0x934f8
+  rfsys_start      2   0x93746 0x937e8
+  rfsr_rawread     2   0x94adc 0x94ae2
+  rfsr_rawwrite    2   0x95062 0x95068
+  rfsr_rdwrinit    2   0x958ca 0x958d0
+  rfm_check        3   0x96ed6 0x96f18 0x96f1e
+  rfsr_create      1   0x97852
+  rfsr_addmap      3   0x98988 0x98990 0x98996
+  rfsr_delmap      3   0x98b86 0x98b8e 0x98b94
+  dusys_exec       1   0x9b534
+  du_fcntl         1   0x9c81c
+  du_fcntl_resp    1   0x9d382
+  dusr_exec        1   0x9dcea
+  dusr_fcntl       3   0x9de28 0x9defe 0x9e036
+  dusr_vn_open     1   0x9eb00
+  dusr_vn_create   1   0x9edf8
+  rfc_pagelist     1   0xa0b34
+  rfc_readrp1      1   0xa0db0
+  rfc_readend      5   0xa0fa6 0xa1000 0xa100a 0xa102c 0xa10c0
+  rfc_plmove       7   0xa1108 0xa110e 0xa1124 0xa112e 0xa1182 0xa11ba 0xa11d8
+  rfc_writefill    5   0xa127c 0xa1284 0xa129a 0xa12d4 0xa1322
+  rfc_pageabort    3   0xa18f0 0xa18fa 0xa1900
+  rfc_readfill     5   0xa1b6e 0xa1b74 0xa1b88 0xa1bd0 0xa1bf2
+  rfcl_write_op    5   0xa2c7e 0xa2cd4 0xa2cda 0xa2dec 0xa2e04
+  rfcl_writemove   2   0xa321a 0xa3220
+  rfcl_esbwrmsg    6   0xa3678 0xa3682 0xa3688 0xa3710 0xa377a 0xa380e
+
+Note this raw census is UNCLASSIFIED: some of these #2048 constants are certainly
+message/buffer sizes rather than page geometry (that classification is exactly the work
+that must not be skipped).  RFS cannot be exercised in the emulator or on the hardware,
+so converting 72 sites blind would be planting a latent bug with no way to detect it.
+STATUS: RFS testing on the 040/060 port remains UNSAFE.  Deferred, not fixed.
+
+================================================================================
+ALSO FOUND DURING THIS SESSION (new issues, not fixed here)
+================================================================================
+
+ISSUE-27  as_iolock (0xaee34, 12 sites) + the whole segmap_pagecreate consumer family
+          (fbzero 0x3fa8a, spec_write 0x665f2, writei 0x70cfa, rwip 0x7f8ac, rwvp
+          0x88f28) still round the pagecreate tail-zero bound to 2 KiB while
+          segmap_pagecreate itself is ALREADY 4 KiB.  Live, silent stale-data exposure on
+          the UFS root write path.  Codex brief written: PAGECREATE-TAILZERO-TASK.md.
+ISSUE-28  memcntl / lock_mem / mem_unlock (0x4319a..0x434b6) unconverted 2 KiB page
+          rounding: 0x4331c 0x43328 0x4332e 0x43348 0x43352 0x43358 0x4338e 0x43394.
+ISSUE-29  the KMA free-list report above.
+
+================================================================================
+BOOT SLOT
+================================================================================
+build/unix-040-dbg was borrowed for these tests and RESTORED to the FPSP+Xsvga kernel
+68040-260724-09 at the end of the session.  Kernels kept:
+  build/unix-040-dbg.ISSUE15-260725-02      ISSUE-15 only
+  build/unix-040-dbg.ISSUE1718-260725-04    ISSUE-15 + ISSUE-17/18
+  build/unix-040-dbg.STD-backup             pre-work reference 260724-04
+  build/unix-040-dbg.FPSP-XSVGA-260724-09-backup
+Serial logs: /tmp/serial-040-{ISSUE15,STD2,I15b,B-proctest-PASS,NEG}.log,
+             /tmp/serial-060-{I15,B}.log  (not committed)
