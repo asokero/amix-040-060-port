@@ -2049,44 +2049,74 @@ kampanjassa.
 `trunctest`, `bmaptest`) PASS + levytotuus `sum 8320 5763` — **emu-040 ja emu-060**.
 Serialit puhtaat. ⚠️ Ei rautaa; VA2000/Piccolo-kortteja ei testattu tällä.
 
-## ISSUE-34: natiivi `cc` ei toimi 68060:lla — `cc1 got fatal signal 12` (SIGSYS)
+## ISSUE-34: 68060 TAPPAA minkä tahansa käyttäjäohjelman joka jakaa vakiolla — vektori 61 ei ole kytketty
 
-**OPEN, hyvä repro, A/B-todistettu ETTEI ole regressio (26.7.).** Emu-060:lla mikä tahansa
-natiivi käännös kaatuu:
+**OPEN, JUURISYY TODISTETTU 2026-07-27. Paljon isompi kuin alkuperäinen otsikko
+"natiivi cc ei toimi".** Emu-040 + emu-060, dbg 260726-02. Ei rautaa — eikä tässä
+projektissa OLE oikeaa 68060:tä, joten tätä ei voi vielä rautavarmistaa.
+
+**Ketju:**
+1. gcc emittoi vakiojaosta `muls.l <ea>,Dh:Dl` — **64-bittisen tuloksen** muodon
+   (magic-number-käänteislukukertolasku). Tämä on tavallista optimoitua koodia, ei
+   eksoottinen rakenne: `x / 100` tuottaa sen.
+2. **68040 toteuttaa sen raudassa. 68060 EI** → Unimplemented Integer Instruction,
+   **vektori 61**.
+3. **`M68Kvec[61] → nullvect`** — verifioitu binäärista (samoin 60/62/63). Mikään ei
+   käsittele sitä.
+4. `nullvect` testaa talletetun SR:n S-bitin ja ohjaa user-moden `u_trap`iin, jossa ei
+   ole tapausta vektorille 61. Prosessi kuolee.
+
+**Eristetty repro — yksi käsky, ei muuta.** `test-tools/mul64test.c`, ristikäännettynä
+tarkalleen YKSI epäilty käsky (ext=0x1c02: bit11 signed=1, **bit10 size=1 = 64-bit**):
 
 ```
-# cc -o fputest fputest.c
-gcc: Program cc1 got fatal signal 12.
+8000042c   mulsl #1374389535,%d2,%d1
+emu-040:  MUL64 before / MUL64 after q=12345 / MUL64-RESULT PASS   exit=0
+emu-060:  MUL64 before / Killed                                    exit=137 (SIGKILL)
 ```
 
-**A/B:** sama vika toistuu **pre-FPSP-kernelillä 68060-260725-18** samalla golden-imagella
-kuin FPSP-kernelillä 68060-260726-02 → **FPSP:n siirto base-linkkiin ei aiheuttanut tätä.**
-040:llä natiivi `cc` toimii (se on FPSP:n M3-kriteeri, verifioitu 260726-02:lla).
+Sama binääri, sama golden image, vain CPU eroaa. Kuolee täsmälleen kertolaskuun.
 
-**Syy on AVOIN, ja se on syytä diagnosoida ennen kuin 68060SP:tä hankitaan.**
-Ilmeinen hypoteesi olisi 68060:n toteuttamattomat käskyt — 060:lta puuttuu raudasta
-64-bittiset mul/div-pitkät muodot, `movep`, `cas2` — ja kääntäjä käyttää 64-bittistä
-jakoa; sitä varten on Motorolan 060SP:n **ISP**-osa, ja `prototypes/lmul060.s` on
-käsintehty osittainen korvike. **MUTTA signaali on 12 = SIGSYS (bad system call), ei
-SIGILL (4)**, eikä se istu puhtaaseen "tuntematon käsky" -selitykseen. Kaksi
-ehdokasluokkaa, kumpaakaan ei ole poissuljettu:
-1. toteuttamattoman käskyn trap mäppäytyy väärään signaaliin 060-polulla;
-2. jokin aivan muu syscall-polun ongelma 060:lla (ei FP/ISP-asia lainkaan).
+**Korrelaatio koko testisuiteen yli — täydellinen 6/6:** 0 epäiltyä käskyä → toimii
+060:llä (`proctest`, `exectest`, `msynctst`); ≥1 → tapetaan (`mul64test` 1,
+`bmaptest` 3, `pgcold` 3); kaikki toimivat 040:llä. **Siksi 060-linja on näyttänyt
+terveeltä: jokainen sillä koskaan ajettu testi sattui olemaan ilman näitä käskyjä.
+Se oli onnea, ei kattavuutta.**
 
-Jos syy on (2), 68060SP EI korjaa tätä. Diagnoosi on halpa: aja `cc1` dbg-kernelin
-trap-proben alla ja katso mikä osoite/käsky faultaa.
+**Miksi tämä jäi huomaamatta — viikon toistuva kuvio jälleen.** Projekti TIESI
+vektori-61-faktan. `prototypes/lmul060.s`:n oma otsikko sanoo: *"The 64-bit mul/div forms
+are UNIMPLEMENTED on the 68060 (vector 61 trap); these are the ONLY such sites in the
+whole kernel (census 2026-07-09)."* Census oli oikea ja korjaus oikea — **kernelin omat**
+kolme sitea `lmul`issa korvattiin 060-laillisella aritmetiikalla (validoitu muls.l-
+referenssimallia vasten, 202500 tapausta, 0 eroa). Mutta census oli rajattu "koko
+kerneliin", joten **user space ei ollut siinä koskaan** eikä vektoria 61 kytketty
+mihinkään. Toinen puoli rajasta hoidettu, toinen jätetty — sama muoto kuin
+ISSUE-27/28/31/32, paitsi että raja on tässä kernelin sisäinen vs. user mode.
 
-**Vaikutus tähän päivään: 060-testit on RISTIKÄÄNNETTÄVÄ hostilla.** Se toimii ja on nyt
-vakiomenetelmä:
+**YKSI ASIA JOKA EI TÄSMÄÄ, JÄTETÄÄN AUKI:** alkuperäinen havainto oli
+`cc1 got fatal signal 12` (SIGSYS), eristetty repro antaa **signaali 9** (SIGKILL). Sama
+vektori tuottaisi saman signaalin, joten joko `cc1` osuu **eri** muotoon tai vektoriin
+(60 = unimplemented effective address on ilmeinen toinen ehdokas), tai `u_trap`in
+lopputulos riippuu prosessitilasta jota en tunnistanut. **EI RATKAISTU.** Seuraava askel
+on trap-probe joka kirjaa vektorinumeron ja faulttaavan PC:n — ei enempää päättelyä.
 
-```sh
-. ~/kehitys/amix-playground/gcc-cross-amix/build/env.sh
-m68k-cbm-sysv4-gcc -O -m68020 -o fputest.bin fputest.c
-# tftp binary; chmod 755; aja
-```
+**Korjausvaihtoehdot:**
+1. **Motorolan 68060SP ISP** (Integer Support Package) kytkettynä vektoriin 61. Virallinen
+   vastaus, ja tämä löydös on paljon vahvempi syy hankkia 060SP kuin kääntäjä oli: ilman
+   sitä 68060-tuki ei ole vain epätäydellinen vaan **epäluotettava tavalliselle koodille.**
+2. Kohdennettu vektori-61-käsittelijä joka emuloi vain 64-bittiset
+   `muls.l`/`mulu.l`/`divs.l`/`divu.l`-muodot. **Kertolaskun aritmetiikka on jo puussa ja
+   validoitu** (`lmul060.s`); puuttuu trap-framen käsittely, käskydekooderi ja tulosten
+   takaisinkirjoitus. Se liima on työ, ei matematiikka.
+3. Ei korjaus vaan kierto: vältä muotoja 060-user-koodia käännettäessä. gcc 2.8.1:ssä ei
+   ole `-m68060`, joten tähän ei voi nojata.
 
-Näin saatiin 26.7. 060-tulokset (`fputest` PASS, `exectest` PASS FPSP-kernelillä). Sivuhyöty:
-poistaa guest-kääntäjäriippuvuuden 060-testauksesta kokonaan.
+**Toimenpiteet nyt:**
+* Ristikäännöskierto 060-testaukseen (26.7.) on kapeampi kuin väitin: **3/8 testiä ei
+  linkity ristiin lainkaan** (`plock`, `ftruncate`, `mincore` puuttuvat cross-sysrootin
+  libc:stä), ja linkittyvistä ne joissa on 64-bittinen kertolasku eivät voi ajaa 060:llä.
+  Nykyinen 060-kattavuus on: `proctest`, `exectest`, `msynctst`, `fputest`. Siinä kaikki.
+* **Älä lue "emu-060 regression PASS" todisteeksi 060:stä yleisesti** ennen kuin vektori 61
+  on käsitelty. Se tarkoittaa "nämä neljä testiä menevät läpi", ei enempää.
 
-Evidenssi: `test-tools/fpsp-into-base-260726.txt`.
-
+Evidenssi: `test-tools/issue34-060-unimpl-integer-260727.txt`.

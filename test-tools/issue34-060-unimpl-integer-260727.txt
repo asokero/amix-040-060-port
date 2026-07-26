@@ -1,0 +1,90 @@
+ISSUE-34 DIAGNOSED: the 68060 kills any user program that divides by a constant
+=================================================================================
+2026-07-27.  Emulator only (emu-040 + emu-060, dbg 260726-02).  No real hardware --
+and there IS no real 68060 in this project, so this cannot be hardware-confirmed yet.
+
+VERDICT: root cause PROVEN, and it is far bigger than "native cc does not work".
+--------------------------------------------------------------------------------
+1. gcc emits `muls.l <ea>,Dh:Dl` -- the 64-BIT-RESULT form -- for division by a
+   constant (magic-number reciprocal multiply).  This is ordinary optimised code, not
+   an exotic construct: `x / 100` produces it.
+2. The 68040 implements that form IN HARDWARE.  The 68060 does NOT: it takes the
+   Unimplemented Integer Instruction exception, vector 61.
+3. `M68Kvec[61] -> nullvect` in our kernel -- verified in the binary, alongside 60/62/63.
+   Nothing handles it.
+4. nullvect tests the saved SR's S bit and routes user-mode faults to `u_trap`, which has
+   no case for vector 61.  The process dies.
+
+ISOLATED REPRO -- one instruction, nothing else
+----------------------------------------------
+test-tools/mul64test.c: prints, divides a long by 100, prints again.  Cross-compiled
+`m68k-cbm-sysv4-gcc -O -m68020` contains EXACTLY ONE suspect instruction, verified by
+decoding the extension word (ext=0x1c02: bit11 signed=1, bit10 size=1 = 64-bit result):
+
+    8000042c   mulsl #1374389535,%d2,%d1
+
+  emu-040:  MUL64 before / MUL64 after q=12345 / MUL64-RESULT PASS   exit=0
+  emu-060:  MUL64 before / Killed                                    exit=137 (SIGKILL)
+
+Same binary, same golden image, only the CPU differs.  It dies exactly at the multiply.
+
+CORRELATION ACROSS THE WHOLE TEST SUITE -- perfect, 6/6
+------------------------------------------------------
+Counted 64-bit muls.l/divs.l forms per cross-compiled binary, then ran each:
+
+  binary          64-bit forms   emu-040                    emu-060
+  mul64test.bin        1         PASS exit 0                KILLED exit 137
+  bmaptest.bin         3         BMAPTEST-RESULT PASS       KILLED exit 137 (2x)
+  pgcold.bin           3         PHASE-D-DONE errs=0        (predicted killed; not run)
+  proctest.bin         0         --                          PROCTEST-RESULT PASS
+  exectest.bin         0         PASS                        PASS
+  msynctst.bin         0         MSYNC-OK                    MSYNC-OK
+
+Zero suspect instructions => works on 060.  One or more => killed on 060.  All work on 040.
+This is why the 060 line has looked healthy: every test ever run on it happened to contain
+none of these instructions.  It was luck, not coverage.
+
+WHY THIS WAS MISSED -- and it is the week's recurring pattern again
+------------------------------------------------------------------
+The project ALREADY KNEW the vector-61 fact.  prototypes/lmul060.s's own header says:
+
+    "The 64-bit mul/div forms are UNIMPLEMENTED on the 68060 (vector 61 trap); these are
+     the ONLY such sites in the whole kernel (census 2026-07-09, see 68060-prestudy.md)."
+
+That census was correct and the fix was correct -- the KERNEL's own three sites, in `lmul`,
+were replaced with 060-legal arithmetic (validated against a muls.l reference model,
+202500 random+edge cases, 0 diffs).  But the census was scoped to "the whole kernel", so
+USER SPACE was never in it, and vector 61 was never wired to anything.  One side of the
+boundary handled, the other side left unhandled -- the same shape as ISSUE-27/28/31/32,
+except here the boundary is kernel-internal vs user-mode rather than producer vs consumer.
+
+ONE THING THAT DOES NOT ADD UP, AND IS LEFT OPEN
+------------------------------------------------
+The original ISSUE-34 observation was `cc1 got fatal signal 12` (SIGSYS).  The isolated
+repro gives signal 9 (SIGKILL).  The same vector should produce the same signal, so either
+cc1 hits a DIFFERENT unimplemented form or vector (60 = unimplemented effective address is
+the obvious other candidate), or u_trap's outcome depends on process state not identified
+here.  NOT RESOLVED.  The remaining step is a trap probe that records the vector number and
+faulting PC, rather than more inference.
+
+FIX OPTIONS, in the order I would consider them
+-----------------------------------------------
+1. Motorola 68060SP **ISP** (Integer Support Package) wired to vector 61.  The official
+   answer, and this finding is a far stronger reason to obtain 060SP than the compiler was:
+   without it, 68060 support is not merely incomplete, it is unsound for ordinary code.
+2. A targeted vector-61 handler emulating just the 64-bit muls.l/mulu.l/divs.l/divu.l
+   forms.  Note the multiply ARITHMETIC already exists in our tree and is validated --
+   lmul060.s.  What is missing is the trap frame handling, an instruction decoder, and
+   operand/result writeback.  That glue is the work, not the maths.
+3. Not a fix, only a workaround: avoid the forms when building 060 user code.  gcc 2.8.1
+   has no -m68060, so this is not reliable and should not be leaned on.
+
+CONSEQUENCES TO ACT ON NOW
+--------------------------
+* The cross-compile workaround for 060 testing (established 2026-07-26) is narrower than
+  claimed: 3 of 8 tests do not cross-link at all (`plock`, `ftruncate`, `mincore` are
+  missing from the cross sysroot's libc), and of those that do, any containing a 64-bit
+  multiply cannot run on 060 regardless.  So 060 coverage is currently: proctest, exectest,
+  msynctst, fputest -- and that is all.
+* Do NOT read "emu-060 regression PASS" as evidence about 060 generally until vector 61 is
+  handled.  It means "these four tests pass", nothing more.

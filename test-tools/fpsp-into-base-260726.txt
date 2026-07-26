@@ -163,3 +163,82 @@ NOT VERIFIED (unchanged from the section above, plus)
     physically installed is a separate question.
   * emu-060 was not re-run on the RTG kernel (the drivers are 040-era Zorro-II boards;
     the 060 line is regression-only for the base).
+
+
+===============================================================================
+FOLLOW-UP 2026-07-27: loader margin quantified + full battery on the 260726 line
+===============================================================================
+
+1. LOADER / copyit AT THE NEW IMAGE SIZE -- risk was overstated, now quantified
+------------------------------------------------------------------------------
+I flagged this twice as an open risk on the strength of three clean cold boots, which is
+weak evidence.  It is answerable exactly, because THE LOADER COMPUTES AND PRINTS THE
+VERDICT ITSELF (unix_boot.c, the 2026-07-09 diagnostic), and the emulator's memory
+geometry is IDENTICAL to the real Mercury machine (mem[0] 0x08000020..0x0a000000 = 32 MiB,
+mem[1] 0x07000020..0x08000000 = 16 MiB).  So the margin transfers to real hardware.
+
+Measured on the largest artifact, the RTG kernel 260726-03 (file 1 817 257 B):
+
+    kernel: entry=08000000 tvaddr=08000000 tsize=000f04a0 dvaddr=080f04a0 dsize=0001a11c
+    buffer: image=09e44550 copysrc=09e44584..09f4eb40 dest=08000000..0810a5bc
+    no overlap (copy is safe)
+
+  destination [0x08000000, 0x0810a5bc)  = 1 090 012 B at the BOTTOM of the 32 MiB region
+  ELF buffer  [0x09e44550, 0x0a000000)  = 1 817 264 B at the TOP (MEMF_REVERSE working
+                                          exactly as designed: top-of-region minus filesize)
+  MARGIN between them = 30 646 164 B = 29.2 MiB
+
+Overlap requires copy_size + file_size >= region_size, i.e. a kernel file of roughly
+16 MiB on this configuration.  We are at 1.82 MiB: about 9x headroom.  Adding 68060SP
+(~350 KB) would not move this meaningfully.
+
+And there are THREE independent guards, all verified in source:
+  * MEMF_REVERSE places the buffer at the top of the region (confirmed by the addresses)
+  * copyit's direction choice is now correct in BOTH directions -- `cmpl a0,a1 / bcs
+    copyfwd`: dest<src ascends, dest>=src descends from the tail (copyit.s:93-95)
+  * a checksum over the DESTINATION is compared against the loader-computed source sum,
+    and a mismatch flashes color0 white/red forever rather than jumping into a corrupt
+    kernel (copyit.s:130-148)
+
+Every boot in this session printed "no overlap (copy is safe)".  CONCLUSION: this is not a
+live risk at the current or foreseeable image size.  The white/red-flash advice stays in the
+run list as a diagnostic, but I was wrong to rank it as an open hazard.
+
+2. FULL BATTERY ON 68040-260726-02 (the gap I recorded on 2026-07-26) -- ALL PASS
+--------------------------------------------------------------------------------
+  bmaptest /pgc            BMAPTEST-RESULT PASS       (ISSUE-31, T5 fragment growth OK)
+  mlocktest                MLOCKTEST-RESULT PASS      (ISSUE-28, fails=0 skipped=0)
+  trunctest 8 /pgc         TRUNCTEST-RESULT ZEROED    (ISSUE-30, expected: no repro)
+  msynctst                 MSYNC-OK sz=65536          (ufs_putpage disk truth)
+  pgcold D 24 /pgc         PHASE-D-DONE files=24 errs=0
+    -> sync; sync; reboot (soft, per ISSUE-24) -- 2 boots in the serial log, both
+       "no overlap (copy is safe)"
+  pgcold E 24 /pgc         PGCOLD-E-RESULT PRESERVED  <- the ISSUE-27 proof holds with
+                           hits=0 zeroed=0 marker=0 errs=0     FPSP in the base
+  disk truth /big.dat      2 950 288 B, sum 8320 5763 BEFORE the reboot and 8320 5763
+                           AFTER it -- and byte-identical to the 260725 baseline
+  serial: 0 hits for PANIC / BUS ERROR / 4AFC005F / KMEMCORRUPT / SIG sig=4
+
+3. emu-060 (68060-260726-02, cross-compiled binaries) -- PASS as far as it goes
+------------------------------------------------------------------------------
+  proctest.bin   PROCTEST-RESULT PASS (parent fails=0)
+  msynctst.bin   MSYNC-OK sz=65536
+  fputest.bin    Test A PASS  (from 2026-07-26)
+  exectest.bin   PASS, 20 generations (from 2026-07-26)
+  serial: 0 hits for PANIC / BUS ERROR / KMEMCORRUPT / "no space" / 4AFC005F
+
+  bmaptest.bin was KILLED (exit 137) on 060 -- chased and ROOT-CAUSED, see
+  test-tools/issue34-060-unimpl-integer-260727.txt.  It is ISSUE-34: the 68060 does not
+  implement 64-bit-result muls.l, M68Kvec[61] goes to nullvect, and any user program
+  containing that instruction is killed.  NOT a regression from anything landed this week.
+
+  The cross-compile workaround is narrower than I claimed on 2026-07-26: mlocktest,
+  trunctest and devmaptest do NOT cross-link (`plock`, `ftruncate`, `mincore` missing from
+  the cross sysroot's libc), so those three are 040-only until either the stubs are added
+  or the 060 compiler works.
+
+4. USER-REPORTED, not run by me
+------------------------------
+  `xinit` WORKS on unix-040-rtg-dbg (68040-260726-03) with the Xsvga driver -- user-tested
+  2026-07-27.  This closes the inference I flagged on 2026-07-26 ("worked on 260724-09, not
+  re-run on this kernel").  Still emulator; the physical Piccolo remains untested.
