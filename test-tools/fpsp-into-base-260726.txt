@@ -242,3 +242,72 @@ run list as a diagnostic, but I was wrong to rank it as an open hazard.
   `xinit` WORKS on unix-040-rtg-dbg (68040-260726-03) with the Xsvga driver -- user-tested
   2026-07-27.  This closes the inference I flagged on 2026-07-26 ("worked on 260724-09, not
   re-run on this kernel").  Still emulator; the physical Piccolo remains untested.
+
+
+===============================================================================
+FOLLOW-UP 2026-07-27 (2): pressure + fork/COW on 260726-02, and an ISSUE-34 CORRECTION
+===============================================================================
+
+5. PRESSURE / fork-COW REGRESSION, emu-040, 68040-260726-02 -- ALL PASS
+----------------------------------------------------------------------
+This was the last unrun item of the run list's own step 9, and it is not a formality:
+FPSP added 191 KB to the base, which SHIFTS kvseg addresses -- exactly the mechanism I
+offered as the structural argument for ISSUE-29 -- and this project's worst bugs (ISSUE-10,
+22, 29) have all lived under fork and I/O pressure.  The functional battery does not load
+the machine at all.
+
+  /payload.bin           4 425 432 B, sum 12480 8644   (new baseline; the historical
+                         1570 8192 belongs to a file that is not in the repo)
+  hat_dup_cow 1          RESULT PASS
+  hat_dup_cow 32         RESULT PASS
+  hat_dup_cow 64         RESULT PASS
+  issue10-pressure.sh    PRESSURE-DONE, 6 concurrent 4 MiB copies + hat_dup_cow 64 churn,
+                         all six sums 12480 8644 -- 6/6 byte-perfect
+  burst4.sh              ALLBURSTS-DONE, grep -c "12480 8644" = 24 -- 24/24 byte-perfect
+                         across 4 bursts of (6x4 MiB concurrent + hat_dup_cow 64)
+  serial over the whole run: 0 hits for PANIC / BUS ERROR / 4AFC005F / KMEMCORRUPT /
+                         SIG sig / EFAULT.  2 XPAGE lines (hardbus page-crossing
+                         diagnostic, expected under pressure -- see ISSUE-11 notes).
+
+So ISSUE-29 did NOT appear in this run, and neither did ISSUE-22's EFAULT.  Recorded as a
+negative datapoint, not as evidence they are gone.
+
+6. ** CORRECTION TO THE ISSUE-34 WRITE-UP EARLIER TODAY **
+---------------------------------------------------------
+I wrote that ISSUE-34's root cause was proven.  That was too broad, and the signal
+discrepancy I flagged (cc1 = 12/SIGSYS, isolated repro = 9/SIGKILL) turns out to matter.
+
+Direct evidence, obtained by disassembling the guest toolchain out of the READ-ONLY vanilla
+install tree and counting 68060-unimplemented instructions:
+
+  gcc (driver)      72 896 B   clean
+  gcc-cc1          666 440 B   CLEAN -- no 64-bit mul/div, no movep/cas/cas2/cmp2/chk2
+  gcc-cpp           46 468 B   clean
+  gcc-gnulib        36 354 B   clean
+  libc.so.1        206 876 B   clean
+  libc.a           469 242 B   clean
+  ld.so.1          111 104 B   clean
+
+**cc1 contains none of the instructions the 68060 fails to implement.**  So the muls.l /
+vector-61 defect, which IS real and IS proven, is NOT what breaks cc1.  ISSUE-34 is two
+separate problems and must be tracked as such:
+
+  ISSUE-34a  PROVEN.  A 64-bit-result muls.l/divs.l kills any user process on the 68060
+             because M68Kvec[61] is nullvect.  Isolated one-instruction repro, 6/6
+             correlation across the suite.  Fix: 68060SP ISP, or a targeted vector-61
+             handler.  This stands entirely on its own merits.
+  ISSUE-34b  STILL OPEN.  cc1 dies with SIGSYS (12) on the 68060 and works on the 68040.
+             The whole compiler toolchain is clean of unimplemented instructions, so the
+             instruction-set class is RULED OUT by direct evidence.  SIGSYS is literally
+             "bad system call", which redirects the search to the syscall/trap path rather
+             than the ISA.  What differs on 060 in our kernel: wb060.s, lmul060.s, the
+             cputype gates and four FPU Tier-1 overrides -- plus the 060's different
+             exception frame formats.
+
+  Caveat on the scan: these are the VANILLA install's binaries.  The emulator boots the
+  X11R5-net image, whose compiler may not be byte-identical.  The class conclusion (the
+  toolchain does not use these instructions) is robust; a specific offset claim would not be.
+
+  Next step for 34b is instrumentation, not more inference: a probe that records the vector
+  number (exception frame format word, sp@(66) after nullvect's moveml) and the faulting PC,
+  which would also confirm 34a's vector directly instead of by deduction.

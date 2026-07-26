@@ -2049,7 +2049,44 @@ kampanjassa.
 `trunctest`, `bmaptest`) PASS + levytotuus `sum 8320 5763` — **emu-040 ja emu-060**.
 Serialit puhtaat. ⚠️ Ei rautaa; VA2000/Piccolo-kortteja ei testattu tällä.
 
-## ISSUE-34: 68060 TAPPAA minkä tahansa käyttäjäohjelman joka jakaa vakiolla — vektori 61 ei ole kytketty
+## ISSUE-34: JAKAUTUU KAHTEEN — 34a (todistettu) 68060 tappaa vakiojaon; 34b (auki) cc1:n SIGSYS ei ole tämä
+
+**⚠ KORJAUS 27.7. iltapäivä, samana päivänä kirjattu.** Kirjasin aamulla juurisyyn
+"todistetuksi" koko ISSUE-34:lle. Se oli liian laaja. Se signaaliero jonka merkitsin
+auki-jääväksi (`cc1` = 12/SIGSYS, eristetty repro = 9/SIGKILL) osoittautui ratkaisevaksi.
+
+**Suora todiste:** purin guestin koko kääntäjäketjun READ-ONLY vanilla-puusta ja laskin
+68060:lle toteuttamattomat käskyt:
+
+```
+gcc (driver)   72 896 B  clean      gcc-gnulib    36 354 B  clean
+gcc-cc1       666 440 B  CLEAN      libc.so.1    206 876 B  clean
+gcc-cpp        46 468 B  clean      libc.a       469 242 B  clean
+                                    ld.so.1      111 104 B  clean
+```
+
+**`cc1` ei sisällä yhtäkään käskyä jota 68060 ei toteuta.** Eli `muls.l`/vektori-61-vika,
+joka ON todellinen ja ON todistettu, **ei ole se joka rikkoo `cc1`:n.** Kaksi eri vikaa:
+
+* **ISSUE-34a — TODISTETTU.** 64-bittinen `muls.l`/`divs.l` tappaa minkä tahansa
+  käyttäjäprosessin 68060:llä koska `M68Kvec[61]` on `nullvect`. Yhden käskyn eristetty
+  repro, 6/6 korrelaatio suiten yli. Seisoo täysin omilla ansioillaan. Yksityiskohdat alla.
+* **ISSUE-34b — AUKI.** `cc1` kuolee SIGSYS:iin (12) 060:llä ja toimii 040:llä. Koko
+  kääntäjäketju on puhdas toteuttamattomista käskyistä, joten **käskykantaluokka on
+  SULJETTU POIS suoralla todisteella.** SIGSYS on kirjaimellisesti "bad system call", mikä
+  siirtää haun **syscall-/trap-polulle** eikä ISA:aan. Mikä 060:llä eroaa meidän
+  kernelissä: `wb060.s`, `lmul060.s`, cputype-gatet ja neljä FPU Tier-1 -overridea — sekä
+  060:n erilaiset exception-frame-formaatit.
+  *Varaus skannauksesta:* nämä ovat VANILLA-asennuksen binäärit; emu boottaa X11R5-net-
+  imagen jonka kääntäjä ei välttämättä ole tavuidenttinen. Luokkapäätelmä (ketju ei käytä
+  näitä käskyjä) on kestävä, yksittäinen offset-väite ei olisi.
+  **Seuraava askel on instrumentointi, ei päättely:** probe joka kirjaa vektorinumeron
+  (exception-framen format-sana, `%sp@(66)` `nullvect`in `moveml`in jälkeen) ja faulttaavan
+  PC:n — se vahvistaisi myös 34a:n vektorin suoraan eikä päättelemällä.
+
+---
+
+### ISSUE-34a: 68060 tappaa minkä tahansa käyttäjäohjelman joka jakaa vakiolla — vektori 61 ei ole kytketty
 
 **OPEN, JUURISYY TODISTETTU 2026-07-27. Paljon isompi kuin alkuperäinen otsikko
 "natiivi cc ei toimi".** Emu-040 + emu-060, dbg 260726-02. Ei rautaa — eikä tässä
