@@ -4,6 +4,14 @@ Tämä on **itsenäinen ajolista**: kaikki mitä sessiossa tarvitaan on tässä
 tiedostossa tai nimetyssä repo-artefaktissa. Mitään ei tarvitse rakentaa
 sessiossa. Ajojärjestys on tarkoituksella **fail-fast**.
 
+> ## ⚠ 2026-07-26: KERNELITAULUKKO ON VANHENTUNUT — ÄLÄ AJA TÄTÄ SELLAISENAAN
+> FPSP siirrettiin base-linkkiin (commit `973c8f7`), joten kernelit ovat nyt
+> **68040-260726-01 (base) / -02 (dbg)** ja niissä on FPU-tuki sisäänrakennettuna.
+> Vaihe 1 pätee näihin suoraan (`fputest` siirtyy vaiheesta 2 vaiheeseen 1).
+> **Grafiikkakerneleitä 260725-19/-20 EI ole vielä rakennettu uudelleen tälle
+> pohjalle** — vaiheet 2–3 odottavat sitä. Evidenssi ja mitä EI testattu:
+> `test-tools/fpsp-into-base-260726.txt`. Päivitä tämä lohko kun -19/-20 on uusittu.
+
 ## Miksi tämä ajetaan nyt
 
 25.7. muutettiin **127 tavupatch-sitea + yksi uusi .s-override** UFS-kirjoituspolulla,
