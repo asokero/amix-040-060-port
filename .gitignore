@@ -32,6 +32,12 @@ ghindra-unix/
 # NOT version-controlled: temporary/ad-hoc, and photos may carry GPS EXIF.
 testimages/
 
+# --- Local-only working notes, deliberately outside version control ---
+# Anything under private/ stays on this machine: notes that must not reach a remote
+# even by accident.  Wholesale rule so a new note needs no new ignore line.
+# NOTE: this means no history and no backup -- `git clean -xdf` WOULD delete it.
+private/
+
 # Third-party reference sources (do NOT commit -- copyright/size)
 svr4-src-3b2/
 svr4-v4/
