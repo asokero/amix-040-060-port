@@ -1,4 +1,42 @@
-# RESUME HERE — AMIX 68040/68060 port status (2026-07-26)
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-27)
+
+> ## ⚠✅ 2026-07-27 — ISSUE-34 JUURISYY TODISTETTU (068060 tappaa vakiojaon); LOADER-RISKI KVANTIFIOITU; TÄYSI PATTERI LÄPI
+> Commit `7b25b8b`. Evidenssit `test-tools/issue34-060-unimpl-integer-260727.txt` ja
+> `fpsp-into-base-260726.txt` (jatko-osa). **Ei rautaa.**
+>
+> **1. ⚠ ISSUE-34 EI OLE "cc ei toimi 060:lla" VAAN: 68060 TAPPAA MINKÄ TAHANSA
+> KÄYTTÄJÄOHJELMAN JOKA JAKAA VAKIOLLA.** gcc emittoi `x / 100`:sta
+> `muls.l <ea>,Dh:Dl` = 64-bittisen tuloksen muodon. **040 toteuttaa sen raudassa, 060 ei**
+> → vektori 61 → **`M68Kvec[61] → nullvect`** (verifioitu binäärista) → `u_trap` ilman
+> tapausta → prosessi kuolee. Eristetty **yhden käskyn** repro `test-tools/mul64test.c`:
+> emu-040 `MUL64-RESULT PASS` exit 0, emu-060 `Killed` exit 137. **Korrelaatio 6/6** koko
+> testisuiteen yli. **→ 060-linja on näyttänyt terveeltä koska jokainen sillä ajettu testi
+> sattui olemaan ilman näitä käskyjä: ONNEA, EI KATTAVUUTTA.** Älä lue "emu-060 PASS"
+> väitteeksi 060:stä yleisesti; todellinen kattavuus on 4 testiä.
+> **Miksi jäi huomaamatta:** `lmul060.s`:n oma otsikko kertoo vektori-61-faktan ja 9.7.
+> censusin joka löysi "the ONLY such sites in **the whole kernel**" — census oli oikea,
+> korjaus oikea, mutta **rajattu kerneliin**, joten user space jäi ulos eikä vektoria 61
+> kytketty. Sama muoto kuin ISSUE-27/28/31/32.
+> **AUKI:** `cc1` antoi signaali 12, repro antaa 9 → `cc1` osuu ehkä eri vektoriin (60?).
+> Seuraava askel on **trap-probe joka kirjaa vektorin ja PC:n**, ei enempää päättelyä.
+> **Korjaus:** 68060SP **ISP** vektoriin 61 (tämä on paljon vahvempi syy hankkia se kuin
+> kääntäjä oli) tai kohdennettu vektori-61-käsittelijä — kertolaskun aritmetiikka on jo
+> puussa ja validoitu (`lmul060.s`), puuttuu trap-frame + dekooderi + writeback.
+>
+> **2. ✅ LOADER-RISKI: olin väärässä pitäessäni sitä avoimena vaarana.** Loader laskee ja
+> tulostaa verdiktin itse, ja emun muistigeometria on identtinen oikean Mercuryn kanssa →
+> luku siirtyy raudalle. Isoimmalla artefaktilla puskuri on **29,2 MiB irti kohteesta**;
+> päällekkäisyys vaatisi **~16 MiB** kernelin (nyt 1,82 MB) = ~9× marginaali. Kolme
+> vahtia verifioitu lähteestä (MEMF_REVERSE, copyitin suunta molempiin suuntiin, kohteen
+> checksum). Valkoinen/punainen välähdys jää ajolistaan diagnostiikkana, ei riskinä.
+>
+> **3. ✅ TÄYSI PATTERI 260726-02:lla** (26.7. kirjattu aukko kiinni): `bmaptest` PASS,
+> `mlocktest` PASS, `trunctest` ZEROED, `msynctst` MSYNC-OK, **`pgcold D/E` →
+> PRESERVED** (ISSUE-27:n todiste pitää FPSP basessa), levytotuus `8320 5763` rebootin yli
+> ja identtinen 260725-baselineen, serial puhdas. **`xinit` toimii 260726-03:lla + Xsvga**
+> (käyttäjän testaama) → 26.7. kirjattu päätelmä kuitattu testiksi.
+> **Rajoite:** `mlocktest`/`trunctest`/`devmaptest` **eivät linkity ristiin**
+> (`plock`/`ftruncate`/`mincore` puuttuvat cross-sysrootin libc:stä) → 040-only.
 
 > ## ✅ 2026-07-26 — FPSP BASE-LINKKIIN + YKSI GRAFIIKKAKERNELI MOLEMMILLA AJUREILLA; RAUTAAN VIEDÄÄN 3 ARTEFAKTIA
 > Commitit `973c8f7` (FPSP→base) ja `f13fedb` (Xsvga-polku + yhdistetty RTG-kerneli).
