@@ -66,6 +66,20 @@
 >   (`cputype`-dispatch); vektorislotit pitää osoittaa shimiin koska kaksi pakettia ei
 >   voi omistaa samaa slottia staattisesti. Koko kasvaisi ~1,9 MB:iin → tekee loaderin
 >   kokorasitustestistä pakollisen.
+> - **`paths.sh`** — repossa on **26 absoluuttista `/home/asokero`-polkua 16 seuratussa
+>   tiedostossa**, viidessä juuressa. Yksi sourcettava `paths.sh` (~20 riviä) korjaa koko
+>   ongelman. Tämä on pienin liike joka lopettaa vuodon; tee ennen muuta rakenteellista.
+> - **`external_drivers/`-drop-in** muodossa **löydä → validoi → delegoi**. EI
+>   automaattista linkitystä: VA2000:n `parinit`-wrapper (weaken + `--add-symbol
+>   parinit_orig=.text:0xfe6c`) on ajurikohtainen RE-teko, ei manifestimetadataa, ja
+>   kolmas samaa hookia tarvitseva ajuri vaatii ketjun. Keskitetty validointi kattaisi
+>   major-törmäyksen, cdevsw-slotin varauksen, **symbolitörmäyksen ajurien välillä**
+>   (ei tänään katettu lainkaan), blobien summat ja base-symbolien osoitteet.
+>   **Raja: mikään tarkistus ei havaitse Model-B-virhettä** — drop-in-ajuri läpäisisi
+>   kaiken ja mappaisi silti 2× fyysiseen osoitteeseen (ISSUE-33:n luokka) → manifestiin
+>   `MODELB-REVIEWED: yes/no` ja build kieltäytyy `no`:lla. Hakemisto `.gitignore`en =
+>   liitospiste, ei sisältöä. Tavoite: avoimen lähdekoodin ajureita mukaan — se on
+>   HELPOMPI luokka kuin binääriblobi, koska sovitus on lähteessä ja arvioitavissa.
 >
 > **RAUTASESSIO on yhä suurin avoin kohde**, ajolista `REALHW-VERIFY-260725.md`
 > (kernelitaulukko päivitetty tähän tilanteeseen). Loaderin copyit-polkua EI ole
