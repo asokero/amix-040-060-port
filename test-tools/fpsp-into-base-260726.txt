@@ -1,0 +1,97 @@
+FPSP PROMOTED INTO THE BASE LINK -- emulator verification, 2026-07-26
+=====================================================================
+
+WHAT CHANGED
+------------
+The Motorola 68040 FPSP stopped being a separate kernel variant and became part of
+relink-040.sh, so every artifact built from the base carries it.
+
+  relink-040.sh          + FPSP block (last step, after every byte patch)
+                           FPSP=1 default; FPSP=0 builds the old no-FPSP kernel
+  relink-040-fpsp.sh     RETIRED -> stub that exits 1 with a pointer
+  relink-040-fpsp-xsvga.sh, relink-040-va2000.sh
+                         FPSP layer REMOVED (they would have double-linked it);
+                         their guard inverted -- they now REQUIRE FPSP in the base
+
+Placement is deliberate: FPSP is ld -r'd in AFTER all byte patches.  `ld -r` puts the
+base object's .text first, so every patch address survives -- but only in this order.
+
+WHY (the argument, not just the tidiness)
+-----------------------------------------
+The 68040 implements a SUBSET of the FP instruction set in hardware and traps the rest.
+Motorola ships FPSP because completing the ISA is the OS's job.  A 68040 kernel without
+it is an incomplete 68040, not a kernel missing an optional extra.
+
+Our own evidence that this mattered: with vector 55 (unimplemented DATA TYPE) left on
+nullvect, the X server died of SIGILL --
+    DBG SIG sig=4 pid=208 psargs=/usr/X/bin/Xsvga :0
+-- and that was read as a graphics problem for a while.  The graphics-driver goal made an
+FPU completeness gap look like a driver bug.
+
+Second reason: the variant matrix.  FPSP+driver kernels were built by separate scripts with
+their own default bases, which is exactly how the 2026-07-25 near-miss happened (graphics
+kernels silently built from a 260724 base, containing none of that day's VM fixes).  FPSP in
+base collapses two axes to one: base = VM + complete CPU; driver kernels = base + one driver.
+
+BUILDS
+------
+  build/unix-040       68040-260726-01   1 716 532 B  (was 260725-17, 1 525 673 -> +191 KB)
+  build/unix-040-dbg   68040-260726-02   1 753 723 B  (was 260725-18, 1 562 864 -> +191 KB)
+  relocs 0 on both; all 10 FPSP entry points defined; no unresolved FPSP refs.
+  M68Kvec[11] -> fpsp_vec11, vectors 48/51/52/53/54/55 -> FPSP, 49/50 left on nullvect
+  by design (the 040 completes inexact and div-by-zero in hardware).
+  Kept for A/B: build/unix-040{,-dbg}.PRE-FPSPBASE-260725-1{7,8}
+
+emu-040 (68040-260726-02) -- ALL PASS
+------------------------------------
+  boot -> idle, banner 68040-260726-02, telnet login OK
+  fputest      Test A PASS  (add/sub/mul/div, 1/3, sqrt2, checksum 1747546)
+  native cc    WORKS -- it compiled fputest/exectest/proctest/devmaptest on the guest
+  exectest     EXECTEST-RESULT PASS (20 generations, data+bss verified)
+  proctest     PROCTEST-RESULT PASS (parent fails=0)
+  devmaptest   DEVMAPTEST-RESULT PASS (fails=0, T2 mincore canary clean)
+  serial: 0 hits for PANIC / BUS ERROR / 4AFC005F / SIG sig=4 / KMEMCORRUPT
+
+emu-060 (68060-260726-02, SAME dual-CPU binary) -- PASS, with one pre-existing gap
+---------------------------------------------------------------------------------
+  boot -> idle, banner 68060-260726-02, CACR read-back BCD80008000 (B1 active)
+  fputest      Test A PASS   <- the cputype gate HOLDS: the 060 does its FP in hardware
+                                and never enters the 040 FPSP path
+  exectest     EXECTEST-RESULT PASS (20 generations)
+  serial: 0 hits for PANIC / BUS ERROR / 4AFC005F / SIG sig=4
+
+  ** NATIVE cc IS BROKEN ON 060 -- AND IT WAS BROKEN BEFORE THIS CHANGE. **
+  `cc -o fputest fputest.c` gives `gcc: Program cc1 got fatal signal 12` (SIGSYS).
+  A/B PROOF: the SAME failure reproduces on the PRE-FPSP kernel 68060-260725-18 booted on
+  the same golden image.  So this is NOT a regression from FPSP-in-base.  It is the 060
+  equivalent of the gap that FPSP closed on the 040 (M3 = "native cc works again"), and it
+  needs Motorola's 68060SP; prototypes/lmul060.s covers only part of the unimplemented set.
+  Consequence for method: 060 tests must be CROSS-COMPILED on the host --
+      . gcc-cross-amix/build/env.sh
+      m68k-cbm-sysv4-gcc -O -m68020 -o fputest.bin fputest.c
+  then tftp'd in BINARY mode and chmod 755.  This works and is how the two 060 results
+  above were obtained.  It also removes the guest-compiler dependency from 060 testing
+  generally.
+
+  ** ISSUE-29 sighting #4 ** (KMA free-list report), 93% into the boot log:
+      DBG KMEMCORRUPT bin=80EDA04 blk=40250A00 next=80ED9F0 prev=80ED9F0
+                      caller=8042334 size=24
+  Recorded, NOT attributed.  ISSUE-29 has been seen on kernels without FPSP and has never
+  reproduced on demand; one sighting on an FPSP kernel is not evidence that FPSP caused it.
+  Note next==prev here, whereas the 2026-07-25 sightings had small integer next/prev --
+  a different shape, worth comparing if it ever reproduces.
+
+NOT VERIFIED
+------------
+  * NO REAL HARDWARE.  Everything above is emulator only.
+  * The loader/copyit path at the NEW image size was NOT stress-tested.  The base grew
+    1.53 -> 1.72 MB, and the historical cold-boot corruption was a loader buffer OVERLAP
+    at ~0.96 MB.  Three cold boots (2x 060, 1x 040) came up clean, which is a weak
+    positive, not a proof.  On real HW: if the screen flashes white/red at handoff, that
+    is the copyit checksum guard and it is THIS, not FPSP.
+  * pgcold D/E, bmaptest, mlocktest, trunctest, disk truth, msync: NOT re-run on the FPSP
+    kernels.  They passed on 260725-17/-18 and FPSP appends code without touching any
+    patched address, but "should not matter" is not "was tested".
+  * The graphics kernels (260725-19/-20) were NOT rebuilt.  They still carry their own
+    FPSP layer from the old flow; rebuilding them on the new base is the next step and
+    REALHW-VERIFY-260725.md's kernel table is stale until then.

@@ -43,7 +43,7 @@ PARINIT_ADDR=0xfe6c
 
 [ -f "$IN" ] || { echo "ERROR: base kernel missing: $IN"; exit 1; }
 echo "[*] base: $(basename "$IN")"
-m68k-linux-gnu-nm "$IN" | grep -qE " [Tt] fpsp_vec11\$" && { echo "[FAIL] base already has FPSP linked -- use a plain (non-FPSP) base"; exit 1; }
+m68k-linux-gnu-nm "$IN" | grep -qE " [Tt] fpsp_vec11$" || { echo "[FAIL] base does NOT carry FPSP -- since 2026-07-26 FPSP is part of relink-040.sh; rebuild the base"; exit 1; }
 m68k-linux-gnu-nm "$IN" | grep -qE " [Tt] va2000init\$" && { echo "[FAIL] base already has va2000 linked -- use a plain base"; exit 1; }
 
 PARINIT_LINE=$(m68k-linux-gnu-nm "$IN" | grep -E " T parinit\$") || { echo "ERROR: parinit not found in $IN"; exit 1; }
@@ -55,11 +55,6 @@ PARINIT_EXPECT=$(printf '%08x' $PARINIT_ADDR)
 }
 echo "      parinit @0x$PARINIT_CUR OK (matches expected 0x$PARINIT_EXPECT)"
 
-echo "[*] M1: FPSP package body"
-sh "$HERE/build-fpsp040.sh" >/dev/null
-echo "[*] M2: assemble the AMIX FPSP glue"
-m68k-linux-gnu-gcc -x assembler-with-cpp -m68040 -I"$FPWORK" \
-	-c "$HERE/prototypes/fpsp_glue040.s" -o "$HERE/build/fpsp_glue040.o"
 
 echo "[*] VA2000: Model-B source copy (>>11 -> >>12, exactly one site)"
 python3 "$HERE/prototypes/va2000_modelb.py"
@@ -83,9 +78,8 @@ m68k-linux-gnu-objcopy \
 	--add-symbol parinit_orig=.text:$PARINIT_ADDR,function,global \
 	"$STAGE"
 
-echo "[*] ld -r: base(weakened) + fpsp040.o + fpsp_glue040.o + va2000_040.o + parinit_va2000.o"
+echo "[*] ld -r: base(weakened, FPSP already in it) + va2000_040.o + parinit_va2000.o"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$STAGE" \
-	"$HERE/build/fpsp040.o" "$HERE/build/fpsp_glue040.o" \
 	"$HERE/build/va2000_040.o" "$HERE/build/parinit_va2000.o"
 
 echo "[*] symbols from both features must be defined:"
@@ -102,10 +96,6 @@ LEAK=$(m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'fpsp_|mem_read|mem_writ
 PCOUNT=$(m68k-linux-gnu-nm "$OUT" | grep -cE " T parinit\$")
 [ "$PCOUNT" -eq 1 ] || { echo "[FAIL] expected exactly 1 strong 'parinit' def, found $PCOUNT"; exit 1; }
 
-echo "[*] patch 1/3: M68Kvec[11] -> fpsp_vec11"
-python3 "$HERE/prototypes/patch_fpsp_vec11.py" "$OUT" | tail -2
-echo "[*] patch 2/3: FP arithmetic vectors 48/51/52/53/54/55 -> FPSP"
-python3 "$HERE/prototypes/patch_fpsp_vectors.py" "$OUT" | tail -8
 echo "[*] patch 3/3: cdevsw[68] -> va2000* (major 68 = /dev/va2000)"
 python3 "$HERE/prototypes/patch_va2000_cdevsw.py" "$OUT" | tail -8
 

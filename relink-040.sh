@@ -381,6 +381,69 @@ python3 "$HERE/prototypes/patch_execboundary.py" "$OUT" | tail -3
 echo "[*] ISSUE-33: device-mmap PFN + segdev_incore vector (DEVMMAP2_GROUPS=pfn,incore)"
 python3 "$HERE/prototypes/patch_devmmap2.py" "$OUT" | tail -3
 
+# ---------------------------------------------------------------------------
+# Motorola 68040 FPSP (Floating-Point Support Package) + AMIX glue.
+#
+# PROMOTED INTO THE BASE LINK 2026-07-26 (was relink-040-fpsp.sh, an add-on layer).
+# Rationale: the 68040 implements only a SUBSET of the FP instruction set in
+# hardware and traps the rest (transcendentals, denormalized/packed operands).
+# Motorola ships FPSP because completing the ISA is the OS's job -- so a 68040
+# kernel without it is an INCOMPLETE 68040, not a kernel missing an extra.  Our own
+# evidence: with vector 55 on nullvect, X died of SIGILL
+# (`DBG SIG sig=4 pid=208 psargs=/usr/X/bin/Xsvga`) and that was mistaken for a
+# graphics problem.  Keeping FPSP as a separate variant also doubled the kernel
+# matrix and directly caused the 2026-07-25 near-miss where the graphics kernels
+# were silently built from a stale base.
+#
+# Placement: LAST, after every byte patch.  `ld -r` puts $OUT's .text first, so all
+# patch addresses survive -- but only in this order.  Do not move it earlier.
+#
+# 68060 safety: fpsp_glue040.s gates every entry on `cmpl #40,cputype` (see its
+# comment "a 68060 boot of this dual-CPU binary must never enter the 040 path").
+# The 060 keeps the stock nullvect path; its own SP package is separate work.
+#
+# Requires build/unix_boot040 (rel.c PC-rel reloc fix f0ed373) -- the FPSP body
+# carries ~330 PC-relative relocations that the stock loader mis-applies.
+#
+# FPSP=0 builds the pre-2026-07-26 kernel WITHOUT FPSP.  Keep that escape hatch:
+# it is how you A/B a suspected FPSP regression, and the image grows ~250 KB with
+# FPSP in, which is exactly what the loader's copyit buffer path is sensitive to.
+FPSP="${FPSP:-1}"
+if [ "$FPSP" = "1" ]; then
+	FPWORK="$HERE/build/fpsp-work/usr/src/sys/arch/m68k/fpsp"
+
+	echo
+	echo "[*] FPSP 1/4: package body build/fpsp040.o"
+	sh "$HERE/build-fpsp040.sh" >/dev/null
+	[ -f "$HERE/build/fpsp040.o" ] || { echo "[FAIL] fpsp040.o not built"; exit 1; }
+	[ -f "$FPWORK/fpsp.defs" ]     || { echo "[FAIL] fpsp.defs missing at $FPWORK"; exit 1; }
+
+	echo "[*] FPSP 2/4: assemble AMIX glue prototypes/fpsp_glue040.s"
+	m68k-linux-gnu-gcc -x assembler-with-cpp -m68040 -I"$FPWORK" \
+		-c "$HERE/prototypes/fpsp_glue040.s" -o "$HERE/build/fpsp_glue040.o"
+
+	echo "[*] FPSP 3/4: ld -r  base + fpsp040.o + fpsp_glue040.o"
+	m68k-cbm-sysv4-ld -r -o "$OUT.fpsp" "$OUT" \
+		"$HERE/build/fpsp040.o" "$HERE/build/fpsp_glue040.o"
+	mv "$OUT.fpsp" "$OUT"
+
+	for s in fpsp_vec11 fpsp_done fpsp_fline fpsp_unimp fpsp_unsupp \
+	         fpsp_operr fpsp_ovfl fpsp_unfl fpsp_snan fpsp_bsun; do
+		m68k-linux-gnu-nm "$OUT" | grep -qE " [Tt] $s\$" \
+			|| { echo "[FAIL] FPSP symbol $s not defined"; exit 1; }
+	done
+	LEAKFP=$(m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'fpsp_|mem_read|mem_write|real_' || true)
+	[ -z "$LEAKFP" ] || { echo "[FAIL] unresolved FPSP symbols:"; echo "$LEAKFP"; exit 1; }
+	echo "      all FPSP entry points defined, no unresolved FPSP refs"
+
+	echo "[*] FPSP 4/4: retarget M68Kvec[11] and FP arith vectors 48/51/52/53/54/55"
+	python3 "$HERE/prototypes/patch_fpsp_vec11.py"   "$OUT" | tail -2
+	python3 "$HERE/prototypes/patch_fpsp_vectors.py" "$OUT" | tail -3
+else
+	echo
+	echo "[*] FPSP=0 -- building WITHOUT the Motorola FPSP (A/B / bisect build)"
+fi
+
 echo
 echo "[*] reloc validation:"
 ( cd "$HERE" && python3 prototypes/check_relink_relocs.py | tail -1 )
@@ -389,4 +452,8 @@ echo
 echo "[*] stamping build id -> utsname.machine tag (banner + uname -m)"
 python3 "$HERE/prototypes/stamp_buildid.py" "$OUT"
 
-echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040"
+if [ "$FPSP" = "1" ]; then
+	echo "[OK] built $OUT (WITH FPSP) -- boot: unix_boot040 unix-040   <- unix_boot040 is MANDATORY"
+else
+	echo "[OK] built $OUT (NO FPSP -- bisect build) -- boot: unix_boot unix-040"
+fi

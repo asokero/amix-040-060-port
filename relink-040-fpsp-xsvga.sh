@@ -28,18 +28,12 @@ EXP="${EXP:-/tmp/claude-12044/-home-asokero-kehitys-amix-playground-kernelsuppor
 [ -f "$IN" ]  || { echo "ERROR: base kernel missing: $IN"; exit 1; }
 [ -f "$EXP" ] || { echo "ERROR: xsvga exp driver missing: $EXP"; exit 1; }
 echo "[*] base: $(basename "$IN")  (must be a STANDARD dbg kernel)"
-m68k-linux-gnu-nm "$IN" | grep -qE " [Tt] fpsp_vec11$" && { echo "[FAIL] base already has FPSP linked -- use the standard kernel"; exit 1; }
+m68k-linux-gnu-nm "$IN" | grep -qE " [Tt] fpsp_vec11$" || { echo "[FAIL] base does NOT carry FPSP -- since 2026-07-26 FPSP is part of relink-040.sh; rebuild the base"; exit 1; }
 
-echo "[*] M1: FPSP package body"
-sh "$HERE/build-fpsp040.sh" >/dev/null
-echo "[*] M2: assemble the AMIX FPSP glue"
-m68k-linux-gnu-gcc -x assembler-with-cpp -m68040 -I"$FPWORK" \
-	-c "$HERE/prototypes/fpsp_glue040.s" -o "$HERE/build/fpsp_glue040.o"
 cp "$EXP" "$HERE/build/xsvga_exp.o"
 
-echo "[*] ld -r: base + fpsp040.o + fpsp_glue040.o + xsvga_exp.o"
-m68k-cbm-sysv4-ld -r -o "$OUT" "$IN" \
-	"$HERE/build/fpsp040.o" "$HERE/build/fpsp_glue040.o" "$HERE/build/xsvga_exp.o"
+echo "[*] ld -r: base (FPSP already in it) + xsvga_exp.o"
+m68k-cbm-sysv4-ld -r -o "$OUT" "$IN" "$HERE/build/xsvga_exp.o"
 
 echo "[*] symbols from both features must be defined:"
 for s in fpsp_vec11 fpsp_done fpsp_fline fpsp_unimp svgaopen svgammap Piccolo_SwitchToSVGA; do
@@ -49,10 +43,6 @@ echo "      fpsp_vec11/done/fline/unimp + svgaopen/svgammap/Piccolo_SwitchToSVGA
 LEAK=$(m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'fpsp_|mem_read|mem_write|real_|svga' || true)
 [ -z "$LEAK" ] && echo "      no unresolved FPSP/svga symbols" || { echo "[FAIL] unresolved:"; echo "$LEAK"; exit 1; }
 
-echo "[*] patch 1/2: M68Kvec[11] -> fpsp_vec11"
-python3 "$HERE/prototypes/patch_fpsp_vec11.py" "$OUT" | tail -2
-echo "[*] M4: FP arithmetic vectors 48/51/52/53/54/55 -> FPSP"
-python3 "$HERE/prototypes/patch_fpsp_vectors.py" "$OUT" | tail -8
 echo "[*] patch 2/2: cdevsw[67] -> svga* + svgammap Model-B geometry"
 python3 "$HERE/prototypes/patch_xsvga.py" "$OUT" | tail -3
 
