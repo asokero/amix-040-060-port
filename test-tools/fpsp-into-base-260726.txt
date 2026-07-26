@@ -95,3 +95,71 @@ NOT VERIFIED
   * The graphics kernels (260725-19/-20) were NOT rebuilt.  They still carry their own
     FPSP layer from the old flow; rebuilding them on the new base is the next step and
     REALHW-VERIFY-260725.md's kernel table is stale until then.
+
+
+===============================================================================
+FOLLOW-UP, same day: durable Xsvga path + ONE combined RTG kernel
+===============================================================================
+
+1. XSVGA OBJECT PROVENANCE FIXED
+-------------------------------
+Both xsvga relink scripts defaulted their driver object to a path under /tmp -- a
+session scratchpad.  Not a hygiene issue but a reproducibility one: the next rebuild
+might not find it, or might find a DIFFERENT exp at the same path and fail with a
+confusing byte-assert instead of a clear one.
+
+  new: prototypes/xsvga-provenance.sh
+       XSVGA_EXP  = /home/asokero/kehitys/va2000-amixdev/svga-dev/svga/exp
+       sha256     = 97a9a39d544aa73c733cd444a18663707c52a22802122f1e7312963481c72301
+       size       = 60464
+       xsvga_check_exp() refuses to build on a mismatch and says why.
+
+The scratchpad copy and the durable copy were verified BYTE-IDENTICAL before the switch
+(cmp + matching sha256), so this changes no bytes in any kernel.  The object stays out of
+the repo -- third-party, not ours to redistribute (same treatment as the AT&T headers).
+
+2. ONE COMBINED RTG KERNEL: 68040-260726-03
+-------------------------------------------
+  relink-040-rtg.sh -> build/unix-040-rtg-dbg   1 817 257 B   relocs 0
+  .data 4-aligned (106780), 330 PC-relative records (needs unix_boot040)
+
+Non-collision was CHECKED, not assumed:
+  * majors distinct -- Xsvga cdevsw[67], VA2000 cdevsw[68]
+  * Xsvga weakens NOTHING (pure .rela.data retarget of 6 slots)
+  * VA2000 weakens only `parinit` (wrapper -> va2000init() -> tail-jmp parinit_orig)
+  * parinit still at 0xfe6c on the FPSP base -- asserted by the script every build,
+    because FPSP appends after the base .text and "base symbols cannot move" is exactly
+    the kind of claim that must be verified rather than reasoned about
+  * exactly 1 strong `parinit` definition after the link
+  * both registrations re-run: 6/6 + 6/6 slots report "already", i.e. idempotent
+
+  relink-040-fpsp-xsvga.sh RETIRED -> stub (with FPSP in base it was a duplicate of
+  relink-040-xsvga.sh).  Single-driver scripts kept for bisecting a driver-specific
+  failure -- same reasoning as FPSP=0.
+
+emu-040 smoke on 68040-260726-03 -- ALL PASS
+--------------------------------------------
+  boot -> multiuser idle, banner 68040-260726-03, telnet login OK
+  serial: `va2000: no board found`  <- the parinit wrapper ran and reported correctly
+  /dev/va2000 (mknod c 68 0):  errno=6 ENXIO -- clean "no board" (expected, not emulatable)
+  /dev/svga0:                  SVGAPROBE open OK, CardID=3 (Piccolo),
+                               FrameBufSize=2097152, MaxPixClk=85, Blitter=1, Panning=1
+                               <- the Xsvga driver DETECTS THE EMULATED PICCOLO with both
+                                  drivers linked in, so they do not interfere
+  fputest      Test A PASS      <- FPSP intact alongside both drivers
+  exectest     PASS (20 generations)
+  devmaptest   PASS (fails=0)
+  serial: 0 hits for PANIC / BUS ERROR / 4AFC005F / KMEMCORRUPT / SIG sig=4
+
+NOT VERIFIED (unchanged from the section above, plus)
+----------------------------------------------------
+  * No real hardware, and this is the artifact that most needs it: the VA2000 side has
+    NEVER run against a physical board, and Xsvga has never run on a physical Piccolo.
+  * `xinit` / a graphical X session was NOT re-run on this kernel.  It worked on
+    260724-09 (test-tools/xsvga-xinit-working-260724.png); this kernel has the same
+    driver plus 260726 VM+FPSP, but that is an inference, not a test.
+  * Both boards present SIMULTANEOUSLY is untested and cannot be tested here -- linking
+    both is proven safe, but which board owns the console/screen switch when two are
+    physically installed is a separate question.
+  * emu-060 was not re-run on the RTG kernel (the drivers are 040-era Zorro-II boards;
+    the 060 line is regression-only for the base).

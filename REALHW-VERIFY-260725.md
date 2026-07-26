@@ -4,13 +4,32 @@ Tämä on **itsenäinen ajolista**: kaikki mitä sessiossa tarvitaan on tässä
 tiedostossa tai nimetyssä repo-artefaktissa. Mitään ei tarvitse rakentaa
 sessiossa. Ajojärjestys on tarkoituksella **fail-fast**.
 
-> ## ⚠ 2026-07-26: KERNELITAULUKKO ON VANHENTUNUT — ÄLÄ AJA TÄTÄ SELLAISENAAN
-> FPSP siirrettiin base-linkkiin (commit `973c8f7`), joten kernelit ovat nyt
-> **68040-260726-01 (base) / -02 (dbg)** ja niissä on FPU-tuki sisäänrakennettuna.
-> Vaihe 1 pätee näihin suoraan (`fputest` siirtyy vaiheesta 2 vaiheeseen 1).
-> **Grafiikkakerneleitä 260725-19/-20 EI ole vielä rakennettu uudelleen tälle
-> pohjalle** — vaiheet 2–3 odottavat sitä. Evidenssi ja mitä EI testattu:
-> `test-tools/fpsp-into-base-260726.txt`. Päivitä tämä lohko kun -19/-20 on uusittu.
+> ## ⚠ 2026-07-26: KERNELIT VAIHTUIVAT — KAKSI ARTEFAKTIA NELJÄN SIJAAN
+> FPSP on nyt base-linkissä ja **molemmat RTG-ajurit ovat yhdessä kernelissä**.
+> Vie koneelle vain nämä:
+>
+> | Vie tämä | buildid | kokoa (B) | Sisältää |
+> |---|---|---|---|
+> | `build/unix-040` | 68040-260726-01 | 1716532 | base + FPSP |
+> | **`build/unix-040-dbg`** | 68040-260726-02 | 1753723 | + probet — **testipatteri tällä** |
+> | `build/unix-040-rtg-dbg` | 68040-260726-03 | 1817257 | + Xsvga (67) **ja** VA2000 (68) |
+> | `build/unix_boot040` | (loader) | 38896 | **pakollinen kaikelle** |
+>
+> Muutokset ajolistaan: **vaiheen 1 kerneli on 260726-02** (`uname -m`), `fputest`
+> siirtyy vaiheeseen 1 (FPU on nyt basessa), ja **vaiheet 2–3 ajetaan SAMALLA
+> kernelillä 260726-03** — ei erillisiä FPSP/Xsvga- ja VA2000-kerneleitä.
+> Molemmat nodet: `mknod /dev/svga c 67 0` ja `mknod /dev/va2000 c 68 0`.
+> Vanhat 260725-17…-20 ja `unix-040-dbg.DEVMMAP-260725-18` ovat **historiaa** — älä vie.
+>
+> Emu-savu 260726-03: boottaa, `va2000: no board found` siististi, `/dev/svga0` →
+> **Piccolo CardID=3 tunnistuu**, `/dev/va2000` → siisti ENXIO, `fputest`/`exectest`/
+> `devmaptest` PASS. Evidenssi + mitä EI testattu:
+> `test-tools/fpsp-into-base-260726.txt` (mm. `xinit` ei ajettu tällä kernelillä,
+> eikä VA2000 ole koskaan nähnyt fyysistä korttia).
+>
+> ⚠️ **ANSA 1 ja 2 alla ovat VANHENTUNEET** — boot-slot on nyt oikea kerneli, ja
+> grafiikan relink ei enää defaultaa vanhaan baseen (`relink-040-fpsp-xsvga.sh` on
+> retiroitu; käytä `relink-040-rtg.sh`).
 
 ## Miksi tämä ajetaan nyt
 

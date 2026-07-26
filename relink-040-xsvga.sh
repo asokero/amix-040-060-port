@@ -11,20 +11,35 @@
 #      driver's own Model-B framebuffer geometry (svgammap phystopfn >>11->>12).
 #   3. validate relocs + stamp a build id.
 #
-# The driver blob lives OUTSIDE the repo (user: not standard in vanilla):
-#   EXP defaults to the durable scratch copy extracted from install.svga.
+# The driver blob lives OUTSIDE the repo (third-party, not ours to redistribute).
+# Its durable path and expected SHA-256 are in prototypes/xsvga-provenance.sh --
+# override with XSVGA_EXP=/your/path.  Until 2026-07-26 the default pointed into a
+# session scratchpad under /tmp, which made rebuilds non-reproducible.
+#
+# FPSP note: since 2026-07-26 the Motorola FPSP is part of the BASE link
+# (relink-040.sh), so this script no longer adds it -- it REQUIRES it in the base.
+#
+# For a kernel with BOTH RTG drivers (Xsvga + VA2000) use relink-040-rtg.sh.
 #
 # Usage: sh relink-040-xsvga.sh [base-kernel] [exp-object]
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
 
+. "$HERE/prototypes/xsvga-provenance.sh"
+
 IN="${1:-$HERE/build/unix-040-dbg}"
-EXP="${2:-/tmp/claude-12044/-home-asokero-kehitys-amix-playground-kernelsupport/durable-tftp-payloads/xsvga/svga/exp}"
+EXP="${2:-$XSVGA_EXP}"
+XSVGA_EXP="$EXP"
 OUT="$HERE/build/unix-040-xsvga-dbg"
 
 [ -f "$IN" ]  || { echo "ERROR: base kernel missing: $IN"; exit 1; }
-[ -f "$EXP" ] || { echo "ERROR: exp driver object missing: $EXP"; exit 1; }
+xsvga_check_exp || exit 1
+m68k-linux-gnu-nm "$IN" | grep -qE " [Tt] fpsp_vec11$" || {
+	echo "[FAIL] base does NOT carry FPSP -- since 2026-07-26 FPSP is part of"
+	echo "       relink-040.sh.  Rebuild the base: sh relink-040.sh"
+	exit 1
+}
 
 echo "[*] ld -r: $(basename "$IN") + svga/exp -> $(basename "$OUT")"
 cp "$EXP" "$HERE/build/xsvga_exp.o"
