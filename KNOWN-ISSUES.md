@@ -2048,3 +2048,45 @@ kampanjassa.
 **Hyväksyntä:** `devmaptest` PASS, ja koko patteri (`exectest`, `proctest`, `mlocktest`,
 `trunctest`, `bmaptest`) PASS + levytotuus `sum 8320 5763` — **emu-040 ja emu-060**.
 Serialit puhtaat. ⚠️ Ei rautaa; VA2000/Piccolo-kortteja ei testattu tällä.
+
+## ISSUE-34: natiivi `cc` ei toimi 68060:lla — `cc1 got fatal signal 12` (SIGSYS)
+
+**OPEN, hyvä repro, A/B-todistettu ETTEI ole regressio (26.7.).** Emu-060:lla mikä tahansa
+natiivi käännös kaatuu:
+
+```
+# cc -o fputest fputest.c
+gcc: Program cc1 got fatal signal 12.
+```
+
+**A/B:** sama vika toistuu **pre-FPSP-kernelillä 68060-260725-18** samalla golden-imagella
+kuin FPSP-kernelillä 68060-260726-02 → **FPSP:n siirto base-linkkiin ei aiheuttanut tätä.**
+040:llä natiivi `cc` toimii (se on FPSP:n M3-kriteeri, verifioitu 260726-02:lla).
+
+**Syy on AVOIN, ja se on syytä diagnosoida ennen kuin 68060SP:tä hankitaan.**
+Ilmeinen hypoteesi olisi 68060:n toteuttamattomat käskyt — 060:lta puuttuu raudasta
+64-bittiset mul/div-pitkät muodot, `movep`, `cas2` — ja kääntäjä käyttää 64-bittistä
+jakoa; sitä varten on Motorolan 060SP:n **ISP**-osa, ja `prototypes/lmul060.s` on
+käsintehty osittainen korvike. **MUTTA signaali on 12 = SIGSYS (bad system call), ei
+SIGILL (4)**, eikä se istu puhtaaseen "tuntematon käsky" -selitykseen. Kaksi
+ehdokasluokkaa, kumpaakaan ei ole poissuljettu:
+1. toteuttamattoman käskyn trap mäppäytyy väärään signaaliin 060-polulla;
+2. jokin aivan muu syscall-polun ongelma 060:lla (ei FP/ISP-asia lainkaan).
+
+Jos syy on (2), 68060SP EI korjaa tätä. Diagnoosi on halpa: aja `cc1` dbg-kernelin
+trap-proben alla ja katso mikä osoite/käsky faultaa.
+
+**Vaikutus tähän päivään: 060-testit on RISTIKÄÄNNETTÄVÄ hostilla.** Se toimii ja on nyt
+vakiomenetelmä:
+
+```sh
+. ~/kehitys/amix-playground/gcc-cross-amix/build/env.sh
+m68k-cbm-sysv4-gcc -O -m68020 -o fputest.bin fputest.c
+# tftp binary; chmod 755; aja
+```
+
+Näin saatiin 26.7. 060-tulokset (`fputest` PASS, `exectest` PASS FPSP-kernelillä). Sivuhyöty:
+poistaa guest-kääntäjäriippuvuuden 060-testauksesta kokonaan.
+
+Evidenssi: `test-tools/fpsp-into-base-260726.txt`.
+

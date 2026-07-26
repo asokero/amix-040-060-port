@@ -1,6 +1,6 @@
 # RESUME HERE — AMIX 68040 REAL-HARDWARE line
 
-> ## ▶▶ NEXT HW SESSION (checklist current as of 2026-07-25) — THE BIGGEST OPEN ITEM IN THE PROJECT
+> ## ▶▶ NEXT HW SESSION (checklist current as of 2026-07-26) — THE BIGGEST OPEN ITEM IN THE PROJECT
 >
 > ### ▶ The run list is a separate, self-contained file: **`REALHW-VERIFY-260725.md`**
 > Take that one to the machine. It has the exact artifacts (with the two build traps
@@ -15,20 +15,22 @@
 > was deterministic destruction of valid file data. History says hardware finds what the
 > emulator does not: ISSUE-8, 11, 13 and 21 all surfaced only on real HW.
 >
-> ### Kernels to bring (ALL rebuilt 2026-07-25 on the same base — do not mix eras)
+> ### Kernels to bring — SUPERSEDED 2026-07-26, see `REALHW-VERIFY-260725.md`
+> FPSP moved into the base link and both RTG drivers were merged into one kernel, so this
+> is now THREE artifacts, not four:
+>
 > | Artifact | buildid | Contains |
 > |---|---|---|
-> | `build/unix-040` | 68040-260725-17 | base, all of today's fixes |
-> | `build/unix-040-dbg` | 68040-260725-18 | + probes (use this for the battery) |
-> | `build/unix-040-fpsp-xsvga-dbg` | 68040-260725-19 | + FPSP + Xsvga/Piccolo RTG |
-> | `build/unix-040-va2000-dbg` | 68040-260725-20 | + FPSP + MNT VA2000 RTG |
+> | `build/unix-040` | 68040-260726-01 | base + FPSP |
+> | `build/unix-040-dbg` | 68040-260726-02 | + probes (use this for the battery) |
+> | `build/unix-040-rtg-dbg` | 68040-260726-03 | + Xsvga (cdevsw 67) AND VA2000 (68) |
 >
-> ⚠️ **The graphics kernels were previously built from `unix-040-dbg.STD-backup`
-> (260724-04) and contained NONE of today's fixes.** They were rebuilt on 2026-07-25 on
-> top of `...DEVMMAP-260725-18`; 260725-19 is emulator-smoke-verified (boot, `fputest`
-> Test A PASS, `exectest` PASS, `devmaptest` PASS). If you rebuild any of them again,
-> pass the base explicitly — the scripts still DEFAULT to the old STD-backup:
-> `sh relink-040-fpsp-xsvga.sh build/unix-040-dbg build/unix-040-fpsp-xsvga-dbg`
+> Everything named 260724-* or 260725-* below is history — do not take it.  The
+> 2026-07-25 trap (graphics kernels built from a stale base) is now structurally gone:
+> FPSP is in the base and there is only one graphics kernel.  `fputest` moves into the
+> first phase because the FPU is part of the base now.  Full detail, run order and what
+> each test proves: `REALHW-VERIFY-260725.md`; evidence for the 260726 line:
+> `test-tools/fpsp-into-base-260726.txt`.
 >
 > Boot with `unix_boot040` (rel.c PC-rel reloc fix f0ed373) — mandatory for any kernel
 > carrying FPSP. Use `reboot`, never `init 6` (ISSUE-24).
@@ -53,15 +55,20 @@
 >    (B1 baseline 18293/s), `bigargv`, `msynctst`.
 >
 > ### Then the graphics/FPU items that have been waiting since 2026-07-24
-> 9. `unix-040-fpsp-xsvga-dbg`: `fputest` (Test A), native `cc` self-host, then `xinit`
->    on the physical Piccolo. The emulator already shows a full twm desktop at
->    1152x900 8-bit (`test-tools/xsvga-xinit-working-260724.png`).
-> 10. `unix-040-va2000-dbg` on the PHYSICAL MNT VA2000: `mknod /dev/va2000 c 68 0`,
->     run `va2000probe` FIRST (emulator gives a clean ENXIO — on real HW it must
->     succeed), only then XRTG/wolf3d. Known risk, unchanged: user-space mmap'd
->     register reads have no PTE CM path yet; the kernel side is CI via DTT0.
-> 11. `devmaptest` on the VA2000 kernel — it is the only test with a direct line to the
->     RTG aperture mapping (ISSUE-33 fixed the PFN that path depends on).
+> `fputest` is no longer here — with FPSP in the base it belongs in the first phase.
+> Steps 9-11 all run on the SAME kernel now, `unix-040-rtg-dbg` (68040-260726-03):
+> `mknod /dev/svga c 67 0` and `mknod /dev/va2000 c 68 0`.
+> 9. `xinit` on the physical Piccolo. The emulator shows a full twm desktop at
+>    1152x900 8-bit (`test-tools/xsvga-xinit-working-260724.png`) — but that was
+>    260724-09; it has NOT been re-run on 260726-03. Also do a native `cc` self-host.
+> 10. The PHYSICAL MNT VA2000: run `va2000probe` FIRST (emulator gives a clean ENXIO —
+>     on real HW it must succeed), only then XRTG/wolf3d. Known risk, unchanged:
+>     user-space mmap'd register reads have no PTE CM path yet; the kernel side is CI
+>     via DTT0. This driver has NEVER seen a physical board.
+> 11. `devmaptest` on this kernel — it is the only test with a direct line to the RTG
+>     aperture mapping (ISSUE-33 fixed the PFN that path depends on).
+> 11b. If both boards are installed at once: linking both drivers is proven safe, but
+>     which one owns the console/screen switch is UNTESTED and untestable off hardware.
 >
 > ### Still pending from the caches line (2026-07-23)
 > 12. B2 copyback (`hat_cm_ram` 0x00→0x20) acceptance was written but never run on HW:

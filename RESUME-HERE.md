@@ -1,4 +1,78 @@
-# RESUME HERE — AMIX 68040/68060 port status (2026-07-25)
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-26)
+
+> ## ✅ 2026-07-26 — FPSP BASE-LINKKIIN + YKSI GRAFIIKKAKERNELI MOLEMMILLA AJUREILLA; RAUTAAN VIEDÄÄN 3 ARTEFAKTIA
+> Commitit `973c8f7` (FPSP→base) ja `f13fedb` (Xsvga-polku + yhdistetty RTG-kerneli).
+> Evidenssi: `test-tools/fpsp-into-base-260726.txt`. **Ei rautaa mistään tästä.**
+>
+> **NYKYISET ARTEFAKTIT — vanhat 260724/260725-kernelit ovat historiaa, älä vie niitä:**
+>
+> | Artefakti | buildid | kokoa (B) | Sisältää |
+> |---|---|---|---|
+> | `build/unix-040` | 68040-260726-01 | 1716532 | base + FPSP |
+> | `build/unix-040-dbg` | 68040-260726-02 | 1753723 | + probet (testipatteri) |
+> | `build/unix-040-rtg-dbg` | 68040-260726-03 | 1817257 | + Xsvga (cdevsw 67) **ja** VA2000 (68) |
+> | `build/unix_boot040` | (loader) | 38896 | **pakollinen kaikelle** (FPSP = 330 PC-rel-recordia) |
+>
+> **1. FPSP EI OLE LISÄOMINAISUUS VAAN CPU-PORTIN TÄYDELLISYYS.** 68040 toteuttaa
+> FP-käskykannasta osajoukon ja trapaa loput; Motorola julkaisi FPSP:n koska
+> käskykannan täydentäminen on kernelin tehtävä. **Oma todiste siitä että tämän
+> pitäminen valinnaisena maksoi:** vektori 55 nullvectissa → X kuoli SIGILL:iin
+> (`DBG SIG sig=4 pid=208 psargs=/usr/X/bin/Xsvga`) ja sitä katsottiin aikansa
+> GRAFIIKKAongelmana. Näyttöajuritavoite sai FPU:n täydellisyysaukon näyttämään
+> ajuribugilta — menetelmällinen harha, ei sattuma.
+> **2. Sijoitus on kriittinen:** FPSP `ld -r`:ätään VIIMEISENÄ, kaikkien tavupatchien
+> jälkeen. `ld -r` laittaa basen `.text`:in ensimmäiseksi → patch-osoitteet säilyvät
+> **vain tässä järjestyksessä.** `FPSP=0 sh relink-040.sh` rakentaa vanhan
+> FPSP-vapaan kernelin — pidä se: se on tapa A/B-testata epäilty FPSP-regressio.
+> **3. 060-turvallisuus verifioitu, ei oletettu.** `fpsp_glue040.s` gataa joka entryn
+> `cmpl #40,cputype`. `fputest` **PASS emu-060:llä** FPSP:n ollessa binäärissä.
+> **4. ⚠ UUSI: ISSUE-34 — natiivi `cc` on rikki 060:llä** (`cc1 got fatal signal 12`
+> = SIGSYS). **A/B-TODISTETTU ESIINTYNEEKSI JO ENNEN** tätä muutosta (sama vika
+> pre-FPSP-kernelillä 260725-18, sama golden image) → EI regressio. Signaali 12 ei
+> istu puhtaaseen "tuntematon käsky" -selitykseen, joten syy on **avoin**: joko
+> trapin väärä signaalimäppäys tai syscall-polun ongelma. Diagnoosi ennen 68060SP:n
+> hankintaa — jos syy on syscallissa, SP ei korjaa sitä.
+> **5. 060-testien menetelmä muuttui:** guest-kääntäjää ei voi käyttää → **ristikäännä
+> hostilla**: `m68k-cbm-sysv4-gcc -O -m68020 -o X.bin X.c`, tftp `binary`, `chmod 755`.
+> Toimii, ja poistaa guest-kääntäjäriippuvuuden 060-testauksesta kokonaan.
+> **6. YKSI grafiikkakerneli (260726-03).** Törmäämättömyys tarkistettu: majorit 67 vs
+> 68; Xsvga weakenaa EI MITÄÄN (pelkkä 6 slotin `.rela.data`-retarget); VA2000 weakenaa
+> vain `parinit`in. Skripti assertoi `parinit` @0xfe6c joka buildissa. Emu-savu:
+> `va2000: no board found` siististi, `/dev/svga0` → **Piccolo CardID=3 tunnistuu**
+> molempien ajurien ollessa linkitettynä (= ne eivät häiritse toisiaan), `/dev/va2000`
+> → siisti ENXIO, `fputest`/`exectest`/`devmaptest` PASS, serial puhdas.
+> **7. Xsvga-objektin polku korjattu pysyväksi + SHA-256.** Se defaultasi
+> **session-scratchpadiin `/tmp`:ssä** — toistettavuusongelma, ei siisteysasia.
+> Nyt `prototypes/xsvga-provenance.sh`: polku + `sha256 97a9a39d…c72301` (60464 B),
+> ja build kieltäytyy jos summa ei täsmää. Objekti pysyy repon ulkopuolella.
+> **8. Retiroitu:** `relink-040-fpsp.sh` ja `relink-040-fpsp-xsvga.sh` → stubit jotka
+> exit 1 + osoitin (FPSP basessa teki niistä duplikaatteja). Yhden ajurin relinkit
+> jäävät bisektointiin.
+>
+> **SOVITTU MUTTA TEKEMÄTTÄ (26.7.):**
+> - **`quiet`-variantti pudotetaan.** Sen syy oli puhdas serial-virta raudalla, mutta
+>   oikealla koneella EI OLE serial-kaapelia → käyttötapaus on mahdoton. Nykyään se on
+>   vain `base + serdbg.o` (kantavat overridet promotoitiin baseen 12.7.), eli
+>   triviaalisti palautettavissa jos kaapeli ilmestyy.
+> - **VA2000 upstreamiin dual-target.** Ajurissa on TÄSMÄLLEEN YKSI sivukokoriippuvuus:
+>   `va2000mmap()`:n `phystopfn` kovakoodattu `>> 11`. Jos upstream käyttäisi
+>   `PNUMSHFT`-makroa, `va2000_modelb.py` katoaisi kokonaan ja ajuri kääntyisi sekä
+>   2 KiB- että 4 KiB-kernelille. **Tee VASTA rautatestin jälkeen** — älä muuta
+>   kernelipohjaa ja ajurilähdettä samaan rauta-ajoon.
+> - **Xsvga-patch-repo** (esim. `xsvga040-amix`): meidän patchit + resepti + `svgaprobe`,
+>   EI `exp`-objektia (kolmannen osapuolen binääri) — ja `exp`:n SHA-256 dokumentoituna,
+>   koska patch osuu kiinteisiin offseteihin.
+> - **68060SP**: yksi kerneli, ei erillistä 060-kerneliä. Mekanismi on jo olemassa
+>   (`cputype`-dispatch); vektorislotit pitää osoittaa shimiin koska kaksi pakettia ei
+>   voi omistaa samaa slottia staattisesti. Koko kasvaisi ~1,9 MB:iin → tekee loaderin
+>   kokorasitustestistä pakollisen.
+>
+> **RAUTASESSIO on yhä suurin avoin kohde**, ajolista `REALHW-VERIFY-260725.md`
+> (kernelitaulukko päivitetty tähän tilanteeseen). Loaderin copyit-polkua EI ole
+> rasitustestattu uudella koolla: base 1,53 → 1,72 MB, ja historiallinen
+> kylmäboot-korruptio oli puskurin päällekkäisyys ~0,96 MB:ssä. Kolme kylmäbootia tuli
+> puhtaasti läpi = heikko positiivinen, ei todiste. Jos raudalla välähtää
+> valkoinen/punainen handoffissa, se on TÄMÄ eikä FPSP.
 
 > ## ✅✅✅ 2026-07-25 — MODEL-B-JÄÄNNÖSTEN HÄNTÄ: ISSUE-15 + ISSUE-17/18 LANDATTU (emu-040+060); ISSUE-17 OLI KERNEL-PANIKKI; 3 UUTTA ISSUEA
 > Buildit **260725-01/-02** (ISSUE-15) ja **260725-03/-04** (+ ISSUE-17/18); relocs 0,
