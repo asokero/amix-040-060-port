@@ -88,3 +88,67 @@ CONSEQUENCES TO ACT ON NOW
   msynctst, fputest -- and that is all.
 * Do NOT read "emu-060 regression PASS" as evidence about 060 generally until vector 61 is
   handled.  It means "these four tests pass", nothing more.
+
+
+===============================================================================
+ISSUE-34b RESOLVED the same day: it is the FP half, not the integer half
+===============================================================================
+
+The morning's write-up called ISSUE-34's cause proven; that was too broad, and the signal
+discrepancy (cc1 = 12/SIGSYS vs the isolated repro = 9/SIGKILL) was the tell.  34b is now
+closed too, and it is a DIFFERENT missing package from 34a.
+
+Step 1 -- rule out the ISA class by direct evidence.  Disassembled the guest toolchain from
+the READ-ONLY vanilla tree and counted 68060-unimplemented instructions:
+
+  gcc 72 896 B / gcc-cc1 666 440 B / gcc-cpp 46 468 B / gcc-gnulib 36 354 B /
+  libc.so.1 206 876 B / libc.a 469 242 B / ld.so.1 111 104 B        ALL CLEAN
+
+So cc1 contains none of them: 34a is real but is NOT what breaks cc1.
+
+Step 2 -- instrument instead of reasoning further.  prototypes/sigkill_dbg.s already wraps
+sigtoproc and prints sig/pid/psargs/uret/kcaller/fu, but its generic gate covered signals
+4..11 only.  Raised the upper bound to 12 (one immediate, in OUR OWN dbg-overlay source, base
+untouched) -> build 68040-260727-01 / 68060-260727-01.  On emu-060:
+
+  DBG SIG sig=12 pid=238 stat=6 psargs=/usr/public/lib/gcc-cc1 ... -dumpbase fputest.c ...
+                 uret=FFFFFFFF uarg2=2E kcaller=804858C fu=0
+
+  kcaller 0x0804858C -> text 0x4858C -> `sigaddq + 0xaa`, the return address right after
+  sigaddq's `jsr sigtoproc`.  fu=0 => the KERNEL raised it, not a user kill().
+
+Step 3 -- the discriminator, which is what actually named it.  On emu-060, kernel 260727-01:
+
+  cc -o intmin intmin.c        rc=0      integer only
+  cc -o fpmin  fpmin.c         rc=0      simple FP (variable * constant)
+  cc -o m64    mul64test.c     rc=0      integer, and contains the 34a instruction itself
+  cc -o fp     fputest.c       rc=1      "gcc: Program cc1 got fatal signal 12"
+
+Step 4 -- and the answer was already written down.  test-tools/fputest.c's own header, from
+the FPU Tier-1 era:
+
+    "Cross-compiled on Linux ... and the BINARY pushed to the guest -- the AMIX native cc1
+     itself crashes with SIGSYS on this FPU-less 040 kernel (IT USES AN UNIMPLEMENTED
+     TRANSCENDENTAL)."
+
+That is exactly this failure.  Back then the 040 kernel had no FPSP and cc1 crashed there
+too; FPSP fixed it on the 040 (that is what M3 "native cc works again" meant).  The 68060 has
+NO FP support package at all -- fpsp_glue040.s gates every entry on `cmpl #40,cputype` and
+deliberately leaves the 060 on the stock path -- so cc1's transcendental reaches
+nullvect -> u_trap -> sigaddq -> SIGSYS.
+
+CONCLUSION: the 68060 needs BOTH halves of Motorola's 68060SP, for two different reasons
+-------------------------------------------------------------------------------------------
+  ISSUE-34a  ISP  (Integer Support)  vector 61      64-bit muls.l/divs.l -> process killed.
+                                                    Affects ANY ordinary optimised code.
+  ISSUE-34b  FPSP (FP Support)       vectors 11/48-55  cc1's transcendental -> SIGSYS.
+                                                    Affects anything using unimplemented FP.
+
+This changes the phase-3 recommendation.  A hand-rolled vector-61 handler would fix 34a and
+leave 34b standing, so the 060 would still not self-host.  Obtaining the real 68060SP (both
+packages) is now the better route, and it is the same shape of work as the 040 FPSP already
+landed: build the package body, write cputype-gated glue, retarget the vectors.
+
+Not resolved, and small: why fpmin.c folds cleanly while fputest.c does not -- i.e. exactly
+which construct makes cc1 reach the transcendental.  It does not change the conclusion or the
+fix, so it is recorded rather than chased.

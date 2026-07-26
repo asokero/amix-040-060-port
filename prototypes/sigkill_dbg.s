@@ -364,9 +364,14 @@ Lsg_skip:
 	moveq	&4,%d1
 	cmpl	%d0,%d1
 	bgtw	Lsk_done		| sig < 4 -> ignore
-	moveq	&11,%d1
+| ISSUE-34b probe (2026-07-27): raised 11 -> 12 so SIGSYS is logged.  cc1 dies with
+| sig 12 on the 68060 and works on the 68040, and the whole compiler toolchain was
+| verified CLEAN of 68060-unimplemented instructions -- so the ISA class is ruled out and
+| the question is which kernel path delivers the signal.  This line's `kcaller` and `uret`
+| answer exactly that.  dbg-overlay only; the base is untouched.
+	moveq	&12,%d1
 	cmpl	%d0,%d1
-	bltw	Lsk_done		| sig > 11 -> ignore
+	bltw	Lsk_done		| sig > 12 -> ignore (was 11; SIGSYS=12 for ISSUE-34b)
 	addql	&1,Lsf_n
 	movel	Lsf_n,%d0
 	cmpil	&8,%d0
