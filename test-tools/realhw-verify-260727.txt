@@ -81,6 +81,28 @@ into /hwt: 17 sources + hat_dup_cow (sum 18025 16, identical to the emulator's c
   The log is otherwise dominated by the idle clock sampler C00000000:080E44B8:00002000
   (proc 0 idling — the same idle PC as the emulator), capped at 1024 samples.
 
+  CONSOLE PHOTO CHECKED (the user reported "nothing special", which is correct, but one line
+  looks alarming and is worth explaining rather than leaving unexplained in a photo):
+
+    DBG hat_pageunload CALLED on crash page pp=400ABA30 p_mapping=9D6C020
+                                            (0=>page_abort SKIPS unmap)
+
+  Three occurrences, cap 6.  Source hatalloc_dbg.s:295 — the gate is `tstl g_shdatapp` then
+  `cmpl g_shdatapp,%d2`, so the watched page is RUNTIME-RECORDED (the ISSUE-10 chain-II
+  shared-data-page tracking), not a hardcoded address; pp=400ABA30 is simply whichever page
+  got recorded this boot.  The message's own condition is that a ZERO p_mapping is the
+  defect shape.  All three firings show p_mapping NON-ZERO (9D6C020, 95AF008, 9E23044).
+
+  So this is a POSITIVE datapoint, not a fault: the p_mapping registration contract whose
+  absence WAS ISSUE-10's root cause is holding on real hardware, 3/3.  The counterpart
+  probe that would signal the defect is `hat_memload crash-page ... (0=>never registered)`,
+  and it did not fire.
+
+  Everything else on the console is routine probe output: `as_fault STREAM ... ret=0` (kvseg
+  faults on STREAMS paths, all resolved), `hat_dup040 ENTER n=100..2C0` (the fork counter
+  climbing through burst4), and `segmap-map` lines.  Note the "crash page" wording is stale
+  terminology from the ISSUE-10 hunt and reads worse than it is.
+
 5b. ** ISSUE-29 ON REAL HARDWARE FOR THE FIRST TIME — sighting #5 **
 -------------------------------------------------------------------
     DBG KMEMCORRUPT bin=80ED9F0 blk=40259300 next=8 prev=6 caller=8042334 size=1
