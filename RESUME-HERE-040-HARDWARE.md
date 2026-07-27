@@ -35,6 +35,12 @@
 > Boot with `unix_boot040` (rel.c PC-rel reloc fix f0ed373) — mandatory for any kernel
 > carrying FPSP. Use `reboot`, never `init 6` (ISSUE-24).
 >
+> **SERIAL CAPTURE IS AVAILABLE AND IS THE PRIMARY RECORD (corrected 2026-07-27).** The
+> Amiga has a serial-to-USB cable and it has been used routinely. Anything below or in the
+> historical blocks that says "no serial cable" is from the 2026-07-10..12 era and is wrong
+> now. Capture the whole boot as text (`SERIAL-DEBUG.md`) rather than photographing the
+> console, which wraps at ~40 lines and loses post-scheduler output.
+>
 > ### Run order (fail fast: if exec or /proc is broken, nothing else matters)
 > Push `test-tools/*.c`, build each with the native `cc`. See `test-tools/README.md`
 > for what each one proves and its discriminating signal.
@@ -112,6 +118,7 @@
 > flaky mid-negotiation — the scratchpad raw-socket runner (`real.py`) is the reliable
 > driver. `nohup` does NOT survive session exit on the real machine. File transfer:
 > slirp-safe TFTP recipe in RESUME-HERE.md. Still NO serial cable on the real machine.
+> **[HISTORICAL — as of 2026-07-12. A serial-to-USB cable IS in use now; see the top block.]**
 >
 > ## ★★★ 2026-07-11 — MILESTONE: AMIX BOOTS TO LOGIN ON REAL HARDWARE ★★★
 > **Amiga 3000 + Mercury 68040 @33 MHz, 32 MB — builds 260711-01/-02/-03, user logged in.**

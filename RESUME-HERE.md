@@ -88,10 +88,14 @@
 > jäävät bisektointiin.
 >
 > **SOVITTU MUTTA TEKEMÄTTÄ (26.7.):**
-> - **`quiet`-variantti pudotetaan.** Sen syy oli puhdas serial-virta raudalla, mutta
->   oikealla koneella EI OLE serial-kaapelia → käyttötapaus on mahdoton. Nykyään se on
->   vain `base + serdbg.o` (kantavat overridet promotoitiin baseen 12.7.), eli
->   triviaalisti palautettavissa jos kaapeli ilmestyy.
+> - **`quiet`-variantti: SUOSITUS PERUTTU 27.7. — se perustui väärään tietoon.**
+>   Perustelin pudottamista sillä ettei koneella ole serial-kaapelia. **Koneella ON
+>   serial-USB-kaapeli** (käyttäjän korjaus 27.7.; sitä on käytetty toistuvasti). Eli
+>   quietin käyttötapaus — **puhdas konsolivirta serialiin ilman probe-tulvaa** — on
+>   täysin voimassa, ja se on nykyään halpa: `base + serdbg.o`, yksi 60-rivinen overlay
+>   (kantavat overridet promotoitiin baseen 12.7.). Se on nimenomaan se mitä haluat kun
+>   dbg-kernelin diagnostiikka hukuttaa etsityn rivin. **Älä pudota; harkitse uudelleen
+>   rakentamista 260727-linjalle.**
 > - **VA2000 upstreamiin dual-target.** Ajurissa on TÄSMÄLLEEN YKSI sivukokoriippuvuus:
 >   `va2000mmap()`:n `phystopfn` kovakoodattu `>> 11`. Jos upstream käyttäisi
 >   `PNUMSHFT`-makroa, `va2000_modelb.py` katoaisi kokonaan ja ajuri kääntyisi sekä
@@ -727,9 +731,13 @@
 > - **File transfer to AMIX**: slirp-NAT-safe TFTP = `test-tools/tftp_onesock.py` (replies from
 >   the listening port 1069; the stock runtime-tests/tftp_server.py uses an ephemeral reply
 >   port that slirp drops). Emulator: `tftp 10.0.2.2 1069`; real HW: `tftp 10.0.10.182 1069`.
-> - **Serial capture (emulator)**: Amiberry listens on `serial_port=TCP://0.0.0.0:1234` always;
->   `nc localhost 1234 > log` or reconnect-tolerant socat loop. Real HW has NO serial cable yet
->   → photo-based; symbol-resolve a photographed backtrace with nm on build/unix-040-dbg.
+> - **Serial capture**: emulator — Amiberry listens on `serial_port=TCP://0.0.0.0:1234` always;
+>   `nc localhost 1234 > log` or a reconnect-tolerant socat loop. **REAL HW: there IS a
+>   serial-to-USB cable on the Amiga and it is the normal way we capture boots** (corrected
+>   2026-07-27 — earlier notes in this file saying "no serial cable yet" are HISTORICAL, from
+>   the 2026-07-10..12 era, and must not be read as current).  Photo-based analysis is the
+>   fallback, not the method; symbol-resolve any photographed backtrace with nm on
+>   build/unix-040-dbg.
 > - **puavoOS = READ-ONLY image**: all apt packages are WIPED on every reboot. Re-check with
 >   `dpkg -s` and give one apt line. Amiberry build (`~/kehitys/amiberry`, branch a2065-backport
 >   = v8.2.2 + PR #2153 A2065-RX fix) needs SDL3 (not SDL2); build binary at

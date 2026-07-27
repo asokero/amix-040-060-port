@@ -20,9 +20,10 @@ sessiossa. Ajojärjestys on tarkoituksella **fail-fast**.
 > päälle, joten aikakausia ei voi sekoittaa.
 >
 > ### ⭐ SIGNAALIPROBE — mitä se antaa raudalla ja miten se luetaan
-> `prototypes/sigkill_dbg.s` kääri `sigtoproc`in ja tulostaa **`cmn_err`illä, eli teksti
-> näkyy KONSOLILLA** — ei siis vaadi serial-kaapelia, mikä on olennaista koska oikealla
-> koneella kaapelia ei ole:
+> `prototypes/sigkill_dbg.s` kääri `sigtoproc`in ja tulostaa **`cmn_err`illä, eli teksti menee
+> sekä KONSOLILLE että serial-mirroriin** — koneella on serial-USB-kaapeli, joten **kaappaa
+> serial**: se on tekstiä, ei valokuvia, eikä konsolin ~40 rivin kierto pyyhi sitä.
+> (Korjaus 27.7.: aiempi versio tästä sanoi ettei kaapelia ole. Se oli vanhaa tietoa.)
 >
 > ```
 > DBG SIG sig=<N> pid=<pid> stat=<x> psargs=<komentorivi> uret=<x> uarg2=<x> kcaller=<x> fu=<0|1>
@@ -138,7 +139,7 @@ Kernelit menevät AmigaOS-puolelle sinne mistä `unix_boot040` ne lataa.
 Fail-fast: jos 2 tai 3 hajoaa, loppu on merkityksetöntä — kirjaa ja pysähdy.
 
 **1. Boot + login.** `uname -m` → `68040-260725-18`. Ei guruja, ei panikkia.
-Serial-kaappaus päälle jos kaapeli on (`SERIAL-DEBUG.md`).
+**Serial-kaappaus PÄÄLLE** — kone on serial-USB-kaapelin päässä (`SERIAL-DEBUG.md`).
 
 **2. exec-polku (ISSUE-32).** Tämä ensin, koska rikkinäinen exec estää kaiken muun.
 ```sh
