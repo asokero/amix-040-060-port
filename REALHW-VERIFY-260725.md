@@ -78,29 +78,12 @@ paljastuivat kaikki VAIN oikealla raudalla.
 
 ## 0. Staus — mitä koneelle viedään
 
-### Kernelit (kaikki linkitetty 25.7. SAMASTA basesta — älä sekoita aikakausia)
+### Kernelit
 
-| Vie tämä tiedosto | buildid | kokoa (B) | Sisältää |
-|---|---|---|---|
-| `build/unix-040` | 68040-260725-17 | 1525673 | base, kaikki 25.7. korjaukset |
-| **`build/unix-040-dbg.DEVMMAP-260725-18`** | 68040-260725-18 | 1562864 | + probet — **TÄLLÄ ajetaan testipatteri** |
-| `build/unix-040-fpsp-xsvga-dbg` | 68040-260725-19 | 1812923 | + FPSP + Xsvga/Piccolo RTG |
-| `build/unix-040-va2000-dbg` | 68040-260725-20 | 1758057 | + FPSP + MNT VA2000 RTG |
-| `build/unix_boot040` | (loader) | 38896 | **pakollinen** kaikelle FPSP:tä sisältävälle |
-
-> ⚠️ **ANSA 1 — älä ota `build/unix-040-dbg`:tä.** Se on emun boot-slot ja siinä on
-> tällä hetkellä **68040-260724-09**, eli vanha FPSP+Xsvga-kerneli ilman 25.7.
-> korjauksia. Testipatterin kerneli on `build/unix-040-dbg.DEVMMAP-260725-18`.
->
-> ⚠️ **ANSA 2 — jos linkität grafiikkakernelin uudelleen, anna base EKSPLISIITTISESTI.**
-> `relink-040-fpsp-xsvga.sh` ja `relink-040-va2000.sh` defaultaavat yhä
-> `unix-040-dbg.STD-backup`iin (260724-04). Juuri siksi -19/-20 piti rakentaa
-> uudestaan. Oikea muoto:
-> `sh relink-040-fpsp-xsvga.sh build/unix-040-dbg.DEVMMAP-260725-18 build/unix-040-fpsp-xsvga-dbg`
-
-Emu-savu 260725-19:lle on ajettu (boottaa, `fputest` Test A PASS, `exectest` PASS,
-`devmaptest` PASS). **260725-20:lle ei ole eikä voi olla** — VA2000 ei ole
-emuloitavissa.
+**Yksi taulukko, ylälohkossa** (`▶ 2026-07-27`). Älä toista sitä tässä — kaksi taulukkoa
+ehti eriytyä kertaalleen, ja se on juuri se ansa jota tämä tiedosto yrittää estää.
+Lyhyesti: `unix-040` 260726-01, **`unix-040-dbg` 260727-01** (testipatteri),
+`unix-040-rtg-dbg` 260727-02 (Xsvga+VA2000), + `unix_boot040`.
 
 ### Testilähteet ja binäärit
 
@@ -134,11 +117,14 @@ Kernelit menevät AmigaOS-puolelle sinne mistä `unix_boot040` ne lataa.
 
 ---
 
-## Vaihe 1 — VM-korjausten hyväksyntä (`unix-040-dbg` = 260725-18)
+## Vaihe 1 — VM-korjausten hyväksyntä (`unix-040-dbg` = **68040-260727-01**)
 
 Fail-fast: jos 2 tai 3 hajoaa, loppu on merkityksetöntä — kirjaa ja pysähdy.
 
-**1. Boot + login.** `uname -m` → `68040-260725-18`. Ei guruja, ei panikkia.
+**1. Boot + login + FPU.** `uname -m` → `68040-260727-01`. Ei guruja, ei panikkia.
+**FPU on nyt basessa, joten se testataan tässä eikä grafiikkavaiheessa:**
+`cc -o fputest fputest.c; ./fputest` → `FPUTEST Test A PASS`. Se että natiivi `cc`
+KÄÄNTÄÄ tämän on itsessään tulos (M3): ilman FPSP:tä `cc1` kuolee SIGSYS:iin.
 **Serial-kaappaus PÄÄLLE** — kone on serial-USB-kaapelin päässä (`SERIAL-DEBUG.md`).
 
 **2. exec-polku (ISSUE-32).** Tämä ensin, koska rikkinäinen exec estää kaiken muun.
@@ -214,30 +200,31 @@ synkronisesti tai at-jonon kautta (B1-sessio käytti at-jonoa juuri tästä syys
 
 ---
 
-## Vaihe 2 — grafiikka + FPU (`unix-040-fpsp-xsvga-dbg` = 260725-19)
+## Vaihe 2 — grafiikka (`unix-040-rtg-dbg` = **68040-260727-02**)
+
+`fputest` EI ole täällä — FPU on basessa, se ajetaan vaiheessa 1.
+`mknod /dev/svga c 67 0` ja `mknod /dev/va2000 c 68 0` kerran.
 
 Nämä ovat odottaneet 24.7. asti; emussa täysi twm-työpöytä toimii
 (`test-tools/xsvga-xinit-working-260724.png`), raudalla ei ole ajettu mitään.
 
-**10.** `cc -o fputest fputest.c; ./fputest` → Test A PASS (fmovecr + fintrz
-emuloituvat, fork-FP-konteksti säilyy).
-**11.** Natiivi self-host: käännä jokin testiohjelma tällä kernelillä — M3:n kriteeri
-oli nimenomaan että `cc` toimii FPSP:n varassa.
-**12.** `xinit` **fyysisellä Piccololla** konsolista. Emu-referenssi 1152x900 8-bit.
+**10.** Natiivi self-host tällä kernelillä: käännä jokin testiohjelma. `fputest` itse
+ajettiin jo vaiheessa 1 — tässä varmistetaan vain että ajurit eivät riko FPSP:tä.
+**11.** `xinit` **fyysisellä Piccololla** konsolista. Emu-referenssi 1152x900 8-bit.
 Jos X kaatuu: tarkista ensin onko kyse etätestaus-artefaktista (24.7. "kaatuu
 disconnectissa" oli juuri se) — aja konsolilta, WM mukana.
 
 ---
 
-## Vaihe 3 — VA2000 (`unix-040-va2000-dbg` = 260725-20)
+## Vaihe 3 — VA2000 (SAMA kerneli `unix-040-rtg-dbg` = 68040-260727-02)
 
 **Tätä ei ole voitu savustaa lainkaan** — kortti ei ole emuloitavissa.
 
-**13.** `mknod /dev/va2000 c 68 0`
-**14.** `./va2000probe` **ENSIN.** Emussa siitä tulee siisti ENXIO; raudalla sen
+**12.** `mknod /dev/va2000 c 68 0`
+**13.** `./va2000probe` **ENSIN.** Emussa siitä tulee siisti ENXIO; raudalla sen
 **täytyy onnistua**. Jos ei onnistu, älä jatka XRTG:hen — kirjaa ja pysähdy.
-**15.** Vasta sitten XRTG / wolf3d.
-**16.** `devmaptest` myös tällä kernelillä: se on ainoa testi jolla on suora yhteys
+**14.** Vasta sitten XRTG / wolf3d.
+**15.** `devmaptest` myös tällä kernelillä: se on ainoa testi jolla on suora yhteys
 RTG-aukon mappaukseen (ISSUE-33 korjasi juuri sen PFN:n josta polku riippuu).
 
 Tunnettu riski ennallaan: user-space-mmapattujen rekisterien luvulla ei ole vielä
@@ -247,7 +234,7 @@ PTE:n CM-polkua; kernelin puoli on CI DTT0:n kautta.
 
 ## Vaihe 4 — B2 copyback (vain jos aikaa jää)
 
-**17.** B2-hyväksyntä (`hat_cm_ram` 0x00→0x20) on kirjoitettu mutta **ei koskaan ajettu
+**16.** B2-hyväksyntä (`hat_cm_ram` 0x00→0x20) on kirjoitettu mutta **ei koskaan ajettu
 raudalla**. Protokolla `CACHES-ON-PLAYBOOK.md`: boottaa ENSIN WT-baseline erottaaksesi
 cache-altistuksen mappausregressiosta, sitten b2-image; tarkista kmemistä
 `hat_cm_ram=0x20`, laskuriparit täsmälleen yhtä suuret, nolla diagnostiikkaa, ja
@@ -257,7 +244,7 @@ virtakatkaisu-levytotuus.
 
 ## Vaihe 5 — pitkä soak
 
-**18.** Jätä kone pystyyn kuorman alle tunneiksi. Kolme avointa kohtaa on
+**17.** Jätä kone pystyyn kuorman alle tunneiksi. Kolme avointa kohtaa on
 saavutettavissa **vain** näin:
 - **ISSUE-9** — idle-ajan loputon bus-error-silmukka (ei koskaan kaapattu)
 - **ISSUE-22** — kertaluontoinen EFAULT paineessa
@@ -279,8 +266,9 @@ Serial-kaappaus päällä koko ajan. `KMEMCORRUPT`-rivit = ISSUE-29.
 | 7 devmaptest | `DEVMAPTEST-RESULT PASS`, ikkuna >0 tavua |
 | 8 levytotuus | summat säilyvät sekä rebootin ETTÄ virtakatkaisun yli |
 | 9 regressiot | hat_dup_cow 3/3 PASS, ALLBURSTS-DONE, summat tavuntarkkoja |
-| 10–12 grafiikka | fputest PASS, natiivi cc toimii, xinit antaa työpöydän |
-| 14 VA2000 | `va2000probe` onnistuu fyysisellä kortilla |
+| 1 FPU | `FPUTEST Test A PASS` ja natiivi `cc` kääntää sen |
+| 10–11 grafiikka | natiivi cc toimii RTG-kernelillä, `xinit` antaa työpöydän |
+| 12–13 VA2000 | `mknod` + **`va2000probe` onnistuu fyysisellä kortilla** (ENSIN, ennen XRTG:tä) |
 
 **Poikkeama MISSÄ TAHANSA kohdassa → kaappaa serial/kuva ja KESKEYTÄ lista.**
 Emulaattori-vs-rauta-delta on itsessään löydös, ei häiriö (ISSUE-7/8/11/13/21).
