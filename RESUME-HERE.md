@@ -92,7 +92,8 @@
 >   rautaan etukäteen: sitä ei ole käytännössä koskaan käytetty, ja `relink-040-quiet.sh`
 >   tuottaa sen **yhdellä komennolla noin minuutissa** basen päältä — ei siis mitään
 >   läpimenoaikaa säästettävänä. **Verifioitu 27.7.: se kääntyy 260727-linjalla puhtaasti
->   (build 68040-260727-04, 1 727 675 B), joten build-on-demand ei ole oletus vaan
+>   (build 68040-260727-04, **1 716 847 B**, `serdbg_putc` linkattu ja `conputc` uudelleen
+>   osoitettu), joten build-on-demand ei ole oletus vaan
 >   testattu.** Laukaisin, jonka takia se kannattaa muistaa: **kun dbg-kernelin
 >   diagnostiikka hukuttaa etsityn rivin.** Juuri niin kävi 27.7. — `DBG SIG` -rivi piti
 >   kaivaa `C<pid>:<PC>:<SR>` -seinän läpi. Quiet = base + serdbg.o = pelkkä konsolivirta
