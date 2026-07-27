@@ -120,6 +120,26 @@
 >   (`cputype`-dispatch); vektorislotit pitää osoittaa shimiin koska kaksi pakettia ei
 >   voi omistaa samaa slottia staattisesti. Koko kasvaisi ~1,9 MB:iin → tekee loaderin
 >   kokorasitustestistä pakollisen.
+> - **JÄLJELLÄ OLEVAT MODEL-B-PERHEET — Codexin kartoitus 27.7. valmis, toteutus ei.**
+>   Pinni verifioitu tavuntarkasti (HEAD `e4daf26`, `unix-040` `767ea9a0…`, `.text` `9b49c77a…`).
+>   Kuusi perhettä: NFS 21/21 aitoa, UFS 12+1, segdev 21, COFF 13+1, S5 **35+28**, RFS **75+3**.
+>   Dokumentit `amix-kernel-analysis/vm-map/*-CLOSURE.md`.
+>   **Kolme löydöstä jotka eivät tulisi muuntamalla:** `ufs_allocmap` @0x7a6f8 on `+0x0fff`
+>   **eikä** `+0x1000` (lähde käyttää `PAGESIZE`, semantiikka `PAGEOFFSET`); S5:llä
+>   **rakenteellinen este** — `page_t`:n `p_dblist[4]` ja 4-alkioiset `S5MAXREQ` eivät riitä
+>   4 KiB -sivulle 512-tavuisella lohkolla, eli **vakiopatchit eivät voi tukea 512:ta koskaan**;
+>   ja **RFS ei ole muuntamaton vaan RIKKI** (`rfc_writefill` eroaa mountatusta `exp`:istä
+>   yhdellä tavulla koska `page_get` on jo 0x1000) → pysyy poissa, nyt vahvemmalla perusteella.
+>   **MEIDÄN järjestys, EI raportin:** 1. UFS `addmap`/`delmap` (4 sitea, elävä, `bmaptest`
+>   testaa) → 2. **NFS** (elävä JA rautatestattavissa, referenssi `sum 11920 6060` ISSUE-13:sta)
+>   → 3. UFS pienlohko → 4. segdev **vasta kun vikaskenaario on** → 5. COFF vasta kun
+>   `PT_SHLIB`-reitti on todistettu → 6. S5 vain lohkopolitiikalla → 7. **julkinen VM-ABI
+>   viimeisenä tai ei lainkaan** (raportti asettaa sen ensimmäiseksi; se on käyttäjälle näkyvä
+>   ABI-muutos eikä bugikorjaus, ja vaatii oman päätöksen) → 8. RFS vain 2-pisteen penkillä.
+>   **Auki:** raportti kumoaa oman kirjaukseni segdevin sisäisestä johdonmukaisuudesta, mutta
+>   `devmaptest` T2 (mincore 4 sivun laitemappauksen yli + kanariat) menee läpi → tarvitaan
+>   konkreettinen vikaskenaario. Kysytty: `RESIDUAL-FAMILIES-FOLLOWUP-TASK.md`.
+>   **HUOM: 2 KiB -header-ansa EI koske näitä** — tavupatcheja binääriin, ei C-käännöstä.
 > - **★★★ MODEL-B-HEADER-OVERRIDE ristikäännökseen — TÄRKEIN, ja esiehto muulle.**
 >   Löydetty 27.7. ZZ9000-analyysissä. Käännämme kaiken kerneliin menevän C:n **vanillan
 >   headereita** vasten, ja ne ovat 2 KiB:
