@@ -2424,3 +2424,99 @@ Piccolo ja VA2000 ovat kumpikin kaksitoimisia (Piccolo: jumpperi; VA2000: firmwa
 Mittaamiseen `test-tools/busbench.c`, jonka otsikossa on se ansa että DTT0 antaa Z2-aukolle
 CM 0x60 (NC) kun `Lcm_sel` antaa Z3-mappaukselle 0x40 (NCS, serialisoitu) — naiivi vertailu
 mittaisi serialisointia eikä väylää.
+
+## ISSUE-37 (OPEN, hardware-reproduced): wolf3d wedges the machine in an infinite as_fault loop
+
+Found 2026-07-28 on real hardware, VA2000 in Zorro II mode, kernel `68040-260727-02` (RTG dbg).
+Wolf3D was ported to AMIX/030 by us earlier and worked there, so this is a **candidate Model-B
+regression** rather than a program that never ran.
+
+### Symptom, and why the symptom lied
+
+Starting `/root/wolf3d`: the VA2000 screen goes black and the game never reaches its menu, the
+network connection drops, virtual consoles still switch but accept no keystrokes. That reads like
+a crash or a hang. **It is neither** -- the machine is running flat out inside the kernel:
+
+```
+DBG as_fault STREAM pid=184 addr=408E0000 upc=C101FFE0 type=3 ret=0
+DBG as_fault STREAM pid=186 addr=408F4FFF upc=C1013088 type=0 ret=0     <- forever
+DBG as_fault REPEAT pid=186 addr=408F4FFF upc=C1013088 type=0 ret=0 n=2000
+```
+
+That explains every part of the symptom at once: VT switching is interrupt-driven so it survives,
+no process gets the CPU so nothing accepts input and the network stack starves, and the game is
+stuck in a syscall so its screen never gets drawn. **A wedged AMIX and a fault storm look
+identical from the console.** Capture serial before concluding anything about a hang.
+
+### What the log establishes on its own
+
+* **`ret=0` means the fault resolver reports SUCCESS** -- and the same address faults again.
+  So nothing is denying the access; something claims to have fixed it and has not.
+* **`type=0`** = `F_INVAL`, a not-present page, not a protection fault.
+* **`addr=0x408F4FFF` is a KERNEL address.** kvseg heap is `[0x40040000,0x40440000)`
+  (`prototypes/kmem_validate.s`), kvsegmap starts at `0x40440000`, kvsegu is at `0x48440000`
+  (`prototypes/execmark.s`). So this is the kernel touching its own file window.
+* **It ends in `FFF`** -- the last byte of a 4 KiB page.
+* **`upc` is constant and in the shared-library range**: the process is parked in libc's `read()`.
+
+### Which segment -- by elimination, not by guess
+
+1. **`as_fault` (0xae108) is not the bug.** Its rounding is correct 4 KiB: `andiw #-4096` clears
+   the low 12 bits of a 32-bit value. It passes the ROUNDED address to the segment's fault op and
+   returns whatever that op returned, so `ret=0` is the segment driver's answer, not its own.
+2. **It is not a segkmem-backed segment.** `segkmem_fault` (0xa83d6) returns 0 **only** for
+   `F_SOFTLOCK`(2) and `F_SOFTUNLOCK`(3), and `-1` for everything else -- it is structurally
+   incapable of returning 0 for `type=0`. That also rules out `sptmap`, whose allocator
+   `sptalloc` (0xa8bb6) sits in the segkmem object immediately after `segkmem_faulta`.
+3. The kernel has exactly five seg-ops vectors: `segdev_ops` `segkmem_ops` `segmap_ops`
+   `segu_ops` `segvn_ops`. segdev/segvn are user segments, segu is kvsegu at 0x48440000.
+   **Only `segmap` remains, and segmap can do exactly this.**
+
+### The mechanism in segmap_fault (0xa9116)
+
+It computes the faulting file offset `d4 = sm_off + (addr & 8191)` and `d7 = d4 + len`, calls
+`VOP_GETPAGE(vp, d4, len, protp, pl, plsz=8192, seg, addr, rw, cred)`, then walks the returned
+`pl[]` and maps **only pages whose `p_offset` lies in `[d4, d7)`**; every other returned page is
+merely released. **If that set is empty it maps nothing, falls through to `clrl %d0` and returns
+0.** So a provider whose page offsets are off by a page -- or that returns an empty list -- makes
+as_fault report success forever while the faulting instruction never becomes executable.
+
+This is ISSUE-27's family once more: **provider on one page grid, consumer on the other.**
+wolf3d's files are on the root UFS, and Codex's residual census lists **UFS as 12 unconverted
+sites**, including the note that `ufs_allocmap` rounds with `+0x0fff` rather than `+0x1000`.
+
+Incidentally this clears segmap of Codex's `pl[]` capacity concern: its frame is `linkw #-56`
+with `pl` at `fp@(-24)`, i.e. 6 pointers, and `plsz=8192` needs 3 on a 4 KiB grid or 5 on a
+2 KiB one. Both fit. The capacity contract is a provider-side question, not segmap's.
+
+### Why wolf3d finds it and a working system hides it
+
+wolf3d is the only program here that reads at **arbitrary byte offsets**: `id_pm_amiga.c:25`
+`PML_ReadFromFile(buf, offset, length)` seeks straight to a VSWAP chunk offset taken from the
+file's own table, and `id_ca.c` does the same in a dozen places (lines 143, 664, 830, 871, 1100,
+1157, 1237). `cc`, X and the shell read sequentially from zero -- and **a sequential reader
+touches byte 0 of a slot first, which maps the page, so it never asks for the tail of an
+unmapped page.** The bug needs a first touch at a page-tail offset, which only random access
+produces.
+
+### NOT yet established
+
+* **Which provider site.** UFS getpage is the hypothesis, not a finding. The discriminator is a
+  probe that prints, at the segmap_fault loop, `d4` and each returned `p_offset` -- an off-by-one
+  page or an empty list identifies it immediately.
+* Whether the same defect reaches `mmap` of a UFS file, which would make it much broader than
+  `read()`.
+* Whether ISSUE-36 (NFS mmap tail SIGBUS) shares the root arithmetic. Probably not: ISSUE-36
+  faults in the LOWER half of its page and returns `E05`, not 0.
+
+### Repro
+
+`test-tools/segmaprep.c` -- one 1-byte read per 8 KiB segmap slot so every read is the first
+touch of its slot, sweeping the within-slot offset across the page and half-page boundaries.
+It records progress to stdout AND to a synced state file **before** each attempt, so the offset
+that wedges the machine survives the hard reset. Requires a COLD file (the loop needs a
+not-present page), so run it on a fresh boot against something nothing has read yet.
+
+    cc -o segmaprep segmaprep.c
+    ./segmaprep /root/wolf3d/VSWAP.WL6 /tmp/segmaprep.state
+    # if it wedges: reset, then  cat /tmp/segmaprep.state
