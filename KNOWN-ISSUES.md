@@ -2499,11 +2499,69 @@ touches byte 0 of a slot first, which maps the page, so it never asks for the ta
 unmapped page.** The bug needs a first touch at a page-tail offset, which only random access
 produces.
 
+### ⚠ FOUR SWEEPS RUN ON REAL HARDWARE — ALL NEGATIVE, AND THE PRIMARY HYPOTHESIS IS REFUTED
+
+Run 2026-07-28 on the machine, kernel `68040-260727-02`, UFS root, files verified cold.
+
+| sweep | what it varied | cases | result |
+|---|---|---|---|
+| `test-tools/segmaprep.c` | one single-byte read per fresh 8 KiB slot, within-slot offset 0…8191 | 12 | **all resolved** |
+| `test-tools/segspan.c` | reads straddling page and slot boundaries, every misalignment, matched vs mismatched src/dst alignment, spans to 64 KB | 14 | **all resolved** |
+| `test-tools/pmrep.c` | wolf3d's OWN `PM_Startup` loader: 663 seek+read pairs at the real VSWAP chunk offsets/lengths, no game attached | 663 | **all resolved** |
+| `test-tools/segwrite.c` | the WRITE path: sparse offsets forcing UFS allocation, partial head+tail pages, byte-verified readback | 10 | **PASS, 69650 bytes verified** |
+
+**The page-tail hypothesis above is REFUTED.** Sweep 1 includes within-slot offset **4095**, which
+is exactly the offset of the hardware fault (`0x408F4FFF - 0x40440000 = 0x4B4FFF`; slot 602 base
+`0x408F4000`; so the faulting byte sits at within-slot offset `0xFFF`). That byte is reachable.
+Straddling accesses, alignment mismatch, the real loader's access pattern and the whole write path
+are all reachable too. **`read()`/`write()` on UFS through segmap is not the trigger by itself.**
+
+**One thing WAS confirmed rather than refuted:** `test-tools/` `vamap` (scratch program) mmapped
+the VA2000 exactly as `id_vl_amix.c` does and got **`0xc1033000`**, mapping
+`0xc1033000..0xc1432fff`. So user mappings live at `0xC1xxxxxx`, `0x408F4FFF` is **not** the
+mapped device aperture, and the kernel-address reading — the assumption the elimination chain
+rested on — holds.
+
+**A correction to the entry above:** "the fault storm explains every part of the symptom" is too
+strong. `id_in_amix.c`'s `IN_Startup` puts the console keyboard into raw mode, which is an
+independent explanation for consoles that switch but accept no keystrokes. The fault storm is
+real and the log proves it; that it accounts for the *input* symptom specifically is unproven.
+
+Also corrected: the black screen does **not** show that the loader completed. `wl_main.c:1379`
+calls `SignonScreen()`, which sets the video mode at line 951 — **before** `PM_Startup()` at 1399.
+The mode set is the first thing the game does, so the hang can be anywhere from there onward.
+
+### What remains, ranked by how badly the sweeps failed to model it
+
+1. **Memory pressure and segmap slot RECYCLING.** Every sweep ran on an idle machine
+   (`load average: 0.00`) against fresh slots — deliberately, to make each read a first touch.
+   wolf3d holds a ~1.5 MB page-manager working set, a 4 MB device mapping and audio buffers at
+   once. A slot being reused underneath a fault is exactly the shape none of these tests can
+   produce. **This is the biggest systematic difference between the tests and the game.**
+2. **The interaction, not either half.** File I/O while a 4 MB segdev mapping is live, i.e. two
+   segment drivers in play at once, which no sweep did.
+3. **The second process.** The log has two pids (184 doing an `F_SOFTUNLOCK` at a slot base, 186
+   looping). Sweeps were single-process.
+
+### The decisive next step is a probe, not a fifth sweep
+
+Stop inferring which segment owns `0x408F4FFF` and **measure it**. `prototypes/assegat_dbg.s`
+already wraps `as_segat` and prints the segment it finds plus `[base, base+size)`; it is gated to
+`addr >= 0x80800000` and capped at 16. Re-gate it to `[0x40000000, 0x50000000)` and add
+**`seg->s_ops`** to what it prints. One boot then names the driver outright, against:
+
+    segdev_ops  0x0000b380      segkmem_ops 0x0000b3c4      segmap_ops  0x0000b408
+    segu_ops    0x0000b450      segvn_ops   0x0000b494
+
+If it is segmap, the follow-on probe is inside `segmap_fault`: print `d4` (the faulting file
+offset) and each returned `p_offset`, which shows an empty set or an off-by-one page directly
+instead of by argument.
+
 ### NOT yet established
 
-* **Which provider site.** UFS getpage is the hypothesis, not a finding. The discriminator is a
-  probe that prints, at the segmap_fault loop, `d4` and each returned `p_offset` -- an off-by-one
-  page or an empty list identifies it immediately.
+* **Which provider site**, and now also **whether segmap is even the segment** -- the elimination
+  argument stands, but it is an argument, and four sweeps failing to reproduce is reason to
+  measure it rather than trust it.
 * Whether the same defect reaches `mmap` of a UFS file, which would make it much broader than
   `read()`.
 * Whether ISSUE-36 (NFS mmap tail SIGBUS) shares the root arithmetic. Probably not: ISSUE-36
@@ -2518,5 +2576,5 @@ that wedges the machine survives the hard reset. Requires a COLD file (the loop 
 not-present page), so run it on a fresh boot against something nothing has read yet.
 
     cc -o segmaprep segmaprep.c
-    ./segmaprep /root/wolf3d/VSWAP.WL6 /tmp/segmaprep.state
-    # if it wedges: reset, then  cat /tmp/segmaprep.state
+    ./segmaprep /root/wolf3d/VSWAP.WL6
+    # if it wedges: reset, then  cat /segmaprep.state

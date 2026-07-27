@@ -45,14 +45,19 @@
  * IT WILL WEDGE THE MACHINE when it finds the answer.  That is the point, and it is why the
  * progress record is written TWICE before each attempt:
  *   1. to stdout with fflush -- printed before the fatal read, so it drains normally;
- *   2. to a state file plus sync() -- so the answer survives the hard reset you will need.
+ *   2. to a state file plus sync(), sleep(1), sync() -- so the answer survives the hard reset
+ *      you will need.  The pause is not decoration: sync() only SCHEDULES the write-out, and a
+ *      machine that wedges microseconds later can leave the record still in the buffer cache.
  * After the reset: cat the state file.  The last line names the offset that wedged it.
+ * The state file defaults to `/` and NOT to /tmp, because /tmp is CLEARED ON EVERY AMIX BOOT --
+ * putting the record there would delete exactly the answer the reboot was meant to preserve.
  *
  * COLD PAGES ARE THE WHOLE EXPERIMENT.  The loop needs a NOT-PRESENT segmap page, so the file
  * must not already be in the page cache.  Use a file nothing has read since boot, and prefer a
  * fresh boot.  Reading the same file twice proves nothing the second time.
  *
  * usage: segmaprep <file> [statefile]        file must be > 256 KB, on UFS, and COLD
+ *        statefile defaults to /segmaprep.state (persistent; /tmp is wiped on boot)
  *
  * 68060 NOTE (ISSUE-34a): no `/` by a constant and no `%` anywhere -- gcc turns those into the
  * 64-bit muls.l/divs.l forms the 68060 does not implement, which would kill this program on the
@@ -107,7 +112,7 @@ char **argv;
 		exit(2);
 	}
 	path = argv[1];
-	statepath = (argc > 2) ? argv[2] : "/tmp/segmaprep.state";
+	statepath = (argc > 2) ? argv[2] : "/segmaprep.state";  /* NOT /tmp: wiped every boot */
 
 	fd = open(path, O_RDONLY);
 	if (fd < 0) {
@@ -143,6 +148,8 @@ char **argv;
 		if (sfd >= 0) {
 			(void) write(sfd, line, strlen(line));
 			sync();                  /* survive the hard reset this may require */
+			sleep(1);                /* sync() only SCHEDULES the write-out */
+			sync();
 		}
 
 		if (lseek(fd, off, 0) != off) {   /* SEEK_SET */
