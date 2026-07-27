@@ -386,6 +386,16 @@ python3 "$HERE/prototypes/patch_devmmap2.py" "$OUT" | tail -3
 # page+0x800 and then meets the genuinely ABI-shaped mmap/munmap/mprotect defects.  Fixing
 # this REDUCES exposure to those; it is not part of the same compatibility decision and it
 # lands alone.  Two canaries next door: the POSIX_VER 198808 and the case VALUE 6.
+# ISSUE-35, PROVEN ON REAL HARDWARE 2026-07-27 and attributed to us: a file whose length is
+# an exact multiple of 8192 lost exactly its last 2048 bytes on NFS write.  nfs_putpage's
+# io_len advanced in 2 KiB steps against a 4 KiB page population.  Codex settled attribution
+# statically -- on stock 030 the same code is correct because page_t offsets and io_len
+# advance together -- so this is a Model-B mixed-geometry regression.  MINIMUM ATOMIC UNIT IS
+# TWO INSTRUCTIONS and a half-applied pair is worse than either endpoint; the script refuses.
+# The other four sites of the six-site group stay unconverted and are asserted as canaries.
+echo "[*] ISSUE-35: nfs_putpage io_len in 4 KiB pages (2 ATOMIC sites + 4 canaries)"
+python3 "$HERE/prototypes/patch_nfs_putpage.py" "$OUT" | tail -3
+
 echo "[*] sysconfig: _CONFIG_PAGESIZE reports 4096, not 2048 (1 site + 2 canaries)"
 python3 "$HERE/prototypes/patch_sysconfig_pagesize.py" "$OUT" | tail -2
 

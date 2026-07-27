@@ -1,0 +1,103 @@
+ISSUE-35 FIX: nfs_putpage io_len advances in 4 KiB pages
+========================================================
+2026-07-27 evening.  prototypes/patch_nfs_putpage.py, TWO ATOMIC sites + 4 canaries.
+Builds 68040-260727-07 (base) / -08 (dbg).  relocs 0.
+** THE FIX ITSELF IS NOT YET VERIFIED ON TARGET -- see "what is missing" below. **
+
+ATTRIBUTION SETTLED, AND IT IS OURS
+-----------------------------------
+Codex settled it statically instead of us booting the 030 kernel
+(vm-map/NFS-REALHW-ISSUE35-FOLLOWUP.md): on stock 030 the same code is CORRECT, because
+page_t offsets advance by 2048 and io_len advances by 2048 together.  Model B moved the page
+population to 4 KiB and left io_len at 2 KiB.  So ISSUE-35 is a Model-B mixed-geometry
+regression -- ours, not a pre-existing AMIX bug.  That was the question I had said was
+answerable from the binary, and it was.
+
+THE MINIMUM ATOMIC UNIT IS TWO INSTRUCTIONS
+-------------------------------------------
+  0x8b9de   263c00000800 -> 263c00001000    io_len = PAGESIZE      (first dirty page)
+  0x8ba2c   068300000800 -> 068300001000    io_len += PAGESIZE     (add one page)
+
+Both byte-verified against our image before anything was written.  They must land together,
+asymmetrically:
+  * 0x8ba2c alone does NOTHING -- the 2048-byte initial comparison never admits the second
+    page, so the add is never reached;
+  * 0x8b9de alone admits the second page but then describes two 4 KiB pages as 6144 bytes,
+    which is a NEW wrong length rather than a fix.
+The script therefore verifies BOTH before writing EITHER, and refuses outright if it finds
+the pair half-applied.
+
+THE OTHER FOUR SITES STAY UNCONVERTED, AS CANARIES
+--------------------------------------------------
+nfs_putpage is at 0x8b7e8 and the complete eventual unit is six sites, but only this pair
+produces ISSUE-35 on an 8 KiB mount (vfs_bsize 0x2000), because both old and new forms of
+the first pair select 8192 there:
+  0x8b84e  cmpi 0x7ff    MAX(vfs_bsize,PAGESIZE) gate
+  0x8b85a  movel #0x800  fallback PAGESIZE local minimum
+  0x8b916  addi 0x7ff    file-size round-up
+  0x8b91c  andi 0xf800   rounded file boundary
+All four are asserted UNCHANGED.  If a later change converts them, the canaries stop the
+build so the minimum-pair reasoning gets revisited rather than silently invalidated.
+
+** CORRECTION TO MY OWN CHARACTERISATION OF THE DEFECT **
+--------------------------------------------------------
+My 2026-07-27 hardware sweep characterised ISSUE-35 by file SIZE across twelve lengths and
+recorded sizes like 12288 as "OK".  Codex points out that is insufficient:
+
+    "12288 reporting the right size does not clear its first 8192 bytes.  The first full slot
+     can still have unwritten upper halves.  The next acceptance run must compare bytes, not
+     only st_size or a same-client read."
+
+So the defect may be WIDER than I characterised, and those "OK" rows prove only that the file
+was not truncated -- not that its content is intact.  A same-client read can also be served
+from the writer's own page cache, which is the same masking that defeated three ISSUE-27
+probe designs.
+
+NEW ACCEPTANCE TEST, IN TWO HALVES
+----------------------------------
+  test-tools/nfstruth.c          guest: writes files of 4096/8192/12288/16384/24576/32768,
+                                 every byte at absolute offset o set to ((o>>9)%251)+1 --
+                                 derived from the absolute offset, distinct per 512-byte
+                                 region, and NEVER ZERO so an unwritten region differs
+                                 whether it reads back as zeros or as stale data
+  test-tools/nfstruth-verify.py  HOST: reads the same files as the SERVER stored them, over a
+                                 DIFFERENT client and protocol (our gvfs SMB mount), and
+                                 checks size AND every byte, reporting wrong regions as
+                                 512-byte indices plus the page offset of the first bad byte
+
+TEST VALIDATED BEFORE USE (a test bug on hardware would waste a session)
+-----------------------------------------------------------------------
+Ran the writer against a LOCAL directory on emu-040 and cross-checked the on-disk bytes
+against the Python implementation of the same pattern:
+    sizes written locally:  4096 8192 12288 16384 24576 32768   -- all exact
+    offset    0  -> 0x01   (expected 0x01)
+    offset  512  -> 0x02   (expected 0x02)
+    offset 4096  -> 0x09   (expected 0x09)
+So the two patbyte() implementations agree and the writer puts the intended bytes on disk.
+
+EMULATOR REGRESSION -- the change did not break local paths
+-----------------------------------------------------------
+  emu-040 68040-260727-08:  pgsztest PASS, bmaptest PASS, msynctst MSYNC-OK, proctest PASS
+  emu-060 68060-260727-08:  pgsztest PASS, proctest PASS   (same dual-CPU binary)
+  serial, both CPUs:        0 hits for PANIC / BUS ERROR / 4AFC005F / KMEMCORRUPT
+
+WHAT IS MISSING, AND IT IS THE MAIN THING
+-----------------------------------------
+** The fix has NOT been shown to fix anything. **  The emulator has no NFS mount, so ISSUE-35
+cannot be reproduced or cleared here at all; everything above is a no-regression result.
+The acceptance run needs the real machine, which is powered off:
+
+  1. boot 68040-260727-08, mount -F nfs nasu:Public /mnt/nasu
+  2. guest:  ./nfstruth /mnt/nasu/amix/hwtest-260727-b
+  3. host:   python3 test-tools/nfstruth-verify.py \
+               "/run/user/12044/gvfs/smb-share:server=nasu.local,share=public/amix/hwtest-260727-b"
+     expect NFSTRUTH-VERIFY-RESULT PASS
+  4. NEGATIVE CONTROL, and it matters: repeat steps 2-3 on 68040-260727-01 (the kernel the
+     hardware session ran) and require a FAIL.  Without that, a PASS proves nothing -- the
+     ISSUE-27 experience was that three probes passed on a broken kernel before one worked.
+  5. re-run the original size sweep as a secondary check, and the 3 MB NFS->local copy for
+     the sum 11920 6060 regression baseline.
+
+Also not done: the remaining four nfs_putpage sites, and the read side (nfs_getapage/
+nfs_getpage, 13 sites) whose next step Codex recommends is a pl[] capacity probe --
+RESIDUAL-PROBE-PRIORITY-260727.md.
