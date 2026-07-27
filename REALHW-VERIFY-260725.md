@@ -232,6 +232,39 @@ PTE:n CM-polkua; kernelin puoli on CI DTT0:n kautta.
 
 ---
 
+## Vaihe 3b — ILMAISET MITTAUKSET (ei kernelimuutosta, skippaa jos aika loppuu)
+
+Nämä eivät testaa mitään — ne **keräävät tietoa jota ei saa muualta** ja tekevät seuraavista
+töistä parempia. Kumpikaan ei muuta konetta.
+
+**15b. NFS-perusmittaus — ennen-arvo listan kohdalle 2.** NFS on ainoa jäljellä olevista
+Model-B-perheistä joka on rautatestattavissa, ja `nfs_putpage`-konversio on seuraava
+toteutuskohde. Tämä on se ennen-mittaus jonka konvertointi muuten heittäisi pois:
+
+```sh
+mount -F nfs nasu:Public /mnt/nasu        # ei säily bootissa
+cp /mnt/nasu/<3MB-tiedosto> /nfsbase.bin ; sync ; sum /nfsbase.bin
+# toista 5 kertaa, kirjaa jokainen summa
+```
+Historiallinen referenssi ISSUE-13:sta on **`sum 11920 6060`** (5 peräkkäistä 3 MB kopiota
+tavuntarkkoja, NFS↔local identtinen). Codex vahvisti että **se pysyy voimassa konversion
+jälkeenkin** — sivukoko ei muuta tiedoston tavuja. Jos saat saman luvun nyt, meillä on
+ennen/jälkeen-pari samalta koneelta.
+
+**15c. COFF:in 76 tiedoston aukko kiinni — 5 minuuttia.** `PT_SHLIB`→`getcoffhead`-reitti on
+todellinen, mutta tuottajaa ei löytynyt luettavasta aineistosta, ja **76 ohjelmatiedostoa jäi
+lukukelvottomaksi** vain koska host-puolen vanilla-mounttimme on root-omisteinen read-only.
+Elävällä koneella root lukee ne. Aja Codexin skripti (`amix-kernel-analysis/vm-map/
+scan_exec_formats.py`, siirrä koneelle) tai vähintään:
+
+```sh
+find /usr/bin /bin /usr/lib /usr/public/lib -type f -perm -100 2>/dev/null \
+  | while read f; do od -An -N2 -tx1 "$f" | grep -q ' 01 50' && echo "COFF: $f"; done
+```
+`0x0150` = MC68 COFF magic. **Jos osumia on nolla, COFF on todistetusti kuollut** tällä
+asennuksella ja 13 sitea voi merkitä pysyvästi lykätyiksi. Jos osumia on, COFF nousee
+lykätystä eläväksi. Kummin päin tahansa se on vastaus kysymykseen joka on nyt auki.
+
 ## Vaihe 4 — B2 copyback (vain jos aikaa jää)
 
 **16.** B2-hyväksyntä (`hat_cm_ram` 0x00→0x20) on kirjoitettu mutta **ei koskaan ajettu
