@@ -23,6 +23,15 @@
  *     expected length is a kernel overrun into user memory, and the check does not
  *     depend on the value written.
  *
+ * ⚠ T1 ENCODES THE CURRENT (PRE-ABI) BEHAVIOUR, deliberately.  It expects a
+ * base+0x800 device offset to alias the SAME 4 KiB PFN, which is true only while
+ * the public mmap offset check still admits 2048-aligned offsets (sysconfig
+ * 0x44e7c / mmap 0x583a6 / MAP_FIXED 0x5844c / munmap 0x584f2 / mprotect 0x58572).
+ * If the public five-site ABI is ever moved to 4 KiB, T1 WILL FAIL and it will
+ * look like a kernel regression.  It is not: change this expectation on purpose,
+ * at the same time, or the next session will "fix" the kernel to satisfy a stale
+ * test.  (Codex, vm-map/RESIDUAL-FAMILIES-FOLLOWUP.md, 2026-07-27.)
+ *
  * usage: devmaptest
  * K&R C for the native AMIX SVR4 cc.  Build: cc -o devmaptest devmaptest.c
  * Run as root (/dev/mem).

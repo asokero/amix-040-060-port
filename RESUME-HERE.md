@@ -130,15 +130,37 @@
 >   4 KiB -sivulle 512-tavuisella lohkolla, eli **vakiopatchit eivät voi tukea 512:ta koskaan**;
 >   ja **RFS ei ole muuntamaton vaan RIKKI** (`rfc_writefill` eroaa mountatusta `exp`:istä
 >   yhdellä tavulla koska `page_get` on jo 0x1000) → pysyy poissa, nyt vahvemmalla perusteella.
->   **MEIDÄN järjestys, EI raportin:** 1. UFS `addmap`/`delmap` (4 sitea, elävä, `bmaptest`
->   testaa) → 2. **NFS** (elävä JA rautatestattavissa, referenssi `sum 11920 6060` ISSUE-13:sta)
->   → 3. UFS pienlohko → 4. segdev **vasta kun vikaskenaario on** → 5. COFF vasta kun
->   `PT_SHLIB`-reitti on todistettu → 6. S5 vain lohkopolitiikalla → 7. **julkinen VM-ABI
->   viimeisenä tai ei lainkaan** (raportti asettaa sen ensimmäiseksi; se on käyttäjälle näkyvä
->   ABI-muutos eikä bugikorjaus, ja vaatii oman päätöksen) → 8. RFS vain 2-pisteen penkillä.
->   **Auki:** raportti kumoaa oman kirjaukseni segdevin sisäisestä johdonmukaisuudesta, mutta
->   `devmaptest` T2 (mincore 4 sivun laitemappauksen yli + kanariat) menee läpi → tarvitaan
->   konkreettinen vikaskenaario. Kysytty: `RESIDUAL-FAMILIES-FOLLOWUP-TASK.md`.
+>   **JÄRJESTYS SOVITTU 27.7.** — kolme todistusvelvollisuutta purettiin
+>   (`vm-map/RESIDUAL-FAMILIES-FOLLOWUP.md`, analyysirepo `0a8d838`) ja listat lähentyivät:
+>   1. **`sysconfig` yksin** (ks. seuraava kohta — tämä ei ole ABI-päätös vaan bugi)
+>   2. **NFS `nfs_putpage`** 6 sitea — elävä, deterministinen, rautatestattavissa: mmap-kirjoitus
+>      sivun YLEMPÄÄN 2 KiB -puolikkaaseen antaa palvelimelta tarkistettavan datanmenetystestin
+>   3. NFS `nfs_getapage`/`nfs_getpage` 13 sitea — vaatii sivulista-proben + kylmän kuvioluvun
+>   4. NFS `nfs_setattr` 2 sitea viimeisenä — NFS-välimuistin purge peittää vian normaalisti
+>   5. UFS `addmap`/`delmap` 4 sitea, sitten pienlohko `allocmap`/`freemap`
+>   6. **julkisen ABI:n loput 4 sitea** — vaatii yhteensopivuuspäätöksen JA testipäivityksen
+>   7. segdev 21 sitea — **LATENTTI**, ei kiireellinen
+>   8. COFF, S5 (lohkopolitiikalla), RFS (2-pisteen penkillä)
+>   `sum 11920 6060` **pysyy voimassa** NFS-regression odotettuna summana (sivukoko ei muuta
+>   tiedoston tavuja) — aja se joka NFS-yksikön jälkeen. Kolme NFS-ryhmää **voivat landata
+>   erikseen**, bisektoitavasti; kaikki 21 tarvitaan ennen kuin NFS on "muunnettu".
+>   **Segdev-ristiriita RATKAISTU: latentti.** Codex korjasi myös *evidenssini*, ei vain
+>   päätelmääni: `segdev_incore` askeltaa 4 KiB ja kirjoittaa tavun per rautasivu **muttei
+>   konsultoi ohjelmistollista `vpage`-taulukkoa** → `devmaptest` T2 todistaa `mincore`n
+>   askelvälin, EI parillisia segdev-suojausmerkintöjä. Testini ei kattanut sitä mitä oletin.
+> - **★★ `sysconfig` @0x44e7c PALAUTTAA 2048 — kerneli valehtelee omasta sivukoostaan.**
+>   Verifioitu: `movel #2048,%a0@`. **Tämä EI ole osa ABI-yhteensopivuuspäätöstä vaan oma
+>   bugi**, ja se on yhden immediaatin korjaus (`0x800`→`0x1000`). Codex niputtaa sen viiden
+>   siten "julkiseen ABI:in", mutta riskiprofiili on päinvastainen kuin muilla neljällä:
+>   ne muuttavat nyt onnistuvia kutsuja `EINVAL`iksi (aito yhteensopivuusrikko), kun
+>   `sysconfig`in korjaus vain **lopettaa väärän vastauksen antamisen** — ja **vähentää**
+>   altistumista niille neljälle, koska juuri väärästä sivukoosta laskeminen on se tapa jolla
+>   ohjelma päätyy osoitteeseen `page+0x800`. **Voi ja kannattaa landata yksin, ennen
+>   tiukennusta.** Testi: ohjelma joka tulostaa `sysconf(_SC_PAGESIZE)`.
+> - ⚠️ **`devmaptest` T1 koodaa NYKYISEN (pre-ABI) käyttäytymisen** — se odottaa että
+>   `base+0x800` aliasoi saman 4 KiB PFN:n. Jos julkinen ABI liikkuu, **T1 hajoaa ja näyttää
+>   kernelregressiolta.** Merkitty itse testitiedostoon, jotta seuraava sessio ei "korjaa"
+>   kerneliä vanhentuneen odotuksen mukaiseksi.
 >   **HUOM: 2 KiB -header-ansa EI koske näitä** — tavupatcheja binääriin, ei C-käännöstä.
 > - **★★★ MODEL-B-HEADER-OVERRIDE ristikäännökseen — TÄRKEIN, ja esiehto muulle.**
 >   Löydetty 27.7. ZZ9000-analyysissä. Käännämme kaiken kerneliin menevän C:n **vanillan
