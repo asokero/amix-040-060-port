@@ -4,20 +4,29 @@ Tämä on **itsenäinen ajolista**: kaikki mitä sessiossa tarvitaan on tässä
 tiedostossa tai nimetyssä repo-artefaktissa. Mitään ei tarvitse rakentaa
 sessiossa. Ajojärjestys on tarkoituksella **fail-fast**.
 
-> ## ▶ 2026-07-27: NÄMÄ KOLME ARTEFAKTIA — SIGNAALIPROBE MUKANA
-> FPSP on base-linkissä, molemmat RTG-ajurit ovat yhdessä kernelissä, ja dbg-kernelit
-> kantavat nyt **laajennetun signaaliproben**. Vie koneelle vain nämä:
+> ## ▶ 2026-07-28: AJANTASAISET ARTEFAKTIT — RTG UUDELLEENLINKITETTY
+> **Vaiheet 1–3 on AJETTU JA HYVÄKSYTTY** (27.–28.7., ks. tulokset alempana ja
+> `test-tools/realhw-verify-260727.txt`). Tämä taulukko on nyt "mitä koneelle kuuluu",
+> ei enää "mitä vietäväksi ensi kertaa".
 >
 > | Vie tämä | buildid | kokoa (B) | Sisältää |
 > |---|---|---|---|
-> | `build/unix-040` | 68040-260726-01 | 1716532 | base + FPSP (**ei probea** — puhdas) |
-> | **`build/unix-040-dbg`** | **68040-260727-01** | 1753723 | + probet + signaaliprobe — **testipatteri tällä** |
-> | `build/unix-040-rtg-dbg` | **68040-260727-02** | 1817257 | + Xsvga (67) **ja** VA2000 (68), sama probe |
+> | `build/unix-040` | **68040-260727-07** | 1716532 | base + FPSP + ISSUE-35 + `sysconfig` (ei probea) |
+> | **`build/unix-040-dbg`** | **68040-260727-08** | 1753723 | + probet + signaaliprobe — **testipatteri tällä** |
+> | `build/unix-040-rtg` | **68040-260728-01** | 1780070 | + Xsvga (67) **ja** VA2000 (68), ei probea |
+> | `build/unix-040-rtg-dbg` | **68040-260728-02** | 1817257 | sama + probet |
 > | `build/unix_boot040` | (loader) | 38896 | **pakollinen kaikelle** |
 >
-> Kaikki 260724/260725/260726-02/-03 -kernelit ovat **historiaa** — älä vie.
-> Molemmat dbg-artefaktit ovat samasta erästä: `260727-02` on linkitetty `260727-01`:n
-> päälle, joten aikakausia ei voi sekoittaa.
+> **⚠ MIKSI RTG NUMEROITIIN UUDELLEEN 28.7.** Kaikki aiemmat RTG-kernelit (260727-02/-03 ja
+> 260724-09) linkitettiin **ennen ISSUE-35:n korjausta**, koska ne rakennettiin aamulla ja
+> korjaus tuli illalla. Käytännön seuraus oli epämiellyttävä: **X11:n ajaja sai samalla
+> rikkinäisen NFS-kirjoituksen.** 260728-01/-02 on linkitetty korjatun basen päälle ja
+> `nfs_putpage`-pari + `sysconfig` on verifioitu tavuina kaikista neljästä artefaktista.
+> Tämä on kolmas kerta kun grafiikkakerneli jäi jälkeen basestaan (vrt. 25.7. läheltä piti)
+> — **RTG-kernelit on linkitettävä uudelleen aina kun base muuttuu**, ne eivät ole erillisiä
+> tuotteita vaan basen johdannaisia.
+>
+> Kaikki 260724/260725/260726/260727-0[1-6] -kernelit ovat **historiaa** — älä vie.
 >
 > ### ⭐ SIGNAALIPROBE — mitä se antaa raudalla ja miten se luetaan
 > `prototypes/sigkill_dbg.s` kääri `sigtoproc`in ja tulostaa **`cmn_err`illä, eli teksti menee
@@ -82,8 +91,8 @@ paljastuivat kaikki VAIN oikealla raudalla.
 
 **Yksi taulukko, ylälohkossa** (`▶ 2026-07-27`). Älä toista sitä tässä — kaksi taulukkoa
 ehti eriytyä kertaalleen, ja se on juuri se ansa jota tämä tiedosto yrittää estää.
-Lyhyesti: `unix-040` 260726-01, **`unix-040-dbg` 260727-01** (testipatteri),
-`unix-040-rtg-dbg` 260727-02 (Xsvga+VA2000), + `unix_boot040`.
+Lyhyesti: `unix-040` 260727-07, **`unix-040-dbg` 260727-08** (testipatteri),
+`unix-040-rtg`/`-rtg-dbg` **260728-01/-02** (Xsvga+VA2000), + `unix_boot040`.
 
 ### Testilähteet ja binäärit
 
@@ -200,13 +209,21 @@ synkronisesti tai at-jonon kautta (B1-sessio käytti at-jonoa juuri tästä syys
 
 ---
 
-## Vaihe 2 — grafiikka (`unix-040-rtg-dbg` = **68040-260727-02**)
+## Vaihe 2 — grafiikka ✅ **AJETTU JA LÄPÄISTY** (nyt `unix-040-rtg-dbg` = 68040-260728-02)
+
+> **TULOS 27.–28.7.: MOLEMMAT RTG-AJURIT TOIMIVAT FYYSISELLÄ RAUDALLA.**
+> * **VA2000 + X11: 27.7.** — ja **selvästi nopeampi kuin 030:lla**.
+> * **Xsvga + X11 fyysisellä Piccololla: 28.7.** — toimii ja on **nopea**. Tämä oli
+>   Xsvga-jäljen viimeinen avoin kohta, avoinna 24.7. lähtien.
+>
+> **Piccolo on ajettava Zorro II -tilassa.** Zorro III -jumpperilla `svgaprobe` → ENXIO.
+> Se ei ole regressio eikä korttivika: ajurit dereferoivat `cd_boardaddr`in
+> kernel-osoitteena, ja vain Zorro II on DTT0:n identity-mappauksessa. Koko mekanismi ja
+> se miksi tämä on **yhden muuttujan A/B** (vain jumpperi vaihtui): `KNOWN-ISSUES.md`,
+> "Zorro III -laiteaukko ei ole ajurin tavoitettavissa".
 
 `fputest` EI ole täällä — FPU on basessa, se ajetaan vaiheessa 1.
 `mknod /dev/svga c 67 0` ja `mknod /dev/va2000 c 68 0` kerran.
-
-Nämä ovat odottaneet 24.7. asti; emussa täysi twm-työpöytä toimii
-(`test-tools/xsvga-xinit-working-260724.png`), raudalla ei ole ajettu mitään.
 
 **10.** Natiivi self-host tällä kernelillä: käännä jokin testiohjelma. `fputest` itse
 ajettiin jo vaiheessa 1 — tässä varmistetaan vain että ajurit eivät riko FPSP:tä.
@@ -216,9 +233,10 @@ disconnectissa" oli juuri se) — aja konsolilta, WM mukana.
 
 ---
 
-## Vaihe 3 — VA2000 (SAMA kerneli `unix-040-rtg-dbg` = 68040-260727-02)
+## Vaihe 3 — VA2000 ✅ **AJETTU JA LÄPÄISTY 27.7.** (SAMA kerneli, nyt 68040-260728-02)
 
-**Tätä ei ole voitu savustaa lainkaan** — kortti ei ole emuloitavissa.
+**Ei ollut savustettavissa lainkaan ennen rautaa** — kortti ei ole emuloitavissa. Nyt ajettu:
+X11 toimii VA2000:lla ja on selvästi nopeampi kuin 030:lla.
 
 **12.** `mknod /dev/va2000 c 68 0`
 **13.** `./va2000probe` **ENSIN.** Emussa siitä tulee siisti ENXIO; raudalla sen

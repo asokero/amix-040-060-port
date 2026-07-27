@@ -2366,6 +2366,14 @@ stock-AMIX:ssa ei ole Zorro III -tukea lainkaan (MNT ZZ9000 -ajurin README sanoo
 hylkää oman Z3-tuotteensa tarkoituksella). Kirjattu koska se rajoittaa kaikkea tulevaa
 Z3-työtä ja koska mekanismi on nyt todistettu eikä arvattu.
 
+**★ KONTROLLI 2026-07-28: sama kortti Zorro II -tilassa → X11 toimii ja on nopea.** Käyttäjä
+palautti jumpperin ja ajoi saman ajurin samalla kernelillä: `svgaprobe` onnistuu, X11
+käynnistyy. **Ainoa muuttunut asia koko järjestelmässä on kortin väylätila**, joten tämä on
+yhden muuttujan A/B eikä pelkkä disassembly-päättely. Se sulkee samalla pois selitykset joita
+ei ollut suljettu: kortti ei ole rikki, firmware ei ole väärä, ajurin sovitus ei ole väärä,
+X-puoli ei ole väärä — vain osoite. **Ja koska Z2 on jo nopea, Zorro III on parannus eikä
+este;** nopeus oli Z3:n alkuperäinen motiivi ja se motiivi heikkeni tässä testissä.
+
 **Todiste.** Piccolo Z3-tilassa autoconfig antaa:
 ```
 board[2] mfg=0893 prod=05 addr=40000000 size=01000000   Piccolo RAM, 16 MB, ZORRO III
