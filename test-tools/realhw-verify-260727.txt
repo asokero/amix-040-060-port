@@ -1,0 +1,178 @@
+REAL HARDWARE ACCEPTANCE — 2026-07-27, A3000 + Mercury 68040
+=============================================================
+Kernel: 68040-260727-01 (base 260726-01 + dbg probes + widened sigtoproc probe).
+Loader: build/unix_boot040.  Serial captured to /tmp/amix-hw-test.log (capture started
+AFTER the first boot, so the first boot's loader lines are absent; the mid-session reboot
+captured them in full — see section 3).
+
+Machine state at start: runlevel 2, load 0.00, root fs 45% used / 448 MB free,
+/payload.bin present with the HISTORICAL sum 1570 8192, /mnt/nasu mounted
+nasu:Public read/write/remote, native cc works.  Test material staged via the NAS bridge
+into /hwt: 17 sources + hat_dup_cow (sum 18025 16, identical to the emulator's copy).
+
+1. FIRST REAL-HARDWARE ACCEPTANCE OF THE 2026-07-25..27 LINE — ALL PASS
+----------------------------------------------------------------------
+  fputest       FPUTEST Test A PASS  (add/sub/mul/div, 1/3, sqrt2, checksum 1747546)
+                AND the native `cc` COMPILED it -- that is the M3 criterion, so this is
+                the FPSP real-hardware acceptance that had been pending since 2026-07-24.
+  exectest 20   EXECTEST-RESULT PASS (data+bss verified across every generation)   ISSUE-32
+  proctest      PROCTEST-RESULT PASS, parent fails=0, CHILD-COW-WRITE PASS        ISSUE-17
+                (on a kernel without this fix the same program PANICS the kernel)
+  bmaptest      BMAPTEST-RESULT PASS, T5 fragment growth OK                        ISSUE-31
+  mlocktest     MLOCKTEST-RESULT PASS, fails=0 skipped=0                           ISSUE-28
+  trunctest     TRUNCTEST-RESULT ZEROED (expected: does not reproduce)             ISSUE-30
+  devmaptest    DEVMAPTEST-RESULT PASS, T2 mincore canaries clobbered=0            ISSUE-33
+  msynctst      MSYNC-OK sz=65536
+  hat_dup_cow   RESULT PASS at 1, 32 and 64 forks
+  bigargv       BIGARGV PASS 45 args 4500 bytes
+  pressure.sh   PRESSURE-DONE, 6 concurrent 4 MiB copies + hat_dup_cow 64 churn,
+                all six sums 1570 8192 -- 6/6 byte-perfect
+  burst4.sh     ALLBURSTS-DONE, 4 bursts of (6 x 4 MiB concurrent + hat_dup_cow 64),
+                grep -c "1570 8192" = 24 -- 24/24 BYTE-PERFECT, and 1570 8192 is the
+                same number the 2026-07-23 B1 acceptance recorded, from the same
+                /payload.bin file that is still on the machine
+
+2. TWO-PHASE ISSUE-27 PROOF AND DISK TRUTH (one soft reboot, per ISSUE-24)
+-------------------------------------------------------------------------
+  pgcold D 24 /pgc          PHASE-D-DONE files=24 errs=0
+  /big.dat before reboot    2 959 368 B, sum 15621 5781
+  -> sync; sync; reboot
+  /big.dat after reboot     sum 15621 5781                            IDENTICAL
+  pgcold E 24 /pgc          PGCOLD-E-RESULT PRESERVED
+                            files=24 hits=0 zeroed=0 marker=0 errs=0
+  This is the result the hardware run existed for: the real disk exercises a different
+  fragment/writeback timing from the emulator, and the ISSUE-27 fix holds on it.
+
+3. LOADER MARGIN — HARDWARE-CONFIRMED (first real-HW capture of these lines)
+---------------------------------------------------------------------------
+    System: 68040 68040/060-FPU   (INST: Cache Burst) (DATA: NoCache NoBurst)
+    kernel cputype set to 40
+    AttnFlags = 0x0000804f
+      -> copyit will take the 68040/060 (movec) path.
+    mem[0] lower=08000020 upper=0a000000 attr=0505      32 MiB Mercury
+    mem[1] lower=07000020 upper=08000000 attr=0505      16 MiB motherboard
+    mem[2] lower=00004020 upper=00200000 attr=0703
+    kernel: entry=08000000 tvaddr=08000000 tsize=000e7474 dvaddr=080e7474 dsize=00019950
+    buffer: image=09e53d80 copysrc=09e53db4..09f54b78 dest=08000000..08100dc4
+    no overlap (copy is safe)
+
+  Margin = 0x09e53d80 - 0x08100dc4 = 30 748 604 B = 29.3 MiB, against the 29.2 MiB
+  computed on the emulator on 2026-07-27.  The emulator's memory geometry really is
+  identical to this machine, so that computation transfers.  The loader risk I had flagged
+  twice is closed on hardware.
+
+  Autoconfig boards seen by the loader:
+    board[0] mfg=0202 prod=70 addr=00e90000   A2065 Ethernet
+    board[1] mfg=4231 prod=01 addr=00ea0000   ACT Prelude
+    board[2] mfg=0893 prod=05 addr=40000000 size=01000000
+    board[3] mfg=0893 prod=06 addr=00eb0000
+    board[4] mfg=6d6e prod=01 addr=00200000 size=00400000   MNT VA2000, 4 MB
+
+4. SERIAL LOG — whole session, 152 374 bytes captured
+----------------------------------------------------
+  0 hits for PANIC / BUS ERROR / 4AFC005F / "no space" / EFAULT / XPAGE /
+  SIG sig=4 / sig=11 / sig=12.
+  ONE KMEMCORRUPT — see section 5b.
+  The probe fired exactly where it should and nowhere else: four
+  `DBG SIG sig=9 ... psargs=reboot ... fu=0` lines during the reboot (the shutdown path
+  killing processes, kernel-raised, correct) and one
+  `DBG as_fault STREAM pid=153 addr=408EE000 upc=C101548C type=3 ret=0` (kvseg fault on a
+  STREAMS path, resolved).  Neither is a fault.
+  The log is otherwise dominated by the idle clock sampler C00000000:080E44B8:00002000
+  (proc 0 idling — the same idle PC as the emulator), capped at 1024 samples.
+
+5b. ** ISSUE-29 ON REAL HARDWARE FOR THE FIRST TIME — sighting #5 **
+-------------------------------------------------------------------
+    DBG KMEMCORRUPT bin=80ED9F0 blk=40259300 next=8 prev=6 caller=8042334 size=1
+
+  Exactly ONE occurrence in 152 374 bytes of log, at offset 21484 = 14% in, i.e. BEFORE
+  the mid-session reboot.  So it happened during the FUNCTIONAL battery, NOT during
+  pressure.sh or burst4 — both of those ran clean, which is worth stating because pressure
+  is where one would expect it.
+
+  Three things are new and they turn this from an emulator curiosity into a lead:
+   1. It occurs on SILICON.  All four previous sightings (three on 2026-07-25, one on
+      emu-060 on 2026-07-26) were emulator-only.
+   2. The SHAPE MATCHES the 2026-07-25 emulator sightings: same caller=8042334, same
+      next=8 prev=6.  (The 2026-07-26 emu-060 sighting had next==prev, a different shape.)
+      Sizes differ across sightings: 0x8C on 07-25, 1 here.
+   3. caller 0x8042334 resolves to **kmem_zalloc + 0x18** — the instruction right after
+      `jsr kmem_alloc` inside kmem_zalloc.  So the corrupted blocks come from kmem_zalloc,
+      not from kmem_alloc directly and not from the KMA pools.
+
+  And the values themselves are informative: next=8 / prev=6 are SMALL INTEGERS sitting
+  where free-list POINTERS belong.  That looks like an index being written over a pointer,
+  not a wild address or a poison pattern.
+
+  Still NOT attributed and not chased — the project's own rule after several ruled-out
+  hypotheses is to record and redirect.  But five sightings with a consistent caller and a
+  consistent corrupted-value shape is no longer noise.
+
+5. ** NEW DEFECT FOUND: NFS WRITE LOSES 2048 BYTES — REPRODUCIBLE, SERVER-VERIFIED **
+-------------------------------------------------------------------------------------
+Found on the very first NFS write of the session.  This is NOT part of the delta the run
+was validating; it is a pre-existing defect that had never been exercised.
+
+  A file whose length is an EXACT MULTIPLE OF 8192 loses exactly its last 2048 bytes when
+  written to NFS.
+
+  size sweep, all written with dd from /payload.bin to nasu:Public over NFS:
+      requested   stored     lost
+        100         100        0
+       2048        2048        0
+       3000        3000        0
+       4096        4096        0
+       6144        6144        0
+       8192        6144     2048     <- 2 x 8192
+      10240       10240        0
+      12288       12288        0     <- 3 x 4096 but NOT a multiple of 8192
+      16384       14336     2048     <- 2 x 8192
+      24576       22528     2048     <- 3 x 8192
+      32768       30720     2048     <- 4 x 8192
+    4194304     4192256     2048     <- 512 x 8192 (the historical /payload.bin)
+
+  Controls that make this a kernel defect and not an artifact:
+   * LOCAL control clean: the same `dd bs=1 count=8192` to local UFS gives 8192 three
+     times out of three.  Only the NFS destination loses data.
+   * Deterministic: 3/3 identical short writes at 8192.
+   * NOT flush latency: sync + 5 s wait did not change the sizes.
+   * SERVER-SIDE VERIFIED from a different client and a different protocol — read back
+     over SMB from Linux: 4 192 256 bytes, and the file ends at page offset 2048 of 4096,
+     i.e. the final 4 KiB page's UPPER 2 KiB half was never written.
+
+  Mechanism, consistent with the numbers: 8192 = MAXBSIZE / the segmap slot, and 2048 is
+  the stale page size.  nfs_putpage computes its write-out extent with 2 KiB arithmetic
+  against a 4 KiB page population, and at an exact block boundary the final half page
+  falls outside the computed range.  This is the ISSUE-27 class (4 KiB producer, 2 KiB
+  consumer) and it is exactly the family Codex ranked #1 for implementation:
+  vm-map/NFS-PROVIDER-RESIDUAL-CLOSURE.md, nfs_putpage, six unconverted sites.  Codex
+  predicted a "server-verifiable data-loss test" for this group; it turns out not even to
+  need mmap — a plain cp does it.
+
+  ATTRIBUTION NOT PROVEN.  It is consistent with the Model-B asymmetry (on a 2 KiB kernel
+  nfs_putpage's arithmetic would be correct, which would make this our regression), but
+  the discriminator — booting the stock 030 kernel, or an 040 kernel with nfs_putpage
+  converted — has not been run.  Do not record it as caused by our work until it has.
+
+  Practical impact: every file whose size is an exact multiple of 8 KiB written to NFS
+  from this machine is silently truncated by 2 KiB.  That includes tar archives.
+
+  Evidence files left in place on the NAS at amix/hwtest-260727/ by request.
+
+6. ALSO CONFIRMED THIS SESSION (user-run, before the battery)
+------------------------------------------------------------
+  unix-040-rtg (68040-260727-03, the non-debug combined RTG kernel): X11 on the VA2000
+  works on real hardware and is markedly faster and smoother than on the 68030.  That is
+  the first real-hardware validation of the RTG kernel and it closes a goal open since
+  2026-07-24.  Not measured — reported by the user as a qualitative result.
+
+7. NOT VERIFIED / NOT RUN
+-------------------------
+  * CACR / B1 cache readback.  My dd+od attempt was the wrong tool (bs=1 with a 134 M skip
+    made dd read byte-by-byte and hang — my error, not the machine's).  AMIX's crash(1M)
+    is the right instrument.  Not a gate: B1 is set unconditionally in pstart040.
+  * POWER-CUT disk truth.  Only the clean soft reboot was done.
+  * burst4 and the long soak — see section 8 for whatever completed.
+  * unix-040 (non-debug base, 260726-01) was not booted at all this session.
+  * The graphics kernel 260727-02 was not run; the user ran 260727-03 (non-debug).
+  * emu-060 was not re-checked against this kernel.
