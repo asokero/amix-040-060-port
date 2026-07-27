@@ -2425,6 +2425,46 @@ Mittaamiseen `test-tools/busbench.c`, jonka otsikossa on se ansa että DTT0 anta
 CM 0x60 (NC) kun `Lcm_sel` antaa Z3-mappaukselle 0x40 (NCS, serialisoitu) — naiivi vertailu
 mittaisi serialisointia eikä väylää.
 
+## ISSUE-36 — FIX BUILT AND EMU-SMOKED 2026-07-28, hardware acceptance pending
+
+Four atomic sites, `prototypes/patch_nfs_getpage.py`, wired into `relink-040.sh`. Codex's site
+analysis is `amix-kernel-analysis/vm-map/NFS-READSIDE-ISSUE36-SITE.md` (c95fd8c); all thirteen
+sites were re-verified byte-for-byte against our own image before anything was written, and the
+image matched Codex's pin exactly (sha256 `5df4158b…`).
+
+```
+0x8b6ba  rp->r_size + 2047 -> + 4095    EOF allowance  <- the direct SIGBUS producer
+0x8b26c  sz -= 2048 -> 4096             pl[] countdown
+0x8b282  io_len + 2047 -> + 4095        full-page initialization
+0x8b288  andiw #-2048 -> #-4096         full-page initialization
+```
+
+**The predicate is sharper than we recorded it.** With `r = size mod 4096` the old gate rejected
+only `r` in 1..2048; `r == 0` and `r >= 2049` were always accepted. So our "NFS mmap does not work
+for any non-multiple-of-4096 length" was wrong — upper-half remainders already worked. The
+acceptance corpus therefore straddles the 2048/2049 boundary, because that boundary is what
+distinguishes this model from "any partial page fails".
+
+**Why the one-liner is unsafe alone** — verified independently in the disassembly, not taken on
+trust: the loop that fills `pl[]` stores the pointer *before* following `p_next`, and SVR4 page
+lists are CIRCULAR, so the byte countdown is the loop's only bound. At 2048 an 8 KiB cluster emits
+`A, B, A, B, NULL` where the contract is `A, B, NULL`. And an EOF gate opened without the io_len
+pair admits a page whose upper 2 KiB the I/O never initializes. Every half state is known-bad, so
+the script verifies all four before writing any and refuses a partially applied image.
+
+Artifacts, corpus, expectation tables and the A/B control kernel: `REALHW-ISSUE36-260728.md`.
+Emulator status: 040 and 060 boot clean, relocs 0, local control corpus 7/7 on both CPUs.
+**ISSUE-36 itself cannot be verified in the emulator** — Amiberry's slirp does not forward RPC
+outbound (`rpcinfo`: cannot contact the portmapper), so the guest cannot mount NFS at all.
+
+### Intermittent, unattributed: scrmon bus error
+
+One emulator boot in six produced `BUS ERROR at 4D455404 PC:C101D6C8 FAULT:6 PID:159
+CMD:/usr/amiga/lib/scrmon`; the same kernel booted clean immediately after. The fault address is
+ASCII (`MET\x04`), i.e. data dereferenced as a pointer. It does not correlate with that build's
+only change (a debug threshold constant), but the cause is unknown and it is recorded rather than
+explained away.
+
 ## ISSUE-37 (OPEN, hardware-reproduced): wolf3d wedges the machine in an infinite as_fault loop
 
 Found 2026-07-28 on real hardware, VA2000 in Zorro II mode, kernel `68040-260727-02` (RTG dbg).
@@ -2543,7 +2583,29 @@ The mode set is the first thing the game does, so the hang can be anywhere from 
 3. **The second process.** The log has two pids (184 doing an `F_SOFTUNLOCK` at a slot base, 186
    looping). Sweeps were single-process.
 
-### The decisive next step is a probe, not a fifth sweep
+### ✅ ANSWERED 2026-07-28: the segment IS segmap, measured rather than argued
+
+The probe was built (`prototypes/assegat_dbg.s`, repeat-gated, prints `seg->s_ops`) and it
+answered the question on its first emulator boot -- as a FALSE POSITIVE, before the gate was
+tuned:
+
+```
+DBG segat LOOP addr=40444000 seg=400B9800 base=40440000 size=1E80000 ops=80F2AB8
+```
+
+Resolving `0x080F2AB8` against the dbg kernel's runtime `.data` base (text base `0x08000000` plus
+`.text` size `0xE76B0`) gives `.data` offset **`0xB408` = `segmap_ops`**, and the window
+`0x40440000..0x422BFFFF` (30.5 MB) **contains `0x408F4FFF`**. So the elimination chain's conclusion
+was right, and it is now a measurement.
+
+**And the false positive taught something that bears on the remaining hypotheses:** at a threshold
+of 64 the probe fired on a healthy idle boot, because **segmap recycles slots constantly and the
+same kernel VA is re-faulted over and over as different files pass through it**. Long consecutive
+streaks on one VA are normal. That weakens "slot recycling" as a sufficient explanation for
+ISSUE-37 -- idle boot recycles continuously without wedging anything. The threshold is now 4096
+(the loop exceeded 8192 within a second) and a healthy boot is verified silent.
+
+### The remaining step is the loop's own segment state, not a fifth sweep
 
 Stop inferring which segment owns `0x408F4FFF` and **measure it**. `prototypes/assegat_dbg.s`
 already wraps `as_segat` and prints the segment it finds plus `[base, base+size)`; it is gated to

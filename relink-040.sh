@@ -396,6 +396,18 @@ python3 "$HERE/prototypes/patch_devmmap2.py" "$OUT" | tail -3
 echo "[*] ISSUE-35: nfs_putpage io_len in 4 KiB pages (2 ATOMIC sites + 4 canaries)"
 python3 "$HERE/prototypes/patch_nfs_putpage.py" "$OUT" | tail -3
 
+# ISSUE-36 (NFS read side): the minimum SAFE repair is four sites, not the one that produces the
+# SIGBUS.  nfs_getpage's EOF allowance (0x8b6ba) is the direct producer -- it rejects the final
+# partial page for remainders 1..2048 with EFAULT, which segvn turns into 0xE05 and the user sees
+# SIGBUS.  But relaxing that gate alone admits a page whose upper 2 KiB the I/O never initializes,
+# and can newly expose a malformed pl[] return list, because the loop that fills it is bounded only
+# by a byte countdown over a CIRCULAR page list.  So the io_len round-up pair and the countdown
+# land together or not at all.  Codex: vm-map/NFS-READSIDE-ISSUE36-SITE.md (c95fd8c).
+# The other nine sites of the thirteen stay unconverted and are asserted as canaries -- notably
+# 0x8b72c, which must never be converted without the countdown.
+echo "[*] ISSUE-36: nfs_getpage EOF + pl[] countdown + io_len (4 ATOMIC sites + 9 canaries)"
+python3 "$HERE/prototypes/patch_nfs_getpage.py" "$OUT" | tail -6
+
 echo "[*] sysconfig: _CONFIG_PAGESIZE reports 4096, not 2048 (1 site + 2 canaries)"
 python3 "$HERE/prototypes/patch_sysconfig_pagesize.py" "$OUT" | tail -2
 
