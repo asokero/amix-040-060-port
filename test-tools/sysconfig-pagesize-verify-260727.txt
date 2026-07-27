@@ -1,0 +1,74 @@
+sysconfig(_CONFIG_PAGESIZE): the kernel stops lying about its own page size
+==========================================================================
+2026-07-27.  prototypes/patch_sysconfig_pagesize.py, ONE site + TWO canaries.
+Builds 68040-260727-05 (base) / -06 (dbg).  relocs 0.  Emulator only; no hardware.
+
+THE DEFECT
+----------
+  0x44e7c   movel #2048,%a0@        sysconfig's _CONFIG_PAGESIZE case
+
+The kernel runs on 4 KiB pages and told user space 2048.  Codex's
+RESIDUAL-FAMILIES-FOLLOWUP.md bundles this with four other sites as one "public five-site
+ABI" decision.  It is separated deliberately, because its risk profile is the OPPOSITE of
+the other four (mmap 0x583a6, MAP_FIXED 0x5844c, munmap 0x584f2, mprotect 0x58572): those
+turn currently-succeeding calls into EINVAL, which is a real compatibility break, whereas
+this one only stops the kernel giving a wrong answer -- and it REDUCES exposure to the other
+four, because computing an alignment from 2048 is precisely how a program lands at
+page+0x800 where those defects live.  So it lands alone and first.
+
+CLASSIFICATION, not matching
+----------------------------
+Source contract: svr4-src-3b2/usr/src/uts/3b2/sys/sysconfig.h:21  _CONFIG_PAGESIZE 6.
+The whole function was classified (0x44e12..0x44e92, 128 bytes) rather than trusting a
+single-site claim.  It contains exactly one page-size immediate.  Two canaries next door,
+both asserted UNCHANGED because a mechanical sweep would have taken them:
+
+  0x44e72  movel #198808,%a0@ (0x30898)  _CONFIG_POSIX_VER -- August 1988 = POSIX.1-1988,
+                                         a DATE, not a size, and directly adjacent
+  0x44e22  moveq #6,%d1                  the _CONFIG_PAGESIZE case VALUE; converting it
+                                         would silently move the query to command 12
+
+(My first draft of the script had the POSIX_VER canary bytes wrong -- 0x30a18 instead of
+0x30898.  Caught by dumping the image before wiring the patch in.  It would have failed
+closed, which is the safe direction, but it was still a bug in the script.)
+
+TEST: test-tools/pgsztest.c
+--------------------------
+Prints sysconf(_SC_PAGESIZE), then CROSS-CHECKS it against the kernel's own behaviour:
+map 4*ps bytes of /dev/zero and count how many entries mincore fills in.  The cross-check
+is the point -- it does not rely on the number the kernel reports.
+(SVR4 has no MAP_ANON; anonymous memory comes from /dev/zero.  That cost one compile.)
+
+NEGATIVE CONTROL on the pre-fix kernel 68040-260727-01 -- and it is richer than expected:
+
+    PGSZ FAIL: kernel reports 2048 but runs on 4096
+    PGSZ mincore over 4*2048 bytes wrote 2 entries (expect 4)
+    PGSZ FAIL: reported page size disagrees with mincore
+    PGSZTEST-RESULT FAIL
+
+That middle line is the actual harm.  A program that TRUSTS sysconf maps 4*2048 = 8192
+bytes and gets TWO mincore entries instead of four, because the kernel's real page size is
+4096.  So the wrong page size does not merely misinform: it makes a correctly written
+program mis-size its own buffers and misread the kernel's own vectors.  The failure signal
+is behavioural, not "the number looks wrong".
+
+RESULTS
+-------
+  emu-040, 68040-260727-06:   PGSZ sysconf = 4096
+                              mincore over 4*4096 wrote 4 entries (expect 4)
+                              PGSZTEST-RESULT PASS
+  emu-060, 68060-260727-06:   identical -- 4096, 4 entries, PASS
+                              (same dual-CPU binary)
+  regression on 060:          proctest PASS, exectest PASS
+  serial, both CPUs:          0 hits for PANIC / BUS ERROR / 4AFC005F / KMEMCORRUPT
+
+NOT VERIFIED
+------------
+  * No real hardware.  The machine was running 260727-01 during the hardware session and
+    has not been rebooted onto -05/-06.
+  * The other four public-ABI sites are UNTOUCHED and still admit 2048-aligned addresses.
+    They need a compatibility decision plus a deliberate change to devmaptest T1, which
+    encodes the current behaviour on purpose -- see the note in that file's header.
+  * No check was made for OTHER places the kernel might report a page size to user space.
+    Codex's five-site list is the authority for that and names only sysconfig; that was
+    taken on his classification, not re-derived here.

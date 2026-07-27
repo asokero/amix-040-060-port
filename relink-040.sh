@@ -381,6 +381,14 @@ python3 "$HERE/prototypes/patch_execboundary.py" "$OUT" | tail -3
 echo "[*] ISSUE-33: device-mmap PFN + segdev_incore vector (DEVMMAP2_GROUPS=pfn,incore)"
 python3 "$HERE/prototypes/patch_devmmap2.py" "$OUT" | tail -3
 
+# sysconfig(_CONFIG_PAGESIZE) reported 2048 on a 4 KiB kernel -- the kernel misreporting
+# ITSELF to user space, which is also how a program computes an alignment that lands at
+# page+0x800 and then meets the genuinely ABI-shaped mmap/munmap/mprotect defects.  Fixing
+# this REDUCES exposure to those; it is not part of the same compatibility decision and it
+# lands alone.  Two canaries next door: the POSIX_VER 198808 and the case VALUE 6.
+echo "[*] sysconfig: _CONFIG_PAGESIZE reports 4096, not 2048 (1 site + 2 canaries)"
+python3 "$HERE/prototypes/patch_sysconfig_pagesize.py" "$OUT" | tail -2
+
 # ---------------------------------------------------------------------------
 # Motorola 68040 FPSP (Floating-Point Support Package) + AMIX glue.
 #
