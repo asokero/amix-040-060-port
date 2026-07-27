@@ -4,32 +4,63 @@ Tämä on **itsenäinen ajolista**: kaikki mitä sessiossa tarvitaan on tässä
 tiedostossa tai nimetyssä repo-artefaktissa. Mitään ei tarvitse rakentaa
 sessiossa. Ajojärjestys on tarkoituksella **fail-fast**.
 
-> ## ⚠ 2026-07-26: KERNELIT VAIHTUIVAT — KAKSI ARTEFAKTIA NELJÄN SIJAAN
-> FPSP on nyt base-linkissä ja **molemmat RTG-ajurit ovat yhdessä kernelissä**.
-> Vie koneelle vain nämä:
+> ## ▶ 2026-07-27: NÄMÄ KOLME ARTEFAKTIA — SIGNAALIPROBE MUKANA
+> FPSP on base-linkissä, molemmat RTG-ajurit ovat yhdessä kernelissä, ja dbg-kernelit
+> kantavat nyt **laajennetun signaaliproben**. Vie koneelle vain nämä:
 >
 > | Vie tämä | buildid | kokoa (B) | Sisältää |
 > |---|---|---|---|
-> | `build/unix-040` | 68040-260726-01 | 1716532 | base + FPSP |
-> | **`build/unix-040-dbg`** | 68040-260726-02 | 1753723 | + probet — **testipatteri tällä** |
-> | `build/unix-040-rtg-dbg` | 68040-260726-03 | 1817257 | + Xsvga (67) **ja** VA2000 (68) |
+> | `build/unix-040` | 68040-260726-01 | 1716532 | base + FPSP (**ei probea** — puhdas) |
+> | **`build/unix-040-dbg`** | **68040-260727-01** | 1753723 | + probet + signaaliprobe — **testipatteri tällä** |
+> | `build/unix-040-rtg-dbg` | **68040-260727-02** | 1817257 | + Xsvga (67) **ja** VA2000 (68), sama probe |
 > | `build/unix_boot040` | (loader) | 38896 | **pakollinen kaikelle** |
 >
-> Muutokset ajolistaan: **vaiheen 1 kerneli on 260726-02** (`uname -m`), `fputest`
-> siirtyy vaiheeseen 1 (FPU on nyt basessa), ja **vaiheet 2–3 ajetaan SAMALLA
-> kernelillä 260726-03** — ei erillisiä FPSP/Xsvga- ja VA2000-kerneleitä.
-> Molemmat nodet: `mknod /dev/svga c 67 0` ja `mknod /dev/va2000 c 68 0`.
-> Vanhat 260725-17…-20 ja `unix-040-dbg.DEVMMAP-260725-18` ovat **historiaa** — älä vie.
+> Kaikki 260724/260725/260726-02/-03 -kernelit ovat **historiaa** — älä vie.
+> Molemmat dbg-artefaktit ovat samasta erästä: `260727-02` on linkitetty `260727-01`:n
+> päälle, joten aikakausia ei voi sekoittaa.
 >
-> Emu-savu 260726-03: boottaa, `va2000: no board found` siististi, `/dev/svga0` →
-> **Piccolo CardID=3 tunnistuu**, `/dev/va2000` → siisti ENXIO, `fputest`/`exectest`/
-> `devmaptest` PASS. Evidenssi + mitä EI testattu:
-> `test-tools/fpsp-into-base-260726.txt` (mm. `xinit` ei ajettu tällä kernelillä,
-> eikä VA2000 ole koskaan nähnyt fyysistä korttia).
+> ### ⭐ SIGNAALIPROBE — mitä se antaa raudalla ja miten se luetaan
+> `prototypes/sigkill_dbg.s` kääri `sigtoproc`in ja tulostaa **`cmn_err`illä, eli teksti
+> näkyy KONSOLILLA** — ei siis vaadi serial-kaapelia, mikä on olennaista koska oikealla
+> koneella kaapelia ei ole:
 >
-> ⚠️ **ANSA 1 ja 2 alla ovat VANHENTUNEET** — boot-slot on nyt oikea kerneli, ja
-> grafiikan relink ei enää defaultaa vanhaan baseen (`relink-040-fpsp-xsvga.sh` on
-> retiroitu; käytä `relink-040-rtg.sh`).
+> ```
+> DBG SIG sig=<N> pid=<pid> stat=<x> psargs=<komentorivi> uret=<x> uarg2=<x> kcaller=<x> fu=<0|1>
+> ```
+>
+> - **`sig`** = signaali. Kattaa nyt **4–12** (raja nostettiin 11→12 ISSUE-34b:n takia).
+> - **`psargs`** = kuka kuoli, komentoriveineen. Tämä yksin nimesi ISSUE-34b:n.
+> - **`kcaller`** = kernelin paluuosoite → ratkaise `nm`illä: `kcaller − 0x08000000` =
+>   text-offset. Näin `0x0804858C` → `sigaddq+0xaa`.
+> - **`fu=0`** = **KERNELI** nosti signaalin, `fu=1` = user-tason `kill()`. Tämä erottaa
+>   "kerneli tappoi" ja "joku tappoi" — älä tulkitse ilman sitä.
+> - Rajoitettu: **8 ensimmäistä + joka 256:s**, joten silmukka ei tulvi lokia.
+> - Lisäksi: `sig==11` (SIGSEGV) laukaisee ISSUE-10:n URP-kävelyn (`SEGVDMP`/`SEGVCHAIN`)
+>   ja `sig==9` oman kaappauksensa. Ne ovat vanhaa kalustoa, eivät uusia.
+>
+> **Kirjaa jokainen `DBG SIG`-rivi sanatarkasti.** Tämän päivän kokemus: kolme aiempaa
+> hypoteesia kaatui ja vasta tämä rivi nimesi vian — `psargs` + `kcaller` + `fu` yhdessä.
+>
+> ### Muutokset ajolistaan alempana
+> - Vaiheen 1 kerneli on **260727-01** (`uname -m` varmistaa).
+> - `fputest` kuuluu **vaiheeseen 1** — FPU on nyt basessa, ei erillisessä kernelissä.
+> - **Vaiheet 2–3 ajetaan SAMALLA kernelillä 260727-02**, ei erillisiä FPSP/Xsvga- ja
+>   VA2000-kerneleitä. Molemmat nodet: `mknod /dev/svga c 67 0`, `mknod /dev/va2000 c 68 0`.
+> - Vaiheen 9 painetestit (`hat_dup_cow`, `pressure`, `burst4`) ovat nyt emu-ajettuja
+>   260726-02:lla: 3/3 PASS, 6/6 ja 24/24 tavuntarkkaa. Raudalla ne ovat vertailukohta,
+>   eivät ensiajo. **Uusi `/payload.bin`-baseline: tee 4 MiB tiedosto ja kirjaa sen summa**
+>   (emussa `12480 8644`, mutta se riippuu tiedostosta).
+> - ⚠️ **ANSA 1 ja 2 alla ovat VANHENTUNEET.**
+>
+> ### Mitä EI kannata odottaa raudalta
+> **ISSUE-34 on 68060-asia eikä koske tätä sessiota** (kone on 68040). Kirjattu koska se
+> muuttaa 060-tulkintaa: 68060 tarvitsee 060SP:n **molemmat** puolet (ISP vektorille 61 +
+> FPSP vektoreille 11/48–55). Emu-060-tulokset eivät ole väite 060:stä yleisesti.
+>
+> Emu-savu 260727-02: boottaa, `va2000: no board found` siististi, `/dev/svga0` →
+> **Piccolo CardID=3 tunnistuu**, `exectest` PASS. `xinit` toimii (käyttäjän testaama
+> 260726-03:lla, sama ajuri). Evidenssit `test-tools/fpsp-into-base-260726.txt` ja
+> `issue34-060-unimpl-integer-260727.txt`.
 
 ## Miksi tämä ajetaan nyt
 
