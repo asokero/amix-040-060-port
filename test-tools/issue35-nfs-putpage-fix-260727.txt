@@ -101,3 +101,63 @@ The acceptance run needs the real machine, which is powered off:
 Also not done: the remaining four nfs_putpage sites, and the read side (nfs_getapage/
 nfs_getpage, 13 sites) whose next step Codex recommends is a pl[] capacity probe --
 RESIDUAL-PROBE-PRIORITY-260727.md.
+
+
+===============================================================================
+ACCEPTANCE RUN, same evening, ON REAL HARDWARE -- and the defect was WORSE than
+I had characterised it
+===============================================================================
+
+Both halves ran on the A3000 + Mercury 68040 with /mnt/nasu mounted, and the verify half ran
+from the HOST over SMB, i.e. a different client and a different protocol from the writer.
+
+POST-FIX, kernel 68040-260727-08:
+    ok   truth4096.bin      4096 bytes, every byte matches
+    ok   truth8192.bin      8192 bytes, every byte matches
+    ok   truth12288.bin    12288 bytes, every byte matches
+    ok   truth16384.bin    16384 bytes, every byte matches
+    ok   truth24576.bin    24576 bytes, every byte matches
+    ok   truth32768.bin    32768 bytes, every byte matches
+    NFSTRUTH-VERIFY-RESULT PASS (0 of 6 files bad)
+
+NEGATIVE CONTROL, kernel 68040-260727-01 -- required, because a PASS alone proves nothing:
+    truth4096     size  2048/ 4096    lost (page,half): --
+    truth8192     size  6144/ 8192    (0,1)
+    truth12288    size 10240/12288    (0,1) (1,1)
+    truth16384    size 14336/16384    (0,1) (1,1) (2,1)
+    truth24576    size 22528/24576    (0,1) ... (4,1)
+    truth32768    size 30720/32768    (0,1) ... (6,1)
+    NFSTRUTH-VERIFY-RESULT FAIL (6 of 6 files bad)
+
+** THE UPPER 2 KiB HALF OF EVERY 4 KiB PAGE WAS NEVER WRITTEN. **  The 2048-byte size
+shortfall is just the tail of that same pattern.  Not an 8 KiB-multiple corner case: every
+page, every file.
+
+MY ORIGINAL CHARACTERISATION WAS SUBSTANTIALLY WRONG, and the reason is test design
+--------------------------------------------------------------------------------
+I reported "a file whose length is an exact multiple of 8192 loses exactly its last 2048
+bytes", with 4096 and 12288 recorded as OK.  Both are in fact broken.  The difference is that
+my sweep used `dd bs=1` -- ONE BYTE PER write() -- so pages were dirtied and flushed one at a
+time, nfs_putpage's clustering loop never accumulated, and a 2 KiB io_len happened to suffice.
+With realistic multi-KB writes the clustering runs and truncates every page to its lower half.
+
+This is the ISSUE-27 lesson repeating: a test that measures the wrong observable passes on a
+broken kernel.  Codex warned about exactly this before the run -- "12288 reporting the right
+size does not clear its first 8192 bytes" -- and he was right in a stronger sense than either
+of us stated, because with a realistic write pattern even the SIZE of 12288 is wrong.
+
+The two kernels differ in exactly FOUR bytes, verified by byte-diffing the images:
+    text 0x44e80   08 -> 10    sysconfig page size
+    text 0x8b9e2   08 -> 10    ISSUE-35 site 1
+    text 0x8ba30   08 -> 10    ISSUE-35 site 2
+    text 0xff9f3   31 -> 38    buildid -01 -> -08
+So the before/after is attributable to those three functional bytes and nothing else.
+
+STILL OPEN
+----------
+  * the read side: nfs_getapage/nfs_getpage, 13 sites.  A read defect returns wrong CONTENT
+    rather than truncating, so it is invisible to a size check and possibly to this test too
+    if the wrong bytes happen to match.  Codex's recommended next step is a pl[] capacity
+    probe -- vm-map/RESIDUAL-PROBE-PRIORITY-260727.md.
+  * the other four nfs_putpage sites (still canaries).
+  * the 3 MB NFS->local copy for the sum 11920 6060 baseline was not re-run this evening.

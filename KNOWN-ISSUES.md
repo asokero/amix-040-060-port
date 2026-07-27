@@ -2172,7 +2172,60 @@ on trap-probe joka kirjaa vektorinumeron ja faulttaavan PC:n — ei enempää p�
 
 Evidenssi: `test-tools/issue34-060-unimpl-integer-260727.txt`.
 
-## ISSUE-35: NFS-kirjoitus menettää 2048 tavua kun tiedoston pituus on 8192:n monikerta
+## ISSUE-35: NFS-kirjoitus menetti PUOLET JOKAISESTA SIVUSTA — ✅ KORJATTU JA TODISTETTU 27.7.
+
+**✅ SULJETTU 2026-07-27 illalla.** Korjaus `prototypes/patch_nfs_putpage.py` (2 atomista
+sitea), buildit 68040-260727-07/-08. **Ennen/jälkeen todistettu oikealla raudalla
+palvelimen puolelta.** Evidenssi `test-tools/issue35-nfs-putpage-fix-260727.txt`.
+
+**⚠ ALKUPERÄINEN KARAKTERISOINTINI (alla) ALIARVIOI VIAN OLENNAISESTI.** Sanoin "8192:n
+monikerta menettää viimeiset 2048 tavua". Tavutotuustesti palvelimen puolelta näyttää
+todellisen kuvion:
+
+```
+kerneli 260727-01 (pre-fix), nfstruth + nfstruth-verify.py, palvelimelta luettuna:
+  truth4096    size  2048/ 4096   hukatut (sivu,puolikas): —
+  truth8192    size  6144/ 8192   (0,1)
+  truth12288   size 10240/12288   (0,1) (1,1)
+  truth16384   size 14336/16384   (0,1) (1,1) (2,1)
+  truth24576   size 22528/24576   (0,1)…(4,1)
+  truth32768   size 30720/32768   (0,1)…(6,1)
+  -> NFSTRUTH-VERIFY-RESULT FAIL (6/6 tiedostoa rikki)
+```
+
+**JOKAISEN 4 KiB -sivun YLEMPI 2 KiB -puolikas jäi kirjoittamatta.** Se 2048 tavun
+kokopuute on vain saman kuvion häntä. Myös `4096` ja `12288`, jotka kokosweepissäni olivat
+"OK", ovat rikki.
+
+**Miksi kokosweepini näytti paremmalta — testisuunnitteluvirhe, ISSUE-27:n oppi uudestaan:**
+käytin `dd bs=1`, eli yksi tavu per `write()`. Silloin sivut likaantuvat yksitellen,
+`nfs_putpage`in klusterointisilmukka ei kerää mitään ja 2 KiB:n `io_len` sattuu riittämään.
+Realistisilla monen kilotavun kirjoituksilla klusterointi käynnistyy ja katkaisee joka sivun.
+**Kokoa mittaava testi ei riitä; tavut on verrattava palvelimen puolelta.** (Codex varoitti
+tästä ennen ajoa: *"12288 reporting the right size does not clear its first 8192 bytes"*.)
+
+**Korjattu tulos samalla testillä, kerneli 260727-08:**
+`NFSTRUTH-VERIFY-RESULT PASS (0/6 rikki)` — kaikki kuusi tiedostoa, jokainen tavu.
+Kernelit eroavat **täsmälleen 4 tavussa**: kaksi ISSUE-35-immediatea, `sysconfig`in sivukoko,
+buildid.
+
+**Attribuutio: MEIDÄN.** Codex staattisesti (`vm-map/NFS-REALHW-ISSUE35-FOLLOWUP.md`):
+stock-030:ssa sama koodi on oikein, koska `page_t`-offsetit ja `io_len` edistyvät 2048:lla
+yhdessä. Model B siirsi sivupopulaation 4 KiB:iin ja jätti `io_len`in 2 KiB:iin.
+
+**Korjaus (minimi atominen yksikkö, molemmat tai ei kumpaakaan):**
+```
+0x8b9de   263c00000800 -> 263c00001000    io_len = PAGESIZE
+0x8ba2c   068300000800 -> 068300001000    io_len += PAGESIZE
+```
+Pelkkä `0x8ba2c` ei tee mitään; pelkkä `0x8b9de` kuvaisi kaksi 4 KiB -sivua 6144 tavuna.
+`nfs_putpage`in neljä muuta sitea jäävät muuntamatta ja ovat kanarioina.
+**Jäljellä:** lukupuoli (`nfs_getapage`/`nfs_getpage`, 13 sitea) — Codexin suositus on
+`pl[]`-kapasiteettikoetin, `vm-map/RESIDUAL-PROBE-PRIORITY-260727.md`.
+
+---
+
+### (historia) alkuperäinen kirjaus: NFS-kirjoitus menettää 2048 tavua kun tiedoston pituus on 8192:n monikerta
 
 **OPEN, TODISTETTU RAUDALLA 2026-07-27, attribuutio ei todistettu.** Löytyi rautasession
 ENSIMMÄISESSÄ NFS-kirjoituksessa (A3000 + Mercury 68040, kerneli 68040-260727-01). **Ei osa
