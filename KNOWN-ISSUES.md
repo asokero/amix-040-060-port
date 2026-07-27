@@ -2371,8 +2371,21 @@ palautti jumpperin ja ajoi saman ajurin samalla kernelillä: `svgaprobe` onnistu
 käynnistyy. **Ainoa muuttunut asia koko järjestelmässä on kortin väylätila**, joten tämä on
 yhden muuttujan A/B eikä pelkkä disassembly-päättely. Se sulkee samalla pois selitykset joita
 ei ollut suljettu: kortti ei ole rikki, firmware ei ole väärä, ajurin sovitus ei ole väärä,
-X-puoli ei ole väärä — vain osoite. **Ja koska Z2 on jo nopea, Zorro III on parannus eikä
-este;** nopeus oli Z3:n alkuperäinen motiivi ja se motiivi heikkeni tässä testissä.
+X-puoli ei ole väärä — vain osoite.
+
+**⚠ Älä lue tuota "nopeaa" väyläväitteenä.** Nopeus tulee **CPU:sta** (Mercury 040 vs 030), ei
+väylästä; **väylä on täsmälleen sama kuin 030-aikana.** Zorro III:n tuoma kaista on siis
+kokonaan käyttämätöntä ja sen nopeusmotiivi on ennallaan — luultavasti vahvempi kuin 030:lla,
+koska kertaluokkaa nopeampi CPU siirtää pullonkaulan väylälle (Z2 on 16-bittinen, Z3
+32-bittinen). Mikä pätee: mikään ei ole rikki, joten Z3 ei **estä** mitään, eikä firmware-työtä
+kannata tehdä diagnoosin takia. Nopeuden takia kannattaa.
+
+**Palkinto on mitattavissa ennen kuin se ansaitaan:** aja `test-tools/busbench.c` **Z2-tilassa**
+`-r`-referenssin rinnalla. Lähellä paikallisen RAMin kattoa → Z3 ostaa vähän; kertaluokan
+alempana → Z3 ostaa paljon. Ei vaadi mitään Z3-työtä. **Ja jos Z3 tehdään, se on kaksi
+muutosta:** kernel-mappaus antaisi aukolle `Lcm_sel`istä CM `0x40` NCS (serialisoitu), kun Z2
+saa DTT0:sta `0x60` NC — serialisointi syö osan hyödystä, joten `Lcm_sel` tarvitsee myös
+framebuffer-luokan.
 
 **Todiste.** Piccolo Z3-tilassa autoconfig antaa:
 ```
