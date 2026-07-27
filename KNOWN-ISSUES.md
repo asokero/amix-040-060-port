@@ -1879,6 +1879,20 @@ MOLEMMILLA kerneleillä eli 16/17 siten runtime-näyttö on "ei regressiota", ei
 
 ## ISSUE-29: kertaluontoinen KMA 128-tavuluokan vapaalista-hälytys (attribuutio TODISTAMATTA)
 
+**OPEN — OSUI RAUDALLA 27.7. (havainto #5) ja ei ole enää kohinaa.**
+`DBG KMEMCORRUPT bin=80ED9F0 blk=40259300 next=8 prev=6 caller=8042334 size=1`, yksi osuma
+332 kB lokissa, **funktionaalisen patterin aikana — EI paineen alla** (`pressure` 6/6 ja
+`burst4` 24/24 ajoivat puhtaasti), mikä on itsessään tieto koska paine on se mistä sitä
+odottaisi. Kolme uutta asiaa: (1) tapahtuu **piillä**, ei vain emussa; (2) **muoto täsmää
+25.7. emu-havaintoihin** — sama caller, sama `next=8 prev=6` (26.7. 060-havainto oli eri
+muotoinen, `next==prev`); (3) **caller 0x8042334 = `kmem_zalloc + 0x18`**, paluu
+`kmem_alloc`-kutsusta → korruptoituneet blokit tulevat nimenomaan `kmem_zalloc`ista, ei
+suoraan `kmem_alloc`ista eikä KMA-pooleista. Ja `next=8`/`prev=6` ovat **pieniä
+kokonaislukuja siellä missä pitäisi olla pointtereita** — indeksi pointterin paikalla, ei
+villi osoite eikä poison-kuvio. Viisi havaintoa samalla kutsujalla ja samalla muodolla.
+Yhä **ei attribuoitu eikä jahdattu** (projektin oma sääntö), mutta seuraava askel on selvä:
+kaikki `kmem_zalloc`-kutsujat joiden koko on 1 tai 0x8C.
+
 **OPEN, EI TOISTUNUT (havaittu 2026-07-25).** ISSUE-15-kernelin (260725-02) ENSIMMÄISESSÄ
 ajossa dbg-overlayn `kmem_validate`-probe laukesi kahdesti, idlen JÄLKEEN:
 
@@ -2157,3 +2171,51 @@ on trap-probe joka kirjaa vektorinumeron ja faulttaavan PC:n — ei enempää p�
   on käsitelty. Se tarkoittaa "nämä neljä testiä menevät läpi", ei enempää.
 
 Evidenssi: `test-tools/issue34-060-unimpl-integer-260727.txt`.
+
+## ISSUE-35: NFS-kirjoitus menettää 2048 tavua kun tiedoston pituus on 8192:n monikerta
+
+**OPEN, TODISTETTU RAUDALLA 2026-07-27, attribuutio ei todistettu.** Löytyi rautasession
+ENSIMMÄISESSÄ NFS-kirjoituksessa (A3000 + Mercury 68040, kerneli 68040-260727-01). **Ei osa
+sitä deltaa jota sessio validoi** — ennestään olemassa ollut vika jota ei ollut koskaan ajettu.
+
+**Vika:** tiedosto jonka pituus on **8192:n tarkka monikerta** menettää täsmälleen viimeiset
+**2048 tavua** kirjoitettaessa NFS:lle.
+
+```
+pyydetty   talletettu  hukattu        pyydetty   talletettu  hukattu
+   100        100         0             10240      10240        0
+  2048       2048         0             12288      12288        0   <- 3x4096, EI 8192:n mon.
+  3000       3000         0             16384      14336     2048   <- 2x8192
+  4096       4096         0             24576      22528     2048   <- 3x8192
+  6144       6144         0             32768      30720     2048   <- 4x8192
+  8192       6144      2048  <- 2x8192  4194304   4192256    2048   <- 512x8192
+```
+
+**Kontrollit jotka tekevät tästä kernelivian:**
+* **paikallinen kontrolli PUHDAS** — sama `dd bs=1 count=8192` paikalliselle UFS:lle 3/3 oikein
+* **deterministinen** — 3/3 identtistä lyhyttä kirjoitusta
+* **ei flush-viive** — `sync` + 5 s ei muuttanut kokoja
+* **palvelimelta varmistettu ERI clientilla ja ERI protokollalla** — luettu Linuxista SMB:llä:
+  4 192 256 tavua, **tiedosto loppuu sivun offsetiin 2048/4096** → viimeisen 4 KiB -sivun
+  YLEMPÄÄ 2 KiB -puolikasta ei kirjoitettu koskaan
+
+**Mekanismi:** 8192 = MAXBSIZE / segmap-slotti, 2048 = vanhentunut sivukoko. `nfs_putpage`
+laskee write-out-laajuuden 2 KiB -aritmetiikalla 4 KiB -sivupopulaatiota vasten, ja tarkalla
+lohkorajalla viimeinen puolisivu jää lasketun välin ulkopuolelle. **ISSUE-27:n luokka**
+(tuottaja 4 KiB, kuluttaja 2 KiB).
+
+**Korjaus on jo kartoitettu:** `nfs_putpage`, **6 muuntamatonta sitea**,
+`amix-kernel-analysis/vm-map/NFS-PROVIDER-RESIDUAL-CLOSURE.md`. Codex asetti sen
+toteutusjärjestyksen ykköseksi ja ennusti sille "palvelimelta tarkistettavan
+datanmenetystestin" — **ennuste osui, eikä se edes tarvitse `mmap`ia.** Kolme NFS-ryhmää
+voivat landata erikseen; `putpage` ensin.
+
+**⚠ ATTRIBUUTIO EI TODISTETTU.** Yhdenmukainen Model-B-epäsymmetrian kanssa (2 KiB -kernelillä
+tuo aritmetiikka olisi oikein → olisi meidän regressio), mutta **erotinta ei ole ajettu**:
+boottaa stock 030-kerneli TAI 040-kerneli jossa `nfs_putpage` on muunnettu.
+
+**Käytännön vaikutus:** jokainen 8 KiB:n tarkka monikerta joka kirjoitetaan NFS:lle tältä
+koneelta katkeaa hiljaa 2 KiB lyhyemmäksi — tar-arkistot ja varmuuskopiot mukaan lukien.
+
+Evidenssi `test-tools/realhw-verify-260727.txt` §5; testitiedostot NAS:issa
+`amix/hwtest-260727/`.

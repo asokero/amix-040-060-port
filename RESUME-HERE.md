@@ -1,4 +1,50 @@
-# RESUME HERE — AMIX 68040/68060 port status (2026-07-27)
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-27, RAUTAHYVÄKSYTTY)
+
+> ## 🎉🎉 2026-07-27 ILTA — RAUTAHYVÄKSYNTÄ: KOKO 25.–27.7. DELTA LÄPI OIKEALLA PIILLÄ + VIRTAKATKAISU 8/8
+> A3000 + Mercury 68040, kerneli **68040-260727-01**, loader `unix_boot040`.
+> Evidenssi **`test-tools/realhw-verify-260727.txt`**. Serial 332 kB, **0 × PANIC /
+> BUS ERROR / 4AFC005F**.
+>
+> **Neljä pitkään avointa kohtaa sulkeutui:**
+> 1. **FPSP rautahyväksytty** — `fputest` Test A PASS **ja natiivi `cc` käänsi sen** = M3.
+>    Odotti 24.7. asti. Ilman FPSP:tä `cc1` kuolee SIGSYS:iin, joten kääntyminen on tulos.
+> 2. **ISSUE-17 raudalla** — `proctest` PASS. Sama ohjelma **panikoi kernelin** ilman korjausta.
+> 3. **ISSUE-27 oikealla levyllä** — `PGCOLD-E PRESERVED` 24/24. Oikealla levyllä on eri
+>    fragment-/writeback-ajoitus kuin emussa; se oli koko syy ajaa se uudelleen.
+> 4. **Loaderin marginaali MITATTU: 29,3 MiB** (`buffer: image=09e53d80 dest=…08100dc4`) vs.
+>    emussa laskettu 29,2. **Se riski jonka nostin kahdesti oli yliarvio** — nyt todistettavasti.
+>
+> **VIRTAKATKAISU-LEVYTOTUUS 8/8** — se testi jolla on eniten painoa, koska puhdas `reboot`
+> antaa kernelille tilaisuuden siivota jälkensä eikä virtakatkaisu anna. 3× `sync`, virta
+> poikki, `fsck -m` totesi likaiseksi → `fsck -y` korjasi → autoreboot → **kaikki 8 summaa
+> identtiset** (6× press + payload `1570 8192`, `/big.dat` `15621 5781`), ja `pgcold E`
+> uudelleen katkaisun jälkeen **yhä PRESERVED**. WT-datacachella tämä on samalla
+> DMA-koherenssitesti. B1 teki sen 7/7; nyt sen alla on koko delta.
+>
+> Muut: `exectest`/`bmaptest`/`mlocktest`/`trunctest`/`devmaptest`/`msynctst`/`bigargv` PASS,
+> `hat_dup_cow` 1/32/64 PASS, `pressure` 6/6, **`burst4` 24/24 tavuntarkkaa** summalla
+> `1570 8192` (sama luku kuin B1:ssä, samasta tiedostosta joka on yhä koneella).
+> **Sivutuote: ISSUE-10:n `p_mapping`-kontrakti pitää raudalla 3/3.**
+> **Ja: X11 TOIMII VA2000:lla raudalla, selvästi nopeampi kuin 030:lla** (käyttäjän ajo,
+> `unix-040-rtg` = 260727-03, ei-debug) → sulkee 24.7. asti avoimen tavoitteen.
+>
+> ### ⚠ KAKSI LÖYDÖSTÄ JOITA EI ETSITTY
+> - **[ISSUE-35] NFS menettää 2048 tavua** kun tiedoston pituus on **8192:n tarkka
+>   monikerta**. Deterministinen, 12 koolla karakterisoitu, **paikallinen kontrolli puhdas**,
+>   **palvelimelta varmistettu eri protokollalla** (tiedosto loppuu sivun offsetiin 2048/4096).
+>   = `nfs_putpage`, 6 muuntamatonta sitea, **Codexin ykköskohde** — hän ennusti tälle
+>   ryhmälle "palvelimelta tarkistettavan datanmenetystestin" ja ennuste osui, eikä se edes
+>   tarvitse `mmap`ia. **Attribuutio EI todistettu**: erotin on yksi boot 030-kerneliin.
+>   **Tämä validoi järjestyksen** — julkinen VM-ABI olisi ollut väärä ensimmäinen kohde.
+> - **ISSUE-29 osui raudalla (#5)** ja ei ole enää kohinaa: **caller = `kmem_zalloc + 0x18`**,
+>   muoto täsmää 25.7. emu-havaintoihin, ja `next=8 prev=6` ovat **pieniä kokonaislukuja
+>   pointterien paikalla**. Osui funktionaalisen patterin aikana, **ei paineen alla**.
+>   Seuraava askel selvä: `kmem_zalloc`-kutsujat koolla 1 tai 0x8C. Ei jahdattu.
+>
+> ### Jäljellä raudalta (ei kiirettä, ei vaadi käyttäjää paikalle)
+> pitkä soak (ISSUE-9/22/29), CACR-readback **`crash(1M)`:llä** (`dd bs=1 skip=<iso>` EI toimi
+> — lukee tavu kerrallaan), ei-debug-base 260726-01, grafiikkakerneli 260727-02
+> (VA2000 ajettiin 260727-03:lla), B2-copyback-hyväksyntä.
 
 > ## ⚠✅ 2026-07-27 — ISSUE-34 JUURISYY TODISTETTU (068060 tappaa vakiojaon); LOADER-RISKI KVANTIFIOITU; TÄYSI PATTERI LÄPI
 > Commit `7b25b8b`. Evidenssit `test-tools/issue34-060-unimpl-integer-260727.txt` ja
