@@ -2358,3 +2358,48 @@ m68k-linux-gnu-objdump -d prog | grep -E '\b(mulsl|mulul|divsl|divul)\b'
 Tämä selittää osan siitä miksi `bmaptest` ja `pgcold` kuolivat emu-060:llä 27.7. — ne
 sisältävät vakiojakoja. `proctest`/`exectest`/`msynctst` eivät, ja ne toimivat.
 Ks. ISSUE-34a, `test-tools/issue34-060-unimpl-integer-260727.txt`.
+
+## Dokumentoitu rajoitus (ei regressio): Zorro III -laiteaukko ei ole ajurin tavoitettavissa
+
+Selvitetty 2026-07-27 oikealla raudalla, Piccolo Zorro III -tilassa. **Ei meidän aiheuttama** —
+stock-AMIX:ssa ei ole Zorro III -tukea lainkaan (MNT ZZ9000 -ajurin README sanoo sen suoraan ja
+hylkää oman Z3-tuotteensa tarkoituksella). Kirjattu koska se rajoittaa kaikkea tulevaa
+Z3-työtä ja koska mekanismi on nyt todistettu eikä arvattu.
+
+**Todiste.** Piccolo Z3-tilassa autoconfig antaa:
+```
+board[2] mfg=0893 prod=05 addr=40000000 size=01000000   Piccolo RAM, 16 MB, ZORRO III
+board[3] mfg=0893 prod=06 addr=00eb0000 size=00010000   Piccolo regs, Zorro II I/O
+```
+Tuotenumerot pysyvät 5+6, joten Xsvga-ajurin sovitus pätee — silti **`svgaprobe`:
+`open /dev/svga0` → ENXIO**. Emulaattorissa jossa sama ajuri toimii:
+`gfxcard_type=Piccolo_Z2`, eli **Zorro II**.
+
+**Juurisyy.** Ajurit dereferoivat `cd_boardaddr`in **suoraan kernel-osoitteena**:
+```
+Xsvga exp @39f6:  moveal %a1@(0,%d2:l),%a0   | a0 = cd_boardaddr
+              3a00:  moveb  #-61,%a0@(0,%d3:l)  | kirjoita sen läpi
+```
+Zorro II:lla se toimii koska **DTT0 = 0x003fc060 identity-mappaa 0x00000000–0x3FFFFFFF**.
+**Zorro III osoitteessa 0x40000000 ei ole identity-mappausta** — se VA-alue on kernelin
+**kvsegiä** ja aktiivisessa käytössä (havaitut VA:t 0x40440000–0x40449000).
+**Ja kvseg on fill-on-fault**, joten pääsy Z3-osoitteeseen **ei faulttaa** vaan osuu hiljaa
+kernelin muistiin: luku palauttaa nollia (→ "ei lautaa"), kirjoitus menisi kernelin dataan.
+
+**Mitä Z3-tuki siis vaatii:** kernelin on mapattava Z3-aukko kernel-VA:han ja ajurin on
+käytettävä sitä mappausta raa'an fyysisen osoitteen sijaan. Ajurikohtainen muotoilu (pidä
+fyysinen osoite `mmap`in `phystopfn`ille, lisää erillinen kernel-VA rekisteripääsyille
+`segkmem_mapin`in kautta) on kirjattu muistiin `amix-zorro3-aperture-limitation`.
+**Toteutus kuuluu ajuriprojekteihin, ei tähän repoon.**
+
+**Ero ajurien välillä on korjattavuudessa, ei mekanismissa.** Xsvga on binääri (vain
+patchattavissa) ja epäonnistuu hiljaa. VA2000 on oma lähdekoodi ja epäonnistuisi
+**turvallisesti ja itsensä diagnosoiden** — init lukee firmware-rekisterin ja tulostaisi
+`board found at 0x40000000` + `board not responding or firmware too old`, ja sen
+rekisterikirjoitukset ovat `va2000ioctl`issa eli vaativat onnistuneen `open`in.
+
+**Ja Z3 EI nopeuta korttia joka on Z2-tilassa** — väyläprotokollan määrää kortti.
+Piccolo ja VA2000 ovat kumpikin kaksitoimisia (Piccolo: jumpperi; VA2000: firmware).
+Mittaamiseen `test-tools/busbench.c`, jonka otsikossa on se ansa että DTT0 antaa Z2-aukolle
+CM 0x60 (NC) kun `Lcm_sel` antaa Z3-mappaukselle 0x40 (NCS, serialisoitu) — naiivi vertailu
+mittaisi serialisointia eikä väylää.
