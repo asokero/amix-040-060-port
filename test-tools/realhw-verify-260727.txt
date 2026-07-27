@@ -43,6 +43,38 @@ into /hwt: 17 sources + hat_dup_cow (sum 18025 16, identical to the emulator's c
   This is the result the hardware run existed for: the real disk exercises a different
   fragment/writeback timing from the emulator, and the ISSUE-27 fix holds on it.
 
+2b. ** POWER-CUT DISK TRUTH — 8/8, the decisive test **
+------------------------------------------------------
+A clean `reboot` lets the kernel tidy up after itself.  A power cut does not.  This is the
+only test that shows whether Model-B's converted PFN writes landed in the correct disk
+blocks with no chance for the shutdown path to repair anything — and with the WT data cache
+enabled it is simultaneously the DMA-coherency test.  The 2026-07-23 B1 acceptance did this
+7/7; here the whole 2026-07-25..27 delta is underneath it.
+
+  before:  sync; sync; sync  -> SYNCED-3x, connection closed, serial log at 153 189 bytes
+  then:    POWER PHYSICALLY CUT by the user
+
+  cold boot sequence, from the serial log, exactly as it should be:
+    loader lines identical again, `no overlap (copy is safe)`
+    UNIX(R) System V Release 4.0 ... 68040-260727-01 Version 2.1c
+    DBG hatfree BAD-Aslot A=4/A=6 ... (skipped)      <- the known hat_free A-slot guard
+    fsck -F ufs -m /dev/dsk/c6d0s1                   <- boot check: dirty, as expected
+    fsck -F ufs -y /dev/rdsk/c6d0s1                  <- full repair
+    automatic reboot, then up to login
+    0 hits for PANIC / BUS ERROR / 4AFC005F / KMEMCORRUPT in the whole cold-boot section
+
+  sums read back FROM DISK after the repair and reboot:
+    1570 8192  /press1.bin        1570 8192  /press5.bin
+    1570 8192  /press2.bin        1570 8192  /press6.bin
+    1570 8192  /press3.bin        1570 8192  /payload.bin
+    1570 8192  /press4.bin       15621 5781  /big.dat
+  ** 8/8 IDENTICAL to the pre-cut values. **
+
+  And a bonus datapoint: pgcold E re-run after the power cut still returns
+  PGCOLD-E-RESULT PRESERVED, files=24 hits=0 zeroed=0 marker=0 — so the ISSUE-27 test data
+  survived the cut as well.
+  fsck -F ufs -m now reports the filesystem clean.
+
 3. LOADER MARGIN — HARDWARE-CONFIRMED (first real-HW capture of these lines)
 ---------------------------------------------------------------------------
     System: 68040 68040/060-FPU   (INST: Cache Burst) (DATA: NoCache NoBurst)
@@ -193,7 +225,6 @@ was validating; it is a pre-existing defect that had never been exercised.
   * CACR / B1 cache readback.  My dd+od attempt was the wrong tool (bs=1 with a 134 M skip
     made dd read byte-by-byte and hang — my error, not the machine's).  AMIX's crash(1M)
     is the right instrument.  Not a gate: B1 is set unconditionally in pstart040.
-  * POWER-CUT disk truth.  Only the clean soft reboot was done.
   * burst4 and the long soak — see section 8 for whatever completed.
   * unix-040 (non-debug base, 260726-01) was not booted at all this session.
   * The graphics kernel 260727-02 was not run; the user ran 260727-03 (non-debug).
