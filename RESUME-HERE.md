@@ -120,6 +120,26 @@
 >   (`cputype`-dispatch); vektorislotit pitää osoittaa shimiin koska kaksi pakettia ei
 >   voi omistaa samaa slottia staattisesti. Koko kasvaisi ~1,9 MB:iin → tekee loaderin
 >   kokorasitustestistä pakollisen.
+> - **★★★ MODEL-B-HEADER-OVERRIDE ristikäännökseen — TÄRKEIN, ja esiehto muulle.**
+>   Löydetty 27.7. ZZ9000-analyysissä. Käännämme kaiken kerneliin menevän C:n **vanillan
+>   headereita** vasten, ja ne ovat 2 KiB:
+>   `immu.h:60 PNUMSHFT 11`, `param.h:265-266 PAGESIZE 0x800 / PAGESHIFT 11`, ja
+>   `immu.h:353 #define phystopfn(paddr) ((u_int)(paddr) >> PNUMSHFT)`.
+>   **`AMIX_KERNEL_CFLAGS` ei ohita niitä** (vain `-Dinline -D_KERNEL -DSVR40 -DSVR4`).
+>   → mikä tahansa kerneliin käännetty C saa **hiljaa 2 KiB -sivugeometrian** ja
+>   sivukohtainen mmap mappautuu **2× fyysiseen osoitteeseen** = ISSUE-33:n luokka.
+>   **Pahempaa: `phystopfn` on MAKRO**, joten lähteessä ei ole literaalia `>>11`:tä jota
+>   voisi grepata tai assertoida. `va2000_modelb.py` toimii vain koska VA2000:n lähteessä
+>   sattuu olemaan literaali — **VA2000 oli onnekas tapaus.** ZZ9000 kutsuu makroa
+>   (`zz9000.c:1246`), eli se olisi kääntynyt puhtaasti, läpäissyt kaikki tarkistukset ja
+>   mapannut väärin ilman mitään tekstuaalista jälkeä.
+>   **Korjaus:** force-include-header tai `-DPNUMSHFT=12 -DPAGESHIFT=12 -DPAGESIZE=0x1000`
+>   kaikelle 040-kerneliin käännettävälle. **Poistaa `va2000_modelb.py`:n kokonaan.**
+>   Varo: `PAGESIZE`/`PAGESHIFT` esiintyvät myös ei-VM-merkityksessä joissain headereissa —
+>   tarkista mitä override rikkoo ennen kuin se on globaali.
+>   **⚠ Tämä on ESIEHTO lähdekoodin palautuksen ensimmäiselle askeleelle**, ei sen jälkeen
+>   tehtävä siivous: se mittaus tehtiin samoja 2 KiB -headereita vasten, joten
+>   rekonstruoitu koodi tulisi ulos 2 KiB:na.
 > - **`paths.sh`** — repossa on **26 absoluuttista `/home/asokero`-polkua 16 seuratussa
 >   tiedostossa**, viidessä juuressa. Yksi sourcettava `paths.sh` (~20 riviä) korjaa koko
 >   ongelman. Tämä on pienin liike joka lopettaa vuodon; tee ennen muuta rakenteellista.
