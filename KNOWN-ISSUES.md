@@ -2327,3 +2327,34 @@ on sama kysymys joka teki ISSUE-35:n korjauksesta pienen (2/6 sitea) eikä sokea
 sitteen konversion.
 
 Evidenssi `test-tools/issue36-nfs-mmap-tail-sigbus-260727.txt`, repro `test-tools/rdmin.c`.
+
+## Käytännön sääntö (ei issue): `%` ja vakiojako ovat 68060-miinoja käyttäjätilan koodissa
+
+Seuraa ISSUE-34a:sta, mutta on tarpeeksi tärkeä ja tarpeeksi helppo unohtaa että se ansaitsee
+oman merkintänsä. Löytyi 27.7. kirjoittaessa `test-tools/busbench.c`:tä.
+
+68060 ei toteuta **64-bittisiä** `muls.l`/`divs.l`-muotoja. m68k-gcc emittoi niitä KAHDESTA
+tavallisesta C-rakenteesta:
+
+1. **jako VAKIOLLA** → magic-number-käänteislukukertolasku → `muls.l <ea>,Dh:Dl` (64-bit)
+2. **`%`-operaattori** → jakomuoto joka palauttaa sekä osamäärän että jakojäännöksen →
+   `divs.l <ea>,Dr:Dq`. **objdump erottaa nämä:** `divsll` = 32-bittinen (060 OK),
+   **`divsl` = 64-bittinen (060 tappaa prosessin)**.
+
+`busbench.c`:n ensimmäinen versio sisälsi molemmat. Kierrot:
+
+```c
+static volatile long D100 = 100L;   /* volatile estää magic-multiplyn */
+q = x / D100;
+r = x - q * D100;                   /* EI `%` */
+```
+
+**Tarkista aina 060:lle tarkoitettu käyttäjätilan koodi:**
+```sh
+m68k-linux-gnu-objdump -d prog | grep -E '\b(mulsl|mulul|divsl|divul)\b'
+# ja dekoodaa laajennussanan bitti 10: 1 = 64-bittinen = 060 tappaa
+```
+
+Tämä selittää osan siitä miksi `bmaptest` ja `pgcold` kuolivat emu-060:llä 27.7. — ne
+sisältävät vakiojakoja. `proctest`/`exectest`/`msynctst` eivät, ja ne toimivat.
+Ks. ISSUE-34a, `test-tools/issue34-060-unimpl-integer-260727.txt`.
