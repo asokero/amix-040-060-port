@@ -2272,3 +2272,58 @@ koneelta katkeaa hiljaa 2 KiB lyhyemmäksi — tar-arkistot ja varmuuskopiot muk
 
 Evidenssi `test-tools/realhw-verify-260727.txt` §5; testitiedostot NAS:issa
 `amix/hwtest-260727/`.
+
+## ISSUE-36: NFS-tiedoston mmap SIGBUSaa viimeisellä OSITTAISELLA sivulla
+
+**OPEN, TODISTETTU RAUDALLA 2026-07-27**, kerneli 68040-260727-08 (ISSUE-35:n korjaus jo
+paikallaan). Löytyi ajamalla Codexin määrittelemä lukupuolen testi — **mutta tämä ei ole se
+vika jonka hän ennusti**, ks. alla.
+
+**Vika:** tavun koskettaminen mmapatun NFS-tiedoston viimeisellä **osittaisella** sivulla
+nostaa SIGBUSin. `read()` samasta tiedostosta toimii. Sama tiedosto paikallisella UFS:llä
+toimii.
+
+```
+tiedosto  fs    pituus        mmap-hännän kosketus   exit
+8192      NFS   2 x 4096      p[8191]   OK             0
+12288     NFS   3 x 4096      p[12287]  OK             0
+8315      NFS   8192 + 123    p[8314]   BUS ERROR    138
+16507     NFS   16384 + 123   p[16506]  BUS ERROR    138
+8315      UFS   8192 + 123    p[8314]   OK             0   <- paikallinen kontrolli
+8315      NFS   read()/sum                             0   <- RPC-polku on kunnossa
+```
+
+Predikaatti on siis **"tiedoston pituus ei ole 4096:n monikerta"**, ja faulttaava osoite on
+tiedoston sisällä (tavu `sz-1`).
+
+**Isolointi korjasi ensilukemani:** kerneli sanoi
+`as_fault FAIL addr=C103507A rw=1 ret=E05` + `User BUS ERROR at C103507A`. Luin ensin
+`0xC1xxxxxx`:n libc:ksi ja `rw=1`:n kirjoitukseksi, eli oman testini bugiksi. Molemmat väärin:
+minimirepro (`test-tools/rdmin.c`) näytti että `mmap` palautti `p=0xc1033000`, ja
+`0xC103507A − 0xC1033000 = 0x207A = 8314 = p[sz-1]` **täsmälleen**. Ja `ret=0xE05` =
+`FC_MAKE_ERR(14)` eli **fault-resolveri palautti EFAULT** — sivun tuonti epäonnistuu, pääsy ei
+ole laiton.
+
+**Missä se asuu:** Codexin dokumentoima lukupuolen ryhmä `nfs_getapage`/`nfs_getpage`,
+**13 sitea**, joihin hän mainitsee kuuluvan "EOF allowance". Viimeisen sivun page-in on
+sallittava vaikka tiedosto loppuu sivun keskelle; 2 KiB -geometrialla laskettu sallittavuus
+hylkää 4 KiB -pyynnön. Yhdenmukainen sen kanssa että alempi `nfs_strategy → do_bio → nfsread
+→ XDR` on tavupohjainen — juuri siksi `read()` toimii.
+
+**ERI VIKA KUIN `pl[]`-invariantti.** Codexin vahvimmaksi arvioima lukupuolen vika on
+kapasiteettirikko (`plsz = 4096` vs `sz -= 2048` per sivu, `nfs_getapage` @0x8b26c) ja se on
+**yhä verifioimatta** — se vaatii kernelin puolen proben. Tämä löydös on musta laatikko ja
+kova virhe samassa 13 sitteen ryhmässä, eli **parempi peruste ryhmän muuntamiselle** kuin
+invarianttiprobe olisi ollut.
+
+**Vakavuus:** lähes jokaisen tiedoston pituus ei ole sivun monikerta → käytännössä **NFS:n
+mmap ei toimi tällä portilla**. Kova virhe eli turvallisempi kuin hiljainen korruptio, mutta
+ei kulmatapaus. **Ei testattu:** osuuko binäärin `exec` NFS-mountilta samaan polkuun — exec
+mappaa text/data ja jokaisen binäärin viimeinen sivu on osittainen.
+
+**Ei korjausta, ei kernel-probea.** Korjausehdokas on se 13 sitteen yksikkö; EOF-allowance-
+sitet ovat todennäköinen paikka, mutta **mikä site tuottaa tämän ei ole selvitetty** — ja se
+on sama kysymys joka teki ISSUE-35:n korjauksesta pienen (2/6 sitea) eikä sokean kuuden
+sitteen konversion.
+
+Evidenssi `test-tools/issue36-nfs-mmap-tail-sigbus-260727.txt`, repro `test-tools/rdmin.c`.

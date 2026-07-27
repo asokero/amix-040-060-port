@@ -1,0 +1,83 @@
+ISSUE-36: mmap of an NFS file SIGBUSes on the last PARTIAL page
+==============================================================
+Found 2026-07-27 on the real A3000 + Mercury 68040, kernel 68040-260727-08 (the ISSUE-35 fix
+in place).  Found by running the read-side test Codex specified -- but it is NOT the defect he
+predicted; see "relation to the pl[] invariant" below.
+
+THE DEFECT
+----------
+Touching a byte in the last, PARTIAL page of an mmap'd NFS file raises SIGBUS.
+`read()` on the same file works.  The same file on local UFS works.
+
+  file          fs      length        mmap tail touch      exit
+  8192          NFS     2 x 4096      p[8191]  OK          0
+  12288         NFS     3 x 4096      p[12287] OK           0
+  8315          NFS     8192 + 123    p[8314]  BUS ERROR   138
+  16507         NFS     16384 + 123   p[16506] BUS ERROR   138
+  8315          UFS     8192 + 123    p[8314]  OK           0     <- local control
+  8315          NFS     read()/sum                          0     <- RPC path is fine
+
+So the predicate is exactly "the file length is not a multiple of 4096", and the failing
+access is inside the file (byte sz-1 of sz).
+
+ISOLATION -- and it corrected my first reading
+---------------------------------------------
+The first sighting was in the larger nfsreadtruth program, and the kernel log said:
+
+    DBG as_fault FAIL pid=208 addr=C103507A type=0 rw=1 ret=E05
+    NOTICE: User BUS ERROR at C103507A, PC:800007C6 FAULT:5 PID:208
+    DBG SIG sig=10 ... fu=0
+
+I initially read `0xC1xxxxxx` as libc (earlier STREAM probes show user PCs in that range) and
+`rw=1` as a write, i.e. as a bug in my own test.  Both readings were wrong, and the minimal
+repro settled it: `mmap` returned `p = 0xc1033000`, and
+
+    0xC103507A - 0xC1033000 = 0x207A = 8314 = exactly p[sz-1]
+
+So the faulting address IS the mapping's last byte, `rw=1` does not mean "write" in this
+probe, and `ret=0xE05` = FC_MAKE_ERR(14) = the fault resolver returning EFAULT.  The page-in
+for the last partial page FAILS rather than the access being illegal.
+
+Minimal repro: test-tools/rdmin.c (mmap, touch p[0], p[4096], p[sz-1], nothing else).
+
+WHERE IT LIVES
+--------------
+This is the NFS read-side group Codex documented: `nfs_getapage`/`nfs_getpage`, 13 sites,
+which he notes include "EOF allowance".  A page-in for a file's last page must be permitted
+even though the file ends mid-page; computing that allowance with 2 KiB geometry against a
+4 KiB page refuses the request, as_fault returns FC_MAKE_ERR(EFAULT), and the user gets
+SIGBUS.  Consistent with his finding that the lower `nfs_strategy -> do_bio -> nfsread -> XDR`
+path is byte-count based and adds no page constant -- which is exactly why `read()` works.
+
+RELATION TO THE pl[] INVARIANT -- this is a DIFFERENT defect
+-----------------------------------------------------------
+Codex ranked the strongest read-side defect as the page-list capacity violation:
+
+    pvn_getpages provider plsz = 4096
+    nfs_getapage @0x8b26c: sz -= 2048 per returned page_t *
+
+That is still unverified: it needs the kernel-side probe (log io_len, plsz, pointer count,
+each pointer, each p_offset; require distinct pointers, count <= ceil(plsz/4096), balanced
+holds/releases).  NOT DONE.  What this run found instead is a black-box, hard-failure defect
+in the same 13-site group, which is arguably a better justification for converting the group
+than the invariant probe would have been -- a SIGBUS on any NFS file whose size is not a page
+multiple needs no instrumentation to argue about.
+
+His prediction that the read side had a live defect was right.  The manifestation is more
+severe than the one he predicted.
+
+SEVERITY
+--------
+Almost every file has a non-page-multiple length, so in practice: mmap of NFS files does not
+work on this port.  It is a hard failure rather than silent corruption, which is the safer
+failure mode, but it is not a corner case.
+
+NOT TESTED, and worth knowing: whether exec'ing a binary from an NFS mount hits the same path.
+exec maps text and data, and every binary's last page is partial.  If it does, running
+programs from NFS is affected too.
+
+STATUS: no fix, no kernel probe.  The 13-site read-side unit is the candidate repair and it
+should be treated as one unit per Codex's analysis.  The EOF-allowance sites within it are
+where this specific failure is expected to live, but WHICH site produces it has not been
+established -- that is the next question, and it is the same question that made the ISSUE-35
+fix small (2 of 6 sites) rather than a blind six-site conversion.
