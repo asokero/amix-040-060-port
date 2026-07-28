@@ -2551,6 +2551,38 @@ Fixing its negative-boundary flaw would change behaviour that cannot be tested h
 **write-through** kernels. They are the pre-flip baseline, **not** copyback's acceptance — copyback has
 to answer the same question itself.
 
+### ⛔ COPYBACK AMPLIFIES ISSUE-22 — strict A/B, 3 bytes apart, 2026-07-28
+
+| kernel | difference | `cp: /payload.bin: read: Bad address` |
+|---|---|---|
+| **copyback `68040-260728-32`** | — | burst **4** (confounded run) and burst **1** (clean run) |
+| **write-through `68040-260728-28`** | **3 bytes** | **CLEAN 16/16 — 96 verifications** |
+
+Same workload, same cold boot, same harness, same day, and the two images differ only in the
+`hat_cm_ram` flip plus two build-id characters. Counting the earlier write-through runs on `-18` and
+`-23`, write-through stands at **3 runs / 288 verifications with zero hits** while copyback failed in
+**2 of 2 runs inside the first four bursts**.
+
+**The verdict is sharper than July's "blocked but not proven guilty", and it is a different charge.**
+Copyback is not a data-integrity problem here: in the run where `cp2` died, `cp1` verified as a
+complete byte-exact match, so what copyback writes is intact. The charge is that it **amplifies a
+transient read EFAULT that aborts operations** — ISSUE-22, which July established as
+kernel-independent (their write-through baseline hit it too). Copyback does not appear to create the
+defect; it makes it fire constantly. That is enough to keep the flip out of production, and it is a
+precise reason rather than a suspicion.
+
+**And it hands ISSUE-22 the thing it never had: a reproducer.** The defect was "1 case in 48 parallel
+copies", and five cold-boot cycles in July failed to reproduce it at all. On the copyback kernel it
+fires **in the first burst**. Combined with the kernel-side observation that holds across both
+copyback hits — the `as_fault` FAIL logger (cap 64) printing **zero** lines, so the EFAULT is not a
+failed page-in but a resolver-internal gate — this is the position Codex's latch spec was written
+for, now with a workload that triggers on demand rather than by luck.
+
+**Recommended order from here:** fix ISSUE-22 first, using copyback as its reproducer; then re-run
+this A/B, where copyback's own acceptance should follow for free. The remaining copyback item
+(`b2reboot-truth.sh`, does the data land across a reboot) is a *different* question and still unrun —
+it is worth running even now, because it is unaffected by the EFAULT frequency.
+
 ### ✅ COPYBACK IS IN EFFECT, MEASURED: Dhrystone 30000/s on real hardware (+64% over B1)
 
 Run on `68040-260728-32`, idle machine, 400000 runs (`dhry` prompts for the count on **stdin**; it
