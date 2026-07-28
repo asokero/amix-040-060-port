@@ -2551,6 +2551,40 @@ Fixing its negative-boundary flaw would change behaviour that cannot be tested h
 **write-through** kernels. They are the pre-flip baseline, **not** copyback's acceptance — copyback has
 to answer the same question itself.
 
+### ✅ COPYBACK IS IN EFFECT, MEASURED: Dhrystone 30000/s on real hardware (+64% over B1)
+
+Run on `68040-260728-32`, idle machine, 400000 runs (`dhry` prompts for the count on **stdin**; it
+does not take it as argv, which is why two attempts hung first):
+
+```text
+Step A, no data cache      11538   /s
+B1 write-through           18292.7 /s   +59 % over Step A
+B2 COPYBACK                30000.0 /s   +64 % over B1, +160 % over Step A
+```
+
+Two things settle at once. **Copyback is genuinely in effect** -- measured, not inferred from the
+image bytes -- which was the precondition for interpreting any copyback test result at all. And the
+user's recollection of "~30000 from the copyback experiments" is **confirmed and now a recorded
+hardware number** rather than a memory; copyback had never been benchmarked on hardware before.
+
+### ⚠ The first copyback burst run is CONFOUNDED, not a result
+
+`b2repro-copy 16` on the copyback kernel stopped at **burst 4** with
+`CLASS=SOURCE_ERROR src=/payload.bin errno=14` (EFAULT reading the reference). But the user was
+logged in searching the filesystem for `dhry` during that run, so it carried **uncontrolled extra
+I/O that the write-through comparison runs did not have**. It is therefore uninterpretable as
+copyback evidence -- not because the search caused it, but because we cannot tell. Repeating it
+cleanly is exactly what this project's own rule from 23.7. demands: *a rare fault needs a controlled
+repeat comparison; a single run would have been mistaken for ISSUE-22.*
+
+**One genuine finding does survive from it, and it is new ISSUE-22 information.** The `as_fault`
+FAIL logger has a cap of 64 and printed **zero** lines during that run, so the absence is meaningful
+rather than exhausted: **the EFAULT that reached user space was not produced by `as_fault` failing.**
+Per Codex's route analysis EFAULT comes from `sf_fault`, which is entered when the *resolver* returns
+nonzero -- so the nonzero came from a resolver-internal decision (a `Lkx_fail`-class path: no `kas`
+segment, walk validation, the recursion cap) and not from a failed page-in. That narrows ISSUE-22
+away from the fault resolver's as_fault call and towards its own gates.
+
 Remaining, both staged with a run sheet in `nasu:Public/amix/hwtest-260728/`:
 1. `b2repro-copy.sh 16` on the copyback kernel — expect CLEAN; a `V1_*` class is ISSUE-22 and not
    copyback (it occurs on write-through too), `V3`–`V6` is a real disk-truth defect.
