@@ -48,7 +48,11 @@ write)
 	done
 	# Record what the next boot must find, so the verify phase cannot be fooled by a
 	# half-written set: the count, the reference size, and the kernel that wrote it.
-	echo "n=$N ref=$REF size=`ls -l $REF | awk '{print $5}'` kernel=`uname -m`" > $DIR/EXPECT
+	# Record the UPTIME too, so the verify phase can tell whether the reboot it depends on
+	# actually happened.  A test that cannot detect its own precondition will happily report a
+	# pass for a run that never crossed the boundary -- which is exactly what a first version of
+	# this script did when it printed "every byte survived the reboot" after no reboot at all.
+	echo "n=$N ref=$REF size=`ls -l $REF | awk '{print $5}'` kernel=`uname -m` uptime=`uptime`" > $DIR/EXPECT
 	sync
 	sleep 2
 	sync
@@ -63,6 +67,12 @@ verify)
 	[ -f $DIR/EXPECT ] || { echo "B2RT FAIL no $DIR/EXPECT -- was the write phase run?"; exit 1; }
 	echo "B2RT VERIFY kernel=`uname -m`"
 	echo "B2RT wrote-by: `cat $DIR/EXPECT`"
+	echo "B2RT now:      uptime=`uptime`"
+	echo "B2RT ^ COMPARE THOSE TWO UPTIMES.  If the current one is LARGER, the machine was never"
+	echo "B2RT   rebooted and this run proves nothing about the reboot boundary -- it only shows"
+	echo "B2RT   the page cache still has the data."
+	echo "B2RT   (Also check the kernel: it must be the SAME one that wrote, or you have measured"
+	echo "B2RT   one kernel's writes through another kernel's reads.)"
 	bad=0
 	i=1
 	while [ $i -le $N ]; do
@@ -75,7 +85,8 @@ verify)
 		i=`expr $i + 1`
 	done
 	if [ $bad -eq 0 ]; then
-		echo "B2RT-RESULT PASS ($N files, every byte survived the reboot)"
+		echo "B2RT-RESULT PASS ($N files, every byte intact) -- valid ONLY if the uptimes above"
+		echo "B2RT   show a reboot actually happened between the phases."
 	else
 		echo "B2RT-RESULT FAIL ($bad of $N bad)"
 		echo "B2RT   read the CLASS: V1_* = transient read fault, file intact on reopen (that is"
