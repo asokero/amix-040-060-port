@@ -28,9 +28,13 @@
 	.globl	usrxmemflt
 usrxmemflt:
 	linkw	%fp,&0
-	moveml	%d2-%d4/%a2-%a3,%sp@-
+	moveml	%d2-%d5/%a2-%a3,%sp@-
 	moveal	%fp@(8),%a2		| 060-B: fmt-4 frame? synthesize an 040-style
 	bsrw	wb060_sswsynth		| SSW at +76 BEFORE the stock classifier reads it
+	movel	%d0,%d5			| XPAGE unit item 1: the ORIGINAL FSLW, which the
+					| synthesis above has just destroyed in the frame.
+					| It must live in a register wb040_replay preserves
+					| (it clobbers d0-d3/a3), hence d5 rather than d3.
 	movel	%fp@(12),%sp@-		| arg2 (fault info)
 	movel	%fp@(8),%sp@-		| arg1 = trap frame
 	jsr	usrxmemflt_orig
@@ -43,18 +47,23 @@ usrxmemflt:
 	moveal	u+0x730,%a0		| 060-B: fmt-4 page-crossing completion
 	moveal	%a0@(124),%a1		| a1 = as = curproc->p_as
 	bsrw	wb060_xpage
+	tstl	%d0			| item 4: a PERMANENT far-page failure must reach the
+	beqw	Lu_done			| caller instead of being masked by the near page's
+	movel	%d0,%d4			| success -- otherwise the restart loops forever
 Lu_done:
 	movel	%d4,%d0			| restore usrxmemflt's return value
-	moveml	%fp@(-20),%d2-%d4/%a2-%a3
+	moveml	%fp@(-24),%d2-%d5/%a2-%a3
 	unlk	%fp
 	rts
 
 	.globl	krnxmemflt
 krnxmemflt:
 	linkw	%fp,&0
-	moveml	%d2-%d4/%a2-%a3,%sp@-
+	moveml	%d2-%d5/%a2-%a3,%sp@-
 	moveal	%fp@(8),%a2		| 060-B: same fmt-4 SSW synthesis (uniform frame
 	bsrw	wb060_sswsynth		| semantics; krnx reads other fields, harmless)
+	movel	%d0,%d5			| XPAGE unit item 1: preserve the ORIGINAL FSLW
+					| (see the usrxmemflt copy above for why d5)
 	movel	%fp@(8),%sp@-		| arg1 = trap frame (krnxmemflt takes ONE arg)
 	jsr	krnxmemflt_orig
 	addqw	&4,%sp
@@ -65,13 +74,18 @@ krnxmemflt:
 	bsrw	wb040_replay
 	lea	kas,%a1			| 060-B: fmt-4 page-crossing completion, as = &kas
 	bsrw	wb060_xpage
+	tstl	%d0			| item 4: propagate a permanent far-page failure
+	beqw	Lk_done
+	movel	%d0,%d4
 Lk_done:
 	movel	%d4,%d0			| restore krnxmemflt's return value
-	moveml	%fp@(-20),%d2-%d4/%a2-%a3
+	moveml	%fp@(-24),%d2-%d5/%a2-%a3
 	unlk	%fp
 	rts
 
-| wb060_sswsynth (060-B, 2026-07-10): a2 = trap frame; clobbers d0/d1 only.
+| wb060_sswsynth (060-B, 2026-07-10; XPAGE unit 2026-07-28): a2 = trap frame.
+| Clobbers d0/d1/d2 -- d2 was added when this began RETURNING the original FSLW in d0 (0 when
+| the frame is not format 4).  Both callers save d2-d5, so that is in contract.
 | The 68060 fmt-4 frame carries an FSLW (long @+76) instead of the 040 SSW (word @+76).
 | The STOCK memflt classifiers read byte@+76 bit0 as the "read access" flag (040 SSW RW,
 | CPU+0xC in the fmt-7 frame).  On a fmt-4 frame that bit is FSLW bit24 = RW-read, which
@@ -94,8 +108,12 @@ wb060_sswsynth:
 	moveb	%a2@(70),%d0		| format/vector high byte
 	lsrb	&4,%d0
 	cmpiw	&4,%d0			| 060 format-4 access error?
-	bnew	Lws_ret
-	movel	%a2@(76),%d1		| d1 = FSLW
+	bnew	Lws_none
+	movel	%a2@(76),%d2		| d2 = the ORIGINAL FSLW, kept INTACT for the return.
+					| d1 cannot serve: the RW test below masks it down to
+					| bits 24-23, which is what a first cut of this change
+					| returned by mistake.
+	movel	%d2,%d1
 	movel	%d1,%d0
 	swap	%d0
 	andil	&7,%d0			| TM (FSLW bits 18-16) -> bits 2-0
@@ -106,6 +124,16 @@ wb060_sswsynth:
 	oriw	&0x0100,%d0		| read -> 040 SSW RW bit (bit8)
 Lws_wr:
 	movew	%d0,%a2@(76)		| replace FSLW upper word with the synthetic SSW
+	movel	%d2,%d0			| item 1: RETURN the original FSLW to the wrapper.
+					| Deliberately not stashed in the frame: +88 is WB3A in
+					| the 040 fmt-7 layout and a fmt-4 frame is shorter, so
+					| writing there would clobber a write-back slot or the
+					| stack past the frame.  Nor a static: a nested fault
+					| would overwrite it.  The wrapper's moveml saves d5 per
+					| invocation, which makes the register copy nest-safe.
+	rts
+Lws_none:
+	clrl	%d0			| not a fmt-4 frame: no FSLW to preserve
 Lws_ret:
 	rts
 
@@ -122,27 +150,85 @@ Lws_ret:
 | XPAGE recipe.  Gated on fmt-4: on the 040 the byte-wise replay already covers this.
 | In: a2 = frame, a1 = as (user: curproc->p_as, kernel: &kas).  Preserves d2-d7/a2-a3
 | (as_fault is ABI-conformant); the wrapper's d4 (orig ret) is untouched.
+| XPAGE UNIT 2026-07-28 (Codex vm-map/XPAGE-COVERAGE-AUDIT.md, a61d2ac).  The audit found the
+| last-eight-bytes heuristic above is NOT an architecture-complete 060 contract, for three reasons
+| it verified against the 68060 manual and Linux/m68k:
+|   * MA WAS UNREADABLE HERE.  wb060_sswsynth overwrites FSLW bits 31..16 -- which holds MA (27),
+|     RW (24-23), SIZE, TT and TM -- before this helper runs, so the helper could never consult the
+|     one bit that actually means "this transfer spans two pages".  Fixed at the source: sswsynth
+|     now RETURNS the original FSLW and the wrapper carries it here in d5.
+|   * 96-BIT OPERANDS are valid on the 060 and 4-byte aligned, so one can begin at page+0xff4 --
+|     before the 0xff8 gate.  And for an instruction extension-word fault FA points at the OPWORD,
+|     which can be earlier still.  Linux/m68k therefore does not use an address window on the 060:
+|     when MA is set it rounds FA up to the next page.
+|   * S_READ WAS HARDCODED for write and RMW faults, and the far result was DISCARDED so a
+|     permanently unmappable far page could still retry forever.
+|
+| TWO TIERS, for the same reason as the 040 native block: MA is the architectural truth, the window
+| is what has actually been exercised.  MA set -> round up, real rw, and PROPAGATE the result.  MA
+| clear but within the last 8 bytes -> exactly the old behaviour, result discarded.  So this is a
+| strict superset of what shipped, not a replacement of it.
+|     IO (FSLW lower half, preserved) distinguishes the instruction-extension case from the operand
+| case.  It is deliberately NOT acted on separately: MA-rounding already covers both, and inventing
+| a second rule from an unverifiable reading of IO is the kind of guess this unit exists to remove.
+|
+| In: a2 = frame, a1 = as, d5 = ORIGINAL FSLW (0 if the frame is not format 4).
+| Out: d0 = 0 normally; nonzero = a permanent far-page failure the caller must propagate.
+| Preserves d2-d4/a2-a3 (as_fault is ABI-conformant).
+| NOTE: no 060 hardware exists in this project, so the MA tier is verified statically and by
+| both-CPU boot regression only.  Amiberry's 060 is not assumed to model MA faithfully.
 wb060_xpage:
 	moveq	&0,%d0
 	moveb	%a2@(70),%d0		| format/vector high byte
 	lsrb	&4,%d0
 	cmpiw	&4,%d0			| 060 format-4 frame?
-	bnew	Lwx_ret
+	bnew	Lwx_none
+	movel	%d5,%d1
+	andil	&0x08000000,%d1		| FSLW MA (bit 27): the transfer spans two pages
+	bnew	Lwx_ma
+| --- tier 2: no MA -> the shipped last-eight-bytes behaviour, result discarded ---
 	movel	%a2@(72),%d0		| FA
 	movel	%d0,%d1
 	andil	&0xfff,%d1
 	cmpil	&0xff8,%d1
-	bcsw	Lwx_ret			| not within 8 bytes of page end -> no crossing
+	bcsw	Lwx_none		| neither MA nor the window -> nothing to do
 	andil	&0xfffff000,%d0
 	addil	&0x1000,%d0		| next page base
-	pea	1			| rw = S_READ
+	moveq	&1,%d1			| rw = S_READ (unchanged in this tier)
+	bsrw	Lwx_call
+	clrl	%d0			| discard: without MA we cannot tell a real crossing
+	rts				| from a byte access that merely sits at 0xFFF, and
+					| failing that access would be a NEW bug
+| --- tier 1: MA set -> Linux/m68k's rule, real rw, and the result KEPT ---
+Lwx_ma:
+	movel	%a2@(72),%d0		| FA
+	addil	&0xfff,%d0
+	andil	&0xfffff000,%d0		| round_page(FA + PAGE_SIZE - 1): the page the transfer
+					| actually needs, regardless of how far before the
+					| boundary the operand or opword started
+	movel	%d5,%d1
+	andil	&0x01800000,%d1		| FSLW RW field (bits 24-23)
+	cmpil	&0x01000000,%d1		| == 10 = pure read?
+	bnew	Lwx_wr
+	moveq	&1,%d1			| S_READ
+	braw	Lwx_go
+Lwx_wr:
+	moveq	&2,%d1			| S_WRITE -- covers write AND locked RMW, the same
+					| classification sswsynth applies to the near page
+Lwx_go:
+	bsrw	Lwx_call
+	rts				| d0 = as_fault's result, PROPAGATED to the wrapper
+Lwx_call:
+	movel	%d1,%sp@-		| rw
 	clrl	%sp@-			| type = F_INVAL
 	pea	4			| len
-	movel	%d0,%sp@-		| addr = next page
+	movel	%d0,%sp@-		| addr = the far page
 	movel	%a1,%sp@-		| as
 	jsr	as_fault
-	lea	%sp@(20),%sp		| ret ignored: if the next page is genuinely
-					| unmappable the re-fault surfaces as a real error
+	lea	%sp@(20),%sp
+	rts
+Lwx_none:
+	clrl	%d0			| nothing attempted -> nothing to propagate
 Lwx_ret:
 	rts
 
