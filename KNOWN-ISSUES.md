@@ -667,8 +667,8 @@ DBG SEGVDMP p0=0 p4=0 cm4=74000000 c0=4AFC0000 c4=0 c8=0                  (8x)
 DBG SEGVCTX a0=80012010 a1=80011C10 pte=0 cell=DEADDEAD uva=48478000      (1x)
 ```
 
-**ISSUE-9 and ISSUE-10 are the same family.** `cell=4AFC0000` is the signature this project已
-documented as the corrupt-heap-link morphology: `prototypes/sigkill_dbg.s` literally predicts it
+**ISSUE-9 and ISSUE-10 are the same family.** `cell=4AFC0000` is the signature this project has
+already documented as the corrupt-heap-link morphology: `prototypes/sigkill_dbg.s` literally predicts it
 ("`a1` = the bad link value -- expect 0x4AFC0000, self-validating"), `hat040.s:730` calls it "the
 4AFC005F bus-error avalanche", and `patch_swapin.py` ties it to a swapped-in anon page losing its
 upper half. `uret`/`a0`/`a1` are all in sh's heap range (`0x8001xxxx`). One sample shows the
