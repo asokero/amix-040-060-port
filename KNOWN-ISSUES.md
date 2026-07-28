@@ -2663,7 +2663,33 @@ ASCII (`MET\x04`), i.e. data dereferenced as a pointer. It does not correlate wi
 only change (a debug threshold constant), but the cause is unknown and it is recorded rather than
 explained away.
 
-## ISSUE-37 — ✅✅ FIXED AND CONFIRMED ON REAL HARDWARE 2026-07-28
+## ISSUE-37 — ✅✅ FIXED AND CONFIRMED; xpage v2 re-verified on hardware 2026-07-28
+
+**v2 acceptance (`68040-260728-26`, the audit-driven rewrite: format-7 gate, SSW MA tier with error
+propagation, v1's window kept as a second tier with its result discarded).** wolf3d was run from a
+COLD boot -- the machine had been up one minute, a stricter condition than the v1 run:
+
+```text
+uname -m   68040-260728-26
+uptime     up 1 min  (pre-flight)  ->  up 5 mins  (after the run)   <- NEVER RESET, so no wedge
+load avg   0.00 afterwards, wolf3d exited on its own, no new core file
+user observation: the game worked
+```
+
+**The uptime continuity is the kernel-level proof here, and it is independent of serial**: a wedge on
+this kernel is unrecoverable and forces the reset switch, which would have restarted the uptime
+counter. It went 1 -> 5 minutes across the run.
+
+⚠ **What this run does NOT have: serial evidence.** The capture (`cat /dev/ttyUSB0`) had died between
+reboots, so the log recorded **0 bytes** during the run. That silence was nearly reported as "the
+kernel had nothing to say" -- the strongest possible result -- and it would have been wrong. It was
+caught by generating a known kernel message on purpose (`kill -9`, which prints `DBG SIG sig=9`) and
+seeing that produce 0 bytes too. **A silent log and a dead instrument look identical**, exactly as a
+wedged machine and a fault storm look identical from the console. Verify the instrument before
+reading silence as success; capture with `cat /dev/ttyUSB0 | tee -a <file>` so it survives a
+terminal.
+
+## (v1 confirmation) FIXED AND CONFIRMED ON REAL HARDWARE 2026-07-28
 
 `68040-260728-18`, wolf3d launched from the console:
 
