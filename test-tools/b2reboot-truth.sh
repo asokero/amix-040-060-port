@@ -68,6 +68,29 @@ verify)
 	echo "B2RT VERIFY kernel=`uname -m`"
 	echo "B2RT wrote-by: `cat $DIR/EXPECT`"
 	echo "B2RT now:      uptime=`uptime`"
+	# FAIL CLOSED on the two preconditions rather than printing them and hoping someone reads.
+	# Learned the hard way: a reboot came back on the DEFAULT kernel, not the one that wrote, and
+	# only a manual uname check caught it.  A test that can detect its own precondition must also
+	# refuse to run without it, or it is just a comment.
+	WROTE_K=`sed -n 's/.*kernel=\(.*\) uptime=.*/\1/p' $DIR/EXPECT`
+	NOW_K=`uname -m`
+	if [ "$WROTE_K" != "$NOW_K" ]; then
+		echo "B2RT ABORT: kernel MISMATCH."
+		echo "B2RT   wrote: $WROTE_K"
+		echo "B2RT   now:   $NOW_K"
+		echo "B2RT   Booting the default kernel instead of the one under test measures one"
+		echo "B2RT   kernel's writes through another kernel's reads.  Boot the writer and re-run;"
+		echo "B2RT   /b2dt survives, so the write phase does NOT need repeating."
+		exit 3
+	fi
+	WROTE_MIN=`sed -n 's/.*up \([0-9]*\) min.*/\1/p' $DIR/EXPECT`
+	NOW_MIN=`uptime | sed -n 's/.*up \([0-9]*\) min.*/\1/p'`
+	if [ -n "$WROTE_MIN" ] && [ -n "$NOW_MIN" ] && [ "$NOW_MIN" -gt "$WROTE_MIN" ]; then
+		echo "B2RT ABORT: uptime went UP ($WROTE_MIN -> $NOW_MIN min): no reboot happened."
+		echo "B2RT   This would only show the page cache still holds the data."
+		exit 3
+	fi
+	echo "B2RT preconditions OK: same kernel, and uptime shows a real reboot"
 	echo "B2RT ^ COMPARE THOSE TWO UPTIMES.  If the current one is LARGER, the machine was never"
 	echo "B2RT   rebooted and this run proves nothing about the reboot boundary -- it only shows"
 	echo "B2RT   the page cache still has the data."
