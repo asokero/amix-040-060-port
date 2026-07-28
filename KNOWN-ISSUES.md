@@ -2589,7 +2589,48 @@ ASCII (`MET\x04`), i.e. data dereferenced as a pointer. It does not correlate wi
 only change (a debug threshold constant), but the cause is unknown and it is recorded rather than
 explained away.
 
-## ISSUE-37 — ✅ ROOT CAUSE IDENTIFIED AND FIXED 2026-07-28 (hardware confirm run pending)
+## ISSUE-37 — ✅✅ FIXED AND CONFIRMED ON REAL HARDWARE 2026-07-28
+
+`68040-260728-18`, wolf3d launched from the console:
+
+```
+before (3 runs, 3 kernels: 260727-02, 260728-12, 260728-15)
+    machine wedged, 16 as_fault REPEAT lines to n=0x2000, telnet lost, reset switch required
+after (260728-18, with the xpage fix)
+    root  194  192  25  console  0:48 ./wolf3d      <- a normal process
+    CPU time 0:14 -> 0:48 -> 0:57, machine answered telnet throughout
+    serial: as_fault REPEAT 0   segat LOOP 0   User BUS ERROR 0   PANIC 0
+```
+
+The only as_fault traffic during the run is two routine `type=3` (`F_SOFTUNLOCK`) events. The
+process consumes CPU and progresses instead of spinning in the kernel, and the system stayed
+responsive to a shell the entire time -- which was impossible before, because the loop starved
+every other process.
+
+**One fix, one line of reasoning, confirmed by its prediction coming true.** The defect was that
+the 68040 reports a misaligned access's START address while the missing page is the NEXT one, and
+the resolver kept resolving the already-present near page.
+
+### The wider consequence worth chasing next
+
+This fix sits on **every kernel fault path**, and ISSUE-22 -- the transient `read: Bad address`
+(EFAULT) under parallel pressure -- has as its recorded suspicion *"a rare race in the fault path
+resolving a copyout buffer's fault under concurrent pressure"*: the same locus. The two symptoms
+differ exactly as `u_nofault` predicts:
+
+| path | `u_nofault` | outcome |
+|---|---|---|
+| segmap access inside `read()` | not set | no escape -> infinite loop = **ISSUE-37** |
+| `copyout`/`uiomove` to a user buffer | **set** | the nofault escape returns **EFAULT** = **ISSUE-22** |
+
+So the xpage fix may close ISSUE-22 too. That is a hypothesis, not a finding, and it is cheap to
+test: ISSUE-22 already has a chase recipe (cold boot, then immediate pressure with six parallel
+`cp`). It matters beyond ISSUE-22, because ISSUE-22's transient EFAULT is the noise that made
+B2/copyback look guilty of disk corruption in July -- so clearing it also cleans the evidence base
+for the copyback flip, whose remaining items are recorded as ordinary acceptance rather than
+blockers.
+
+## (root-cause record) ROOT CAUSE IDENTIFIED AND FIXED 2026-07-28
 
 *(ISSUE-37 XPAGE root cause)*
 
