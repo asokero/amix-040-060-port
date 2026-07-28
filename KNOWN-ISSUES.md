@@ -2481,7 +2481,58 @@ Mittaamiseen `test-tools/busbench.c`, jonka otsikossa on se ansa että DTT0 anta
 CM 0x60 (NC) kun `Lcm_sel` antaa Z3-mappaukselle 0x40 (NCS, serialisoitu) — naiivi vertailu
 mittaisi serialisointia eikä väylää.
 
-## ISSUE-36 — ✅ FIXED AND VERIFIED ON REAL HARDWARE 2026-07-28 (kernel 68040-260728-12)
+## ISSUE-36 — ✅ CLOSED: A/B CONFIRMED ON REAL HARDWARE 2026-07-28
+
+Both halves are now run, on two kernels that differ in **exactly five bytes** (the four immediates
+plus one build-id byte), so the difference is attributable to nothing else.
+
+| `r = size mod 4096` | OLD `68040-260728-13` | NEW `68040-260728-12` |
+|---|---|---|
+| 0 (full final page) | PASS | PASS |
+| **1** | **SIGBUS** | PASS |
+| **123** (the original field report) | **SIGBUS** | PASS |
+| **2048** (last rejected) | **SIGBUS** | PASS |
+| **2049** (first accepted) | **PASS** | PASS |
+| 4095 | PASS | PASS |
+| 123 in the 2nd page of a partial 8 KiB block | **SIGBUS** | PASS |
+
+**Codex's static predicate is confirmed exactly, including the sharp part.** `2048` fails and
+`2049` passes, which is the discriminator that separates this model from "any partial page fails" --
+the characterisation we had originally recorded from the field and which was wrong. On the new
+kernel all seven pass with all three checks (bytes match the host-written pattern, and the bytes
+between EOF and the end of the tail page read as zero).
+
+The kernel side closes the chain end to end, with the fault addresses being exactly `p[size-1]` of
+each failing file:
+
+```
+DBG as_fault FAIL pid=199 addr=C1039000 type=0 rw=1 ret=E05        <- r=1     tail offset 0x000
+DBG as_fault FAIL pid=199 addr=C103907A type=0 rw=1 ret=E05        <- r=123   tail offset 0x07A
+DBG as_fault FAIL pid=199 addr=C10397FF type=0 rw=1 ret=E05        <- r=2048  tail offset 0x7FF
+DBG as_fault FAIL pid=199 addr=C103A07A type=0 rw=1 ret=E05        <- 28795   tail offset 0x07A
+NOTICE: User BUS ERROR at C1039000, PC:80000C22 FAULT:5 PID:199 CMD:./nfstail ...
+```
+
+`ret=E05` is `FC_MAKE_ERR(EFAULT)`, `type=0` is `F_INVAL`, `rw=1` is `S_READ`, and `FAULT:5` is the
+`FC_OBJERR` low nibble -- the exact chain Codex derived from the binary.
+
+Also verified on the new kernel: an NFS-resident **exposed** ELF (`uname`, one exposed PT_LOAD)
+executes cold from the mount, a control ELF does too, the local control corpus passes 7/7, and the
+ISSUE-35 server-side byte-truth regression still passes 6/6.
+
+### The `pl[]` probe found no violation on EITHER body — and Codex predicted that
+
+`DBG pvn` printed nothing on the old kernel or the new one. That is not a gap in the probe; it is
+what Codex's own analysis says to expect for this workload: *"The reported +123 fault itself does
+not exercise the return-list defect: raw `io_len=123`, so even the old countdown emits one
+pointer."* The return-list defect needs **full 8 KiB clusters**, which a corpus of tail faults never
+creates. So the four-site unit's countdown half remains justified by the source contract and by the
+disassembly (a circular page list bounded only by a byte countdown), not by an observed violation.
+**A future probe run aimed at it needs a different workload** -- large sequential reads of an
+NFS-resident file, not tail faults.
+
+### (build record and prior status)
+
 
 `nfstail` over NFS: **7/7 PASS**, including the remainders that previously raised SIGBUS
 (`r=1`, `r=123`, `r=2048`), and every file satisfied all three checks -- bytes match the

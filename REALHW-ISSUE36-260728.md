@@ -21,13 +21,14 @@ Ajettu oikealla A3000 + Mercury 040:llä, NFS `nasu:Public`, korpus tunniste `t2
 | **Paikallinen kontrollikorpus** | **7/7 PASS** |
 | **ISSUE-35 regressio** (tavuntotuus palvelimelta) | **6/6 PASS** |
 
-**Vielä tekemättä, ja molemmat vaativat sinua:**
+**✅ A/B VALMIS — malli VAHVISTUI.** Vanha kerneli `68040-260728-13` samalla korpuksella:
+`r=1`, `r=123`, `r=2048` ja `28795` → **SIGBUS**; `r=0`, `r=2049`, `r=4095` → **PASS**. Eli
+**2048 kaatuu ja 2049 läpäisee** — juuri se terävä erotin. Uudella kernelillä 7/7. Kernelin puoli:
+`ret=E05` (= `FC_MAKE_ERR(EFAULT)`) neljä kertaa, osoitteet täsmälleen `p[size-1]`.
 
-1. **A/B:n VANHA puoli** = boottaa `unix-040-dbg-pre36` (**260728-13**) ja aja sama `nfstail`.
-   Se on se ajo joka **vahvistaa tai kumoaa** Codexin rajamallin: odotus `r=1,123,2048` → SIGBUS,
-   `r=0,2049,4095` → PASS. Uuden kernelin vihreä ajo yksin todistaa vain ettei mikään ole rikki.
-   Kernelin vaihto vaatii kädet (loader ajetaan AmigaOS:n puolelta).
-2. **`pl[]`-probe (kohta D)**: `DBG pvn`-rivit menivät konsoliin ja serialiin, ja serial oli
+**Jäljellä vain tämä:**
+
+1. **`pl[]`-probe (kohta D)**: `DBG pvn`-rivit menivät konsoliin ja serialiin, ja serial oli
    sinun omassa `cat /dev/ttyUSB0` -kaappauksessasi (PID 624823, klo 9:37). Koneella ei ole
    `/var/adm/messages`ia, joten en pääse niihin. Liitä rivit tänne, tai putkita kaappaus
    tiedostoon (`cat /dev/ttyUSB0 | tee /tmp/amix-serial.log`) niin luen sen itse.
