@@ -1734,7 +1734,47 @@ luuppi. SEURAAVA ASKEL kun tähän tartutaan: ktrap_latchin kenttien tarkka deco
 rekursioketju tallentuu; toistotilasto eri lämpötiloissa. Työkalu valmiina:
 serial2usb-kaappaus toimii nyt (stty 9600 raw + while-cat-luuppi | tee).
 
-## ISSUE-22: kertaluontoinen EFAULT (read: Bad address) paineessa bare basella (real-HW)
+## ISSUE-22 — ⏳ NOT REPRODUCED on the xpage-fixed kernel; one-byte A/B built to attribute it
+
+**2026-07-28, `68040-260728-18`:** `b2repro-copy.sh 16` -- the workload that reproduced ISSUE-22 on
+23.7. -- ran **CLEAN: `0 non-V0 in 16 bursts`**, i.e. 96 verifications, every one
+`V0_COMPLETE_MATCH` (full 4194304 bytes, identical CRC).
+
+**The comparison is like-for-like, which is the part that matters.** The 23.7. runs that DID
+reproduce it were both dbg builds -- `unix-040-dbg 68040-260723-07` (WT baseline, failed with
+`cp: read: Bad address`) and `unix-040-b2-dbg 68040-260723-10` (copyback, `V1_EFAULT_TRANSIENT`) --
+and both failed **inside the first two bursts**. So the older note that "the dbg kernel masks
+ISSUE-22" is outdated for this workload: with burst4 pressure a dbg kernel reproduces it promptly.
+
+That makes today's result strong evidence that the ISSUE-37 xpage fix also closed ISSUE-22, exactly
+as the `u_nofault` reading predicts (no escape -> infinite loop; nofault escape -> EFAULT).
+
+**What it is NOT yet: attributed.** `260723-07` and `260728-18` are five weeks of other fixes apart,
+so something else in that delta could be responsible. Fixed the same way ISSUE-36's closure was made
+defensible -- the xpage handling is now behind a runtime flag, so the A/B differs in **one flag byte**
+in an otherwise identical image:
+
+```text
+build/unix-040-rtg-dbg          68040-260728-22   xpage_on = 1   (shipping)
+build/unix-040-rtg-dbg-noxpage  68040-260728-23   xpage_on = 0   (control)
+  the pair differs in exactly 2 bytes: the flag and one build-id character
+```
+
+`prototypes/patch_xpage_flip.py` locates `xpage_on` through the symbol table, asserts the old value
+and fails closed.
+
+**The test:** boot `-23`, run `sh b2repro-copy.sh 16 noxpage`. If ISSUE-22's EFAULT returns at
+~burst 2, the xpage fix is the cause of today's clean run and ISSUE-22 is closed with it. If `-23`
+also runs clean, then something else in the five-week delta fixed it and this needs its own hunt
+after all. Note the control run is **non-destructive if the hypothesis holds** -- `copyout` has
+`u_nofault` set, so the defect surfaces as EFAULT rather than as ISSUE-37's unkillable loop.
+
+This also matters for **B2/copyback**: ISSUE-22's transient EFAULT is the noise that made copyback
+look guilty of disk corruption in July, and the two remaining copyback items are recorded as ordinary
+acceptance (a longer all-V0 `b2verify` run + reboot disk-truth) rather than blockers. Today's 16-burst
+all-V0 run is already most of the first one.
+
+### (original entry) ISSUE-22: kertaluontoinen EFAULT (read: Bad address) paineessa bare basella
 
 **OPEN (alennettu prioriteetti 2026-07-19 ilta): jahti ajettu — EI TOISTUNUT uusilla
 Model-B-ryhmillä.** 5 validia kylmä-boot→välitön-pressure-sykliä bare basella 260719-13

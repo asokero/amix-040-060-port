@@ -172,6 +172,11 @@ Lkx_ret:
 |     speculative one: after a SUCCESSFUL resolve, if FA lies in the last 8 bytes of its page,
 |     resolve the NEXT page too.  A `move16` cannot trigger this (it is 16-byte aligned by
 |     definition), and 8 bytes covers every misalignable operand up to an FPU double. ---
+	tstl	xpage_on		| ISSUE-22 A/B: one .data byte turns this off in an
+	beqw	Lkx_nox			| OTHERWISE IDENTICAL image, so a before/after run
+					| attributes to THIS fix and not to five weeks of
+					| other deltas (the discipline that made ISSUE-36's
+					| closure defensible).  prototypes/patch_xpage_flip.py
 	tstl	%d0
 	bnew	Lkx_nox			| only after a SUCCESSFUL resolve
 	movel	%d2,%d1
@@ -200,6 +205,12 @@ Lkx_nox:
 	unlk	%fp
 	rts
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
+	.data
+	.even
+	.globl	xpage_on
+xpage_on:
+	.long	1			| 1 = xpage handling live (default); 0 = the A/B control
+	.balign 4			| pad section to a 4-byte multiple
 
 	.data
 	.even
