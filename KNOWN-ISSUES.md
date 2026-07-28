@@ -2511,6 +2511,25 @@ is a **strict superset** of the behaviour that was actually proven on hardware. 
 is why the carried FSLW lives in a register the wrapper saves per invocation — nest-safe without a
 static.
 
+**040 REGRESSION CLEARED ON HARDWARE (`68040-260728-29`, cold boot).** The unit's new logic is
+format-4 gated, but it changed the *shared wrapper prologue* on the 040 path too -- the `d5`
+save/restore, the `moveml` set from five registers to six, and honouring `wb060_xpage`'s return --
+and that runs on **every** 040 fault. wolf3d is the hardest exercise of that path available and it
+came back clean:
+
+```text
+uptime 1 min (pre-flight) -> 5 min (after)   never reset, so no kernel loop
+wolf3d exited on its own, no new core, load 0.00, shell responsive throughout
+serial: 0 bytes during the run -- as_fault REPEAT 0, segat LOOP 0, BUS ERROR 0, SIG 0, FAIL 0
+```
+
+**And this time the silence is evidence, because the instrument was BRACKETED.** A deliberate
+`kill -9` (which must print `DBG SIG sig=9`) was fired **before** the run (+1831 bytes) and **after**
+it (+493 bytes), with the same capture process holding the port throughout. Earlier today the same
+0-byte reading came from a capture that had died, and it was nearly recorded as the strongest
+possible result. Verifying only beforehand is not enough either: a capture can die mid-run and
+produce identical silence. **Bracket the instrument.**
+
 **Verification is honest about its limit.** There is no 68060 in this project, so the MA tier is
 verified statically and by boot regression on both CPUs (0 faults, idle reached, relocs 0, plus a
 1.4 MB byte-verified copy round trip on the 060). Amiberry's 060 is not assumed to model MA
