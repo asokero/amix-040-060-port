@@ -1734,7 +1734,37 @@ luuppi. SEURAAVA ASKEL kun tähän tartutaan: ktrap_latchin kenttien tarkka deco
 rekursioketju tallentuu; toistotilasto eri lämpötiloissa. Työkalu valmiina:
 serial2usb-kaappaus toimii nyt (stty 9600 raw + while-cat-luuppi | tee).
 
-## ISSUE-22 — ⏳ NOT REPRODUCED on the xpage-fixed kernel; one-byte A/B built to attribute it
+## ISSUE-22 — ⏳ OPEN, and today's clean runs are NOT attributable to the xpage fix
+
+**Codex's static verdict (XPAGE-COVERAGE-AUDIT.md, a61d2ac) refutes the equivalence hypothesis on
+two independent grounds, and the hardware A/B agrees with it.**
+
+1. **`u_nofault` does not turn a successful near-page resolve into EFAULT — it retries.** The armed
+   sequence in `k_trap` is *resolve first, escape only on failure*: the resolver's zero reaches
+   `0x5a20c`, the saved PC is **not** rewritten, and the instruction retries. Only a **nonzero**
+   return installs the landing pad and reaches `sf_fault @0x5f2`, which is what becomes EFAULT.
+2. **More decisively, `copyin`/`copyout` are not on the changed route at all.** A guarded MOVES
+   fault has **transfer mode = user**, so `k_trap` dispatches it to **`usrxmemflt`**; today's block
+   is inside `krnxmemflt_orig` and uses `&kas`. The relevant copyout crossing mechanisms were
+   already the high-user `hardbus` helper and the 040 scalar write-back replay.
+
+**The A/B confirmed it at runtime.** `xpage_on = 0` (`68040-260728-23`, two bytes from the shipping
+image) ran the same 16-burst workload and was clean through burst 10+ — past the point where the
+historical configuration failed twice. So **ISSUE-22 is simply not reproducing today**, on either
+side of the flag, and the earlier clean run cannot be credited to the xpage fix.
+
+**What this changes:** ISSUE-22 keeps its own hunt. Codex specifies the latch fields — faulting PC
+and FA, frame format, **original** SSW/FSLW, TM and the resolver actually selected, the `u_nofault`
+landing pad, the primary `as_fault` return, and the next-page return if any. That last set is the
+point: if the selected resolver returns nonzero, the nofault mechanism explains EFAULT, and the
+current static evidence does not show crossing-page handling producing that nonzero.
+
+**What it does not change:** ISSUE-22 was never a copyback blocker, and the two remaining copyback
+items are recorded as ordinary acceptance (a longer all-V0 `b2verify` run + reboot disk-truth).
+**Two independent 16-burst all-V0 runs now exist** (`xpage_on` on and off), which is most of the
+first one.
+
+### (superseded) NOT REPRODUCED on the xpage-fixed kernel; one-byte A/B built to attribute it
 
 **2026-07-28, `68040-260728-18`:** `b2repro-copy.sh 16` -- the workload that reproduced ISSUE-22 on
 23.7. -- ran **CLEAN: `0 non-V0 in 16 bursts`**, i.e. 96 verifications, every one
