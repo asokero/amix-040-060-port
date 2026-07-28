@@ -173,30 +173,69 @@ Lkx_ret:
 |     resolve the NEXT page too.  A `move16` cannot trigger this (it is 16-byte aligned by
 |     definition), and 8 bytes covers every misalignable operand up to an FPU double. ---
 	tstl	xpage_on		| ISSUE-22 A/B: one .data byte turns this off in an
-	beqw	Lkx_nox			| OTHERWISE IDENTICAL image, so a before/after run
-					| attributes to THIS fix and not to five weeks of
-					| other deltas (the discipline that made ISSUE-36's
-					| closure defensible).  prototypes/patch_xpage_flip.py
+	beqw	Lkx_nox			| OTHERWISE IDENTICAL image (patch_xpage_flip.py)
 	tstl	%d0
 	bnew	Lkx_nox			| only after a SUCCESSFUL resolve
+| --- v2 (2026-07-28), on Codex's XPAGE-COVERAGE-AUDIT.  v1 used the 060 sibling's address
+|     heuristic verbatim and inherited three defects it names precisely:
+|       * NOT CPU-GATED -- v1 had no format test, so on a 060 kernel fault the next page was
+|         resolved TWICE, once here and again in wb060_xpage;
+|       * S_READ hardcoded, including for write faults;
+|       * a permanent far-page failure discarded, so an unmappable far page could still retry.
+|     All three are fixed here, and the address window is replaced by the architectural test.
+|
+|     WHY MA IS BETTER THAN THE LAST-8-BYTES WINDOW, and why it had to come first: the 040 sets
+|     SSW MA precisely when the fault is on the SECOND page of a transfer that spans two pages,
+|     which is the exact condition the window only approximates.  Without MA, this block also
+|     pre-faults a successor for a NON-crossing byte access at offset 0xFFF -- harmless while the
+|     far result is discarded, but it would turn into a SPURIOUS FAILURE the moment we propagate
+|     that result.  So MA is what makes error propagation safe, not merely tidier.  (The 060 path
+|     cannot do this yet: wb060_sswsynth overwrites the FSLW word holding MA before its helper
+|     runs.  That belongs to Codex's six-item frame-aware unit, not here.)
+|     The 040 SSW is intact at frame+76 -- this function already reads its RW bit -- and MA is
+|     bit 11 of that word.
+	moveal	%fp@(8),%a0
+	moveq	&0,%d1
+	moveb	%a0@(70),%d1		| format/vector high byte
+	lsrb	&4,%d1
+	cmpiw	&7,%d1
+	bnew	Lkx_nox			| not an 040 format-7 access-error frame -> not ours
+| --- TWO TIERS, deliberately.  MA is the architectural truth, but v1's address window is what
+|     was PROVEN on hardware (wolf3d, three loops, then a clean run).  Trading a proven fix for a
+|     stricter-but-more-elegant gate on the strength of a manual would be exactly the kind of
+|     unforced regression this project keeps finding in other people's code:
+|       MA set                 -> the transfer really spans two pages: resolve and KEEP the result,
+|                                 because a permanent failure here must reach the caller.
+|       MA clear, last 8 bytes -> v1's behaviour verbatim: resolve and DISCARD, since without MA we
+|                                 cannot distinguish a real crossing from a byte access that merely
+|                                 sits at 0xFFF, and failing that access would be a NEW bug.
+|     So v2 is a strict superset of v1: everything v1 resolved is still resolved.
+	movew	%a0@(76),%d1		| 040 SSW (intact on the 040; this function reads its RW bit)
+	andiw	&0x0800,%d1		| MA: the faulted transfer spans two pages
+	bnew	Lkx_xp_ma
 	movel	%d2,%d1
 	andil	&0xfff,%d1
 	cmpil	&0xff8,%d1
-	bcsw	Lkx_nox			| not in the last 8 bytes -> cannot straddle
-	movel	%d0,%sp@-		| preserve the return value across the extra resolve
+	bcsw	Lkx_nox			| neither MA nor the window -> nothing to do
+	movel	%d0,%sp@-		| v1 tier: preserve the return value, discard the far one
+	bsrw	Lkx_farfault
+	movel	%sp@+,%d0
+	braw	Lkx_nox
+Lkx_xp_ma:
+	bsrw	Lkx_farfault		| MA tier: d0 = the far result, KEPT on purpose
+	braw	Lkx_nox
+Lkx_farfault:
 	movel	%d2,%d1
 	andil	&0xfffff000,%d1
-	addil	&0x1000,%d1		| the next page's base
-	pea	1			| rw   = S_READ
+	addil	&0x1000,%d1		| the page the transfer actually needs
+	movel	%d3,%sp@-		| rw = the REAL access kind (d3, decoded above)
 	clrl	%sp@-			| type = F_INVAL
 	pea	4			| len
 	movel	%d1,%sp@-		| addr = next page
 	pea	kas			| as   = kernel address space
 	jsr	as_fault
 	lea	%sp@(20),%sp
-	movel	%sp@+,%d0		| restore it; the extra resolve's own result is ignored --
-					| if that page is genuinely unmappable, the re-fault
-					| surfaces as a real error instead of being masked here
+	rts
 Lkx_nox:
 	movel	Lkx_depth,%d1
 	subql	&1,%d1

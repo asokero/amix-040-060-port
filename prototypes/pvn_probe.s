@@ -38,10 +38,11 @@
 | OUTPUT, and how to read it
 |     DBG pvn n=%d cap=%d plsz=%x off=%x  p0=%x p1=%x p2=%x p3=%x
 |     DBG pvn   poff0=%x poff1=%x poff2=%x poff3=%x
-| A violation is n > cap.  The predicted signature is visible without any dup-detection logic in
-| assembly: p0 == p2 and p1 == p3, with poff0 == poff2.  That is why the pointers are printed
-| instead of a boolean -- a boolean would tell us less than the data does, and the p_offsets say
-| whether the duplicates are the same page or merely adjacent ones.
+| A violation is EITHER n > cap OR two equal non-NULL pointers among the counted entries.  Both
+| are tested (the duplicate test was missing until 2026-07-28 -- see the block comment below; its
+| absence is why a hardware run reported "no violation" while saying nothing about duplicates).
+| The pointers are printed rather than a boolean because the p_offsets say whether duplicates are
+| the same page or merely adjacent ones, which a boolean could not.
 |
 | GATING.  Violations always print (capped, so a storm cannot wedge the console the way ISSUE-37
 | does).  Beyond that the first few normal calls print as a baseline, because "no violations" is
@@ -57,7 +58,7 @@
 	.globl	pvn_getpages
 pvn_getpages:
 	linkw	%fp,&0
-	moveml	%d2-%d7/%a2-%a3,%sp@-
+	moveml	%d2-%d7/%a2-%a3/%a5,%sp@-
 
 | --- forward all eleven arguments unchanged, right to left ---
 	movel	%fp@(48),%sp@-		| cred
@@ -102,6 +103,38 @@ Lpv_cnt_done:
 | --- decide whether to print: violation always (capped), otherwise the first few ---
 	cmpl	%d5,%d4
 	bhiw	Lpv_viol		| count > cap -> contract violation
+| --- DUPLICATE-POINTER TEST (added 2026-07-28 on Codex's XPAGE-COVERAGE-AUDIT finding).
+|     This file documented TWO invariants -- count <= cap AND all pointers distinct -- but only
+|     the count was ever tested.  The predicted old-provider shape A,B,A,B in a 16 KiB caller
+|     array has count 4 and cap 4, so it passed the count test silently, and the duplicate would
+|     only have shown in a normal SAMPLE line -- which boot had already consumed.  That is exactly
+|     why the hardware run reported "no violation" without saying anything about duplicates.
+|     O(n^2) over a hard-capped 16 entries: any equal non-NULL pair is a violation by itself. ---
+	moveal	%a2,%a3			| a3 = &pl[i]
+	clrl	%d6			| d6 = i
+Lpv_di:
+	cmpl	%d4,%d6
+	bccw	Lpv_dz			| i >= count -> no duplicate found
+	movel	%a3@,%d1		| pl[i]
+	beqw	Lpv_dz
+	movel	%d6,%d0
+	addql	&1,%d0			| j = i + 1
+Lpv_dj:
+	cmpl	%d4,%d0
+	bccw	Lpv_dinext
+	movel	%d0,%d7
+	asll	&2,%d7
+	moveal	%a2,%a5
+	addal	%d7,%a5
+	cmpl	%a5@,%d1		| pl[j] == pl[i] ?
+	beqw	Lpv_viol		| duplicate pointer -> report it
+	addql	&1,%d0
+	braw	Lpv_dj
+Lpv_dinext:
+	addql	&1,%d6
+	addql	&4,%a3
+	braw	Lpv_di
+Lpv_dz:
 	movel	Lpv_nsamp,%d0
 	cmpil	&6,%d0
 	bccw	Lpv_ret
@@ -176,7 +209,7 @@ Lpv_snap_done:
 Lpv_ret:
 	movel	%d2,%d0			| restore pvn_getpages_orig's return value
 	moveal	%d2,%a0
-	moveml	%fp@(-32),%d2-%d7/%a2-%a3
+	moveml	%fp@(-36),%d2-%d7/%a2-%a3/%a5
 	unlk	%fp
 	rts
 	nop				| keep text/data contiguous
