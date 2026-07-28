@@ -2489,6 +2489,61 @@ Tämä selittää osan siitä miksi `bmaptest` ja `pgcold` kuolivat emu-060:llä
 sisältävät vakiojakoja. `proctest`/`exectest`/`msynctst` eivät, ja ne toimivat.
 Ks. ISSUE-34a, `test-tools/issue34-060-unimpl-integer-260727.txt`.
 
+## 060 XPAGE unit — LANDED 2026-07-28, static + both-CPU regression only (no 060 hardware exists)
+
+Codex's `XPAGE-COVERAGE-AUDIT.md` (a61d2ac) specified six items as **one frame-aware unit**, for the
+stated reason that changing only the address threshold leaves the status loss and the nonconvergence
+intact. All six are now in (`12a8934`, `95d8f3f`):
+
+| # | item | where |
+|---|---|---|
+| 1 | preserve the original format-4 FSLW before `wb060_sswsynth` destroys its upper word | `wb040.s`: sswsynth returns it; the wrapper carries it in `d5` |
+| 2 | use MA to select `round_page(FA)` instead of `FA&0xfff >= 0xff8` | `wb060_xpage` tier 1 |
+| 3 | pass the real read/write/RMW classification, not `S_READ` | `wb060_xpage` tier 1 + the 040 native block |
+| 4 | propagate a permanent far-page failure instead of restoring a saved zero | both wrappers honour `wb060_xpage`'s return; the 040 MA tier keeps its own |
+| 5 | gate the native kernel helper so the 060 does not resolve twice | `krnxmemflt040`: format-7 test |
+| 6 | prefer SSW MA over a raw address window on the 040 | `krnxmemflt040`: MA tier |
+
+**Both the 040 and 060 keep a second tier**: MA set takes the new path and propagates; MA clear but
+within the last eight bytes behaves exactly as the shipped code did, result discarded. So each change
+is a **strict superset** of the behaviour that was actually proven on hardware. That matters most for
+`d5`: `wb040_replay` runs between the synthesis and the crossing helper and clobbers `d0-d3`, which
+is why the carried FSLW lives in a register the wrapper saves per invocation — nest-safe without a
+static.
+
+**Verification is honest about its limit.** There is no 68060 in this project, so the MA tier is
+verified statically and by boot regression on both CPUs (0 faults, idle reached, relocs 0, plus a
+1.4 MB byte-verified copy round trip on the 060). Amiberry's 060 is not assumed to model MA
+faithfully, so a green emulator run is not evidence that the MA path executes at all.
+
+**Two of my own bugs were caught in review before building**, recorded because this file is delicate:
+a first draft stashed the FSLW at frame+88 (that is `WB3A` in the 040 layout, and past the end of a
+shorter format-4 frame), and a second returned `d1` after the RW test had masked it to bits 24-23.
+
+**Left alone deliberately:** `hardbus` keeps its OR-of-results behaviour on the proven high-user path.
+Fixing its negative-boundary flaw would change behaviour that cannot be tested here.
+
+## Copyback (B2) — the last acceptance items are staged, 2026-07-28
+
+`unix-040-b2-dbg` = **68040-260728-32** (`hat_cm_ram = 0x20`) differs from the write-through
+`260728-28` in **three bytes**: the flip and two build-id characters.
+
+⚠ **Correction to something claimed earlier today:** the two 16-burst all-V0 `b2repro` runs were on
+**write-through** kernels. They are the pre-flip baseline, **not** copyback's acceptance — copyback has
+to answer the same question itself.
+
+Remaining, both staged with a run sheet in `nasu:Public/amix/hwtest-260728/`:
+1. `b2repro-copy.sh 16` on the copyback kernel — expect CLEAN; a `V1_*` class is ISSUE-22 and not
+   copyback (it occurs on write-through too), `V3`–`V6` is a real disk-truth defect.
+2. **`test-tools/b2reboot-truth.sh`** — the item that was actually missing. Two phases across a clean
+   reboot: 6 × 4 MiB written and synced, then every byte compared after the boot, so the whole
+   copyback chain is forced (dirty D-cache lines → push → buffer cache → disk → a fresh boot's
+   reads). Files go in `/b2dt`, never `/tmp`, which every boot clears. Verification uses `b2verify`,
+   not `sum` — `sum` prints a partial progress count after `ferror()`, which is exactly how a clean
+   copyback run was misread as silent corruption in July.
+3. Bonus: Dhrystone on copyback. The WT hardware baseline is **18292.7/s**; copyback has never been
+   measured on hardware at all.
+
 ## Dokumentoitu rajoitus (ei regressio): Zorro III -laiteaukko ei ole ajurin tavoitettavissa
 
 Selvitetty 2026-07-27 oikealla raudalla, Piccolo Zorro III -tilassa. **Ei meidän aiheuttama** —
