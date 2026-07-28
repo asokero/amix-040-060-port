@@ -2425,7 +2425,24 @@ Mittaamiseen `test-tools/busbench.c`, jonka otsikossa on se ansa että DTT0 anta
 CM 0x60 (NC) kun `Lcm_sel` antaa Z3-mappaukselle 0x40 (NCS, serialisoitu) — naiivi vertailu
 mittaisi serialisointia eikä väylää.
 
-## ISSUE-36 — FIX BUILT AND EMU-SMOKED 2026-07-28, hardware acceptance pending
+## ISSUE-36 — ✅ FIXED AND VERIFIED ON REAL HARDWARE 2026-07-28 (kernel 68040-260728-12)
+
+`nfstail` over NFS: **7/7 PASS**, including the remainders that previously raised SIGBUS
+(`r=1`, `r=123`, `r=2048`), and every file satisfied all three checks -- bytes match the
+host-written pattern AND the bytes past EOF in the tail page read as zero, which is the
+io_len half of the defect that a `p[size-1]` touch cannot see. An NFS-resident **exposed** ELF
+(`uname`, one exposed PT_LOAD) executed cold from the mount and returned 0, as did a control
+binary; the local control corpus passed 7/7; and the ISSUE-35 server-side byte-truth regression
+still passes 6/6.
+
+**Not yet done, and it is the half that CONFIRMS the model rather than the fix:** the A/B run on
+`unix-040-dbg-pre36` (68040-260728-13, the same build with these four sites reverted -- the pair
+differs in exactly five bytes). Expected there: `r=1,123,2048` SIGBUS and `r=0,2049,4095` pass.
+Until that runs, the green result proves nothing is broken, not that the boundary model is right.
+Also pending: the `pl[]` probe output, which goes to the console and the serial mirror only.
+
+### (build record)
+
 
 Four atomic sites, `prototypes/patch_nfs_getpage.py`, wired into `relink-040.sh`. Codex's site
 analysis is `amix-kernel-analysis/vm-map/NFS-READSIDE-ISSUE36-SITE.md` (c95fd8c); all thirteen

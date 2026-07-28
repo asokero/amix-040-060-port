@@ -8,6 +8,39 @@ Yön työ tehtiin **Opus 5:llä**, koska Fable-creditit loppuivat (muisti
 
 ---
 
+## ✅ TULOKSET RAUDALLA 2026-07-28, kerneli 68040-260728-12
+
+Ajettu oikealla A3000 + Mercury 040:llä, NFS `nasu:Public`, korpus tunniste `t280209`.
+
+| kohta | tulos |
+|---|---|
+| **ISSUE-36 NFS-häntä** (7 tiedostoa) | **7/7 PASS** — ml. `r=1`, `r=123`, `r=2048` jotka ennen SIGBUSasivat |
+| — jokainen rivi | `all bytes match` **ja** `past-EOF zero` (kaikki kolme ehtoa) |
+| **Altis ELF NFS:ltä** (`uname`, 1 altis PT_LOAD) | **toimii**, rc=0, banneri tulostui |
+| **Kontrolli-ELF NFS:ltä** (`pwd`) | **toimii**, rc=0 |
+| **Paikallinen kontrollikorpus** | **7/7 PASS** |
+| **ISSUE-35 regressio** (tavuntotuus palvelimelta) | **6/6 PASS** |
+
+**Vielä tekemättä, ja molemmat vaativat sinua:**
+
+1. **A/B:n VANHA puoli** = boottaa `unix-040-dbg-pre36` (**260728-13**) ja aja sama `nfstail`.
+   Se on se ajo joka **vahvistaa tai kumoaa** Codexin rajamallin: odotus `r=1,123,2048` → SIGBUS,
+   `r=0,2049,4095` → PASS. Uuden kernelin vihreä ajo yksin todistaa vain ettei mikään ole rikki.
+   Kernelin vaihto vaatii kädet (loader ajetaan AmigaOS:n puolelta).
+2. **`pl[]`-probe (kohta D)**: `DBG pvn`-rivit menivät konsoliin ja serialiin, ja serial oli
+   sinun omassa `cat /dev/ttyUSB0` -kaappauksessasi (PID 624823, klo 9:37). Koneella ei ole
+   `/var/adm/messages`ia, joten en pääse niihin. Liitä rivit tänne, tai putkita kaappaus
+   tiedostoon (`cat /dev/ttyUSB0 | tee /tmp/amix-serial.log`) niin luen sen itse.
+   Odotus korjatulla kernelillä: **`n <= cap`** eikä `p0 == p2`.
+
+### ⚠ Kaksi omaa virhettä jotka korjattiin ajon aikana
+
+* **Kontrolli-ELF oli kelvoton.** Valintalogiikkani poimi kontrolliksi minkä tahansa tiedoston
+  joka ei läpäise altisehtoa — myös 64-bittisen little-endian ELFin (`^?ELF^B^A^A^C`), jota AMIX ei
+  voi ajaa. Shell tulkitsi sen skriptinä eikä kontrolli todistanut mitään. Korjattu: kontrollin on
+  oltava **aito big-endian m68k ELF** jossa on PT_LOADeja mutta ei altista. Uusi kontrolli = `pwd`.
+* SVR4:n `grep` ei tue `-E`:tä (tämä on jo `CLAUDE.md`:ssä, ja unohdin sen silti).
+
 ## ▶ Artefaktit
 
 | Vie tämä | buildid | Sisältää |

@@ -84,6 +84,37 @@ def gen_data(outdir, tag):
     print("  AMIX side: cc -o nfstail nfstail.c && ./nfstail <dir> tail_%s_manifest" % tag)
 
 
+def m68k_elf_loads(path):
+    """Return (is_m68k_be_elf, nonempty_PT_LOAD_count).  Split out from exposed_loads because the
+    CONTROL binary must be a valid m68k ELF that merely is not exposed -- the first control picked
+    was a 64-bit little-endian ELF (EI_CLASS 2, EI_DATA 1), so AMIX's exec refused it, the shell
+    fell back to script interpretation, and the control proved nothing about NFS exec."""
+    try:
+        with open(path, "rb") as f:
+            d = f.read(64)
+        if len(d) < 52 or d[:4] != b"\x7fELF":
+            return (False, 0)
+        if d[4] != 1 or d[5] != 2:                 # EI_CLASS 1 = 32-bit, EI_DATA 2 = big-endian
+            return (False, 0)
+        if struct.unpack(">H", d[18:20])[0] != 4:  # EM_68K
+            return (False, 0)
+        with open(path, "rb") as f:
+            phoff, = struct.unpack(">I", d[28:32])
+            phentsize, phnum = struct.unpack(">HH", d[42:46])
+            f.seek(phoff)
+            ph = f.read(phentsize * phnum)
+        n = 0
+        for i in range(phnum):
+            e = ph[i * phentsize:(i + 1) * phentsize]
+            if len(e) >= 20:
+                p_type, _o, _v, _p, p_filesz = struct.unpack(">IIIII", e[:20])
+                if p_type == 1 and p_filesz:
+                    n += 1
+        return (True, n)
+    except Exception:
+        return (False, 0)
+
+
 def exposed_loads(path):
     """Codex's predicate, per nonempty PT_LOAD of a big-endian m68k ELF:
          last_page = floor((p_offset + p_filesz - 1) / 4096) * 4096
@@ -149,8 +180,10 @@ def gen_elf(outdir, vanilla, tag):
                 n = exposed_loads(p)
                 if n > 0:
                     exposed.append((p, n))
-                elif p.endswith(("ls", "cat", "echo", "date", "pwd")):
-                    clean.append(p)
+                    continue
+                ok, nloads = m68k_elf_loads(p)
+                if ok and nloads > 0:
+                    clean.append(p)          # a REAL m68k ELF that simply is not exposed
     print("  scanned %d files: %d exposed, %d candidate controls" % (scanned, len(exposed), len(clean)))
     if not exposed:
         print("  NO exposed binary found -- item 5 cannot run from this tree")
@@ -171,6 +204,9 @@ def gen_elf(outdir, vanilla, tag):
     chmod_note(dst)
     print("  EXPOSED  -> %s  (from %s, %d exposed PT_LOAD)" % (dst, pick, exposed[0][1]))
     if clean:
+        CPREF = ["uname", "pwd", "echo", "date", "ls", "cat", "hostname", "sync"]
+        clean.sort(key=lambda q: (CPREF.index(os.path.basename(q))
+                                  if os.path.basename(q) in CPREF else len(CPREF), q))
         c = clean[0]
         dstc = os.path.join(outdir, "elfc_%s_%s" % (tag, os.path.basename(c)))
         with open(c, "rb") as s, open(dstc, "wb") as d:
