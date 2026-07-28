@@ -1,0 +1,89 @@
+[22:12:12] CMD: uname -m
+uname -m; echo RUN''END0
+Amiga (Unlimited) 68040-260728-42
+RUNEND0
+[22:12:12] CMD: mount -F nfs nasu:Public /mnt/nasu
+# mount -F nfs nasu:Public /mnt/nasu; echo RUN''END1
+RUNEND1
+[22:12:13] CMD: cp /mnt/nasu/amix/hwtest-260728/kpeek.c /mnt/nasu/amix/hwtest-260728/kpoke.c /mnt/nasu/amix/hwtest-260728/cofault.c /mnt/nasu/amix/hwtest-260728/b2verify.c /mnt/nasu/amix/hwtest-260728/b2repro-copy.sh /tmp/
+# cp /mnt/nasu/amix/hwtest-260728/kpeek.c /mnt/nasu/amix/hwtest-260728/kpoke.c /mnt/nasu/amix/hwtest-260728/cofault.c /mnt/nasu/amix/hwtest-260728/b2verify.c /mnt/nasu/amix/hwtest-260728/b2repro-copy.sh /tmp/; echo RUN''END2
+RUNEND2
+[22:12:13] CMD: cd /tmp && cc -o kpeek kpeek.c && cc -o kpoke kpoke.c && cc -o cofault cofault.c && cc -o b2verify b2verify.c && echo TOOLS-BUILT
+# cd /tmp && cc -o kpeek kpeek.c && cc -o kpoke kpoke.c && cc -o cofault cofault.c && cc -o b2verify b2verify.c && echo TOOLS-BUILT; echo RUN''END3
+TOOLS-BUILT
+RUNEND3
+[22:12:28] >>> BRACKET: the serial log must gain a DBG SIG sig=9 line
+[22:12:28] CMD: sleep 120 & p=$!; sleep 2; kill -9 $p; echo BRACKET-FIRED
+# sleep 120 & p=$!; sleep 2; kill -9 $p; echo BRACKET-FIRED; echo RUN''END4
+210
+210 Killed
+BRACKET-FIRED
+RUNEND4
+[22:12:30] >>> COUNTERS BEFORE stage CONTROL (anchors: xpage_on=1, 7365676b)
+[22:12:30] CMD: /tmp/kpeek 080FFD4C 5
+# /tmp/kpeek 080FFD4C 5; echo RUN''END5
+KPEEK 080ffd4c = 00000bfd  (/dev/mem)
+KPEEK 080ffd50 = 00000000  (/dev/mem)
+KPEEK 080ffd54 = 00000299  (/dev/mem)
+KPEEK 080ffd58 = 00000000  (/dev/mem)
+KPEEK 080ffd5c = 00000000  (/dev/mem)
+RUNEND5
+[22:12:30] CMD: /tmp/kpeek 080FFE78 2
+# /tmp/kpeek 080FFE78 2; echo RUN''END6
+KPEEK 080ffe78 = 00000001  (/dev/mem)
+KPEEK 080ffe7c = 0000351d  (/dev/mem)
+RUNEND6
+[22:12:30] CMD: /tmp/kpeek 080FFF04 4
+# /tmp/kpeek 080FFF04 4; echo RUN''END7
+KPEEK 080fff04 = 00000000  (/dev/mem)
+KPEEK 080fff08 = 00000001  (/dev/mem)
+KPEEK 080fff0c = 00000000  (/dev/mem)
+KPEEK 080fff10 = 7365676b  (/dev/mem)
+RUNEND7
+[22:12:30] CMD: /tmp/kpeek 080FFE78 1
+# /tmp/kpeek 080FFE78 1; echo RUN''END8
+KPEEK 080ffe78 = 00000001  (/dev/mem)
+RUNEND8
+[22:12:30] CMD: /tmp/kpoke 080FFE78 1 0
+# /tmp/kpoke 080FFE78 1 0; echo RUN''END9
+KPOKE 080ffe78 = 00000000 (was 00000001) OK
+RUNEND9
+[22:12:30] >>> TRIGGER: cofault 6x4MiB for 420s, wb_dfc_on=0 (CONTROL = shipping behaviour)
+[22:12:30] CMD: cd /tmp && ./cofault /payload.bin 4 6 420
+# cd /tmp && ./cofault /payload.bin 4 6 420; echo RUN''END10
+COFAULT START file=/payload.bin bytes=4194304 children=6 seconds=420
+COFAULT child=0 DONE iters=7 efaults=0
+COFAULT child=2 DONE iters=7 efaults=0
+COFAULT child=4 DONE iters=7 efaults=0
+COFAULT child=3 DONE iters=7 efaults=0
+COFAULT child=1 DONE iters=7 efaults=0
+COFAULT child=5 DONE iters=7 efaults=0
+COFAULT END efaults_total=0
+RUNEND10
+[22:19:52] trigger ran 7.4 min
+[22:19:52] >>> COUNTERS AFTER stage CONTROL
+[22:19:52] CMD: /tmp/kpeek 080FFD4C 5
+# /tmp/kpeek 080FFD4C 5; echo RUN''END11
+KPEEK 080ffd4c = 00006be4  (/dev/mem)
+KPEEK 080ffd50 = 00000000  (/dev/mem)
+KPEEK 080ffd54 = 00001e06  (/dev/mem)
+KPEEK 080ffd58 = 00000000  (/dev/mem)
+KPEEK 080ffd5c = 00000000  (/dev/mem)
+RUNEND11
+[22:19:52] CMD: /tmp/kpeek 080FFE78 2
+# /tmp/kpeek 080FFE78 2; echo RUN''END12
+KPEEK 080ffe78 = 00000000  (/dev/mem)
+KPEEK 080ffe7c = 0000357e  (/dev/mem)
+RUNEND12
+[22:19:52] CMD: /tmp/kpeek 080FFF04 4
+# /tmp/kpeek 080FFF04 4; echo RUN''END13
+KPEEK 080fff04 = 00000000  (/dev/mem)
+KPEEK 080fff08 = 00000001  (/dev/mem)
+KPEEK 080fff0c = 00000000  (/dev/mem)
+KPEEK 080fff10 = 7365676b  (/dev/mem)
+RUNEND13
+[22:19:52] CMD: uptime
+# uptime; echo RUN''END14
+ 12:20pm  up 9 mins,  1 user,  load average: 0.00, 0.00, 0.00
+RUNEND14
+[22:19:55] stage CONTROL done

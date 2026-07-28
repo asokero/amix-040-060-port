@@ -1,0 +1,96 @@
+[22:48:48] CMD: uname -m
+uname -m; echo RUN''END0
+Amiga (Unlimited) 68040-260728-45
+RUNEND0
+[22:48:48] CMD: mount -F nfs nasu:Public /mnt/nasu
+# mount -F nfs nasu:Public /mnt/nasu; echo RUN''END1
+RUNEND1
+[22:48:48] CMD: cp /mnt/nasu/amix/hwtest-260728/kpeek.c /mnt/nasu/amix/hwtest-260728/kpoke.c /mnt/nasu/amix/hwtest-260728/cofault.c /mnt/nasu/amix/hwtest-260728/b2verify.c /mnt/nasu/amix/hwtest-260728/b2repro-copy.sh /tmp/
+# cp /mnt/nasu/amix/hwtest-260728/kpeek.c /mnt/nasu/amix/hwtest-260728/kpoke.c /mnt/nasu/amix/hwtest-260728/cofault.c /mnt/nasu/amix/hwtest-260728/b2verify.c /mnt/nasu/amix/hwtest-260728/b2repro-copy.sh /tmp/; echo RUN''END2
+RUNEND2
+[22:48:48] CMD: cd /tmp && cc -o kpeek kpeek.c && cc -o kpoke kpoke.c && cc -o cofault cofault.c && cc -o b2verify b2verify.c && echo TOOLS-BUILT
+# cd /tmp && cc -o kpeek kpeek.c && cc -o kpoke kpoke.c && cc -o cofault cofault.c && cc -o b2verify b2verify.c && echo TOOLS-BUILT; echo RUN''END3
+TOOLS-BUILT
+RUNEND3
+[22:49:01] >>> BRACKET: the serial log must gain a DBG SIG sig=9 line
+[22:49:01] CMD: sleep 120 & p=$!; sleep 2; kill -9 $p; echo BRACKET-FIRED
+# sleep 120 & p=$!; sleep 2; kill -9 $p; echo BRACKET-FIRED; echo RUN''END4
+228
+228 Killed
+BRACKET-FIRED
+RUNEND4
+[22:49:03] >>> COUNTERS BEFORE stage BOOTSNAP (anchors: xpage_on=1, 7365676b)
+[22:49:03] CMD: /tmp/kpeek 080FFD88 5
+# /tmp/kpeek 080FFD88 5; echo RUN''END5
+KPEEK 080ffd88 = 00000c86  (/dev/mem)
+KPEEK 080ffd8c = 00000000  (/dev/mem)
+KPEEK 080ffd90 = 000002a0  (/dev/mem)
+KPEEK 080ffd94 = 00000000  (/dev/mem)
+KPEEK 080ffd98 = 00000000  (/dev/mem)
+RUNEND5
+[22:49:03] CMD: /tmp/kpeek 080FFEB4 7
+# /tmp/kpeek 080FFEB4 7; echo RUN''END6
+KPEEK 080ffeb4 = 00000001  (/dev/mem)
+KPEEK 080ffeb8 = 000038bc  (/dev/mem)
+KPEEK 080ffebc = 000000da  (/dev/mem)
+KPEEK 080ffec0 = 00000001  (/dev/mem)
+KPEEK 080ffec4 = 00000005  (/dev/mem)
+KPEEK 080ffec8 = 0000128b  (/dev/mem)
+KPEEK 080ffecc = 000000da  (/dev/mem)
+RUNEND6
+[22:49:03] CMD: /tmp/kpeek 080FFF54 4
+# /tmp/kpeek 080FFF54 4; echo RUN''END7
+KPEEK 080fff54 = 00000000  (/dev/mem)
+KPEEK 080fff58 = 00000001  (/dev/mem)
+KPEEK 080fff5c = 00000000  (/dev/mem)
+KPEEK 080fff60 = 7365676b  (/dev/mem)
+RUNEND7
+[22:49:03] CMD: /tmp/kpeek 080FFEB4 1
+# /tmp/kpeek 080FFEB4 1; echo RUN''END8
+KPEEK 080ffeb4 = 00000001  (/dev/mem)
+RUNEND8
+[22:49:03] wb_dfc_on already 1
+[22:49:03] >>> TRIGGER: cofault 6x4MiB for 30s, wb_dfc_on=1 (FIX)
+[22:49:03] CMD: cd /tmp && ./cofault /payload.bin 4 6 30
+# cd /tmp && ./cofault /payload.bin 4 6 30; echo RUN''END9
+COFAULT START file=/payload.bin bytes=4194304 children=6 seconds=30
+COFAULT child=4 DONE iters=1 efaults=0
+COFAULT child=1 DONE iters=1 efaults=0
+COFAULT child=0 DONE iters=1 efaults=0
+COFAULT child=2 DONE iters=1 efaults=0
+COFAULT child=3 DONE iters=1 efaults=0
+COFAULT child=5 DONE iters=1 efaults=0
+COFAULT END efaults_total=0
+RUNEND9
+[23:00:27] trigger ran 11.4 min
+[23:00:27] >>> COUNTERS AFTER stage BOOTSNAP
+[23:00:27] CMD: /tmp/kpeek 080FFD88 5
+# /tmp/kpeek 080FFD88 5; echo RUN''END10
+KPEEK 080ffd88 = 0000290b  (/dev/mem)
+KPEEK 080ffd8c = 00000000  (/dev/mem)
+KPEEK 080ffd90 = 000006c0  (/dev/mem)
+KPEEK 080ffd94 = 00000000  (/dev/mem)
+KPEEK 080ffd98 = 00000000  (/dev/mem)
+RUNEND10
+[23:00:28] CMD: /tmp/kpeek 080FFEB4 7
+# /tmp/kpeek 080FFEB4 7; echo RUN''END11
+KPEEK 080ffeb4 = 00000001  (/dev/mem)
+KPEEK 080ffeb8 = 00005873  (/dev/mem)
+KPEEK 080ffebc = 000000da  (/dev/mem)
+KPEEK 080ffec0 = 00000001  (/dev/mem)
+KPEEK 080ffec4 = 00000005  (/dev/mem)
+KPEEK 080ffec8 = 00002bd3  (/dev/mem)
+KPEEK 080ffecc = 000000da  (/dev/mem)
+RUNEND11
+[23:00:28] CMD: /tmp/kpeek 080FFF54 4
+# /tmp/kpeek 080FFF54 4; echo RUN''END12
+KPEEK 080fff54 = 00000000  (/dev/mem)
+KPEEK 080fff58 = 00000001  (/dev/mem)
+KPEEK 080fff5c = 00000000  (/dev/mem)
+KPEEK 080fff60 = 7365676b  (/dev/mem)
+RUNEND12
+[23:00:28] CMD: uptime
+# uptime; echo RUN''END13
+  1:00pm  up 20 mins,  2 users,  load average: 0.00, 0.00, 0.00
+RUNEND13
+[23:00:30] stage BOOTSNAP done

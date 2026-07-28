@@ -1734,6 +1734,42 @@ luuppi. SEURAAVA ASKEL kun tähän tartutaan: ktrap_latchin kenttien tarkka deco
 rekursioketju tallentuu; toistotilasto eri lämpötiloissa. Työkalu valmiina:
 serial2usb-kaappaus toimii nyt (stty 9600 raw + while-cat-luuppi | tee).
 
+## ISSUE-22 — ★ NAMED ON HARDWARE 2026-07-28: the fault is MISROUTED to the kernel resolver
+
+Full evidence: `test-tools/issue22-misroute-260728.txt` (+ the raw run and serial logs beside it).
+Kernel `68040-260728-36`, copyback, six-way copy load, hit at burst 15 of 16:
+
+```text
+WARNING: DBG krnxflt FAILEXIT w=2 va=800C96B0 rw=2 depth=1
+```
+
+`va` is inside b2verify's own freshly `malloc`'d 4 MiB heap buffer and `rw=2` is a write — this is
+`copyout` filling a user buffer during `read(2)`. The fault on that **user** page was handed to the
+**kernel** resolver, whose stock `as_segat(&kas, userVA)` gate (verbatim at `0x5b19e`) cannot
+succeed, so it returned unresolved **without calling `as_fault`** — which is exactly why the
+`as_fault` FAIL logger stayed silent through every hit. `sf_fault` then delivered EFAULT.
+
+**This refutes the depth-counter hypothesis by measurement.** `depth=1`, and `Lkx_depth` read live
+through `/dev/mem` was 0 at rest both before the run and after the failure. The counter *is* global
+and *is* held across a sleeping `as_fault` (Codex's static reading is right about that, and it stays
+on the list as a latent defect), but it is not this bug.
+
+**It also corrects an assumption written in the section below**: "a guarded MOVES fault has transfer
+mode = user, so `k_trap` dispatches it to `usrxmemflt`". Usually true — the same run resolved on the
+order of 90000 copyout page faults — but measurably not always, and one exception per run is enough
+to abort an operation.
+
+The routing has exactly one decision point, `k_trap 0x5a1ca: jsr userspace`, reached only when the
+`u_nofault` pad is armed. `prototypes/userspace040.s` reads the function code from the 040 SSW at
+`frame+76`; what it reads in the failing case is the open question. `68040-260728-39` answers it: it
+logs `fmt`/`fc`/`fa`/raw SSW for every non-user function code, counts the events in `.globl` longs
+readable with `kpeek` (so the result does not depend on the serial capture), and carries the
+candidate fix behind `us_reroute_on` — a one-`.data`-long A/B that runs inside a single boot.
+
+The fix is safe by construction rather than by argument: with the pad armed, a "kernel" verdict on a
+fault address ≥ `0x80000000` always ends in `as_segat(&kas, userVA) = NULL`, so the rerouted set is
+exactly the set that fails today.
+
 ## ISSUE-22 — ⏳ OPEN, and today's clean runs are NOT attributable to the xpage fix
 
 **Codex's static verdict (XPAGE-COVERAGE-AUDIT.md, a61d2ac) refutes the equivalence hypothesis on

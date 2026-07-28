@@ -1,0 +1,340 @@
+[20:17:34] shell ok
+[20:17:34] CMD: uname -m
+uname -m; echo RUN''END0
+Amiga (Unlimited) 68040-260728-36
+RUNEND0
+[20:17:34] kernel confirmed: 68040-260728-36
+[20:17:34] CMD: mount -F nfs nasu:Public /mnt/nasu
+# mount -F nfs nasu:Public /mnt/nasu; echo RUN''END1
+RUNEND1
+[20:17:34] CMD: cp /mnt/nasu/amix/hwtest-260728/b2verify.c /mnt/nasu/amix/hwtest-260728/b2repro-copy.sh /mnt/nasu/amix/hwtest-260728/kpeek.c /tmp/
+# cp /mnt/nasu/amix/hwtest-260728/b2verify.c /mnt/nasu/amix/hwtest-260728/b2repro-copy.sh /mnt/nasu/amix/hwtest-260728/kpeek.c /tmp/; echo RUN''END2
+RUNEND2
+[20:17:34] CMD: cd /tmp && cc -o b2verify b2verify.c && ls -l /tmp/b2verify
+# cd /tmp && cc -o b2verify b2verify.c && ls -l /tmp/b2verify; echo RUN''END3
+-rwxr-xr-x   1 root     root        9588 May 17 10:19 /tmp/b2verify
+RUNEND3
+[20:17:40] CMD: cd /tmp && cc -o kpeek kpeek.c && echo KPEEK-BUILT
+# cd /tmp && cc -o kpeek kpeek.c && echo KPEEK-BUILT; echo RUN''END4
+KPEEK-BUILT
+RUNEND4
+[20:17:43] CMD: ls -l /payload.bin
+# ls -l /payload.bin; echo RUN''END5
+-rw-rw-rw-   1 root     root     4194304 May 15 10:15 /payload.bin
+RUNEND5
+[20:17:43] >>> COUNTER BASELINE (kmem, independent of serial)
+[20:17:43] CMD: /tmp/kpeek 080FFDBC 4
+# /tmp/kpeek 080FFDBC 4; echo RUN''END6
+KPEEK 080ffdbc = 00000000  (/dev/mem)
+KPEEK 080ffdc0 = 00000001  (/dev/mem)
+KPEEK 080ffdc4 = 00000000  (/dev/mem)
+KPEEK 080ffdc8 = 7365676b  (/dev/mem)
+RUNEND6
+[20:17:43] >>> BRACKET-BEFORE: firing kill -9; the serial log must gain a 'DBG SIG sig=9' line
+[20:17:43] CMD: sleep 120 & p=$!; sleep 2; kill -9 $p; echo BRACKET-BEFORE-FIRED
+# sleep 120 & p=$!; sleep 2; kill -9 $p; echo BRACKET-BEFORE-FIRED; echo RUN''END7
+197
+197 Killed
+BRACKET-BEFORE-FIRED
+RUNEND7
+[20:17:48] >>> REPRODUCER: 16 bursts, label hunt -- no other login until this finishes
+[20:17:48] CMD: cd /tmp && sh b2repro-copy.sh 16 hunt
+# cd /tmp && sh b2repro-copy.sh 16 hunt; echo RUN''END8
+B2REPRO-COPY start bursts=16 label=hunt ref=/payload.bin
+COPY-BURST-1
+B2V label=hunt-b1-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321192 ctime=832321192
+B2V label=hunt-b1-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b1-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b1-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321192 ctime=832321192
+B2V label=hunt-b1-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b1-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b1-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321191 ctime=832321191
+B2V label=hunt-b1-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b1-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b1-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321191 ctime=832321191
+B2V label=hunt-b1-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b1-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b1-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321192 ctime=832321192
+B2V label=hunt-b1-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b1-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b1-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321191 ctime=832321191
+B2V label=hunt-b1-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b1-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-2
+B2V label=hunt-b2-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321329 ctime=832321329
+B2V label=hunt-b2-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b2-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b2-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321329 ctime=832321329
+B2V label=hunt-b2-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b2-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b2-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321329 ctime=832321329
+B2V label=hunt-b2-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b2-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b2-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321329 ctime=832321329
+B2V label=hunt-b2-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b2-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b2-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321329 ctime=832321329
+B2V label=hunt-b2-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b2-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b2-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321330 ctime=832321330
+B2V label=hunt-b2-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b2-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-3
+B2V label=hunt-b3-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321444 ctime=832321444
+B2V label=hunt-b3-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b3-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b3-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321446 ctime=832321446
+B2V label=hunt-b3-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b3-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b3-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321447 ctime=832321447
+B2V label=hunt-b3-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b3-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b3-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321446 ctime=832321446
+B2V label=hunt-b3-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b3-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b3-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321446 ctime=832321446
+B2V label=hunt-b3-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b3-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b3-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321446 ctime=832321446
+B2V label=hunt-b3-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b3-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-4
+B2V label=hunt-b4-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321616 ctime=832321616
+B2V label=hunt-b4-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b4-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b4-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321616 ctime=832321616
+B2V label=hunt-b4-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b4-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b4-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321614 ctime=832321614
+B2V label=hunt-b4-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b4-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b4-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321612 ctime=832321612
+B2V label=hunt-b4-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b4-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b4-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321614 ctime=832321614
+B2V label=hunt-b4-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b4-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b4-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321616 ctime=832321616
+B2V label=hunt-b4-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b4-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-5
+B2V label=hunt-b5-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321739 ctime=832321739
+B2V label=hunt-b5-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b5-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b5-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321738 ctime=832321738
+B2V label=hunt-b5-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b5-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b5-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321738 ctime=832321738
+B2V label=hunt-b5-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b5-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b5-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321739 ctime=832321739
+B2V label=hunt-b5-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b5-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b5-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321735 ctime=832321735
+B2V label=hunt-b5-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b5-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b5-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321739 ctime=832321739
+B2V label=hunt-b5-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b5-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-6
+B2V label=hunt-b6-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321858 ctime=832321858
+B2V label=hunt-b6-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b6-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b6-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321858 ctime=832321858
+B2V label=hunt-b6-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b6-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b6-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321856 ctime=832321856
+B2V label=hunt-b6-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b6-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b6-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321854 ctime=832321854
+B2V label=hunt-b6-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b6-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b6-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321857 ctime=832321857
+B2V label=hunt-b6-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b6-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b6-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321857 ctime=832321857
+B2V label=hunt-b6-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b6-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-7
+B2V label=hunt-b7-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321977 ctime=832321977
+B2V label=hunt-b7-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b7-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b7-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321977 ctime=832321977
+B2V label=hunt-b7-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b7-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b7-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321975 ctime=832321975
+B2V label=hunt-b7-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b7-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b7-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321976 ctime=832321976
+B2V label=hunt-b7-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b7-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b7-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321975 ctime=832321975
+B2V label=hunt-b7-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b7-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b7-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832321978 ctime=832321978
+B2V label=hunt-b7-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b7-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-8
+B2V label=hunt-b8-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322515 ctime=832322515
+B2V label=hunt-b8-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b8-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b8-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322516 ctime=832322516
+B2V label=hunt-b8-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b8-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b8-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322517 ctime=832322517
+B2V label=hunt-b8-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b8-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b8-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322517 ctime=832322517
+B2V label=hunt-b8-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b8-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b8-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322514 ctime=832322514
+B2V label=hunt-b8-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b8-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b8-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322514 ctime=832322514
+B2V label=hunt-b8-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b8-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-9
+B2V label=hunt-b9-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322622 ctime=832322622
+B2V label=hunt-b9-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b9-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b9-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322635 ctime=832322635
+B2V label=hunt-b9-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b9-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b9-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322634 ctime=832322634
+B2V label=hunt-b9-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b9-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b9-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322633 ctime=832322633
+B2V label=hunt-b9-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b9-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b9-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322635 ctime=832322635
+B2V label=hunt-b9-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b9-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b9-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322634 ctime=832322634
+B2V label=hunt-b9-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b9-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-10
+B2V label=hunt-b10-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322747 ctime=832322747
+B2V label=hunt-b10-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b10-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b10-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322757 ctime=832322757
+B2V label=hunt-b10-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b10-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b10-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322756 ctime=832322756
+B2V label=hunt-b10-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b10-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b10-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322755 ctime=832322755
+B2V label=hunt-b10-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b10-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b10-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322749 ctime=832322749
+B2V label=hunt-b10-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b10-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b10-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322755 ctime=832322755
+B2V label=hunt-b10-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b10-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-11
+B2V label=hunt-b11-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322877 ctime=832322877
+B2V label=hunt-b11-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b11-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b11-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322880 ctime=832322880
+B2V label=hunt-b11-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b11-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b11-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322880 ctime=832322880
+B2V label=hunt-b11-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b11-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b11-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322880 ctime=832322880
+B2V label=hunt-b11-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b11-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b11-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322882 ctime=832322882
+B2V label=hunt-b11-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b11-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b11-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322881 ctime=832322881
+B2V label=hunt-b11-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b11-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-12
+B2V label=hunt-b12-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322999 ctime=832322999
+B2V label=hunt-b12-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b12-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b12-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323001 ctime=832323001
+B2V label=hunt-b12-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b12-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b12-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322996 ctime=832322996
+B2V label=hunt-b12-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b12-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b12-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323001 ctime=832323001
+B2V label=hunt-b12-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b12-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b12-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832322997 ctime=832322997
+B2V label=hunt-b12-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b12-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b12-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323001 ctime=832323001
+B2V label=hunt-b12-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b12-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-13
+B2V label=hunt-b13-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323123 ctime=832323123
+B2V label=hunt-b13-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b13-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b13-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323122 ctime=832323122
+B2V label=hunt-b13-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b13-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b13-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323109 ctime=832323109
+B2V label=hunt-b13-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b13-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b13-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323118 ctime=832323118
+B2V label=hunt-b13-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b13-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b13-cp5 path=/cp5.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323122 ctime=832323122
+B2V label=hunt-b13-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b13-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b13-cp6 path=/cp6.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323118 ctime=832323118
+B2V label=hunt-b13-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b13-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-14
+B2V label=hunt-b14-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323471 ctime=832323471
+B2V label=hunt-b14-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b14-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b14-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323472 ctime=832323472
+B2V label=hunt-b14-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b14-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b14-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323469 ctime=832323469
+B2V label=hunt-b14-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b14-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b14-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323474 ctime=832323474
+B2V label=hunt-b14-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b14-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b14-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323473 ctime=832323473
+B2V label=hunt-b14-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b14-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b14-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323475 ctime=832323475
+B2V label=hunt-b14-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b14-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-15
+B2V label=hunt-b15-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832323594 ctime=832323594
+B2V label=hunt-b15-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=hunt-b15-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=hunt-b15-cp2 CLASS=SOURCE_ERROR src=/payload.bin errno=14
+B2REPRO-COPY FAILURE (first non-V0):
+STOP burst=15 cp=2 class=20
+  (see the B2V ... CLASS=... line above for errno/st_size/retry)
+B2REPRO-COPY-DONE
+RUNEND8
+[20:59:19] reproducer finished in 41.5 min
+[20:59:19] >>> COUNTERS AFTER: fn = FAILEXIT prints attempted, depth = resting value (leak check)
+[20:59:19] CMD: /tmp/kpeek 080FFDBC 4
+# /tmp/kpeek 080FFDBC 4; echo RUN''END9
+KPEEK 080ffdbc = 00000001  (/dev/mem)
+KPEEK 080ffdc0 = 00000001  (/dev/mem)
+KPEEK 080ffdc4 = 00000000  (/dev/mem)
+KPEEK 080ffdc8 = 7365676b  (/dev/mem)
+RUNEND9
+[20:59:19] >>> BRACKET-AFTER: firing kill -9 again
+[20:59:19] CMD: sleep 120 & p=$!; sleep 2; kill -9 $p; echo BRACKET-AFTER-FIRED
+# sleep 120 & p=$!; sleep 2; kill -9 $p; echo BRACKET-AFTER-FIRED; echo RUN''END10
+672
+672 Killed
+BRACKET-AFTER-FIRED
+RUNEND10
+[20:59:24] CMD: uptime
+# uptime; echo RUN''END11
+ 11:00am  up 43 mins,  1 user,  load average: 0.00, 0.00, 0.00
+RUNEND11
+[20:59:26] session closed

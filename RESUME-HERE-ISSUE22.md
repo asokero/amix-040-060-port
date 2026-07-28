@@ -1,127 +1,125 @@
-# RESUME HERE — the ISSUE-22 hunt, starting state as of 2026-07-28 (kernel HEAD 46f9dca)
+# RESUME HERE — ISSUE-22, state at the end of 2026-07-28 (was: the hunt; now: the acceptance)
 
-Read this file and nothing else to start the hunt. Everything below is measured, not inferred, and
-the two places where that is not true are marked.
+Read this file and nothing else to continue. Everything below is measured unless it says otherwise,
+and the one open question is marked as open.
 
 ---
 
-## 1. Why this is now the top item
+## 1. ISSUE-22 has a named root cause, measured on hardware
 
-**ISSUE-22 is the only thing between this port and a measured +63 % machine.** Copyback's own
-acceptance is complete — reboot disk-truth PASS, the July corruption scare explained, Dhrystone
-30000/s vs 18292.7 write-through, three boots within 0.7 % — and the single remaining objection to
-flipping it is that **copyback multiplies ISSUE-22's frequency**:
-
-| kernel | 3-byte difference | `cp: /payload.bin: read: Bad address` |
-|---|---|---|
-| copyback `260728-32` | `hat_cm_ram = 0x20` | burst 4, then burst 1 on a clean repeat (2/2 runs) |
-| write-through `260728-28` | `hat_cm_ram = 0x00` | clean 16/16, and 3 runs / 288 verifications total |
-
-## 2. The reproducer — this is the part that changed everything
-
-ISSUE-22 was "1 case in 48 parallel copies" and five cold-boot cycles in July failed to reproduce it.
-**On copyback it fires within the first four bursts, every time.**
+**`prototypes/wb040.s` does not restore DFC.** The 68040 write-back replay sets
+`DFC = WBxS & 7` to re-issue a pending store with the faulted access's function code, and never puts
+the register back. DFC is not saved by the exception mechanism, so the value survives the `rte` into
+whatever the CPU was doing — and what it was doing is often a copy:
 
 ```text
-boot  build/unix-040-b2-dbg = 68040-260728-36   (copyback + the exit probe)
-mount -F nfs nasu:Public /mnt/nasu
-cp /mnt/nasu/amix/hwtest-260728/b2verify.c /mnt/nasu/amix/hwtest-260728/b2repro-copy.sh /tmp/
-cd /tmp && cc -o b2verify b2verify.c            # /tmp is cleared by every boot
-sh b2repro-copy.sh 16 hunt
+000005a0 <lcopyout>:                     (stock, disassembled)
+     5a2:  movec %d0,%dfc                DFC = 1 (user data), set ONCE
+     5c0:  movel %a0@+,%d1               source read from the kernel segmap  (supervisor data)
+     5c2:  movesl %d1,%a1@+              destination write to user space     (DFC)
+                                         the loop NEVER reloads DFC
 ```
 
-It stops on the first non-V0 and preserves state. Expect the failure inside four bursts. Do **not**
-log in or browse the filesystem while it runs: the first copyback run was invalidated exactly that
-way, and the write-through comparisons had no such load.
+With DFC left at 5, the next `movesl` looks a **user** address up in the **supervisor** tree, faults
+with TM=5, and `k_trap`'s `userspace()` — reading the frame correctly — routes it to the kernel
+resolver, whose stock `as_segat(&kas, userVA)` gate cannot succeed. Unresolved, **no `as_fault`
+call**, `sf_fault`, EFAULT, `read: Bad address`.
 
-## 3. What the failure looks like, and what it is NOT
+That is exactly the failure captured on `68040-260728-36`:
 
 ```text
-cp: /payload.bin: read: Bad address          <- the EFAULT, from read(2)
-B2V ... CLASS=SOURCE_ERROR dst=/cp2.bin stat_errno=2   <- CONSEQUENCE: cp died, so the file is absent
+WARNING: DBG krnxflt FAILEXIT w=2 va=800C96B0 rw=2 depth=1
 ```
 
-* **Not corruption.** In the same burst, `cp1` verified as a complete byte-exact match. What gets
-  written lands intact; an operation aborts.
-* **Which read the EFAULT hits is chance** — `cp`'s read of the source in one run, the verifier's in
-  another. July recorded the same.
-* `V1_*` classes are this same transient, with the file intact on reopen. `V3`–`V6` would be
-  something else and worse; nothing has ever produced one.
+`va` is inside b2verify's own `malloc`'d 4 MiB heap, `rw` is a write, `depth=1`. Full evidence and
+the route with byte-exact addresses: `test-tools/issue22-misroute-260728.txt`.
 
-## 4. The measurement that makes the question narrow
+**Codex's prediction (`w=1 depth=5`, the global `Lkx_depth` counter) was refuted by measurement.**
+The counter is global and is held across a sleeping `as_fault` — that part of their reading is
+correct and remains a latent defect worth fixing on its own terms — but `Lkx_depth` read live was 0
+at rest before and after every failure.
 
-**The `as_fault` FAIL logger (cap 64, in the weakened `as_fault` wrapper, logs every nonzero return
-from every caller) printed ZERO lines during both copyback hits.**
+## 2. The mechanism is measured, not inferred
 
-EFAULT reaches user space through `sf_fault @0x5f2`, which is entered only when the **resolver**
-returns nonzero — so something returned "unresolved" to `k_trap` **without any `as_fault` call having
-failed**. In our own `krnxmemflt040` exactly three exits return failure and **two never call
-`as_fault`**:
+`68040-260728-45` counts the mechanism itself instead of waiting for its rare symptom:
+
+| | one boot | +30 s cofault (pure reads) | +12 bursts b2repro |
+|---|---:|---:|---:|
+| `wb_replay_n` write-back replays | 4747 | +6472 | +74428 |
+| `wb_replay_odd` replays setting DFC ≠ user data | 218 | **+0** | +16 |
+| `wb_dfc_changed` faults returning with a changed DFC | 218 | +0 | +25 |
+| `wb_dfc_lastold` → `wb_dfc_lastnew` | **1 → 5** | — | 1 → 5 |
+| `us_odd_user` misroutes | 0 | 0 | **0** |
+
+The two 218s are the same events counted in two places. `1 → 5` is the pair the theory predicted
+before the counter existed. The cofault column is the useful negative: a pure read workload produces
+thousands of replays and **not one** with a non-user function code, which is why it never reproduces
+ISSUE-22 — the hazard needs a pending *supervisor* store at the moment of a copy fault.
+
+## 3. The fix, and what is NOT yet proven about it
+
+`wb040.s` now saves DFC on entry to each fault wrapper and restores it before returning — in the
+wrapper, not in `Lwb_do`, because that is nesting-safe and because `Lwb_fail` returns via `rts` on
+the trap-time stack. `wb_dfc_on = 0` (one `.data` long, poke it with `kpeek`/`kpoke`) restores the
+old behaviour for an A/B inside a single boot.
+
+**OPEN: the fix has not been shown to change the EFAULT rate.** The control run (fix off, 12 bursts)
+produced 25 DFC corruptions and zero EFAULTs, and the historical rate is ~1 EFAULT per 15 bursts, so
+12 clean bursts is not evidence either way. Do not record the fix as verified on the strength of a
+clean run.
+
+## 4. Next step: stop rolling dice — inject the corruption
+
+Add `wb_dfc_force` to `wb040.s`: when nonzero, the wrapper deliberately leaves that value in DFC on
+exit for the next N faults — exactly what nature does 243 times per boot. Then the causal chain is
+testable in seconds instead of hours:
+
+* `force=5`, `wb_dfc_on=0` → one `read()` into a fresh buffer should EFAULT immediately, with
+  `us_odd_user` climbing and `DBG krnxflt FAILEXIT w=2` on serial. That proves the chain end to end.
+* `force=5`, `wb_dfc_on=1` → nothing should happen. That proves the fix by the same measure.
+
+Only after that is it worth spending hours on a natural-rate A/B, and then it is confirmation rather
+than the primary evidence.
+
+## 5. Artifacts (`nasu:Public/amix/hwtest-260728/`, `SHA256SUMS-issue22.txt`)
 
 ```text
-line 56   depth/recursion cap exceeded (depth > 4)
-line 80   "no kas segment owns this address"
-line 139  as_fault failed (F_PROT branch)  <- this one WOULD be logged
+unix-040-b2-dbg-260728-45   copyback + DFC fix + mechanism counters   <- current
+unix-040-b2-dbg-260728-42   copyback + DFC fix (no mechanism counters)
+unix-040-b2-dbg-260728-39   copyback + misroute probe, no DFC fix
+unix-040-b2-dbg-260728-36   the kernel that captured the FAILEXIT line
+unix_boot040                MANDATORY loader
+kpeek.c kpoke.c cofault.c kdepthmax.c   (also in test-tools/)
 ```
 
-## 5. The probe is already built and verified silent
-
-`68040-260728-35` (WT) and `-36` (copyback) carry it:
+Counter addresses in **-45** (recompute after any relink: `0x08000000 + textsize + .data offset`):
 
 ```text
-DBG krnxflt FAILEXIT w=<1|2|3> va=<x> rw=<1|2> depth=<n>
-     w=1 depth cap    w=2 no kas segment    w=3 as_fault failed
+us_calls 080FFD88  us_odd_user 080FFD8C  us_odd_kern 080FFD90  us_reroute_on 080FFD98
+wb_dfc_on 080FFEB4  wb_dfc_n 080FFEB8  wb_dfc_changed 080FFEBC
+wb_dfc_lastold 080FFEC0  wb_dfc_lastnew 080FFEC4
+wb_replay_n 080FFEC8  wb_replay_odd 080FFECC
+Lkx_fn 080FFF54  xpage_on 080FFF58 (=1, ANCHOR)  Lkx_depth 080FFF5C
 ```
 
-Cap 8 prints. **Silent on a healthy 040 boot (verified).** One reproducer run should name the exit.
+Always read a known anchor in the same `kpeek` range. Every reading in this file was taken with
+`xpage_on == 1` and the string `segkmem_ptes` bracketing the counters.
 
-**Bracket the serial capture** — verify it before AND after the run by firing a deliberate
-`kill -9` (which must print `DBG SIG sig=9`) and checking the log grew. Today an identical 0-byte
-reading came from a dead capture and was nearly recorded as the strongest possible result. Capture as
-`cat /dev/ttyUSB0 | tee -a /tmp/amix-hw-test.log` so it survives a terminal.
+## 6. Instrument discipline that earned its keep, and one failure of mine
 
-## 6. If the probe stays silent, the framing is wrong — go here next
+* Serial was bracketed with a deliberate `kill -9` before AND after every run.
+* `Lkx_fn`, the probe's own print counter, read from `/dev/mem`, equalled the number of lines in the
+  serial log — so the capture provably lost nothing. Prefer this over trusting the log.
+* A stray `cat /dev/ttyUSB0` was holding the port at session start. Two readers split the byte
+  stream; kill the old one first.
+* **My driver's timeout stopped waiting but did not kill the remote workload**, so every command
+  after it queued behind the still-running script and the post-run counters were never read. Fix the
+  driver before the next long run.
 
-That would mean the resolver never reported failure, and EFAULT came from outside the fault
-machinery: `uiomove`/`copyout` bounds checks, `useracc`-style validation, or a filesystem/driver
-returning EFAULT directly. `ISSUE22-HUNT-TASK.md` asks Codex exactly that as its question 2, so check
-their answer before building a second probe.
+## 7. Cleanup owed once the fix is accepted
 
-## 7. Codex is working on four questions (`ISSUE22-HUNT-TASK.md`)
-
-1. Which paths in stock `usrxmemflt_orig` (0x5aede) and `hardbus` return nonzero without calling
-   `as_fault` — byte-exact, so the probe can be extended in one edit.
-2. Whether `read(2)` has EFAULT sources outside the fault machinery at all.
-3. **★ Why copyback amplifies it** — candidates: `dma_cache040`'s prepare=`cpusha` /
-   complete=range-`cinvl` protocol, `cb_release040`'s per-page `cpushl` sweep, `hat040`'s
-   `Lhl_dofree` reorder (leaf-clear + `cpusha` + `pflusha` before `page_free`). A named transient
-   window would be both the mechanism and the amplification in one answer.
-4. Whether depth 4 is legitimately reachable, which decides "raise the cap" versus "stop the
-   nesting".
-
-## 8. Two things NOT to redo
-
-* **Do not re-run the write-through comparison** unless a fix lands: 3 runs / 288 verifications
-  clean is already recorded.
-* **Do not re-run copyback's acceptance items**: reboot disk-truth PASS, `pl[]` no violation on
-  either body (Codex predicted that for a tail-fault workload), Dhrystone measured three times.
-
-## 9. Artifacts (`nasu:Public/amix/hwtest-260728/`, names carry the build id)
-
-```text
-unix-040-b2-dbg-260728-36    copyback + exit probe   <- the hunt kernel
-unix-040-dbg-260728-35       write-through + probe   <- control
-unix-040-260728-34           base, no probes
-unix_boot040                 MANDATORY loader
-b2verify.c b2repro-copy.sh b2reboot-truth.sh COPYBACK-RUNSHEET.txt
-```
-
-`uname -m` is the only reliable identifier — the filenames in `build/` never change.
-
-## 10. Marked as inference, not measurement
-
-* That the depth cap or the no-kas-segment exit is the source is a **hypothesis**; the probe exists
-  to test it and may refute it.
-* That copyback's cache-management hooks create the window is a **candidate list**, not a finding.
-* July's "ISSUE-22 is kernel-independent" is a July measurement; today's data shows a strong
-  kernel-dependence in *frequency*, which is not the same claim and does not contradict it.
+* `userspace040.s` still carries the reroute band-aid (`us_reroute_on`, default 0). Remove it: it
+  treats the symptom and cannot succeed when the access itself is aimed at the wrong space.
+* The `DBG userspace ODD` `cmn_err` prints live in the BASE link. Keep the counters, drop or gate
+  the printing before shipping a quiet kernel.
+* Nothing in this work is committed yet.

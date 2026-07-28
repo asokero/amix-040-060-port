@@ -24,11 +24,39 @@
 | (usrxmemflt_orig=0x5aede; krnxmemflt_orig binds to the NATIVE core in krnxmemflt040.s
 | since 2026-07-13 -- the stock 0x5b140 body remains reachable as krnxmemflt_stock).
 
+| ===========================================================================================
+| 2026-07-28, ISSUE-22 -- DFC IS A CALLER'S REGISTER AND THIS FILE WAS EATING IT.
+|
+| Lwb_do sets DFC = WBxS&7 to re-issue a pending write-back with the faulted access's function
+| code, and never restores it.  DFC is not saved by the exception mechanism, so the value
+| survives the rte back into whatever the CPU was doing.  What it was doing is usually a copy:
+| lcopyout sets DFC = 1 (user data) ONCE before its movesl loop, and 22% of all classifications
+| on that loop's fault path are supervisor-data faults on the kernel segmap source (measured:
+| us_odd_kern = 660 of us_calls = 2939 during one boot).  Any of those, if the frame carried a
+| valid write-back, returns to the copy loop with DFC = 5.  The next movesl then looks a USER
+| address up in the SUPERVISOR tree, faults with TM = 5, and k_trap's userspace() -- correctly
+| reading the frame -- routes it to the kernel resolver, whose as_segat(&kas, userVA) cannot
+| succeed.  EFAULT, with no as_fault call anywhere, which is exactly the measured signature:
+|     DBG krnxflt FAILEXIT w=2 va=800C96B0 rw=2 depth=1     (b2verify's own malloc'd heap)
+| It is rare because it needs a pending write-back with FC != 1 to be replayed mid-copy, and it
+| is amplified by copyback because copyback is what leaves stores pending.
+|
+| The fix is to treat DFC the way the ABI treats every other caller register: save it on entry
+| to the fault wrapper, restore it before returning.  Saving in the WRAPPER rather than in
+| Lwb_do is deliberate -- it is nesting-safe (each invocation has its own frame, so a nested
+| fault inside the replay restores the OUTER replay's DFC, which is the value that loop needs),
+| and Lwb_do cannot use the stack at all: k_trap lands an unresolvable nested fault on Lwb_fail
+| with the trap-time SP, whose rts expects the stack exactly as bsr left it.
+| wb_dfc_on = 0 restores the old behaviour in one .data long, for an A/B inside a single boot.
+| ===========================================================================================
+
 	.text
 	.globl	usrxmemflt
 usrxmemflt:
-	linkw	%fp,&0
+	linkw	%fp,&-4			| fp@(-4) = the caller's DFC
 	moveml	%d2-%d5/%a2-%a3,%sp@-
+	.word	0x4e7a,0x0001		| movec %dfc,%d0
+	movel	%d0,%fp@(-4)
 	moveal	%fp@(8),%a2		| 060-B: fmt-4 frame? synthesize an 040-style
 	bsrw	wb060_sswsynth		| SSW at +76 BEFORE the stock classifier reads it
 	movel	%d0,%d5			| XPAGE unit item 1: the ORIGINAL FSLW, which the
@@ -51,15 +79,24 @@ usrxmemflt:
 	beqw	Lu_done			| caller instead of being masked by the near page's
 	movel	%d0,%d4			| success -- otherwise the restart loops forever
 Lu_done:
+	bsrw	Lwb_dfccheck		| count DFC corruption whether or not the fix is on
+	tstl	wb_dfc_on		| ISSUE-22: give the interrupted code its DFC back
+	beqs	Lu_nodfc
+	movel	%fp@(-4),%d0
+	.word	0x4e7b,0x0001		| movec %d0,%dfc
+	addql	&1,wb_dfc_n
+Lu_nodfc:
 	movel	%d4,%d0			| restore usrxmemflt's return value
-	moveml	%fp@(-24),%d2-%d5/%a2-%a3
+	moveml	%fp@(-28),%d2-%d5/%a2-%a3
 	unlk	%fp
 	rts
 
 	.globl	krnxmemflt
 krnxmemflt:
-	linkw	%fp,&0
+	linkw	%fp,&-4			| fp@(-4) = the caller's DFC
 	moveml	%d2-%d5/%a2-%a3,%sp@-
+	.word	0x4e7a,0x0001		| movec %dfc,%d0
+	movel	%d0,%fp@(-4)
 	moveal	%fp@(8),%a2		| 060-B: same fmt-4 SSW synthesis (uniform frame
 	bsrw	wb060_sswsynth		| semantics; krnx reads other fields, harmless)
 	movel	%d0,%d5			| XPAGE unit item 1: preserve the ORIGINAL FSLW
@@ -78,9 +115,34 @@ krnxmemflt:
 	beqw	Lk_done
 	movel	%d0,%d4
 Lk_done:
+	bsrw	Lwb_dfccheck		| count DFC corruption whether or not the fix is on
+	tstl	wb_dfc_on		| ISSUE-22: give the interrupted code its DFC back
+	beqs	Lk_nodfc
+	movel	%fp@(-4),%d0
+	.word	0x4e7b,0x0001		| movec %d0,%dfc
+	addql	&1,wb_dfc_n
+Lk_nodfc:
 	movel	%d4,%d0			| restore krnxmemflt's return value
-	moveml	%fp@(-24),%d2-%d5/%a2-%a3
+	moveml	%fp@(-28),%d2-%d5/%a2-%a3
 	unlk	%fp
+	rts
+
+| --- Lwb_dfccheck (ISSUE-22, 2026-07-28): does this fault return with a DIFFERENT DFC than it
+|     arrived with?  That is the whole mechanism, measured directly instead of waiting for its
+|     rare downstream symptom: one control run produced 7686 copy-path faults and no misroute, so
+|     "a fault during a copy" is not the trigger -- "a fault that eats DFC" is.  Counts on BOTH
+|     sides of the wb_dfc_on A/B, because the corruption happens regardless of whether we then
+|     repair it; with the fix on, this counter is the amount of damage the fix is undoing.
+|     Called with the wrapper's frame live (fp@(-4) = the DFC saved on entry).  d0/d1 scratch. ---
+Lwb_dfccheck:
+	.word	0x4e7a,0x0001		| movec %dfc,%d0  -- what the replay left behind
+	movel	%fp@(-4),%d1		| what the interrupted code had
+	cmpl	%d1,%d0
+	beqs	Lwb_dfcsame
+	addql	&1,wb_dfc_changed
+	movel	%d0,wb_dfc_lastnew
+	movel	%d1,wb_dfc_lastold
+Lwb_dfcsame:
 	rts
 
 | wb060_sswsynth (060-B, 2026-07-10; XPAGE unit 2026-07-28): a2 = trap frame.
@@ -320,8 +382,13 @@ Lwr_ret:
 | moves re-walks the page table and picks up the new writable PTE.
 Lwb_do:
 	.word	0xf518			| pflusha -- drop stale ATC entries before re-issuing the store
+	addql	&1,wb_replay_n		| ISSUE-22 instrumentation: how often a replay runs at all
 	moveq	&7,%d0
 	andl	%d3,%d0			| FC = WBxS & 7
+	cmpil	&1,%d0			| ...and how often it aims DFC somewhere other than user
+	beqs	Lwb_fcok		| data, which is the hazard: the interrupted copy loop
+	addql	&1,wb_replay_odd	| set DFC=1 ONCE and never reloads it (lcopyout 0x5a2)
+Lwb_fcok:
 	.word	0x4e7b,0x0001		| movec %d0,%dfc
 	movel	%d2,%d1			| d1 = data, to be left-justified -- BEFORE the size decode: movel
 					| sets the CCs, and it must not clobber the Z flag between the
@@ -395,4 +462,27 @@ Lwbf_msg:
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 Lwbf_n:
 	.long	0
+	.balign 4
+| --- ISSUE-22 (2026-07-28): DFC restore, and the one .data long that turns it off ---
+	.globl	wb_dfc_on
+wb_dfc_on:
+	.long	1			| 1 = restore the caller's DFC (the fix); 0 = A/B control
+	.globl	wb_dfc_n
+wb_dfc_n:
+	.long	0			| restores performed -- the denominator for the A/B
+	.globl	wb_dfc_changed
+wb_dfc_changed:
+	.long	0			| faults that returned with a DFC the caller did not set
+	.globl	wb_dfc_lastold
+wb_dfc_lastold:
+	.long	0			| the caller's DFC in the most recent such fault
+	.globl	wb_dfc_lastnew
+wb_dfc_lastnew:
+	.long	0			| what the replay left in DFC instead
+	.globl	wb_replay_n
+wb_replay_n:
+	.long	0			| write-back replays performed (Lwb_do entries)
+	.globl	wb_replay_odd
+wb_replay_odd:
+	.long	0			| ...of those, replays that set DFC to something != user data
 	.balign 4

@@ -1,0 +1,268 @@
+[23:01:11] CMD: uname -m
+uname -m; echo RUN''END0
+Amiga (Unlimited) 68040-260728-45
+RUNEND0
+[23:01:11] >>> COUNTERS BEFORE stage OFF (anchors: xpage_on=1, 7365676b)
+[23:01:11] CMD: /tmp/kpeek 080FFD88 5
+# /tmp/kpeek 080FFD88 5; echo RUN''END1
+KPEEK 080ffd88 = 00002aa0  (/dev/mem)
+KPEEK 080ffd8c = 00000000  (/dev/mem)
+KPEEK 080ffd90 = 000006f6  (/dev/mem)
+KPEEK 080ffd94 = 00000000  (/dev/mem)
+KPEEK 080ffd98 = 00000000  (/dev/mem)
+RUNEND1
+[23:01:11] CMD: /tmp/kpeek 080FFEB4 7
+# /tmp/kpeek 080FFEB4 7; echo RUN''END2
+KPEEK 080ffeb4 = 00000001  (/dev/mem)
+KPEEK 080ffeb8 = 00005d05  (/dev/mem)
+KPEEK 080ffebc = 000000dd  (/dev/mem)
+KPEEK 080ffec0 = 00000001  (/dev/mem)
+KPEEK 080ffec4 = 00000005  (/dev/mem)
+KPEEK 080ffec8 = 00002dd8  (/dev/mem)
+KPEEK 080ffecc = 000000dd  (/dev/mem)
+RUNEND2
+[23:01:12] CMD: /tmp/kpeek 080FFF54 4
+# /tmp/kpeek 080FFF54 4; echo RUN''END3
+KPEEK 080fff54 = 00000000  (/dev/mem)
+KPEEK 080fff58 = 00000001  (/dev/mem)
+KPEEK 080fff5c = 00000000  (/dev/mem)
+KPEEK 080fff60 = 7365676b  (/dev/mem)
+RUNEND3
+[23:01:12] CMD: /tmp/kpeek 080FFEB4 1
+# /tmp/kpeek 080FFEB4 1; echo RUN''END4
+KPEEK 080ffeb4 = 00000001  (/dev/mem)
+RUNEND4
+[23:01:12] CMD: /tmp/kpoke 080FFEB4 1 0
+# /tmp/kpoke 080FFEB4 1 0; echo RUN''END5
+KPOKE 080ffeb4 = 00000000 (was 00000001) OK
+RUNEND5
+[23:01:12] >>> TRIGGER: b2repro 16 bursts (3000 ignored), wb_dfc_on=0 (CONTROL = shipping behaviour)
+[23:01:12] CMD: cd /tmp && sh b2repro-copy.sh 16 OFF
+# cd /tmp && sh b2repro-copy.sh 16 OFF; echo RUN''END6
+B2REPRO-COPY start bursts=16 label=OFF ref=/payload.bin
+COPY-BURST-1
+B2V label=OFF-b1-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832330886 ctime=832330886
+B2V label=OFF-b1-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b1-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b1-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832330880 ctime=832330880
+B2V label=OFF-b1-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b1-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b1-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832330886 ctime=832330886
+B2V label=OFF-b1-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b1-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b1-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832330885 ctime=832330885
+B2V label=OFF-b1-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b1-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b1-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832330885 ctime=832330885
+B2V label=OFF-b1-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b1-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b1-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832330882 ctime=832330882
+B2V label=OFF-b1-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b1-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-2
+B2V label=OFF-b2-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832331004 ctime=832331004
+B2V label=OFF-b2-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b2-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b2-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832331008 ctime=832331008
+B2V label=OFF-b2-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b2-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b2-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832331002 ctime=832331002
+B2V label=OFF-b2-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b2-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b2-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832331011 ctime=832331011
+B2V label=OFF-b2-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b2-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b2-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832331010 ctime=832331010
+B2V label=OFF-b2-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b2-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b2-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832331011 ctime=832331011
+B2V label=OFF-b2-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b2-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-3
+B2V label=OFF-b3-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832331815 ctime=832331815
+B2V label=OFF-b3-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b3-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b3-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832331815 ctime=832331815
+B2V label=OFF-b3-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b3-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b3-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832331815 ctime=832331815
+B2V label=OFF-b3-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b3-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b3-cp4 path=/cp4.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832331815 ctime=832331815
+B2V label=OFF-b3-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b3-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b3-cp5 path=/cp5.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832331817 ctime=832331817
+B2V label=OFF-b3-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b3-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b3-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832331816 ctime=832331816
+B2V label=OFF-b3-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b3-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-4
+B2V label=OFF-b4-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832332124 ctime=832332124
+B2V label=OFF-b4-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b4-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b4-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832332120 ctime=832332120
+B2V label=OFF-b4-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b4-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b4-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832332123 ctime=832332123
+B2V label=OFF-b4-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b4-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b4-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832332117 ctime=832332117
+B2V label=OFF-b4-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b4-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b4-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832332124 ctime=832332124
+B2V label=OFF-b4-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b4-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b4-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832332124 ctime=832332124
+B2V label=OFF-b4-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b4-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-5
+B2V label=OFF-b5-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832332414 ctime=832332414
+B2V label=OFF-b5-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b5-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b5-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832332415 ctime=832332415
+B2V label=OFF-b5-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b5-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b5-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832332411 ctime=832332411
+B2V label=OFF-b5-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b5-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b5-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832332414 ctime=832332414
+B2V label=OFF-b5-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b5-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b5-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832332413 ctime=832332413
+B2V label=OFF-b5-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b5-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b5-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832332415 ctime=832332415
+B2V label=OFF-b5-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b5-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-6
+B2V label=OFF-b6-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333318 ctime=832333318
+B2V label=OFF-b6-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b6-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b6-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333315 ctime=832333315
+B2V label=OFF-b6-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b6-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b6-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333317 ctime=832333317
+B2V label=OFF-b6-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b6-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b6-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333319 ctime=832333319
+B2V label=OFF-b6-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b6-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b6-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333319 ctime=832333319
+B2V label=OFF-b6-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b6-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b6-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333319 ctime=832333319
+B2V label=OFF-b6-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b6-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-7
+B2V label=OFF-b7-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333435 ctime=832333435
+B2V label=OFF-b7-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b7-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b7-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333439 ctime=832333439
+B2V label=OFF-b7-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b7-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b7-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333439 ctime=832333439
+B2V label=OFF-b7-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b7-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b7-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333438 ctime=832333438
+B2V label=OFF-b7-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b7-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b7-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333438 ctime=832333438
+B2V label=OFF-b7-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b7-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b7-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333439 ctime=832333439
+B2V label=OFF-b7-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b7-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-8
+B2V label=OFF-b8-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333559 ctime=832333559
+B2V label=OFF-b8-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b8-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b8-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333551 ctime=832333551
+B2V label=OFF-b8-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b8-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b8-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333555 ctime=832333555
+B2V label=OFF-b8-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b8-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b8-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333560 ctime=832333560
+B2V label=OFF-b8-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b8-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b8-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333560 ctime=832333560
+B2V label=OFF-b8-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b8-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b8-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333561 ctime=832333561
+B2V label=OFF-b8-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b8-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-9
+B2V label=OFF-b9-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333683 ctime=832333683
+B2V label=OFF-b9-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b9-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b9-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333673 ctime=832333673
+B2V label=OFF-b9-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b9-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b9-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333683 ctime=832333683
+B2V label=OFF-b9-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b9-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b9-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333682 ctime=832333682
+B2V label=OFF-b9-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b9-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b9-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333680 ctime=832333680
+B2V label=OFF-b9-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b9-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b9-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333683 ctime=832333683
+B2V label=OFF-b9-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b9-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-10
+B2V label=OFF-b10-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333797 ctime=832333797
+B2V label=OFF-b10-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b10-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b10-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333803 ctime=832333803
+B2V label=OFF-b10-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b10-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b10-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333800 ctime=832333800
+B2V label=OFF-b10-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b10-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b10-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333804 ctime=832333804
+B2V label=OFF-b10-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b10-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b10-cp5 path=/cp5.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333804 ctime=832333804
+B2V label=OFF-b10-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b10-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b10-cp6 path=/cp6.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832333803 ctime=832333803
+B2V label=OFF-b10-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b10-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-11
+B2V label=OFF-b11-cp1 path=/cp1.bin dev=4718614 ino=51 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832334277 ctime=832334277
+B2V label=OFF-b11-cp1 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b11-cp1 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b11-cp2 path=/cp2.bin dev=4718614 ino=52 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832334276 ctime=832334276
+B2V label=OFF-b11-cp2 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b11-cp2 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b11-cp3 path=/cp3.bin dev=4718614 ino=53 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832334278 ctime=832334278
+B2V label=OFF-b11-cp3 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b11-cp3 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b11-cp4 path=/cp4.bin dev=4718614 ino=54 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832334274 ctime=832334274
+B2V label=OFF-b11-cp4 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b11-cp4 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b11-cp5 path=/cp5.bin dev=4718614 ino=56 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832334278 ctime=832334278
+B2V label=OFF-b11-cp5 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b11-cp5 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+B2V label=OFF-b11-cp6 path=/cp6.bin dev=4718614 ino=55 mode=100666 nlink=1 size=4194304 srcsize=4194304 mtime=832334278 ctime=832334278
+B2V label=OFF-b11-cp6 read_total=4194304 dst_crc=50250 dst_blocks=8192
+B2V label=OFF-b11-cp6 CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250
+COPY-BURST-12
+[00:06:13] TIMEOUT after 3900s
+[00:06:13] trigger ran 65.0 min
+[00:06:13] >>> COUNTERS AFTER stage OFF
+[00:06:13] CMD: /tmp/kpeek 080FFD88 5
+/tmp/kpeek 080FFD88 5; echo RUN''END7
+[00:08:13] TIMEOUT after 120s
+[00:08:13] CMD: /tmp/kpeek 080FFEB4 7
+/tmp/kpeek 080FFEB4 7; echo RUN''END8
+[00:10:13] TIMEOUT after 120s
+[00:10:13] CMD: /tmp/kpeek 080FFF54 4
+/tmp/kpeek 080FFF54 4; echo RUN''END9
+[00:12:13] TIMEOUT after 120s
+[00:12:13] CMD: uptime
+uptime; echo RUN''END10
+[00:13:13] TIMEOUT after 60s
+[00:13:14] stage OFF done

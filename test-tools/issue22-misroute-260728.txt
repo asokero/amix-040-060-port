@@ -1,0 +1,170 @@
+ISSUE-22 NAMED ON REAL HARDWARE -- the fault is MISROUTED, not nested
+=====================================================================
+2026-07-28 evening, A3000 + Mercury 040, kernel 68040-260728-36 (copyback + the FAILEXIT probe).
+kernelsupport HEAD b8adfc7.  Serial capture /tmp/amix-issue22-hunt.log, offset at run start 218343.
+
+THE DECISIVE LINE
+-----------------
+    WARNING: DBG krnxflt FAILEXIT w=2 va=800C96B0 rw=2 depth=1
+
+    w=2     no kas segment owns the fault address   (as_fault is NEVER called on this exit --
+                                                     which is why the as_fault FAIL logger, cap 64
+                                                     and unused, stayed silent through every hit)
+    depth=1 no nesting whatsoever
+    va, rw  VALID on this exit (only w=1 has them uninitialised)
+
+WHAT IT REFUTES
+---------------
+Codex's static analysis (amix-kernel-analysis vm-map/ISSUE22-EFAULT-SOURCE.md, f757544) predicted
+    DBG krnxflt FAILEXIT w=1 ... depth=5
+from the global Lkx_depth counter aggregating concurrent sleeping resolvers.  The counter IS global
+and IS held across as_fault (verified in prototypes/krnxmemflt040.s:52/272 -- that part of the
+analysis is correct), but it is not what fires:
+
+  * depth=1 at the failure.
+  * Lkx_depth read live through /dev/mem: 0 at rest before the run, 0 at rest after the failure.
+    No leak, no elevated resting value, on this boot or on the previous -32 boot.
+
+The depth cap remains a latent design defect worth fixing on its own terms (a machine-wide counter
+compared against a per-context limit), but it is NOT ISSUE-22.
+
+WHAT IT NAMES
+-------------
+va=0x800C96B0 is inside b2verify's own freshly malloc'd 4 MiB heap buffer (srcbuf, 760 KB in), and
+rw=2 is a WRITE: this is copyout filling a user buffer during read(2).  The fault on that user page
+was handed to the KERNEL resolver, which looked the address up in the kernel address space:
+
+    read(2) -> rwip -> uiomove -> copyout -> lcopyout (DFC = user data, movesl)
+      page fault on the user destination
+        k_trap 0x5a19e   tstl u+0x374        nofault pad armed?  yes -> classify
+        k_trap 0x5a1ca   jsr userspace       <== THE ROUTING DECISION, one call site in the kernel
+                         returned 0 = "kernel"
+        k_trap 0x5a1fe   jsr krnxmemflt
+          krnxmemflt040  as_segat(&kas, 0x800C96B0) = NULL   (stock contract, verbatim at 0x5b19e
+                                                              in the vanilla body)
+          -> unresolved, no as_fault call            -> w=2
+        k_trap 0x5a212   saved PC := u_nofault pad
+        sf_fault 0x5f2   -> copyout returns -1 -> uiomove 0x43b54 -> EFAULT
+    cp/b2verify: "read: Bad address"
+
+The classifier is right almost always: the same run resolved on the order of 90000 copyout page
+faults and misrouted ONE.  So userspace() normally reads function code 1 (user data) out of the
+040 SSW at frame+76 and occasionally reads something else.  WHAT else is the open question; the
+next probe answers it by printing the raw SSW.
+
+This also corrects a written assumption in KNOWN-ISSUES' own ISSUE-22 section ("a guarded MOVES
+fault has transfer mode = user, so k_trap dispatches it to usrxmemflt").  Usually true; measurably
+not always.
+
+INSTRUMENT DISCIPLINE (both instruments were bracketed, because yesterday a dead capture nearly
+became the strongest result of the day)
+-----------------------------------------------------------------------------------------------
+  * Serial verified alive BEFORE the run:  DBG SIG sig=9 pid=197  (pid matches the shell's report)
+  * Serial verified alive AFTER the run:   DBG SIG sig=9 pid=672
+  * Serial-INDEPENDENT cross-check: Lkx_fn (the probe's own print counter) read from /dev/mem = 1,
+    and the log contains exactly 1 FAILEXIT line.  The capture lost nothing.
+  * Every /dev/mem read was anchored between two words of known content (xpage_on == 1 before the
+    counter, the string "segkmem_ptes" after it).  Anchors matched on both kernels, so the address
+    mapping is measured rather than assumed.
+  * The stray `cat /dev/ttyUSB0` found holding the port at session start was killed first: two
+    readers split the byte stream between them, which would have corrupted the capture silently.
+
+THE RUN
+-------
+  boot 68040-260728-36, mount NFS, cc b2verify, sh b2repro-copy.sh 16 hunt
+  bursts 1-14      all V0 (84 verifications, byte-exact)
+  burst 15 cp2     B2V CLASS=SOURCE_ERROR src=/payload.bin errno=14   (EFAULT)
+  41.5 minutes wall clock, one hit.
+  NOTE: -32 hit at burst 4 and burst 1 in its two runs; -36 hit at burst 15.  The reproducer is
+  stochastic, so "clean" is never by itself evidence -- which is why the follow-up kernel counts
+  the misroute events instead of waiting for one to surface as an error.
+
+NEXT: 68040-260728-39
+---------------------
+Same image plus, in prototypes/userspace040.s:
+  * a probe that logs fmt / fc / fa / raw SSW whenever the function code is not user (cap 8 for
+    user addresses = the misroute, cap 4 for kernel addresses = context and positive control);
+  * .globl counters readable with kpeek: us_calls (the denominator), us_odd_user, us_odd_kern,
+    us_reroute_n;
+  * the fix: fc-not-user AND fa >= 0x80000000 -> resolve against the process address space.
+    SAFE BY CONSTRUCTION: userspace() has exactly one caller (k_trap 0x5a1ca) and runs only with
+    the nofault pad armed, where a "kernel" verdict on a user address always ends in
+    as_segat(&kas, userVA) = NULL.  The rerouted set is exactly the set that fails today.
+  * us_reroute_on: one .data long, flipped live with kpoke, so the A/B runs inside ONE boot.
+
+Runtime addresses in -39 (0x08000000 + textsize 0xe78c0 + .data offset):
+    us_calls      080FFD10      us_odd_user   080FFD14      us_odd_kern   080FFD18
+    us_reroute_n  080FFD1C      us_reroute_on 080FFD20
+    Lkx_fn        080FFEC0      xpage_on      080FFEC4 (=1, ANCHOR)   Lkx_depth 080FFEC8
+
+Emulator smoke (040, kernel -38 = the same code write-through): boots through init to a listening
+telnetd, no panic, and the probe prints
+    DBG userspace ODD fmt=7 fc=5 fa=40452000 ssw=505
+which is copyout's legitimate SOURCE side -- a supervisor-data read fault on the kernel segmap VA
+(ssw 0x505 = ATC fault, RW=1 read, TM=101 supervisor data).  A kernel address, so the reroute
+leaves it alone, and it doubles as proof the probe fires.
+
+ROOT CAUSE, FOUND BY READING AND THEN MEASURED: wb040.s EATS THE DFC REGISTER
+=============================================================================
+Verified byte-exactly in the stock binary:
+
+    000005a0 <lcopyout>:
+         5a0:  moveq #1,%d0
+         5a2:  movec %d0,%dfc           <-- DFC = user data, set ONCE
+         5c0 <lcolloop>: movel %a0@+,%d1 ; movesl %d1,%a1@+ ; subql #4,%d0 ; bgel
+         5d6 <lcol2>:    moveb %a0@+,%d1 ; movesb %d1,%a1@+ ; subql #1,%d0 ; bnel
+         5e4 <lcodone>:  clear the pad, return 0
+         5f2 <sf_fault>: clear the pad, return -1        <-- what uiomove turns into EFAULT
+
+The loop never reloads DFC.  Note also that its source read is a PLAIN movel from the kernel
+segmap -- that is the supervisor-data fault our probe counts by the thousand.
+
+prototypes/wb040.s's Lwb_do sets DFC = WBxS&7 to re-issue a pending write-back with the faulted
+access's function code, and never restores it.  DFC is not saved by the exception mechanism, so
+the value survives the rte back into the interrupted copy loop.  From there:
+
+    next movesl uses DFC=5 -> a USER address is looked up in the SUPERVISOR tree -> access error
+    with TM=5 -> userspace() reads the frame CORRECTLY and says "kernel" -> krnxmemflt ->
+    as_segat(&kas, userVA) = NULL -> unresolved, no as_fault -> sf_fault -> EFAULT
+
+MEASURED on 68040-260728-45, which counts the mechanism instead of waiting for its symptom:
+
+    one boot, nothing else running
+        wb_replay_n     4747     write-back replays performed
+        wb_replay_odd    218     ...of those, replays that set DFC to something != user data
+        wb_dfc_changed   218     faults that returned with a DFC the caller did not set
+        wb_dfc_lastold     1     what the interrupted code had   (user data)
+        wb_dfc_lastnew     5     what the replay left behind     (supervisor data)
+
+    The two 218s are the same events counted at two different places: every odd-FC replay
+    corrupts, none of them is repaired by anything else.  1 -> 5 is the exact pair the theory
+    predicted before the counter existed.
+
+    30 s of cofault (six processes doing nothing but read into fresh malloc'd buffers)
+        wb_replay_n    +6472
+        wb_replay_odd     +0     <-- and this is why cofault never reproduces ISSUE-22
+        wb_dfc_changed    +0
+
+That last line is the useful negative result.  A pure read workload generates thousands of
+replays and not one of them carries a non-user function code, because the only pending stores
+are the copy's own.  The hazard needs a pending SUPERVISOR store at the moment of a copy fault,
+which is what boot activity and b2repro's concurrent disk copies produce and cofault does not.
+It also explains the rarity: DFC has to be corrupted WHILE a copy is still mid-loop, since the
+next copyin/copyout call sets it again.
+
+THE FIX
+-------
+Treat DFC as what it is -- a register belonging to the interrupted code.  Save it on entry to
+the fault wrapper, restore it before returning.  In the WRAPPER, not in Lwb_do:
+  * nesting-safe: each invocation has its own frame, so a nested fault inside a replay restores
+    the OUTER replay's DFC, which is the value that loop still needs;
+  * Lwb_do cannot use the stack at all -- k_trap lands an unresolvable nested fault on Lwb_fail
+    with the trap-time SP, and its rts expects the stack exactly as bsr left it.
+wb_dfc_on = 0 restores the old behaviour in one .data long, so the A/B runs inside one boot.
+
+TOOLS ADDED (test-tools/)
+-------------------------
+  kpeek.c      read kernel longwords via /dev/mem; always used with a known anchor in range
+  kpoke.c      write one kernel longword, refusing unless the caller states the current value
+  kdepthmax.c  poll(2)-paced high-water sampler for a counter (written as the fallback for a run
+               that produces no event; unused so far)
