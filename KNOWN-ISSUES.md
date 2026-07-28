@@ -2589,7 +2589,69 @@ ASCII (`MET\x04`), i.e. data dereferenced as a pointer. It does not correlate wi
 only change (a debug threshold constant), but the cause is unknown and it is recorded rather than
 explained away.
 
-## ISSUE-37 (OPEN, hardware-reproduced): wolf3d wedges the machine in an infinite as_fault loop
+## ISSUE-37 — ✅ ROOT CAUSE IDENTIFIED AND FIXED 2026-07-28 (hardware confirm run pending)
+
+*(ISSUE-37 XPAGE root cause)*
+
+**The 68040 reports the fault address of a MISALIGNED access as the address where the access
+STARTS, even when the page actually missing is the NEXT one** (SSW `MA`). `krnxmemflt040` never
+looked at that, so it handed as_fault the near page, as_fault resolved a page that was already
+resident, returned 0, the instruction restarted and faulted identically -- an **unkillable** kernel
+loop, since the fault is taken in kernel mode on the process's behalf.
+
+**We had already found this exact defect on the 060 and explicitly excluded the 040.**
+`prototypes/wb040.s`'s `wb060_xpage` fixes it for the format-4 path, citing Linux/m68k's
+`if (fslw & MA) addr = (addr + 7) & -8`, and its comment ends:
+
+```
+| Gated on fmt-4: on the 040 the byte-wise replay already covers this.
+```
+
+That sentence is the defect. The byte-wise replay covers **write-backs**; a **read** access error
+never reaches the replay, so the 040's read side was uncovered. The 060 sighting even had the same
+shape: `addr=40734FFE`, a kernel VA two bytes before a page end, `ret=0`, infinite loop.
+
+### The measured invariant that identified it
+
+| instance | addr | slot base | in-slot offset |
+|---|---|---|---|
+| 27.7. | `0x408F4FFF` | `0x408F4000` | **0xFFF** |
+| 28.7. #1 | `0x40A80FFF` | `0x40A80000` | **0xFFF** |
+| 28.7. #2 | `0x40946FFF` | `0x40946000` | **0xFFF** |
+
+Three loops, three different slots, always the **last byte of an 8 KiB segmap slot's first page** --
+exactly where a misaligned access straddles into the slot's second page. And `as_fault(len=1)`
+rounds to a 4096-byte range covering only the first page, so `segmap_fault` maps that page and never
+the second.
+
+Supporting: the segment is `segmap` (`ops` resolved to `segmap_ops` from the loop itself on
+hardware, window `0x40440000..0x422BFFFF`); the user PC is constant at `libc.so.1+0x13088` =
+**`read`+4**, so the loop is inside a `read(2)`; `type=0` and `ret=0` every iteration.
+
+### Why 76 synthetic cases missed it
+
+Six sweeps varied offset, length, alignment, straddling, destination residency and the EOF tail on
+both filesystems, and never produced a *misaligned kernel access starting at a page's last byte
+whose successor page was absent*. The straddles they did produce had the second page already
+resident, so each fault reported its own address and resolved normally. **The trigger is a
+conjunction, and varying one property at a time cannot construct one.**
+
+### The fix
+
+`prototypes/krnxmemflt040.s`, mirroring the proven 060 recipe rather than inventing one: after a
+**successful** resolve, if the fault address lies in the last 8 bytes of its page, resolve the next
+page too (`len=4`, `F_INVAL`, `S_READ`, `&kas`), preserving the original return value. The 8-byte
+window is deliberately the sibling's: `move16` cannot trigger this (16-byte aligned by definition)
+and 8 bytes covers every misalignable operand up to an FPU double.
+
+Built `68040-260728-16` (base), `-17` (dbg), `-18` (rtg-dbg), `-19` (rtg). Verified: both CPUs boot
+clean (0 faults, idle reached), relocs 0, and a 1.4 MB copy plus `cmp` byte-identical on the 060 --
+this sits on every kernel fault path, so a functional check mattered more than usual.
+
+**Not confirmed yet.** The acceptance test is one command: run wolf3d on `260728-18`. If it reaches
+its menu, ISSUE-37 is closed. Until then: a root cause with a matching fix, not a proven repair.
+
+## (original entry) ISSUE-37: wolf3d wedges the machine in an infinite as_fault loop
 
 Found 2026-07-28 on real hardware, VA2000 in Zorro II mode, kernel `68040-260727-02` (RTG dbg).
 Wolf3D was ported to AMIX/030 by us earlier and worked there, so this is a **candidate Model-B
