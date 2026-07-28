@@ -28,76 +28,11 @@ as_segat:
 	jsr	as_segat_orig
 	addqw	&8,%sp
 	moveal	%a0,%a2			| a2 = returned seg (preserved across cmn_err)
-| ===========================================================================
-| ISSUE-37 block: NAME the segment driver that owns a REPEATING kernel-VA fault.
-|
-| wolf3d wedges the machine in an infinite as_fault loop on kernel VA 0x408F4FFF with ret=0 --
-| the resolver reports success and the same address faults again, forever.  Four user-space
-| sweeps (62 cases: every within-slot offset including the exact one, straddles, the game's own
-| loader, and the whole write path) failed to reproduce it, so the elimination argument that
-| named segmap must be MEASURED instead of trusted.  Printing seg->s_ops does that outright:
-|     segdev_ops 0x0000b380   segkmem_ops 0x0000b3c4   segmap_ops 0x0000b408
-|     segu_ops   0x0000b450   segvn_ops   0x0000b494
-|
-| GATED ON REPETITION, not on a call counter.  Kernel-VA faults happen constantly during ordinary
-| file I/O, so any plain cap (16, 64, anything) is spent during boot and the probe is deaf by the
-| time the game runs.  A repeat threshold inverts that: the loop trips it within milliseconds.
-|
-| THRESHOLD MEASURED, NOT GUESSED -- and my first guess was wrong in an instructive way.
-| At 64 the probe fired on a HEALTHY emulator boot, twice, on 0x40444000 and 0x40550000.  That is
-| not a bug in the gate: it is what segmap does.  Slots are RECYCLED constantly, so the same
-| kernel VA is faulted again and again as different files pass through it, and long consecutive
-| streaks on one VA are entirely normal.  (Worth carrying into ISSUE-37: recycling by itself
-| clearly does not wedge anything, since idle boot does it continuously.)  The wolf3d loop reached
-| n=0x2000 and climbing within a second, so 4096 sits far above normal recycling and far below the
-| loop.  Capped at 4 prints so a probe for a fault storm cannot itself become one.
-|
-| THAT FALSE POSITIVE ALREADY ANSWERED THE QUESTION, on 2026-07-28 in the emulator:
-|     DBG segat LOOP addr=40444000 seg=400B9800 base=40440000 size=1E80000 ops=80F2AB8
-| Resolving 0x080F2AB8 against the dbg kernel's runtime .data base (text base 0x08000000 + .text
-| size 0xE76B0) gives .data offset 0xB408 = segmap_ops.  And the window 0x40440000..0x422BFFFF
-| (30.5 MB) contains 0x408F4FFF.  So the segment behind ISSUE-37 is segmap, MEASURED rather than
-| argued -- which is what four failed user-space reproductions had made necessary.
-	movel	%fp@(12),%d3
-	cmpil	&0x40000000,%d3
-	bcsw	Lsg_user		| below kvseg: not this block's business
-	cmpil	&0x50000000,%d3
-	bccw	Lsg_user		| above kvsegu: ditto
-	cmpl	Lsg_last,%d3
-	beqw	Lsg_same
-	movel	%d3,Lsg_last		| a different address: the streak restarts
-	clrl	Lsg_rep
-	braw	Lsg_user
-Lsg_same:
-	movel	Lsg_rep,%d2
-	addql	&1,%d2
-	movel	%d2,Lsg_rep
-	cmpil	&4096,%d2		| see the measurement note below: 64 was NOT enough
-	bnew	Lsg_user
-	movel	Lsg_shown,%d2
-	cmpil	&4,%d2
-	bccw	Lsg_user
-	addql	&1,%d2
-	movel	%d2,Lsg_shown
-	tstl	%a2
-	beqw	Lsg_kvnull
-	movel	%a2@(24),%sp@-		| seg->s_ops  <-- names the driver
-	movel	%a2@(8),%sp@-		| seg size
-	movel	%a2@(4),%sp@-		| seg base
-	movel	%a2,%sp@-		| seg
-	movel	%d3,%sp@-		| addr
-	pea	Lsg_kvmsg
-	pea	2
-	jsr	cmn_err
-	lea	%sp@(28),%sp
-	braw	Lsg_user
-Lsg_kvnull:
-	movel	%d3,%sp@-		| addr
-	pea	Lsg_kvnullmsg
-	pea	2
-	jsr	cmn_err
-	lea	%sp@(12),%sp
-Lsg_user:
+| (An earlier ISSUE-37 probe lived here, gated on consecutive as_segat calls with the same
+|  address.  It stayed silent through a real loop that reached n=0x2000, because as_segat has
+|  twenty call sites and any other kernel-range lookup between iterations resets such a
+|  streak.  Removed rather than kept as a fallback: two code paths printing the same message
+|  text would make the output ambiguous.  The working version is in the as_fault wrapper.)
 | --- gated trace for user faults (addr >= 0x80800000), max 16 ---
 	movel	%fp@(12),%d0
 	cmpil	&0x80800000,%d0
@@ -495,7 +430,60 @@ Laff_rep:
 	braw	Laff_ok
 Laflp_same:
 	addql	&1,Laflp_n
+| --- ISSUE-37 v2 (2026-07-28): name the segment that owns a LOOPING kernel-VA fault.
+|     v1 put this in the as_segat wrapper, gated on consecutive as_segat calls with the same
+|     address, and it stayed SILENT through a real loop that reached n=0x2000.  The reason is
+|     structural: as_segat has TWENTY call sites, so any other kernel-range lookup between two
+|     loop iterations resets a consecutive-streak counter.  Never gate on a streak in a function
+|     that half the VM calls.
+|     THIS counter is the right one, measured rather than assumed: the as_fault REPEAT detector
+|     produced 0 lines across four healthy emulator boots (040 and 060) and 38 lines on hardware,
+|     all of them inside the two wolf3d loops.  So reaching 512 consecutive faults on ONE address
+|     is already proof of a loop, and the same trigger that prints the REPEAT line can print the
+|     segment identity.  Compare the ops pointer against (runtime .data base + these offsets):
+|         segdev_ops 0xb380  segkmem_ops 0xb3c4  segmap_ops 0xb408  segu_ops 0xb450  segvn_ops 0xb494
+|     as_fault hands as_segat the PAGE-ROUNDED address (andiw #-4096 at 0xae156), so round it the
+|     same way here or the lookup is not the one the loop is doing.  Fires once per streak, cap 4.
 	movel	Laflp_n,%d1
+	cmpil	&512,%d1
+	bnew	Lafseg_skip
+	movel	%fp@(12),%d3
+	cmpil	&0x40000000,%d3
+	bcsw	Lafseg_skip
+	cmpil	&0x50000000,%d3
+	bccw	Lafseg_skip
+	movel	Lafseg_p,%d1
+	cmpil	&4,%d1
+	bccw	Lafseg_skip
+	addql	&1,%d1
+	movel	%d1,Lafseg_p
+	movel	%d3,%d1
+	andil	&0xfffff000,%d1		| the rounded VA as_fault itself looked up
+	movel	%d1,%sp@-
+	movel	%fp@(8),%sp@-		| the SAME address space as_fault used
+	jsr	as_segat_orig		| _orig: never re-enter our own as_segat wrapper
+	addqw	&8,%sp
+	moveal	%a0,%a3			| a3 = seg (NULL possible: that would be FC_NOMAP)
+	tstl	%a3
+	beqw	Lafseg_null
+	movel	%a3@(24),%sp@-		| seg->s_ops -- the driver identity
+	movel	%a3@(8),%sp@-		| seg size
+	movel	%a3@(4),%sp@-		| seg base
+	movel	%a3,%sp@-		| seg
+	movel	%d3,%sp@-		| the faulting address as reported
+	pea	Lafseg_msg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(28),%sp
+	braw	Lafseg_skip
+Lafseg_null:
+	movel	%d3,%sp@-
+	pea	Lafseg_nullmsg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(12),%sp
+Lafseg_skip:
+	movel	Laflp_n,%d1		| reload: the block above clobbered d1
 	andil	&0x1ff,%d1		| every 512th repeat
 	bnew	Laff_str
 	movel	Laflp_p,%d1
@@ -976,18 +964,6 @@ Lrx_go:
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
-Lsg_kvmsg:
-	.asciz	"DBG segat LOOP addr=%x seg=%x base=%x size=%x ops=%x"
-	.even
-Lsg_kvnullmsg:
-	.asciz	"DBG segat LOOP addr=%x seg=NULL (as_fault returns FC_NOMAP)"
-	.even
-Lsg_last:
-	.long	0
-Lsg_rep:
-	.long	0
-Lsg_shown:
-	.long	0
 Lsg_msg:
 	.asciz	"DBG as_segat as=%x addr=%x -> seg=%x base=%x size=%x"
 	.even
@@ -1043,6 +1019,14 @@ Laflp_addr:
 Laflp_n:
 	.long	0
 Laflp_p:
+	.long	0
+Lafseg_msg:
+	.asciz	"DBG segat LOOP addr=%x seg=%x base=%x size=%x ops=%x"
+	.even
+Lafseg_nullmsg:
+	.asciz	"DBG segat LOOP addr=%x seg=NULL -> as_fault should be returning FC_NOMAP"
+	.even
+Lafseg_p:
 	.long	0
 Laflp_msg:
 	.asciz	"DBG as_fault REPEAT pid=%d addr=%x upc=%x type=%x ret=%x n=%x"

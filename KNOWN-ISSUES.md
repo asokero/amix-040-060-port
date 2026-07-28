@@ -2656,6 +2656,75 @@ The mode set is the first thing the game does, so the hang can be anywhere from 
 3. **The second process.** The log has two pids (184 doing an `F_SOFTUNLOCK` at a slot base, 186
    looping). Sweeps were single-process.
 
+### ★★★ THE LOOP IS INSIDE A read(2) — the user PC resolves to a libc symbol (2026-07-28)
+
+Second hardware reproduction, kernel `68040-260728-12`:
+
+```
+DBG as_fault REPEAT pid=438 addr=40A80FFF upc=C1013088 type=0 ret=0 n=2000
+```
+
+**A different slot from 27.7. (`0x408F4FFF`) but the identical shape** — segmap window, last byte
+of a page, `type=0`, `ret=0` — and **exactly the same `upc`**. That constant is the lead we had
+been walking past:
+
+`libc.so.1` maps at `0xC1000000`, the vanilla copy is **not stripped**, and its text has
+`vaddr == file offset`. So `0xC1013088` is `libc.so.1 + 0x13088`, and the nearest preceding
+symbol is:
+
+```
+00013084 T _read      /  W read        <- upc is read + 4, i.e. the syscall stub
+00013098 T _stime
+```
+
+**So ISSUE-37 is a `read(2)` that never returns**, while the kernel spins in `as_fault` on a
+segmap address. That vindicates the original file-read model that four sweeps had seemed to
+refute — the sweeps were wrong about *which* read, not about the subsystem.
+
+### And the call site follows from wolf3d's own source
+
+`wl_main.c:1379` runs `SignonScreen()` first, before `PM_Startup` — which is why the screen goes
+black and the game never reaches its menu. It does this:
+
+```c
+VL_SetVGAPlaneMode();                  /* open /dev/va2000, mmap 4 MB, program the mode */
+signon = (byte *) calloc(320*200, 1);  /* 64000 bytes of FRESH anon memory */
+fread(signon, 320*200, 1, file);       /* ONE 64000-byte read into it */
+```
+
+That read has three properties **none of the 62 passing cases had**:
+
+1. one large read into an **untouched destination** — every earlier sweep read into a `.bss`
+   array or a block an earlier iteration had already faulted in, so `uiomove` never had to fault
+   the destination while also faulting the segmap source;
+2. a **live 4 MB segdev mapping** in the same address space (hypothesis 2 on the remaining list);
+3. `stdio` `fread` rather than a bare `read(2)`.
+
+`test-tools/readfresh.c` is sweep 5 and targets exactly this: fresh `/dev/zero`-mapped
+destinations so "untouched" is guaranteed rather than hoped for, a pre-touched control to separate
+destination-faulting from size, a case with `/dev/va2000` mapped, and a size bisect.
+
+### ⚠ The v1 probe failed, and the reason is worth keeping
+
+The segment-identity probe shipped in `260728-12` **stayed silent through a loop that reached
+`n=0x2000`**. Not a build problem: it was gated on *consecutive* `as_segat` calls with the same
+address, and **`as_segat` has twenty call sites**, so any other kernel-range lookup between two
+loop iterations resets such a streak. *Never gate on a consecutive streak inside a function half
+the VM calls.*
+
+v2 (`260728-14`/`-15`) attaches the print to the `as_fault` REPEAT counter instead, and that
+trigger is measured rather than assumed: **0 REPEAT lines across four healthy emulator boots (040
+and 060), 38 on hardware, all inside the two wolf3d loops.** So 512 consecutive faults on one
+address is already proof of a loop. Verified silent on a healthy boot after the change.
+
+### On the `pl[]` probe during the loop — a correct reading, not the tempting one
+
+`DBG pvn` produced **zero lines** during the loop. That does **not** show `pvn_getpages` was
+uncalled: the probe's sample cap (6) is consumed during boot, so a clean call prints nothing
+afterwards. Violations print independently up to 24, and none appeared. The honest statement is
+therefore: **no page-list capacity violation occurred**, and whether the loop even reaches
+`pvn_getpages` is still unknown.
+
 ### ✅ ANSWERED 2026-07-28: the segment IS segmap, measured rather than argued
 
 The probe was built (`prototypes/assegat_dbg.s`, repeat-gated, prints `seg->s_ops`) and it
