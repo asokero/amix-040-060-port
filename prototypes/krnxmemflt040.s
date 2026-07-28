@@ -53,7 +53,7 @@ krnxmemflt_orig:
 	addql	&1,%d0
 	movel	%d0,Lkx_depth
 	cmpil	&4,%d0
-	bgtw	Lkx_fail		| recursion cap: unresolved -> one clean panic
+	bgtw	Lkx_f1			| recursion cap: unresolved (ISSUE-22 candidate 1)
 
 | --- fault address ---
 	movel	%fp@(8),%sp@-
@@ -77,7 +77,7 @@ Lkx_haverw:
 	addqw	&8,%sp
 	movel	%a0,%d0			| as_segat returns the segment in a0
 	tstl	%d0
-	beqw	Lkx_fail		| no kas segment -> unresolved
+	beqw	Lkx_f2			| no kas segment -> unresolved (ISSUE-22 candidate 2)
 
 | --- kernel translation status: validated software walk of the LIVE tree ---
 	cmpil	&0x40000000,%d2
@@ -136,7 +136,7 @@ Lkx_haverw:
 	lea	%sp@(20),%sp
 	tstl	%d0
 	beqw	Lkx_ret			| resolved
-	braw	Lkx_fail		| normalize to 1 (stock protection-branch semantics)
+	braw	Lkx_f3			| as_fault FAILED (this one IS visible in the FAIL logger)
 
 Lkx_inval:
 	movel	%d3,%sp@-		| rw
@@ -148,6 +148,38 @@ Lkx_inval:
 	lea	%sp@(20),%sp
 	braw	Lkx_ret			| raw as_fault result (stock I-branch semantics)
 
+| --- ISSUE-22 EXIT PROBE (2026-07-28).  Evidence: a transient `read: Bad address` under copy
+|     pressure reaches user space while the as_fault FAIL logger (cap 64) records ZERO failures, so
+|     the EFAULT does not come from a failed page-in.  EFAULT arrives via sf_fault, which needs the
+|     RESOLVER to return nonzero -- and this function has exactly three failure exits, two of which
+|     never call as_fault at all.  So name the exit instead of guessing which one:
+|         w=1  recursion/depth cap exceeded (depth > 4)
+|         w=2  no kas segment owns the fault address
+|         w=3  as_fault itself failed (cross-check: this one must ALSO appear in the FAIL logger)
+|     Cap 8 prints -- enough to characterise, too few to flood a machine already under pressure.
+|     Copyback reproduces the EFAULT in the first burst, so one run should be sufficient.
+Lkx_f1:
+	moveq	&1,%d1
+	braw	Lkx_flog
+Lkx_f2:
+	moveq	&2,%d1
+	braw	Lkx_flog
+Lkx_f3:
+	moveq	&3,%d1
+Lkx_flog:
+	movel	Lkx_fn,%d0
+	cmpil	&8,%d0
+	bccw	Lkx_fail
+	addql	&1,%d0
+	movel	%d0,Lkx_fn
+	movel	Lkx_depth,%sp@-		| nesting depth at the failure
+	movel	%d3,%sp@-		| rw as decoded from the SSW
+	movel	%d2,%sp@-		| the fault address
+	movel	%d1,%sp@-		| which exit
+	pea	Lkx_fmsg
+	pea	2
+	jsr	cmn_err
+	lea	%sp@(24),%sp
 Lkx_fail:
 	moveq	&1,%d0
 Lkx_ret:
@@ -246,6 +278,11 @@ Lkx_nox:
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
+Lkx_fmsg:
+	.asciz	"DBG krnxflt FAILEXIT w=%d va=%x rw=%d depth=%d"
+	.even
+Lkx_fn:
+	.long	0
 	.globl	xpage_on
 xpage_on:
 	.long	1			| 1 = xpage handling live (default); 0 = the A/B control
