@@ -2755,6 +2755,32 @@ That read has three properties **none of the 62 passing cases had**:
 destinations so "untouched" is guaranteed rather than hoped for, a pre-touched control to separate
 destination-faulting from size, a case with `/dev/va2000` mapped, and a size bisect.
 
+### Sweeps 5 and 6: also negative — 76 synthetic cases now, and that is itself the finding
+
+Run on `68040-260728-13` (no reboot needed; both are user-space):
+
+| sweep | hypothesis it tested | cases | result |
+|---|---|---|---|
+| `readfresh.c` | one large read into an **untouched** destination (the SignonScreen shape), pre-touched control, size bisect, mmap-anon vs brk-anon | 7 | all passed |
+| `readtail.c` | one large read of a **whole UFS file, ending exactly at EOF** — the local analogue of ISSUE-36, motivated by UFS's 12 unconverted sites and `ufs_allocmap +0x0fff` | 7 | all passed, every byte correct |
+
+Note one limitation honestly: `readfresh` case 2 was meant to have `/dev/va2000` mapped, but
+`260728-13` is a dbg kernel **without** the RTG drivers (`va2000init` absent), so the map returned
+0 and the case degenerated into a copy of case 1. That half of the hypothesis is untested.
+
+**Six sweeps, 76 cases, no reproduction. The synthetic approach has failed decisively enough that
+continuing it is the wrong move**, and by this project's own rule (record and redirect after a few
+ruled-out hypotheses) the instrument has to change. What the failures collectively say is that the
+trigger is not any single read shape — not offset, not length, not alignment, not straddling, not
+destination residency, not the EOF tail, on either filesystem. It depends on something cumulative
+in the game's state.
+
+So the next step is **not a seventh synthetic case**. It is (a) the v2 probe on the real loop, which
+names the segment from the loop itself rather than from a healthy emulator fault, and (b) bisecting
+**the game**, using its own code paths — e.g. removing `signon.wl6` so `SignonScreen` returns before
+its read (`if(!file) { free(signon); return; }`) and seeing whether the hang moves to a later phase.
+After six failed models of the program, the program is the better instrument.
+
 ### ⚠ The v1 probe failed, and the reason is worth keeping
 
 The segment-identity probe shipped in `260728-12` **stayed silent through a loop that reached
