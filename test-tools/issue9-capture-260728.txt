@@ -1,0 +1,26 @@
+ISSUE-9 FIRST CAPTURE -- real hardware, 2026-07-28, kernel 68040-260728-12
+Serial capture (user's tee of /dev/ttyUSB0).  Representative slice; the flood itself
+repeated the identical BUS ERROR line 4328 times.
+
+PROCESS (from ps -ef on the live machine):
+    uucp   254    97  0 23:45:00 ?  0:00 sh -c /usr/lib/uucp/uudemon.cleanu > /dev/null
+    uucp   256   254 15 23:45:00 ?  1:50 /usr/lib/uucp/uudemon.cleanu
+  parent 97 = cron; machine clock 23:47, uptime 9 min -> a PERIODIC job, not a test.
+
+KERNEL-SIDE PROBE STATE (prototypes/sigkill_dbg.s):
+    23 x  DBG SIG sig=11 pid=256 stat=6 psargs=/usr/lib/uucp/uudemon.cleanu  uret=80011BF5 uarg2=80011A8C kcaller=804858C
+     8 x  DBG SEGVCTX a0=400B5604 a1=1 pte=94C6019 cell=4AFC0000 uva=48478000
+     8 x  DBG SEGVDMP p0=0 p4=0 cm4=74000000 c0=4AFC0000 c4=0 c8=0
+     1 x  DBG SEGVCTX a0=80012010 a1=80011C10 pte=0 cell=DEADDEAD uva=48478000
+     1 x  DBG SIG sig=11 pid=256 stat=6 psargs=/usr/lib/uucp/uudemon.cleanu  uret=1C uarg2=C07FFD7C kcaller=804858C fu=0
+     1 x  DBG SIG sig=9 pid=256 stat=2 psargs=-sh  uret=8000CACC uarg2=9 kcaller=804858C fu=1
+
+FAULT LINE (4328 identical):
+  NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:256 CMD:/usr/lib/uucp/uudemon.cleanu
+
+DETERMINISM: NOT deterministic.  The same script run by hand on the same kernel completed
+in 8 seconds with ZERO bus errors, so the corruption was in the state at that moment, not
+in the script.
+
+RECOVERY: kill -9 on the looping process restored the machine completely (sync clean).
+That distinguishes this from ISSUE-37, whose loop is inside the kernel and unkillable.

@@ -641,7 +641,63 @@ inert-store consumers.
 
 ---
 
-## ISSUE-9: idle-time infinite Bus Error loop (OPEN, uncaptured — separate from ISSUE-7)
+## ISSUE-9: idle-time infinite Bus Error loop — ✅ **CAPTURED 2026-07-28** (still open)
+
+**The capture ISSUE-9 has been waiting for since 2026-07-09 arrived on its own**, on real
+hardware, kernel `68040-260728-12`, with serial running. Evidence:
+`test-tools/issue9-capture-260728.txt`. It appeared during an ISSUE-36 acceptance session and the
+first assumption -- that the acceptance tests caused it -- turned out to be wrong.
+
+**It is a PERIODIC path, exactly as this entry predicted, and now it is named.** Not `fsflush`,
+not `pageout`, not the callout handler -- **cron**:
+
+```
+uucp   254    97  0 23:45:00 ?  0:00 sh -c /usr/lib/uucp/uudemon.cleanu > /dev/null
+uucp   256   254 15 23:45:00 ?  1:50 /usr/lib/uucp/uudemon.cleanu       <- 4328 faults
+```
+
+Parent 97 is cron; the machine's clock read 23:47 with 9 minutes of uptime, so the nightly uucp
+cleanup fired on its own schedule. The loop:
+
+```
+NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:256 CMD:/usr/lib/uucp/uudemon.cleanu
+DBG SIG sig=11 pid=256 stat=6 psargs=... uret=80011BF5 uarg2=80011A8C     (23x, probe-capped)
+DBG SEGVCTX a0=400B5604 a1=1 pte=94C6019 cell=4AFC0000 uva=48478000       (8x)
+DBG SEGVDMP p0=0 p4=0 cm4=74000000 c0=4AFC0000 c4=0 c8=0                  (8x)
+DBG SEGVCTX a0=80012010 a1=80011C10 pte=0 cell=DEADDEAD uva=48478000      (1x)
+```
+
+**ISSUE-9 and ISSUE-10 are the same family.** `cell=4AFC0000` is the signature this project已
+documented as the corrupt-heap-link morphology: `prototypes/sigkill_dbg.s` literally predicts it
+("`a1` = the bad link value -- expect 0x4AFC0000, self-validating"), `hat040.s:730` calls it "the
+4AFC005F bus-error avalanche", and `patch_swapin.py` ties it to a swapped-in anon page losing its
+upper half. `uret`/`a0`/`a1` are all in sh's heap range (`0x8001xxxx`). One sample shows the
+stronger form: **`pte=0`** with `cell=DEADDEAD`, i.e. the page is not merely wrong, it is gone.
+
+**NOT deterministic.** The same script run by hand on the same kernel completed in 8 seconds with
+zero bus errors. So the corruption is in the state at that moment, not in the script -- which is
+why a plain A/B cannot attribute it and why a soak is the only honest test.
+
+**RECOVERABLE, and that is a useful distinction:** `kill -9` on the looping process restored the
+machine completely (`sync` clean afterwards). ISSUE-37's loop is inside the kernel and cannot be
+killed. From the console the two are indistinguishable -- both are an endless error stream -- so
+**try killing the faulting PID before reaching for the reset switch.**
+
+**Attribution to the ISSUE-36 fix: not supported, but not excluded either.** All four changed sites
+live inside `nfs_getpage`/`nfs_getapage`, which only execute for NFS-backed vnodes, while
+`uudemon.cleanu` works on the local UFS spool -- so the changed code is not on its path. The `pl[]`
+probe also reported no contract violations anywhere in that boot, which is the specific mechanism
+that could have corrupted kernel state indirectly. What that does not exclude is some other
+indirect effect of the same boot's NFS activity, and an intermittent fault cannot be cleared by a
+single clean run.
+
+**Next step, unchanged in kind but now much better targeted:** a soak with serial running, and
+`uudemon.cleanu` (or any cron job that exercises sh's heap) as the trigger to watch. The open
+question is which producer leaves `4AFC0000` in an anon page after ISSUE-10's fixes landed.
+
+### (original entry, 2026-07-09)
+
+**ISSUE-9 (as first recorded): idle-time infinite Bus Error loop, uncaptured — separate from ISSUE-7**
 
 **Status: OPEN, deferred (2026-07-09).** After ISSUE-7 was fixed, the user left a successfully
 booted 040 machine idle for a longer period and returned to find an **endless BUS ERROR loop on
