@@ -112,7 +112,7 @@ tail_t280209_26625_r2049   r=2049  RAJA, ensimmäinen hyväksytty
 tail_t280209_28671_r4095   r=4095  toimi ennen, ei saa rikkoutua
 tail_t280209_28795_r123    8192*3+4096+123 -> takautuva klusterointi (Codexin kohta 3)
 elfx_t280209_uname         ALTIS ELF (1 PT_LOAD), NFS:ltä ajettava
-elfc_t280209_atopcat       kontrolli-ELF, ei altis
+elfc_t280209_pwd       kontrolli-ELF (aito m68k ELF, ei altis)
 ```
 
 Alttiuden skanneri **toisti Codexin luvun riippumattomasti: 85/524**. (Ensin sain 0 — oma bugi,
@@ -150,9 +150,9 @@ Sama komento. **Odotus: 7/7 PASS**, ja jokaisesta rivistä pitää lukea kaikki 
 ### Vaihe C — ELF NFS:ltä (Codexin kohta 5, uusi polku: `nfs_map → segvn_fault → nfs_getpage`)
 
 ```
-chmod 755 /mnt/nasu/amix/issue36/elfx_t280209_uname /mnt/nasu/amix/issue36/elfc_t280209_atopcat
+chmod 755 /mnt/nasu/amix/issue36/elfx_t280209_uname /mnt/nasu/amix/issue36/elfc_t280209_pwd
 /mnt/nasu/amix/issue36/elfx_t280209_uname        # ALTIS  -> pitää toimia
-/mnt/nasu/amix/issue36/elfc_t280209_atopcat </dev/null   # kontrolli
+/mnt/nasu/amix/issue36/elfc_t280209_pwd </dev/null   # kontrolli
 ```
 
 **`chmod` on pakollinen:** SMB:n läpi kirjoitetut tiedostot tulevat moodilla 666 eikä
