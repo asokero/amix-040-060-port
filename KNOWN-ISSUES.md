@@ -2551,6 +2551,44 @@ Fixing its negative-boundary flaw would change behaviour that cannot be tested h
 **write-through** kernels. They are the pre-flip baseline, **not** copyback's acceptance — copyback has
 to answer the same question itself.
 
+### ✅ COPYBACK REBOOT DISK-TRUTH: PASS — the last recorded acceptance item is done
+
+The item that had never been run for copyback is now run, on `68040-260728-32`, with both
+preconditions verified **by the harness itself** rather than by a reader noticing two printed lines:
+
+```text
+B2RT VERIFY   kernel = 68040-260728-32
+B2RT wrote-by kernel = 68040-260728-32   uptime = up 10 mins
+B2RT now                                  uptime = up 7 mins
+B2RT preconditions OK: same kernel, and uptime shows a real reboot
+6 x 4194304 bytes -> all CLASS=V0_COMPLETE_MATCH
+```
+
+So 24 MiB written through a copyback data cache, synced, rebooted, and read back byte-exact by the
+same kernel. **Copyback's write path lands its data.** That is the question copyback had never been
+asked, and the July corruption scare -- since explained as ISSUE-22 -- was about this and nothing
+else.
+
+A **preliminary** read had already answered the same question a boot earlier and is worth keeping,
+because it was free: the reboot came back on the default kernel (`-18`, write-through) instead of the
+writer, and reading the copyback-written files there also gave 6/6 byte-exact. Caches are empty after
+a boot, so the reader's cache mode cannot change what is on the platter -- but it is two variables, so
+it stands as corroboration and not as the acceptance run.
+
+**That mismatch produced the harness fix:** `verify` now **aborts** on a kernel mismatch or an uptime
+that went up, instead of printing both identities and trusting the reader. A test that can detect its
+own precondition must also refuse to run without it, or the check is a comment. This is the fifth
+instrument failure of the same family today (dead serial capture read as kernel silence; a probe that
+never fired read as a healthy kernel; a sample-capped `pl[]` probe read as "no violations"; a
+no-reboot run read as reboot truth; the loader booting a different kernel than the test assumed) --
+every one of which would have produced a green line.
+
+### Dhrystone, three independent measurements on copyback
+
+`30000.0`, `30037.5`, `29813.7` per second across three boots — within 0.7 % of each other, against
+the write-through baseline of `18292.7`. Copyback is **+63 %**, and it is confirmed active on each
+boot rather than assumed from the image.
+
 ### ⛔ COPYBACK AMPLIFIES ISSUE-22 — strict A/B, 3 bytes apart, 2026-07-28
 
 | kernel | difference | `cp: /payload.bin: read: Bad address` |
