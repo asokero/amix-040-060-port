@@ -1749,9 +1749,13 @@ two independent grounds, and the hardware A/B agrees with it.**
    already the high-user `hardbus` helper and the 040 scalar write-back replay.
 
 **The A/B confirmed it at runtime.** `xpage_on = 0` (`68040-260728-23`, two bytes from the shipping
-image) ran the same 16-burst workload and was clean through burst 10+ — past the point where the
+image) ran the same 16-burst workload to completion: **`CLEAN (0 non-V0 in 16 bursts)`, 96/96
+verifications**, exactly like the `xpage_on = 1` run, and both are far past the point where the
 historical configuration failed twice. So **ISSUE-22 is simply not reproducing today**, on either
-side of the flag, and the earlier clean run cannot be credited to the xpage fix.
+side of the flag, and neither clean run can be credited to the xpage fix.
+
+**Both sides of the A/B: 96/96 V0.** That symmetry is the result — it is what turns "the fix worked"
+into "the workload no longer triggers it, for a reason this flag does not control".
 
 **What this changes:** ISSUE-22 keeps its own hunt. Codex specifies the latch fields — faulting PC
 and FA, frame format, **original** SSW/FSLW, TM and the resolver actually selected, the `u_nofault`
