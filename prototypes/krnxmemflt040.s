@@ -151,6 +151,48 @@ Lkx_inval:
 Lkx_fail:
 	moveq	&1,%d0
 Lkx_ret:
+| --- ISSUE-37 XPAGE (2026-07-28): the 68040 reports FA = the START of a MISALIGNED access even
+|     when the page actually missing is the NEXT one (SSW MA bit).  as_fault then resolves the
+|     already-present near page, returns 0, the instruction restarts and faults identically --
+|     an UNKILLABLE kernel loop, because the fault is taken in kernel mode on the process's behalf.
+|
+|     This is not a new discovery: wb040.s's wb060_xpage implements exactly this fix for the 060
+|     format-4 path, citing Linux/m68k's `if (fslw & MA) addr = (addr + 7) & -8`, and its comment
+|     says "Gated on fmt-4: on the 040 the byte-wise replay already covers this."  That is true for
+|     WRITE-BACKS -- wb040_replay reissues them byte-wise -- but a READ access error never reaches
+|     the replay path at all, so the 040's read side was left uncovered.  ISSUE-37 is that gap.
+|
+|     MEASURED, three times on real hardware (wolf3d): every loop faults at in-slot offset 0xFFF
+|     of an 8 KiB segmap slot -- the LAST BYTE of the slot's first page, i.e. precisely where a
+|     misaligned access straddles into the slot's second page -- with type=0 ret=0 and the user PC
+|     at libc.so.1+0x13088 = `read`+4.  as_fault(len=1) rounds to a 4096-byte range that covers
+|     only the first page, so segmap_fault maps that page and never the second one.
+|
+|     Same recipe as the 060, deliberately including the same 8-byte window rather than a wider
+|     speculative one: after a SUCCESSFUL resolve, if FA lies in the last 8 bytes of its page,
+|     resolve the NEXT page too.  A `move16` cannot trigger this (it is 16-byte aligned by
+|     definition), and 8 bytes covers every misalignable operand up to an FPU double. ---
+	tstl	%d0
+	bnew	Lkx_nox			| only after a SUCCESSFUL resolve
+	movel	%d2,%d1
+	andil	&0xfff,%d1
+	cmpil	&0xff8,%d1
+	bcsw	Lkx_nox			| not in the last 8 bytes -> cannot straddle
+	movel	%d0,%sp@-		| preserve the return value across the extra resolve
+	movel	%d2,%d1
+	andil	&0xfffff000,%d1
+	addil	&0x1000,%d1		| the next page's base
+	pea	1			| rw   = S_READ
+	clrl	%sp@-			| type = F_INVAL
+	pea	4			| len
+	movel	%d1,%sp@-		| addr = next page
+	pea	kas			| as   = kernel address space
+	jsr	as_fault
+	lea	%sp@(20),%sp
+	movel	%sp@+,%d0		| restore it; the extra resolve's own result is ignored --
+					| if that page is genuinely unmappable, the re-fault
+					| surfaces as a real error instead of being masked here
+Lkx_nox:
 	movel	Lkx_depth,%d1
 	subql	&1,%d1
 	movel	%d1,Lkx_depth
