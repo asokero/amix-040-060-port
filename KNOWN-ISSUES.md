@@ -1799,6 +1799,19 @@ DBG page_abort crash pp=400AD290 p_mapping=0 caller=80AD7DA (0=>SKIPs hat_pageun
 A page released with its PTE left in place is the stale-PTE/page-recycling family — the same family
 as ISSUE-10. Whether that is cause, consequence or coincidence here is **not established**.
 
+⚠ **Provenance caveat on those two lines.** From 20:59 onward three processes were reading
+`/dev/ttyUSB0` at once (two strays plus the session's capture), and serial readers SPLIT the byte
+stream between them. The `-20` and `-22` captures are therefore incomplete. The lines quoted above
+arrived intact and are real, but "immediately after the release, and nothing else" is NOT safe —
+other lines may have gone to the other readers. Re-read them from a clean port before building on
+the ordering. The bisect verdicts are unaffected: they rest on telnet/login, and the hang point
+itself is established from the `-07` console photograph and the `-09` capture, both taken while the
+port had a single reader.
+
+The tell for a split stream is garbling, not absence: lines break mid-word and continue with another
+line's content (`WARNING: DBG as_fault STREAM pi00011:00000001:...`). It reads like interleaved
+output, which is how it was misread here for several messages.
+
 **Next, and deliberately not another bisect:** the useful question is no longer *what hides it* but
 *why exec aborts*. That wants a small probe on the exec header path (the `exhd_getmap`/`elfexec`
 return codes) in an otherwise probe-less image, or a static read of that path under copyback. Both
