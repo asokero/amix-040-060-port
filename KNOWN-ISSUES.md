@@ -910,6 +910,38 @@ path bypassing that gate, or `hat_pteload` linked the victim PTE only after the 
 SEGVCHAIN/SEGVPP probe stays as the live confirmator (grind full 6-cp pressure to land the sh-heap
 morphology; ~1 in 3 runs, the rest hit the non-walkable init morphology).
 
+**★★★ 2026-07-29: THE AMIXADM TRIGGER IS BACK, AND IT REPRODUCES IN THE EMULATOR.** The user
+noticed it while checking the probe-less kernels: `amixadm` bus-errors on the base build but never
+on a dbg build. It then reproduced on the FIRST try in Amiberry on `unix-040-quiet-260729-08`,
+byte-identical to July:
+
+```text
+NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:173 CMD:amixadm     (x16108)
+```
+
+Evidence: `test-tools/issue10-amixadm-emu-repro-260729.log`.
+
+**Why it looked "retired" in July: the trigger is VARIANT-dependent, and every session since has run
+dbg kernels.** The 2026-07-15 retest that declared it unreliable was run on a dbg image. It was never
+the trigger that decayed; it was the instrument that hid it.
+
+Three consequences, all of them useful:
+
+1. **Not copyback** — `-08` is write-through, so this is independent of the B2 work.
+2. **Not hardware-specific** — the emulator reproduces it, which substantially weakens a
+   cache-coherency explanation for THIS symptom: Amiberry does not model the 040 data cache's
+   coherency behaviour. That points back at the July suspect list, headed by **phys double-use**:
+   the value read from sh's malloc free list is `0x4AFC0000`, which is kvsegu (u-area) flavoured,
+   so a user heap page is carrying kernel u-area content.
+3. **Iteration is now ~3 minutes locally instead of a hardware session.** The quiet kernel mirrors
+   the console to serial, so the whole cycle is scriptable with `test-tools/sendkeys.py` and the
+   serial log — no telnet, no hardware, no user at the keyboard.
+
+**Open question worth testing first, because it is cheap:** ISSUE-38 (copyback hangs at init's exec
+without probes) is ALSO masked by the dbg overlay. Two different symptoms, both hidden by the same
+overlay, both involving page reuse. Whether they are one defect is unproven — but bisecting which
+dbg component masks each of them is now an emulator-only experiment.
+
 **★ AMIXADM TRIGGER RETESTED 2026-07-15 (evening) — the 2026-07-10 deterministic trigger NO
 LONGER FIRES on 260715-12.** Ran the original deterministic use case (`/usr/amiga/bin/amixadm`,
 the interactive-menu sh script whose malloc free-list walk faulted) directly: bare run,
