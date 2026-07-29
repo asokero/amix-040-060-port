@@ -113,29 +113,28 @@ acceptance is complete and which measures +63 % (Dhrystone 30000/s vs 18292.7).
 ## 5. Artifacts (`nasu:Public/amix/hwtest-260728/`, `SHA256SUMS-issue22.txt`)
 
 ```text
-unix-040-b2-dbg-260729-03   copyback + DFC fix + counters + injection  <- current, boot this
-unix-040-b2-dbg-260728-45   copyback + DFC fix + mechanism counters
-unix-040-b2-dbg-260728-42   copyback + DFC fix (no mechanism counters)
-unix-040-b2-dbg-260728-39   copyback + misroute probe, no DFC fix
-unix-040-b2-dbg-260728-36   the kernel that captured the FAILEXIT line
+unix-040-b2-dbg-260729-06   copyback + DFC/SFC contract + counters   <- the ACCEPTED image
+unix-040-b2-260729-07       same, copyback, no probes
+unix-040-260729-04          base (write-through, silent)
+unix-040-b2-dbg-260729-03   the injection kernel (wb_dfc_force)
+unix-040-b2-dbg-260728-36   the kernel that captured the original FAILEXIT line
 unix_boot040                MANDATORY loader
 kpeek.c kpoke.c dfcinject.c cofault.c kdepthmax.c   (also in test-tools/)
 ```
 
-Counter addresses in **260729-03** (recompute after any relink: `0x08000000 + textsize + .data
-offset`; every reading in this file was taken with `xpage_on == 1` as an anchor in the same range):
+Counter addresses in **260729-06** (recompute after any relink: `0x08000000 + textsize + .data
+offset`; read a known anchor in the same `kpeek` range — every reading in this file was taken with
+`xpage_on == 1` and the string `segkmem_ptes` bracketing the counters):
 
 ```text
-us_calls 080FFDB8  us_odd_user 080FFDBC  us_odd_kern 080FFDC0  us_reroute_on 080FFDC8
-wb_dfc_on 080FFEE4  wb_dfc_n 080FFEE8  wb_dfc_changed 080FFEEC
-wb_dfc_lastold 080FFEF0  wb_dfc_lastnew 080FFEF4
-wb_replay_n 080FFEF8  wb_replay_odd 080FFEFC
-wb_dfc_force 080FFF00  wb_dfc_force_n 080FFF04  wb_dfc_forced 080FFF08
-Lkx_fn 080FFF90  xpage_on 080FFF94 (=1, ANCHOR)  Lkx_depth 080FFF98
+us_calls 080FFDE0  us_odd_user 080FFDE4  us_odd_kern 080FFDE8
+wb_dfc_on 080FFF04  wb_dfc_n 080FFF08  wb_dfc_changed 080FFF0C
+wb_dfc_lastold 080FFF10  wb_dfc_lastnew 080FFF14
+wb_replay_n 080FFF18  wb_replay_odd 080FFF1C
+wb_dfc_force 080FFF20  wb_dfc_force_n 080FFF24  wb_dfc_forced 080FFF28
+wb_sfc_changed 080FFF2C
+Lkx_fn 080FFFB4  xpage_on 080FFFB8 (=1, ANCHOR)  Lkx_depth 080FFFBC
 ```
-
-Always read a known anchor in the same `kpeek` range. Every reading in this file was taken with
-`xpage_on == 1` and the string `segkmem_ptes` bracketing the counters.
 
 ## 6. Instrument discipline that earned its keep, and one failure of mine
 
@@ -148,17 +147,28 @@ Always read a known anchor in the same `kpeek` range. Every reading in this file
   after it queued behind the still-running script and the post-run counters were never read. Fix the
   driver before the next long run.
 
-## 7. Cleanup owed once the fix is accepted
+## 7. What is done, and what is left
 
-* **SFC** leaks the same way and Codex found the site: `ptest040.s:52` writes SFC=1 (and its own
-  comment argues it is safe using the exact assumption ISSUE-22 disproved for DFC). No victim path
-  exists today — every MOVES consumer sets its own function code — so it is latent, and it was
-  deliberately kept OUT of the injection kernel to leave that image single-variable. Land Codex's
-  option 2 afterwards: save DFC at `fp-4` and SFC at `fp-8`, `moveml` base `fp-32`.
-  (`vm-map/ISSUE22-DFC-ARCH-STATE-AUDIT.md`, 7c314b2, which also confirmed the current wrapper
-  geometry and the `Lwb_fail` contract byte-exactly, and found no CACR/VBR/URP/ATC/FPU leaks.)
-* `userspace040.s` still carries the reroute band-aid (`us_reroute_on`, default 0). Remove it: it
-  treats the symptom and cannot succeed when the access itself is aimed at the wrong space.
-* The `DBG userspace ODD` `cmn_err` prints live in the BASE link. Keep the counters, drop or gate
-  the printing before shipping a quiet kernel.
-* Nothing in this work is committed yet.
+**Done** (commits b56c5ef, 83ae97a, 5106049, 5eb1dbc, ea3b97b):
+
+* DFC preserved across a fault; proven by injection and accepted under the copyback pressure suite.
+* SFC preserved by the same contract. Codex offered removing `ptest040.s:52`'s SFC write instead;
+  that write is insurance against DFC/SFC ambiguity on real silicon and the case for removing it
+  rests on an emulator source reading, so the leak was made harmless rather than the insurance
+  removed. `wb_sfc_changed` stayed 0 across a boot and 105k replays, which is the measured version
+  of Codex's "no victim path".
+* The reroute band-aid is gone; the `DBG userspace ODD` prints are gated on `btrace_on` so base and
+  quiet are silent; the stale header paragraph that defended the removed code is rewritten.
+
+**Left:**
+
+* **Copyback's default.** ISSUE-22 was the last objection and it is now closed. Flipping
+  `hat_cm_ram` to `0x20` in the base link is a policy decision, not a technical one; today the
+  copyback images are still produced by `patch_b2_flip.py`.
+* **`Lkx_depth`** — still a machine-wide counter compared against a per-context limit. Refuted as
+  ISSUE-22, real as a latent defect. Codex's design: a private 200-entry `proc *`-keyed table, not
+  an unproved u-area field (`vm-map/ISSUE22-DFC-ARCH-STATE-AUDIT.md`, 7c314b2).
+* **The b2repro stalls** — 120–125 s baseline bursts interrupted by stalls of 200–900 s, present
+  since before any DFC work and on fresh boots. Cheap first checks: root-fs free space and
+  fragmentation after ~1 GB of burst writes, and paging pressure from 6 × 4 MiB copies plus a 4 MiB
+  verify buffer on a 32 MB machine.
