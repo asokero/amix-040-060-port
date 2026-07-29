@@ -1734,6 +1734,57 @@ luuppi. SEURAAVA ASKEL kun tähän tartutaan: ktrap_latchin kenttien tarkka deco
 rekursioketju tallentuu; toistotilasto eri lämpötiloissa. Työkalu valmiina:
 serial2usb-kaappaus toimii nyt (stty 9600 raw + while-cat-luuppi | tee).
 
+## ISSUE-38 — ⛔ OPEN, and it blocks the copyback flip: copyback hangs at init's exec WITHOUT the debug probes
+
+Found 2026-07-29 by booting the image that would actually ship — which, it turns out, no probe-less
+kernel ever had been.
+
+| image | cache | probes | result on the A3000 |
+|---|---|---|---|
+| `unix-040-260729-04` | write-through | no | **boots**, telnet, `uname -m` confirms |
+| `unix-040-b2-260729-07` | **copyback** | no | **HANGS** at init's exec |
+| `unix-040-b2-dbg-260729-06` | copyback | yes | boots; ran a 72-minute acceptance clean |
+
+**`-04` and `-07` differ in exactly TWO bytes** — `hat_cm_ram` `0x00 → 0x20` at file offset 1033728,
+and one build-id character. So the hang is attributable to copyback and to nothing else, and the
+debug build masks it.
+
+The console stops here (photographed; the DBG lines are pre-existing in every base image — 25 of
+them in yesterday's `-24` — not new):
+
+```text
+WARNING: DBG hat_free ENTER as=4015F000 root=4015E000
+WARNING: DBG hatfree BAD-Aslot A=4 Adesc=400003 table=400000 (skipped)
+WARNING: DBG hatfree BAD-Aslot A=6 Adesc=3F0003 table=3F0000 (skipped)
+WARNING: DBG hat_unload va=80800000 size=1000 flags=0
+WARNING: DBG hat_unload va=C07FF000 size=1000 flags=0
+WARNING: DBG hat_unload va=48442000 size=2000 flags=A        <- last line, then nothing
+```
+
+In a working boot (`-06` serial, `test-tools/issue22-serial-acceptance-260729.log`) the very next
+line is `DBG execmap vaddr=80000034 filesz=66D4 off=34 prot=D` — **mapping init's ELF from disk.**
+So it dies exactly where the exec path goes to the disk, and `0x48442000 size=2000` is the 8 KiB
+exec-header segmap slot being released just before that.
+
+**It boots in the emulator.** Amiberry does not model the 040's copyback data cache, which is
+consistent with a cache-coherency mechanism and is why this could only be found on silicon.
+
+**Working hypothesis, NOT yet measured:** a DMA/cache coherency window on the read path. With
+copyback, a segmap slot reused for a DMA fill can still hold dirty or stale lines; the debug build's
+constant `cmn_err` chatter creates cache pressure that would evict them, which is a plausible reason
+the same code survives with probes and dies without. `dma_cache040`'s complete = per-range `cinvl`
+is the first thing to re-read. Alternatives not excluded: a genuine timing race, or something
+specific to the exec header slot's 8 KiB (two-page) size.
+
+**Consequence: the copyback default flip is blocked.** Yesterday's acceptance stands — it was run on
+`-06` and every number in it is real — but the artifact intended for use does not boot, so copyback
+is not ready to become the default. The power-cut disk-truth test is postponed with it; there is no
+point hardening a kernel we cannot ship.
+
+Next: boot `unix-040-b2-quiet-260729-09` (base + serial mirror, no probes) to capture the hang's tail
+verbatim instead of from a photograph, and to find whether the serial mirror alone is enough to mask
+it — which would put a number on how narrow the window is.
+
 ## ISSUE-22 — ✅ ACCEPTED 2026-07-29: 16 bursts clean with 13 corruptions repaired under way
 
 `68040-260729-06` (copyback + the DFC/SFC contract), fresh boot, `b2repro-copy.sh 16`, 72.6 min,
