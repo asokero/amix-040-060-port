@@ -79,6 +79,7 @@ usrxmemflt:
 	beqw	Lu_done			| caller instead of being masked by the near page's
 	movel	%d0,%d4			| success -- otherwise the restart loops forever
 Lu_done:
+	bsrw	Lwb_dfcinject		| ISSUE-22 fault injection (see Lwb_dfcinject)
 	bsrw	Lwb_dfccheck		| count DFC corruption whether or not the fix is on
 	tstl	wb_dfc_on		| ISSUE-22: give the interrupted code its DFC back
 	beqs	Lu_nodfc
@@ -115,6 +116,7 @@ krnxmemflt:
 	beqw	Lk_done
 	movel	%d0,%d4
 Lk_done:
+	bsrw	Lwb_dfcinject		| ISSUE-22 fault injection (see Lwb_dfcinject)
 	bsrw	Lwb_dfccheck		| count DFC corruption whether or not the fix is on
 	tstl	wb_dfc_on		| ISSUE-22: give the interrupted code its DFC back
 	beqs	Lk_nodfc
@@ -134,6 +136,34 @@ Lk_nodfc:
 |     sides of the wb_dfc_on A/B, because the corruption happens regardless of whether we then
 |     repair it; with the fix on, this counter is the amount of damage the fix is undoing.
 |     Called with the wrapper's frame live (fp@(-4) = the DFC saved on entry).  d0/d1 scratch. ---
+| --- Lwb_dfcinject (ISSUE-22, 2026-07-29): make the rare race deterministic.
+|     The natural corruption happens ~218 times per boot but only matters when it lands inside a
+|     copy loop that still has bytes to write, which is why it surfaces about once per 40 minutes
+|     and why a 12-burst control run proved nothing.  This injects the SAME corruption on demand:
+|     leave wb_dfc_force in DFC for the next wb_dfc_force_n faults, at exactly the point in the
+|     epilogue where a leaking replay would have left it.
+|
+|     PLACED BEFORE THE RESTORE ON PURPOSE.  That is what makes it an A/B of the FIX and not just
+|     of the mechanism:
+|         wb_dfc_on = 0  -> the injected value survives    -> the interrupted copy must break
+|         wb_dfc_on = 1  -> the wrapper repairs it         -> the interrupted copy must be fine
+|     Self-limiting: the budget counts down, so an injection cannot leave the machine unusable
+|     even if the harness dies between arming and disarming.  Arm it from the test program itself
+|     (test-tools/dfcinject.c), microseconds before the read it is meant to hit -- a shell pipeline
+|     spends its budget on the faults of its own exec. ---
+Lwb_dfcinject:
+	tstl	wb_dfc_force
+	beqs	Lwb_noinject
+	movel	wb_dfc_force_n,%d0
+	beqs	Lwb_noinject		| budget spent: leave DFC alone
+	subql	&1,%d0
+	movel	%d0,wb_dfc_force_n
+	addql	&1,wb_dfc_forced
+	movel	wb_dfc_force,%d0
+	.word	0x4e7b,0x0001		| movec %d0,%dfc  -- the leak, on demand
+Lwb_noinject:
+	rts
+
 Lwb_dfccheck:
 	.word	0x4e7a,0x0001		| movec %dfc,%d0  -- what the replay left behind
 	movel	%fp@(-4),%d1		| what the interrupted code had
@@ -485,4 +515,14 @@ wb_replay_n:
 	.globl	wb_replay_odd
 wb_replay_odd:
 	.long	0			| ...of those, replays that set DFC to something != user data
+| --- fault injection (Lwb_dfcinject): arm with kpoke or from dfcinject.c ---
+	.globl	wb_dfc_force
+wb_dfc_force:
+	.long	0			| 0 = off; else the FC value to leave in DFC
+	.globl	wb_dfc_force_n
+wb_dfc_force_n:
+	.long	0			| remaining budget, counts down (self-limiting)
+	.globl	wb_dfc_forced
+wb_dfc_forced:
+	.long	0			| injections actually performed
 	.balign 4

@@ -68,15 +68,32 @@ produced 25 DFC corruptions and zero EFAULTs, and the historical rate is ~1 EFAU
 12 clean bursts is not evidence either way. Do not record the fix as verified on the strength of a
 clean run.
 
-## 4. Next step: stop rolling dice — inject the corruption
+## 4. Next step: BUILT AND WAITING — boot `68040-260729-03` and inject
 
-Add `wb_dfc_force` to `wb040.s`: when nonzero, the wrapper deliberately leaves that value in DFC on
-exit for the next N faults — exactly what nature does 243 times per boot. Then the causal chain is
-testable in seconds instead of hours:
+`wb_dfc_force` now exists (`wb040.s`, `Lwb_dfcinject`): for the next `wb_dfc_force_n` faults the
+wrapper deliberately leaves that value in DFC, at exactly the point in the epilogue where a leaking
+replay would have left it — **before the restore**, which is what makes it an A/B of the *fix* and
+not merely of the mechanism. The budget counts down, so an injection cannot leave the machine
+unusable. `test-tools/dfcinject.c` arms it from inside the test process, microseconds before the
+read it is meant to hit (a shell pipeline spends the budget on its own `exec`).
 
-* `force=5`, `wb_dfc_on=0` → one `read()` into a fresh buffer should EFAULT immediately, with
-  `us_odd_user` climbing and `DBG krnxflt FAILEXIT w=2` on serial. That proves the chain end to end.
-* `force=5`, `wb_dfc_on=1` → nothing should happen. That proves the fix by the same measure.
+```text
+boot unix-040-b2-dbg-260729-03      sha256 af66cdbe54795e560b40aeedf8c2a9e8ab45d003043c74819d176d407c6a9fe4
+mount -F nfs nasu:Public /mnt/nasu
+cp /mnt/nasu/amix/hwtest-260728/{kpeek.c,kpoke.c,dfcinject.c} /tmp/
+cd /tmp && cc -o kpeek kpeek.c && cc -o kpoke kpoke.c && cc -o dfcinject dfcinject.c
+
+A (mechanism):  ./kpoke 080FFEE4 1 0        # wb_dfc_on = 0, the shipping behaviour
+                ./dfcinject 080FFF00 080FFF04 080FFF08 5 40 /payload.bin
+                EXPECT  DFCINJ VERDICT EFAULT     + us_odd_user up + FAILEXIT w=2 on serial
+
+B (the fix):    ./kpoke 080FFEE4 0 1        # wb_dfc_on = 1
+                ./dfcinject 080FFF00 080FFF04 080FFF08 5 40 /payload.bin
+                EXPECT  DFCINJ VERDICT CLEAN      + us_odd_user unchanged
+```
+
+`DFCINJ WARNING no injection was performed` means the verdict means nothing — wrong addresses, or no
+fault occurred during the read. Treat it as a failed instrument, not as a clean run.
 
 Only after that is it worth spending hours on a natural-rate A/B, and then it is confirmation rather
 than the primary evidence.
@@ -84,22 +101,25 @@ than the primary evidence.
 ## 5. Artifacts (`nasu:Public/amix/hwtest-260728/`, `SHA256SUMS-issue22.txt`)
 
 ```text
-unix-040-b2-dbg-260728-45   copyback + DFC fix + mechanism counters   <- current
+unix-040-b2-dbg-260729-03   copyback + DFC fix + counters + injection  <- current, boot this
+unix-040-b2-dbg-260728-45   copyback + DFC fix + mechanism counters
 unix-040-b2-dbg-260728-42   copyback + DFC fix (no mechanism counters)
 unix-040-b2-dbg-260728-39   copyback + misroute probe, no DFC fix
 unix-040-b2-dbg-260728-36   the kernel that captured the FAILEXIT line
 unix_boot040                MANDATORY loader
-kpeek.c kpoke.c cofault.c kdepthmax.c   (also in test-tools/)
+kpeek.c kpoke.c dfcinject.c cofault.c kdepthmax.c   (also in test-tools/)
 ```
 
-Counter addresses in **-45** (recompute after any relink: `0x08000000 + textsize + .data offset`):
+Counter addresses in **260729-03** (recompute after any relink: `0x08000000 + textsize + .data
+offset`; every reading in this file was taken with `xpage_on == 1` as an anchor in the same range):
 
 ```text
-us_calls 080FFD88  us_odd_user 080FFD8C  us_odd_kern 080FFD90  us_reroute_on 080FFD98
-wb_dfc_on 080FFEB4  wb_dfc_n 080FFEB8  wb_dfc_changed 080FFEBC
-wb_dfc_lastold 080FFEC0  wb_dfc_lastnew 080FFEC4
-wb_replay_n 080FFEC8  wb_replay_odd 080FFECC
-Lkx_fn 080FFF54  xpage_on 080FFF58 (=1, ANCHOR)  Lkx_depth 080FFF5C
+us_calls 080FFDB8  us_odd_user 080FFDBC  us_odd_kern 080FFDC0  us_reroute_on 080FFDC8
+wb_dfc_on 080FFEE4  wb_dfc_n 080FFEE8  wb_dfc_changed 080FFEEC
+wb_dfc_lastold 080FFEF0  wb_dfc_lastnew 080FFEF4
+wb_replay_n 080FFEF8  wb_replay_odd 080FFEFC
+wb_dfc_force 080FFF00  wb_dfc_force_n 080FFF04  wb_dfc_forced 080FFF08
+Lkx_fn 080FFF90  xpage_on 080FFF94 (=1, ANCHOR)  Lkx_depth 080FFF98
 ```
 
 Always read a known anchor in the same `kpeek` range. Every reading in this file was taken with
@@ -118,6 +138,13 @@ Always read a known anchor in the same `kpeek` range. Every reading in this file
 
 ## 7. Cleanup owed once the fix is accepted
 
+* **SFC** leaks the same way and Codex found the site: `ptest040.s:52` writes SFC=1 (and its own
+  comment argues it is safe using the exact assumption ISSUE-22 disproved for DFC). No victim path
+  exists today — every MOVES consumer sets its own function code — so it is latent, and it was
+  deliberately kept OUT of the injection kernel to leave that image single-variable. Land Codex's
+  option 2 afterwards: save DFC at `fp-4` and SFC at `fp-8`, `moveml` base `fp-32`.
+  (`vm-map/ISSUE22-DFC-ARCH-STATE-AUDIT.md`, 7c314b2, which also confirmed the current wrapper
+  geometry and the `Lwb_fail` contract byte-exactly, and found no CACR/VBR/URP/ATC/FPU leaks.)
 * `userspace040.s` still carries the reroute band-aid (`us_reroute_on`, default 0). Remove it: it
   treats the symptom and cannot succeed when the access itself is aimed at the wrong space.
 * The `DBG userspace ODD` `cmn_err` prints live in the BASE link. Keep the counters, drop or gate
