@@ -86,13 +86,17 @@ m68k-linux-gnu-objcopy --weaken-symbol ddopen --weaken-symbol idle --weaken-symb
 
 OUT="$HERE/build/unix-040-dbg"
 echo "[*] relinking -> $OUT"
-m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-dbg-stage1" \
-	"$HERE/build/ddopen_dbg.o" \
-	"$HERE/build/blkatoff_dbg.o" "$HERE/build/mainmarks.o" "$HERE/build/serdbg.o" \
-	"$HERE/build/assegat_dbg.o" "$HERE/build/execmark.o" "$HERE/build/hatalloc_dbg.o" \
-	"$HERE/build/sigkill_dbg.o" "$HERE/build/ktrap_latch.o" "$HERE/build/kmem_validate.o" \
-	"$HERE/build/segvn_softunlock_dbg.o" "$HERE/build/preempt_dbg.o" "$HERE/build/segu_swap_dbg.o" \
-	"$HERE/build/setuctxt_dbg.o" "$HERE/build/pvn_probe.o"
+# DBG_OBJS lets a caller link a SUBSET of the probe objects (2026-07-29, ISSUE-38 bisect:
+# copyback boots with the full overlay and hangs with only serdbg, so the masker is one of
+# these and a binary search over them costs ~4 boots).  Unset = the full set, i.e. the
+# normal dbg build, byte-identical to before.  The objcopy above is deliberately NOT
+# parameterised: it only weakens symbols and adds _orig aliases, both of which are harmless
+# when the object that would use them is absent.
+DBG_OBJS="${DBG_OBJS:-ddopen_dbg blkatoff_dbg mainmarks serdbg assegat_dbg execmark hatalloc_dbg sigkill_dbg ktrap_latch kmem_validate segvn_softunlock_dbg preempt_dbg segu_swap_dbg setuctxt_dbg pvn_probe}"
+OBJPATHS=""
+for o in $DBG_OBJS; do OBJPATHS="$OBJPATHS $HERE/build/$o.o"; done
+echo "[*] linking probe objects: $DBG_OBJS"
+m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-dbg-stage1" $OBJPATHS
 
 echo "[*] overridden defs (single strong def each; hat_dup is inherited from \$IN, shown for confirmation only):"
 for s in ddopen hat_dup k_trap kmem_alloc segvn_softunlock preempt setuctxt swapinub swapinub_orig swapinub_stock segu_get; do
