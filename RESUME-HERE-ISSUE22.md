@@ -1,4 +1,4 @@
-# RESUME HERE — ISSUE-22, state at the end of 2026-07-28 (was: the hunt; now: the acceptance)
+# RESUME HERE — ISSUE-22, state 2026-07-29: root cause fixed and proven by injection
 
 Read this file and nothing else to continue. Everything below is measured unless it says otherwise,
 and the one open question is marked as open.
@@ -56,47 +56,46 @@ before the counter existed. The cofault column is the useful negative: a pure re
 thousands of replays and **not one** with a non-user function code, which is why it never reproduces
 ISSUE-22 — the hazard needs a pending *supervisor* store at the moment of a copy fault.
 
-## 3. The fix, and what is NOT yet proven about it
+## 3. The fix, and what injection proved about it
 
-`wb040.s` now saves DFC on entry to each fault wrapper and restores it before returning — in the
-wrapper, not in `Lwb_do`, because that is nesting-safe and because `Lwb_fail` returns via `rts` on
-the trap-time stack. `wb_dfc_on = 0` (one `.data` long, poke it with `kpeek`/`kpoke`) restores the
-old behaviour for an A/B inside a single boot.
+`wb040.s` saves DFC on entry to each fault wrapper and restores it before returning — in the wrapper,
+not in `Lwb_do`, because that is nesting-safe and because `Lwb_fail` returns via `rts` on the
+trap-time stack. Codex confirmed both byte-exactly (`vm-map/ISSUE22-DFC-ARCH-STATE-AUDIT.md`,
+7c314b2). `wb_dfc_on = 0` is a one-`.data`-long A/B inside a single boot.
 
-**OPEN: the fix has not been shown to change the EFAULT rate.** The control run (fix off, 12 bursts)
-produced 25 DFC corruptions and zero EFAULTs, and the historical rate is ~1 EFAULT per 15 bursts, so
-12 clean bursts is not evidence either way. Do not record the fix as verified on the strength of a
-clean run.
+## 4. ✅ DONE — the injection A/B (2026-07-29, `68040-260729-03`, two seconds)
 
-## 4. Next step: BUILT AND WAITING — boot `68040-260729-03` and inject
-
-`wb_dfc_force` now exists (`wb040.s`, `Lwb_dfcinject`): for the next `wb_dfc_force_n` faults the
-wrapper deliberately leaves that value in DFC, at exactly the point in the epilogue where a leaking
-replay would have left it — **before the restore**, which is what makes it an A/B of the *fix* and
-not merely of the mechanism. The budget counts down, so an injection cannot leave the machine
-unusable. `test-tools/dfcinject.c` arms it from inside the test process, microseconds before the
-read it is meant to hit (a shell pipeline spends the budget on its own `exec`).
+The natural event is far too rare to A/B (12-burst control: 25 corruptions, zero EFAULTs), so the
+corruption was injected at exactly the point a leaking replay leaves it, **before** the restore —
+which makes one test an A/B of the fix and not only of the mechanism:
 
 ```text
-boot unix-040-b2-dbg-260729-03      sha256 af66cdbe54795e560b40aeedf8c2a9e8ab45d003043c74819d176d407c6a9fe4
-mount -F nfs nasu:Public /mnt/nasu
-cp /mnt/nasu/amix/hwtest-260728/{kpeek.c,kpoke.c,dfcinject.c} /tmp/
-cd /tmp && cc -o kpeek kpeek.c && cc -o kpoke kpoke.c && cc -o dfcinject dfcinject.c
+A  wb_dfc_on = 0   read_total=0        errno=14  injections=3    VERDICT EFAULT
+B  wb_dfc_on = 1   read_total=1048576  errno=0   injections=40   VERDICT CLEAN
 
-A (mechanism):  ./kpoke 080FFEE4 1 0        # wb_dfc_on = 0, the shipping behaviour
-                ./dfcinject 080FFF00 080FFF04 080FFF08 5 40 /payload.bin
-                EXPECT  DFCINJ VERDICT EFAULT     + us_odd_user up + FAILEXIT w=2 on serial
-
-B (the fix):    ./kpoke 080FFEE4 0 1        # wb_dfc_on = 1
-                ./dfcinject 080FFF00 080FFF04 080FFF08 5 40 /payload.bin
-                EXPECT  DFCINJ VERDICT CLEAN      + us_odd_user unchanged
+serial during A:
+WARNING: DBG userspace ODD fmt=7 fc=5 fa=80003228 ssw=85
+WARNING: DBG krnxflt FAILEXIT w=2 va=80003228 rw=2 depth=1     <- the ISSUE-22 signature, exactly
 ```
 
-`DFCINJ WARNING no injection was performed` means the verdict means nothing — wrong addresses, or no
-fault occurred during the read. Treat it as a failed instrument, not as a clean run.
+| | baseline | after A | after B |
+|---|---:|---:|---:|
+| `us_odd_user` | 0 | **1** | 1 |
+| `Lkx_fn` | 0 | **1** | 1 |
+| `wb_dfc_forced` | 0 | 3 | 43 |
+| `wb_dfc_changed` | 213 | 214 | **254** |
+| `wb_replay_odd` (natural) | 213 | 213 | 213 |
 
-Only after that is it worth spending hours on a natural-rate A/B, and then it is confirmation rather
-than the primary evidence.
+40 corruptions repaired inside one 1 MiB read with no user-visible damage; 3 were enough to abort
+the read at zero bytes without the fix.
+
+**The one thing still open:** a natural-rate A/B — `b2repro-copy.sh 16` with the fix on, against the
+recorded historical rate of ~1 EFAULT per 15 bursts. It is now confirmation, not primary evidence.
+Run it on a FRESH boot (yesterday's run was slowed by memory pressure left by earlier cofault runs:
+the 120 s baseline burst was identical, but stalls of 300–900 s appeared 5 times in 11 bursts).
+
+**Why it matters beyond ISSUE-22:** this was the last objection to flipping copyback, whose own
+acceptance is complete and which measures +63 % (Dhrystone 30000/s vs 18292.7).
 
 ## 5. Artifacts (`nasu:Public/amix/hwtest-260728/`, `SHA256SUMS-issue22.txt`)
 

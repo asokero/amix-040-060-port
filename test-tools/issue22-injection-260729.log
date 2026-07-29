@@ -1,0 +1,153 @@
+[10:40:39] CMD: uname -m
+uname -m; echo RUN''END0
+Amiga (Unlimited) 68040-260729-03
+RUNEND0
+[10:40:39] CMD: mount -F nfs nasu:Public /mnt/nasu
+# mount -F nfs nasu:Public /mnt/nasu; echo RUN''END1
+RUNEND1
+[10:40:40] CMD: cp /mnt/nasu/amix/hwtest-260728/kpeek.c /mnt/nasu/amix/hwtest-260728/kpoke.c /mnt/nasu/amix/hwtest-260728/dfcinject.c /tmp/
+# cp /mnt/nasu/amix/hwtest-260728/kpeek.c /mnt/nasu/amix/hwtest-260728/kpoke.c /mnt/nasu/amix/hwtest-260728/dfcinject.c /tmp/; echo RUN''END2
+RUNEND2
+[10:40:40] CMD: cd /tmp && cc -o kpeek kpeek.c && cc -o kpoke kpoke.c && cc -o dfcinject dfcinject.c && echo TOOLS-BUILT
+# cd /tmp && cc -o kpeek kpeek.c && cc -o kpoke kpoke.c && cc -o dfcinject dfcinject.c && echo TOOLS-BUILT; echo RUN''END3
+TOOLS-BUILT
+RUNEND3
+[10:40:50] >>> BRACKET-BEFORE: the serial log must gain a DBG SIG sig=9 line
+[10:40:50] CMD: sleep 120 & p=$!; sleep 2; kill -9 $p; echo BRACKET-BEFORE-FIRED
+sleep 120 & p=$!; sleep 2; kill -9 $p; echo BRACKET-BEFORE-FIRED; echo RUN''END4
+202
+202 Killed
+BRACKET-BEFORE-FIRED
+RUNEND4
+[10:40:56] >>> BASELINE (anchors: xpage_on=1 and 7365676b must read back)
+[10:40:56] CMD: /tmp/kpeek 080FFDB8 5
+# /tmp/kpeek 080FFDB8 5; echo RUN''END5
+KPEEK 080ffdb8 = 00000b82  (/dev/mem)
+KPEEK 080ffdbc = 00000000  (/dev/mem)
+KPEEK 080ffdc0 = 00000292  (/dev/mem)
+KPEEK 080ffdc4 = 00000000  (/dev/mem)
+KPEEK 080ffdc8 = 00000000  (/dev/mem)
+RUNEND5
+[10:40:56] CMD: /tmp/kpeek 080FFEE4 7
+# /tmp/kpeek 080FFEE4 7; echo RUN''END6
+KPEEK 080ffee4 = 00000001  (/dev/mem)
+KPEEK 080ffee8 = 000031bf  (/dev/mem)
+KPEEK 080ffeec = 000000d5  (/dev/mem)
+KPEEK 080ffef0 = 00000001  (/dev/mem)
+KPEEK 080ffef4 = 00000005  (/dev/mem)
+KPEEK 080ffef8 = 00001020  (/dev/mem)
+KPEEK 080ffefc = 000000d5  (/dev/mem)
+RUNEND6
+[10:40:56] CMD: /tmp/kpeek 080FFF00 3
+/tmp/kpeek 080FFF00 3; echo RUN''END7
+KPEEK 080fff00 = 00000000  (/dev/mem)
+KPEEK 080fff04 = 00000000  (/dev/mem)
+KPEEK 080fff08 = 00000000  (/dev/mem)
+RUNEND7
+[10:40:56] CMD: /tmp/kpeek 080FFF90 4
+# /tmp/kpeek 080FFF90 4; echo RUN''END8
+KPEEK 080fff90 = 00000000  (/dev/mem)
+KPEEK 080fff94 = 00000001  (/dev/mem)
+KPEEK 080fff98 = 00000000  (/dev/mem)
+KPEEK 080fff9c = 7365676b  (/dev/mem)
+RUNEND8
+[10:40:56] >>> A -- wb_dfc_on = 0 (shipping behaviour), inject DFC=5. EXPECT: EFAULT
+[10:40:56] CMD: /tmp/kpoke 080FFEE4 1 0
+# /tmp/kpoke 080FFEE4 1 0; echo RUN''END9
+KPOKE 080ffee4 = 00000000 (was 00000001) OK
+RUNEND9
+[10:40:56] CMD: /tmp/dfcinject 080FFF00 080FFF04 080FFF08 5 40 /payload.bin
+# /tmp/dfcinject 080FFF00 080FFF04 080FFF08 5 40 /payload.bin; echo RUN''END10
+DFCINJ ARM fc=5 budget=40 forced_before=0
+DFCINJ RESULT read_total=0 errno=14 injections=3
+DFCINJ VERDICT EFAULT -- the leaked DFC broke the copy
+RUNEND10
+[10:40:57] CMD: /tmp/kpeek 080FFDB8 5
+# /tmp/kpeek 080FFDB8 5; echo RUN''END11
+KPEEK 080ffdb8 = 00000ba2  (/dev/mem)
+KPEEK 080ffdbc = 00000001  (/dev/mem)
+KPEEK 080ffdc0 = 00000293  (/dev/mem)
+KPEEK 080ffdc4 = 00000000  (/dev/mem)
+KPEEK 080ffdc8 = 00000000  (/dev/mem)
+RUNEND11
+[10:40:57] CMD: /tmp/kpeek 080FFEE4 7
+# /tmp/kpeek 080FFEE4 7; echo RUN''END12
+KPEEK 080ffee4 = 00000000  (/dev/mem)
+KPEEK 080ffee8 = 00003220  (/dev/mem)
+KPEEK 080ffeec = 000000d6  (/dev/mem)
+KPEEK 080ffef0 = 00000001  (/dev/mem)
+KPEEK 080ffef4 = 00000005  (/dev/mem)
+KPEEK 080ffef8 = 00001065  (/dev/mem)
+KPEEK 080ffefc = 000000d5  (/dev/mem)
+RUNEND12
+[10:40:57] CMD: /tmp/kpeek 080FFF00 3
+# /tmp/kpeek 080FFF00 3; echo RUN''END13
+KPEEK 080fff00 = 00000000  (/dev/mem)
+KPEEK 080fff04 = 00000025  (/dev/mem)
+KPEEK 080fff08 = 00000003  (/dev/mem)
+RUNEND13
+[10:40:57] CMD: /tmp/kpeek 080FFF90 4
+# /tmp/kpeek 080FFF90 4; echo RUN''END14
+KPEEK 080fff90 = 00000001  (/dev/mem)
+KPEEK 080fff94 = 00000001  (/dev/mem)
+KPEEK 080fff98 = 00000000  (/dev/mem)
+KPEEK 080fff9c = 7365676b  (/dev/mem)
+RUNEND14
+[10:40:57] >>> B -- wb_dfc_on = 1 (the fix), same injection. EXPECT: CLEAN
+[10:40:57] CMD: /tmp/kpoke 080FFEE4 0 1
+# /tmp/kpoke 080FFEE4 0 1; echo RUN''END15
+KPOKE 080ffee4 = 00000001 (was 00000000) OK
+RUNEND15
+[10:40:57] CMD: /tmp/dfcinject 080FFF00 080FFF04 080FFF08 5 40 /payload.bin
+# /tmp/dfcinject 080FFF00 080FFF04 080FFF08 5 40 /payload.bin; echo RUN''END16
+DFCINJ ARM fc=5 budget=40 forced_before=3
+DFCINJ RESULT read_total=1048576 errno=0 injections=40
+DFCINJ VERDICT CLEAN -- the copy completed under injection
+RUNEND16
+[10:40:58] CMD: /tmp/kpeek 080FFDB8 5
+# /tmp/kpeek 080FFDB8 5; echo RUN''END17
+KPEEK 080ffdb8 = 00000dbc  (/dev/mem)
+KPEEK 080ffdbc = 00000001  (/dev/mem)
+KPEEK 080ffdc0 = 00000390  (/dev/mem)
+KPEEK 080ffdc4 = 00000000  (/dev/mem)
+KPEEK 080ffdc8 = 00000000  (/dev/mem)
+RUNEND17
+[10:40:59] CMD: /tmp/kpeek 080FFEE4 7
+# /tmp/kpeek 080FFEE4 7; echo RUN''END18
+KPEEK 080ffee4 = 00000001  (/dev/mem)
+KPEEK 080ffee8 = 0000348c  (/dev/mem)
+KPEEK 080ffeec = 000000fe  (/dev/mem)
+KPEEK 080ffef0 = 00000001  (/dev/mem)
+KPEEK 080ffef4 = 00000005  (/dev/mem)
+KPEEK 080ffef8 = 000011a9  (/dev/mem)
+KPEEK 080ffefc = 000000d5  (/dev/mem)
+RUNEND18
+[10:40:59] CMD: /tmp/kpeek 080FFF00 3
+# /tmp/kpeek 080FFF00 3; echo RUN''END19
+KPEEK 080fff00 = 00000000  (/dev/mem)
+KPEEK 080fff04 = 00000000  (/dev/mem)
+KPEEK 080fff08 = 0000002b  (/dev/mem)
+RUNEND19
+[10:40:59] CMD: /tmp/kpeek 080FFF90 4
+# /tmp/kpeek 080FFF90 4; echo RUN''END20
+KPEEK 080fff90 = 00000001  (/dev/mem)
+KPEEK 080fff94 = 00000001  (/dev/mem)
+KPEEK 080fff98 = 00000000  (/dev/mem)
+KPEEK 080fff9c = 7365676b  (/dev/mem)
+RUNEND20
+[10:40:59] >>> BRACKET-AFTER
+[10:40:59] CMD: sleep 120 & p=$!; sleep 2; kill -9 $p; echo BRACKET-AFTER-FIRED
+# sleep 120 & p=$!; sleep 2; kill -9 $p; echo BRACKET-AFTER-FIRED; echo RUN''END21
+220
+220 Killed
+BRACKET-AFTER-FIRED
+RUNEND21
+[10:41:05] CMD: /tmp/kpeek 080FFEE4 1
+# /tmp/kpeek 080FFEE4 1; echo RUN''END22
+KPEEK 080ffee4 = 00000001  (/dev/mem)
+RUNEND22
+[10:41:05] CMD: uptime
+# uptime; echo RUN''END23
+  3:26pm  up 1 min,  1 user,  load average: 0.00, 0.00, 0.00
+RUNEND23
+[10:41:06] injection A/B done

@@ -152,6 +152,52 @@ which is what boot activity and b2repro's concurrent disk copies produce and cof
 It also explains the rarity: DFC has to be corrupted WHILE a copy is still mid-loop, since the
 next copyin/copyout call sets it again.
 
+CAUSAL CHAIN CLOSED BY INJECTION, 2026-07-29, kernel 68040-260729-03
+====================================================================
+The natural event is too rare to A/B (a 12-burst control run gave 25 corruptions and zero EFAULTs),
+so the corruption was injected instead: `wb_dfc_force` leaves a chosen function code in DFC for the
+next N faults, at exactly the point in the wrapper epilogue where a leaking replay would have left
+it -- BEFORE the restore, which is what makes the same test an A/B of the FIX and not only of the
+mechanism.  `dfcinject` arms it from inside the test process, microseconds before the read it is
+meant to hit.  Both halves ran in the same boot, one .data long apart, in two seconds:
+
+    A  wb_dfc_on = 0     DFCINJ RESULT read_total=0        errno=14  injections=3
+                         VERDICT EFAULT -- the leaked DFC broke the copy
+    B  wb_dfc_on = 1     DFCINJ RESULT read_total=1048576  errno=0   injections=40
+                         VERDICT CLEAN -- the copy completed under injection
+
+Serial during A, and this is the point of the whole exercise -- the injected leak reproduces the
+ISSUE-22 signature exactly, including the `w=2 ... rw=2 depth=1` that was captured by chance a day
+earlier at a completely different address:
+
+    WARNING: DBG userspace ODD fmt=7 fc=5 fa=80003228 ssw=85
+    WARNING: DBG krnxflt FAILEXIT w=2 va=80003228 rw=2 depth=1
+
+    ssw 0x85 = TM 101 (supervisor data, the injected DFC) + RW 0 (write) at a USER address.
+
+Counters, all read from /dev/mem with `xpage_on == 1` anchoring the range:
+
+| | baseline | after A (fix off) | after B (fix on) |
+|---|---:|---:|---:|
+| `us_odd_user` misroutes | 0 | **1** | 1 |
+| `Lkx_fn` FAILEXIT prints | 0 | **1** | 1 |
+| `wb_dfc_forced` injections performed | 0 | 3 | 43 |
+| `wb_dfc_changed` corruptions seen | 213 | 214 | **254** |
+| `wb_replay_odd` natural odd replays | 213 | 213 | 213 |
+
+Read the last two rows together: with the fix on, the wrapper detected and repaired **40**
+corruptions during a single 1 MiB read and the copy completed byte-complete, while with the fix off
+**3** were enough to abort it at zero bytes read.  `wb_replay_odd` unchanged confirms the injection
+was not conflated with natural replays.
+
+WHAT THIS DOES AND DOES NOT PROVE
+* Proven: a leaked DFC produces the ISSUE-22 signature deterministically, and the fix neutralises it.
+* Not proven: that every historical ISSUE-22 event was a DFC leak. The support for that is the
+  identical signature, 218 natural leaks per boot with the exact `1 -> 5` pair, and Codex's census
+  (`vm-map/ISSUE22-DFC-ARCH-STATE-AUDIT.md`, 7c314b2) finding no other architectural state leaking
+  out of the fault path. A natural-rate A/B remains the last confirmation, and it is now
+  confirmation rather than primary evidence.
+
 THE FIX
 -------
 Treat DFC as what it is -- a register belonging to the interrupted code.  Save it on entry to

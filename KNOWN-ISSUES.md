@@ -1734,7 +1734,40 @@ luuppi. SEURAAVA ASKEL kun tähän tartutaan: ktrap_latchin kenttien tarkka deco
 rekursioketju tallentuu; toistotilasto eri lämpötiloissa. Työkalu valmiina:
 serial2usb-kaappaus toimii nyt (stty 9600 raw + while-cat-luuppi | tee).
 
-## ISSUE-22 — ★ NAMED ON HARDWARE 2026-07-28: the fault is MISROUTED to the kernel resolver
+## ISSUE-22 — ★ CAUSAL CHAIN CLOSED 2026-07-29 by fault injection; fix measured to neutralise it
+
+Root cause: **`wb040.s` leaked DFC into the interrupted copy** (section below for how it was found).
+The natural event is far too rare to A/B — a 12-burst control run produced 25 DFC corruptions and
+zero EFAULTs — so the corruption was injected instead, in the same place a leaking replay leaves it
+and **before** the restore, which makes one test an A/B of the fix rather than of the mechanism
+alone. Both halves ran in the same boot, one `.data` long apart, in two seconds (`68040-260729-03`):
+
+```text
+A  wb_dfc_on = 0   read_total=0        errno=14  injections=3    VERDICT EFAULT
+B  wb_dfc_on = 1   read_total=1048576  errno=0   injections=40   VERDICT CLEAN
+```
+
+Serial during A reproduced the ISSUE-22 signature exactly — the same `w=2 ... rw=2 depth=1` that had
+been captured by chance the previous day at a completely different address:
+
+```text
+WARNING: DBG userspace ODD fmt=7 fc=5 fa=80003228 ssw=85
+WARNING: DBG krnxflt FAILEXIT w=2 va=80003228 rw=2 depth=1
+```
+
+With the fix on, the wrapper detected and repaired **40** corruptions during one 1 MiB read and the
+read completed byte-complete; with it off, **3** were enough to abort it at zero bytes. Evidence:
+`test-tools/issue22-misroute-260728.txt` and the injection logs beside it.
+
+**Still open, and it is the last item:** a natural-rate A/B. What is proven is that a leaked DFC
+produces this failure and that the fix neutralises it; what is not proven is that every historical
+ISSUE-22 event was this leak. Supporting that: the identical signature, 218 natural leaks per boot
+with the exact `1 → 5` pair, and Codex's census (`vm-map/ISSUE22-DFC-ARCH-STATE-AUDIT.md`, 7c314b2)
+finding no other architectural state leaking out of the fault path — SFC excepted, which leaks the
+same way from `ptest040.s:52` but has no victim path today and is deliberately left for its own
+change.
+
+## ISSUE-22 — how it was named on hardware, 2026-07-28: the fault is MISROUTED to the kernel resolver
 
 Full evidence: `test-tools/issue22-misroute-260728.txt` (+ the raw run and serial logs beside it).
 Kernel `68040-260728-36`, copyback, six-way copy load, hit at burst 15 of 16:
