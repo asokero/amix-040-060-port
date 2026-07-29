@@ -1,4 +1,4 @@
-# RESUME HERE — ISSUE-22, state 2026-07-29: root cause fixed and proven by injection
+# RESUME HERE — ISSUE-22 is CLOSED (2026-07-29): root cause fixed, proven by injection, accepted on hardware
 
 Read this file and nothing else to continue. Everything below is measured unless it says otherwise,
 and the one open question is marked as open.
@@ -89,10 +89,23 @@ WARNING: DBG krnxflt FAILEXIT w=2 va=80003228 rw=2 depth=1     <- the ISSUE-22 s
 40 corruptions repaired inside one 1 MiB read with no user-visible damage; 3 were enough to abort
 the read at zero bytes without the fix.
 
-**The one thing still open:** a natural-rate A/B — `b2repro-copy.sh 16` with the fix on, against the
-recorded historical rate of ~1 EFAULT per 15 bursts. It is now confirmation, not primary evidence.
-Run it on a FRESH boot (yesterday's run was slowed by memory pressure left by earlier cofault runs:
-the 120 s baseline burst was identical, but stalls of 300–900 s appeared 5 times in 11 bursts).
+## 4b. ✅ ACCEPTED — the natural-rate confirmation (2026-07-29, `68040-260729-06`, fresh boot)
+
+`b2repro-copy.sh 16`, 72.6 min, serial bracketed at both ends:
+**`B2REPRO-COPY CLEAN (0 non-V0 in 16 bursts)`**, 96/96 verifications byte-exact.
+
+| counter | before | after |
+|---|---:|---:|
+| `wb_dfc_changed` (corruptions repaired) | 220 | **233 (+13)** |
+| `us_odd_user` (misroutes) | 0 | **0** |
+| `Lkx_fn` (resolver failure exits) | 0 | **0** |
+| `wb_replay_n` | 7686 | 112558 |
+| `wb_sfc_changed` | 0 | **0** |
+| `wb_dfc_force*` (injection) | 0 | 0 — stayed inert |
+
+The +13 is what makes the clean run mean anything: the hazard occurred thirteen times and was
+repaired every time. Against a historical ~1 EFAULT per 15 bursts this is about one expected event
+avoided, so it is confirmation on top of the injection A/B, not evidence on its own.
 
 **Why it matters beyond ISSUE-22:** this was the last objection to flipping copyback, whose own
 acceptance is complete and which measures +63 % (Dhrystone 30000/s vs 18292.7).

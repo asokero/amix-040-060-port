@@ -1734,7 +1734,48 @@ luuppi. SEURAAVA ASKEL kun tähän tartutaan: ktrap_latchin kenttien tarkka deco
 rekursioketju tallentuu; toistotilasto eri lämpötiloissa. Työkalu valmiina:
 serial2usb-kaappaus toimii nyt (stty 9600 raw + while-cat-luuppi | tee).
 
-## ISSUE-22 — ★ CAUSAL CHAIN CLOSED 2026-07-29 by fault injection; fix measured to neutralise it
+## ISSUE-22 — ✅ ACCEPTED 2026-07-29: 16 bursts clean with 13 corruptions repaired under way
+
+`68040-260729-06` (copyback + the DFC/SFC contract), fresh boot, `b2repro-copy.sh 16`, 72.6 min,
+serial bracketed at both ends:
+
+```text
+B2REPRO-COPY CLEAN (0 non-V0 in 16 bursts)        96/96 verifications byte-exact
+```
+
+| counter | before | after | delta |
+|---|---:|---:|---:|
+| `wb_dfc_changed` corruptions caught and repaired | 220 | 233 | **+13** |
+| `us_odd_user` misroutes | 0 | **0** | 0 |
+| `Lkx_fn` resolver failure exits | 0 | **0** | 0 |
+| `wb_replay_n` write-back replays | 7686 | 112558 | +104872 |
+| `wb_dfc_lastold → lastnew` | 1 → 5 | 1 → 5 | unchanged signature |
+| `wb_sfc_changed` | 0 | **0** | never differed |
+| `wb_dfc_force*` | 0 | 0 | injection stayed inert |
+
+**The +13 is what makes the clean run mean something.** A clean 16-burst run proves little by itself
+— yesterday's control run was clean too, with the bug active. Thirteen corruptions occurring and
+being repaired, with zero misroutes and zero failure exits, is the pair that says the hazard was
+present and neutralised.
+
+**Honest weight:** against a historical rate of ~1 EFAULT per 15 bursts, one clean 16-burst run is
+about one expected event avoided. The case rests on the injection A/B and the mechanism counters;
+this run is the confirmation Codex's acceptance list asked for, not the primary evidence.
+
+`wb_sfc_changed = 0` across a boot and 112558 replays turns Codex's static "no victim path for the
+SFC leak" into a measured statement.
+
+### Side observation, NOT caused by this work: multi-minute stalls in the b2repro workload
+
+Burst cost from the machine's own clock: bursts 1–6 took 120–125 s each, then +881, +118, +195,
++658 s. The same pattern predates all DFC work (`260728-36`: +539 and +352 in 15 bursts) and
+appeared on a fresh boot, so yesterday's guess that it came from memory pressure left by earlier
+cofault runs is weakened by this run. Baseline burst cost is unchanged, so it is stalls rather than
+slowdown — a few candidates worth one cheap check later: root-fs free space and fragmentation after
+~1 GB of burst writes, or paging pressure from 6 × 4 MiB copies plus a 4 MiB verify buffer on a
+32 MB machine. Not investigated; recorded so it is not rediscovered as a new symptom.
+
+## ISSUE-22 — the causal chain, closed 2026-07-29 by fault injection
 
 Root cause: **`wb040.s` leaked DFC into the interrupted copy** (section below for how it was found).
 The natural event is far too rare to A/B — a 12-burst control run produced 25 DFC corruptions and
