@@ -1766,6 +1766,45 @@ luuppi. SEURAAVA ASKEL kun tähän tartutaan: ktrap_latchin kenttien tarkka deco
 rekursioketju tallentuu; toistotilasto eri lämpötiloissa. Työkalu valmiina:
 serial2usb-kaappaus toimii nyt (stty 9600 raw + while-cat-luuppi | tee).
 
+## ISSUE-38 — BISECTED 2026-07-29: `assegat_dbg` is what masks it, and that names the path
+
+Five hardware boots, deterministic verdict each time (reaches login, or spins in the scheduler with
+no runnable process — `mainmarks` makes the latter visible as a repeating `W` proc-table dump):
+
+```text
+full dbg overlay (14 objects)                                     boots
+A  = serdbg + ddopen,blkatoff,mainmarks,assegat,execmark,
+              hatalloc,sigkill                                     boots   (telnet: -12, uptime 2 min)
+B2 = serdbg + mainmarks,ddopen,blkatoff,execmark                   HANGS
+D  = serdbg + mainmarks,hatalloc                                   HANGS
+E  = D + assegat_dbg                                               boots   (telnet: -22)
+quiet = serdbg only                                                hangs
+```
+
+**E − D is exactly `assegat_dbg`.** And the result is more informative than the name: `hatalloc_dbg`
+(in D) prints heavily and wraps `page_get`/`page_free`/`hat_ptalloc`, yet does NOT mask. So the
+masking is not chatter and not page-allocation instrumentation — it is specifically the wrapping of
+**`as_fault`, `as_segat` and `execmap`**.
+
+**The two paths differ structurally, not just in timing.** A booting kernel maps the 8 KiB
+exec-header segmap slot and proceeds to fault in init's text; a hanging kernel *releases* it —
+`DBG hat_unload va=48442000 size=2000 flags=A` — and stops. Exec is aborting, not stalling. `D`'s
+log adds two lines immediately after the release that are worth following:
+
+```text
+DBG page_abort crash pp=400AD254 p_mapping=0 caller=80AD7DA (0=>SKIPs hat_pageunload, PTE stays)
+DBG page_abort crash pp=400AD290 p_mapping=0 caller=80AD7DA (0=>SKIPs hat_pageunload, PTE stays)
+```
+
+A page released with its PTE left in place is the stale-PTE/page-recycling family — the same family
+as ISSUE-10. Whether that is cause, consequence or coincidence here is **not established**.
+
+**Next, and deliberately not another bisect:** the useful question is no longer *what hides it* but
+*why exec aborts*. That wants a small probe on the exec header path (the `exhd_getmap`/`elfexec`
+return codes) in an otherwise probe-less image, or a static read of that path under copyback. Both
+are cheaper than narrowing further inside `assegat_dbg`, which is one large object with several
+wrappers.
+
 ## ISSUE-38 — ⛔ OPEN, and it blocks the copyback flip: copyback hangs at init's exec WITHOUT the debug probes
 
 Found 2026-07-29 by booting the image that would actually ship — which, it turns out, no probe-less
