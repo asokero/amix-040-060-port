@@ -98,6 +98,22 @@ for o in $DBG_OBJS; do OBJPATHS="$OBJPATHS $HERE/build/$o.o"; done
 echo "[*] linking probe objects: $DBG_OBJS"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-dbg-stage1" $OBJPATHS
 
+# HARD CHECK (2026-07-29, ISSUE-38 bisect): a probe subset must not leave dangling references.
+# The probe objects depend on each other -- mainmarks is needed by nearly all of them, and
+# hatalloc_dbg -> assegat_dbg -> sigkill_dbg is a chain -- so dropping one can leave another's
+# reference unresolved.  unix_boot does not report that as a missing symbol: it dies before
+# printing anything with the guru D245 4C41 ("RELA", its unsupported-relocation code), which
+# costs a hardware boot to discover.  Fail here instead.
+UND=$(m68k-linux-gnu-nm "$OUT" | awk '$1=="U" && $2!="edata" && $2!="end" && $2!="etext" {print $2}')
+if [ -n "$UND" ]; then
+	echo "[FAIL] unresolved symbols after link:"; echo "$UND" | sed 's/^/         /'
+	echo "       DBG_OBJS dropped an object that a linked one references."
+	echo "       Dependencies: mainmarks <- (everything); hatalloc_dbg <- assegat_dbg <- sigkill_dbg;"
+	echo "                     execmark and ktrap_latch <- mainmarks."
+	exit 1
+fi
+echo "[OK] no unresolved symbols (only edata/end/etext, which the loader supplies)."
+
 echo "[*] overridden defs (single strong def each; hat_dup is inherited from \$IN, shown for confirmation only):"
 for s in ddopen hat_dup k_trap kmem_alloc segvn_softunlock preempt setuctxt swapinub swapinub_orig swapinub_stock segu_get; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
