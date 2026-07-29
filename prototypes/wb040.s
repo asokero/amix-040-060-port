@@ -48,15 +48,28 @@
 | and Lwb_do cannot use the stack at all: k_trap lands an unresolvable nested fault on Lwb_fail
 | with the trap-time SP, whose rts expects the stack exactly as bsr left it.
 | wb_dfc_on = 0 restores the old behaviour in one .data long, for an A/B inside a single boot.
+|
+| PROVEN BY INJECTION 2026-07-29 (68040-260729-03, two seconds, same boot, one .data long apart):
+| with wb_dfc_on = 0 an injected DFC=5 aborted a 1 MiB read at ZERO bytes with errno 14 and printed
+| the exact ISSUE-22 signature (`FAILEXIT w=2 va=80003228 rw=2 depth=1`, ssw 0x85 = TM 101 + write);
+| with wb_dfc_on = 1 the same injection was absorbed 40 times inside one read that completed
+| byte-complete.  See test-tools/issue22-misroute-260728.txt.
+|
+| 2026-07-29: the contract now covers SFC as well, on Codex's audit -- not because a victim exists
+| (none does today) but because "this register happens to be harmless to clobber" is precisely the
+| reasoning that hid ISSUE-22 for a month.  The memory-fault machinery returns BOTH function-code
+| registers unchanged.
 | ===========================================================================================
 
 	.text
 	.globl	usrxmemflt
 usrxmemflt:
-	linkw	%fp,&-4			| fp@(-4) = the caller's DFC
+	linkw	%fp,&-8			| fp@(-4) = caller's DFC, fp@(-8) = caller's SFC
 	moveml	%d2-%d5/%a2-%a3,%sp@-
 	.word	0x4e7a,0x0001		| movec %dfc,%d0
 	movel	%d0,%fp@(-4)
+	.word	0x4e7a,0x0000		| movec %sfc,%d0
+	movel	%d0,%fp@(-8)
 	moveal	%fp@(8),%a2		| 060-B: fmt-4 frame? synthesize an 040-style
 	bsrw	wb060_sswsynth		| SSW at +76 BEFORE the stock classifier reads it
 	movel	%d0,%d5			| XPAGE unit item 1: the ORIGINAL FSLW, which the
@@ -85,19 +98,23 @@ Lu_done:
 	beqs	Lu_nodfc
 	movel	%fp@(-4),%d0
 	.word	0x4e7b,0x0001		| movec %d0,%dfc
+	movel	%fp@(-8),%d0
+	.word	0x4e7b,0x0000		| movec %d0,%sfc  -- same contract for the source side
 	addql	&1,wb_dfc_n
 Lu_nodfc:
 	movel	%d4,%d0			| restore usrxmemflt's return value
-	moveml	%fp@(-28),%d2-%d5/%a2-%a3
+	moveml	%fp@(-32),%d2-%d5/%a2-%a3
 	unlk	%fp
 	rts
 
 	.globl	krnxmemflt
 krnxmemflt:
-	linkw	%fp,&-4			| fp@(-4) = the caller's DFC
+	linkw	%fp,&-8			| fp@(-4) = caller's DFC, fp@(-8) = caller's SFC
 	moveml	%d2-%d5/%a2-%a3,%sp@-
 	.word	0x4e7a,0x0001		| movec %dfc,%d0
 	movel	%d0,%fp@(-4)
+	.word	0x4e7a,0x0000		| movec %sfc,%d0
+	movel	%d0,%fp@(-8)
 	moveal	%fp@(8),%a2		| 060-B: same fmt-4 SSW synthesis (uniform frame
 	bsrw	wb060_sswsynth		| semantics; krnx reads other fields, harmless)
 	movel	%d0,%d5			| XPAGE unit item 1: preserve the ORIGINAL FSLW
@@ -122,10 +139,12 @@ Lk_done:
 	beqs	Lk_nodfc
 	movel	%fp@(-4),%d0
 	.word	0x4e7b,0x0001		| movec %d0,%dfc
+	movel	%fp@(-8),%d0
+	.word	0x4e7b,0x0000		| movec %d0,%sfc  -- same contract for the source side
 	addql	&1,wb_dfc_n
 Lk_nodfc:
 	movel	%d4,%d0			| restore krnxmemflt's return value
-	moveml	%fp@(-28),%d2-%d5/%a2-%a3
+	moveml	%fp@(-32),%d2-%d5/%a2-%a3
 	unlk	%fp
 	rts
 
@@ -173,6 +192,19 @@ Lwb_dfccheck:
 	movel	%d0,wb_dfc_lastnew
 	movel	%d1,wb_dfc_lastold
 Lwb_dfcsame:
+| --- SFC, the sibling Codex found (ISSUE22-DFC-ARCH-STATE-AUDIT.md, 7c314b2): ptest040.s:52 writes
+|     SFC and never restores it, defended in its own comment by the exact assumption ISSUE-22
+|     disproved for DFC.  There is no victim today -- every MOVES consumer sets its own function
+|     code -- so this counter exists to keep that claim measured rather than assumed.  The write
+|     itself is deliberately LEFT IN PLACE: it was added as insurance against DFC/SFC ambiguity on
+|     real silicon, and the case for removing it rests on an emulator source reading.  Making the
+|     leak harmless costs nothing; removing working hardware insurance on a manual's word does. ---
+	.word	0x4e7a,0x0000		| movec %sfc,%d0
+	movel	%fp@(-8),%d1
+	cmpl	%d1,%d0
+	beqs	Lwb_sfcsame
+	addql	&1,wb_sfc_changed
+Lwb_sfcsame:
 	rts
 
 | wb060_sswsynth (060-B, 2026-07-10; XPAGE unit 2026-07-28): a2 = trap frame.
@@ -525,4 +557,7 @@ wb_dfc_force_n:
 	.globl	wb_dfc_forced
 wb_dfc_forced:
 	.long	0			| injections actually performed
+	.globl	wb_sfc_changed
+wb_sfc_changed:
+	.long	0			| faults returning with an SFC the caller did not set
 	.balign 4

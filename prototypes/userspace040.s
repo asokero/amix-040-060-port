@@ -41,19 +41,22 @@
 |
 | The classifier is right ~99.999% of the time: the same run resolved ~90000 copyout page
 | faults and misrouted ONE.  So the function code in the frame is USUALLY 1 (user data) and
-| occasionally something else.  What else it can be is the open question this probe answers:
-| TM=000 is a data-cache push (which EXISTS ONLY UNDER COPYBACK -- the write-through control
-| ran 288 verifications clean, and that A/B is the reason this is worth suspecting), TM=011 is
-| an MMU table search, TM=101/110 are supervisor accesses.
+| occasionally something else.
 |
-| WHY THE FIX SHIPS IN THE SAME IMAGE AS THE PROBE, instead of after another 40-minute run:
-| the rerouted set is EXACTLY the set that always fails today.  userspace() has exactly one
-| caller -- k_trap at 0x5a1ca -- and it is reached ONLY when u+0x374 (the copyin/copyout
-| nofault landing pad) is armed.  On that path a "kernel" verdict for a fault address at or
-| above 0x80000000 leads to as_segat(&kas, userVA), which cannot succeed for a user address.
-| So rerouting {fc not user} + {fa >= 0x80000000} to the user resolver cannot alter any path
-| that works today; it can only change an unconditional failure into an attempt.
-| us_reroute_on = 0 restores the old behaviour in ONE .data byte, for an A/B inside one boot.
+| RESOLVED 2026-07-29: the "something else" is 5, and it does not come from the CPU reporting
+| anything unusual -- this function reads the frame CORRECTLY every time.  It comes from
+| wb040.s leaving a stale DFC behind after a write-back replay, so the interrupted copy loop's
+| next `movesl` genuinely IS a supervisor-data access to a user address.  The root cause is
+| fixed there; see that file's header for the injection A/B that proved it.
+|
+| WHAT REMAINS HERE IS A REGRESSION DETECTOR, NOT A HUNT.  us_odd_user counts user-address
+| misroutes and must stay 0 now that the function-code registers are preserved; us_odd_kern
+| counts the legitimate supervisor-data faults on the kernel segmap source (thousands per copy
+| workload -- that is the copy loop's `movel %a0@+` and it is fine).  Both are .globl so kpeek
+| can read them from /dev/mem without the serial capture being alive.  The cmn_err lines are
+| gated on btrace_on, so the base and quiet kernels are silent and only the DBG build prints.
+|
+| The reroute band-aid that briefly lived here is GONE (see Lus_oddfix).
 | ===========================================================================================
 
 	.text
@@ -132,12 +135,16 @@ Lus_odduser:
 	movel	%d0,Lus_ou_n
 	bsrw	Lus_dolog
 Lus_oddfix:
-	tstl	us_reroute_on		| 0 = the A/B control: behave exactly as before
-	beqw	Lus_kern
-	addql	&1,us_reroute_n
-	moveq	&1,%d0			| resolve against the process address space
-	braw	Lus_ret
+| --- 2026-07-29: the reroute band-aid that used to sit here is GONE.  It sent user-address
+|     misroutes to the user resolver, which treats the symptom and cannot work: with the root cause
+|     (a leaked DFC, wb040.s) the ACCESS ITSELF is aimed at the wrong space, so as_fault resolves
+|     the page, the retry re-faults identically, and that is an unkillable kernel loop -- the
+|     ISSUE-37 shape.  The counters stay: us_odd_user must remain 0 now that DFC is preserved, so
+|     it is a standing regression detector rather than diagnostics. ---
+	braw	Lus_kern
 Lus_dolog:
+	tstl	btrace_on		| the DBG build sets this; base and quiet stay silent
+	beqs	Lus_nolog
 	movel	%fp@(-16),%sp@-		| ssw
 	movel	%fp@(-8),%sp@-		| fa
 	movel	%fp@(-4),%sp@-		| fc
@@ -146,6 +153,7 @@ Lus_dolog:
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(24),%sp
+Lus_nolog:
 	rts
 Lus_kern:
 	clrl	%d0			| else supervisor/kernel
@@ -189,15 +197,5 @@ us_odd_user:
 	.globl	us_odd_kern
 us_odd_kern:
 	.long	0
-	.globl	us_reroute_n
-us_reroute_n:
-	.long	0
-	.globl	us_reroute_on
-us_reroute_on:
-	.long	0			| 0 by DEFAULT since the DFC root cause was found (wb040.s
-					| header): rerouting only treats the symptom, and it cannot
-					| succeed when the ACCESS ITSELF is aimed at the wrong space
-					| -- as_fault resolves the user page, the retry re-faults with
-					| the same wrong DFC, and that is an unkillable loop (the
-					| ISSUE-37 shape).  Kept as a lever, inert unless poked to 1.
+
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
