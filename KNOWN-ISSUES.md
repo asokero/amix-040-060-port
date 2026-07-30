@@ -1766,6 +1766,32 @@ luuppi. SEURAAVA ASKEL kun tähän tartutaan: ktrap_latchin kenttien tarkka deco
 rekursioketju tallentuu; toistotilasto eri lämpötiloissa. Työkalu valmiina:
 serial2usb-kaappaus toimii nyt (stty 9600 raw + while-cat-luuppi | tee).
 
+## ✅ COPYBACK IS THE DEFAULT, AND FULLY ACCEPTED ON THE SHIPPING IMAGE (2026-07-30/31)
+
+`hat_cm_ram` now ships `0x20` in the base link (`prototypes/hat040.s`); the WRITE-THROUGH control is
+the derived image (`patch_b2_flip.py --wt`). The flipped base differs from the hardware-accepted
+`unix-040-b2-fix38-260730-03` by exactly one build-id byte, so the acceptance below covers what
+ships. Everything here was run on a **probe-less** image — every earlier copyback result was taken
+on a dbg overlay that carried an unconditional `cpusha bc` (see ISSUE-38).
+
+```text
+pressure suite      B2REPRO-COPY CLEAN (0 non-V0 in 16 bursts), 96/96 V0_COMPLETE_MATCH
+power-cut truth     B2RT-RESULT PASS (6 files, every byte intact) after a real power cut + fsck
+Dhrystone           30037 /s  vs write-through 18292.7 /s  = +64 %
+exec path           EXECTEST-RESULT PASS (data+bss verified across 20 generations)
+```
+
+Counters over the burst run (the content of the run, not bookkeeping): `wb_dfc_changed` +43 — the
+ISSUE-22 DFC fix fired 43 times under load and the run produced zero EFAULTs; `dma_cmpl_noprep` 0
+across +555 567 page releases — the B1 DMA-coherency hook never failed open; `cb_rel_reject` 0;
+`us_odd_user` 0. Full records: `REALHW-COPYBACK-ACCEPTANCE-260730.md`,
+`REALHW-COPYBACK-POWERCUT-260730.md`.
+
+Known residual, deliberately not bundled: the base kernel still prints ~29 `cmn_err` diagnostics
+from the genuine-fix objects (`hat040.s` 17, `vtop040` 3, `hat_dup040` 2, ...), gated only by
+counters and not by a runtime flag. Quieting them is a separate unit with its own hardware
+acceptance — ISSUE-38 is precisely the lesson that instrumentation changes behaviour.
+
 ## ISSUE-38 — ✅ CLOSED 2026-07-30: the boot icode was invisible to the 040 ifetch under copyback
 
 Full record: `ISSUE38-ICODE-CACHE-FINDING-260730.md`. Short form: `main+0x1e8`'s
