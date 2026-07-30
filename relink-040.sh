@@ -283,6 +283,12 @@ if [ "$COADDR" = "00000576" ] || [ -z "$COADDR" ]; then
 	echo "[FAIL] strong copyout is stock/missing (addr='$COADDR') -> icode never published to RAM (ISSUE-38)"; exit 1
 fi
 echo "[OK] cb_icode040 copyout wrapper @0x$COADDR is the strong def (stock body kept as copyout_orig)."
+
+# The shipped cache stage (2026-07-30): the base image is COPYBACK by default now
+# that ISSUE-38 is closed.  Printed, and asserted to be one of the two legal
+# values by the script itself; the write-through control is the derived image
+# (patch_b2_flip.py --wt).
+python3 "$HERE/prototypes/patch_b2_flip.py" "$OUT" --check | sed 's/^/      /'
 echo
 m68k-linux-gnu-size "$OUT" | sed 's/^/      /'
 

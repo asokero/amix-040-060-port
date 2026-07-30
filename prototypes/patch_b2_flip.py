@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-# patch_b2_flip.py -- caches Step B2: produce a COPYBACK variant of a linked
-# kernel image by flipping the hat_cm_ram staging global 0x00 -> 0x20
+# patch_b2_flip.py -- set the hat_cm_ram staging global of a linked kernel image
 # (2026-07-23; spec = CM-PTE-WRITER-MATRIX.md stage table + the three B2 docs).
 #
-#   python3 patch_b2_flip.py <input-image> <output-image>
+#   python3 patch_b2_flip.py <input-image> <output-image> [--wt]
+#   python3 patch_b2_flip.py <image> --check
+#
+# DIRECTION REVERSED 2026-07-30.  The base link now ships hat_cm_ram = 0x20
+# (copyback) by default, because ISSUE-38 closed on hardware and a probe-less
+# copyback kernel finally boots.  So the interesting derived image today is the
+# WRITE-THROUGH control (--wt, 0x20 -> 0x00), used for one-variable cache A/Bs.
+# Without --wt the script still produces/asserts the copyback value, which keeps
+# every older recipe in the docs working (it is now normally a no-op "[skip]").
 #
 # Two artifact sets by design (CB-PAGE-LIFECYCLE-CLOSURE / A3091 spec runtime
 # acceptance: "baseline smoke before the CM flip"): the normal relink output
@@ -16,11 +23,21 @@
 
 import struct, sys
 
-if len(sys.argv) != 3:
-    raise SystemExit("usage: patch_b2_flip.py <input-image> <output-image>")
-SRC, DST = sys.argv[1], sys.argv[2]
+CB, WT = 0x00000020, 0x00000000
 
-CB = 0x00000020
+argv = sys.argv[1:]
+CHECK = "--check" in argv
+WANT_WT = "--wt" in argv
+argv = [a for a in argv if not a.startswith("--")]
+if CHECK:
+    if len(argv) != 1:
+        raise SystemExit("usage: patch_b2_flip.py <image> --check")
+    SRC, DST = argv[0], None
+elif len(argv) == 2:
+    SRC, DST = argv
+else:
+    raise SystemExit("usage: patch_b2_flip.py <input-image> <output-image> [--wt] | <image> --check")
+WANT = WT if WANT_WT else CB
 
 def u16(b, o): return struct.unpack(">H", b[o:o+2])[0]
 def u32(b, o): return struct.unpack(">I", b[o:o+4])[0]
@@ -57,13 +74,20 @@ if val is None:
 
 foff = data["offset"] + (val - data["addr"])
 cur = u32(buf, foff)
-if cur == CB:
-    print("  [skip] hat_cm_ram @.data+0x%x already 0x%08x (copyback)" % (val, CB))
-elif cur == 0:
-    struct.pack_into(">I", buf, foff, CB)
-    print("  [ok]   hat_cm_ram @.data+0x%x: 0x00000000 -> 0x%08x (WT -> COPYBACK)" % (val, CB))
+if cur not in (WT, CB):
+    raise SystemExit("ABORT: hat_cm_ram @.data+0x%x holds 0x%08x, expected 0x00 or 0x20" % (val, cur))
+
+NAME = {WT: "WRITETHROUGH", CB: "COPYBACK"}
+if CHECK:
+    print("hat_cm_ram @.data+0x%x = 0x%08x (%s)" % (val, cur, NAME[cur]))
+    raise SystemExit(0)
+
+if cur == WANT:
+    print("  [skip] hat_cm_ram @.data+0x%x already 0x%08x (%s)" % (val, cur, NAME[cur]))
 else:
-    raise SystemExit("ABORT: hat_cm_ram @.data+0x%x holds 0x%08x, expected 0 or 0x20" % (val, cur))
+    struct.pack_into(">I", buf, foff, WANT)
+    print("  [ok]   hat_cm_ram @.data+0x%x: 0x%08x -> 0x%08x (%s -> %s)"
+          % (val, cur, WANT, NAME[cur], NAME[WANT]))
 
 open(DST, "wb").write(buf)
-print("B2 copyback variant -> %s" % DST)
+print("%s variant -> %s" % (NAME[WANT], DST))

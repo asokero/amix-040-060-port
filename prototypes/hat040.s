@@ -1703,14 +1703,24 @@ Lhfa_n:
 	.long	0
 | --- hat_cm_ram: the managed-ordinary-RAM cache-mode class for the caches
 | campaign (CM-PTE-WRITER-MATRIX.md stage table).  B1 = 0x00 (writethrough),
-| B2 flips this ONE global to 0x20 (copyback).  Read by hat_pteload's Lcm_sel,
-| hat_dup040's private-leaf constructor and bp_map040's alias constructor.
-| GLOBAL + in .data so a future stage flip is a 4-byte initializer change (or a
-| boot-time poke) without touching the three consumers.
+| B2 = 0x20 (copyback).  Read by hat_pteload's Lcm_sel, hat_dup040's private-leaf
+| constructor and bp_map040's alias constructor.  GLOBAL + in .data so the stage
+| is a 4-byte initializer change (or a boot-time poke) without touching the three
+| consumers.
+|
+| DEFAULT FLIPPED TO COPYBACK 2026-07-30, after ISSUE-38 closed on hardware:
+| unix-040-b2-fix38-260730-03 (copyback, NO probes) boots to telnet with
+| cb_icode_push=1 and hat_cm_ram=0x20 read back live, and `exectest 20` PASSes on
+| it.  Until that day every copyback image had to be produced by patch_b2_flip.py
+| from a write-through base, because the probe-less copyback kernel could not boot
+| at all: main's copyout(icode) sat in dirty data-cache lines that the 040
+| instruction fetch does not snoop (ISSUE38-ICODE-CACHE-FINDING-260730.md,
+| prototypes/cb_icode040.s).  The WRITE-THROUGH control is now the derived image:
+|   python3 prototypes/patch_b2_flip.py build/unix-040 build/unix-040-wt --wt
 	.globl	hat_cm_ram
 	.balign 4
 hat_cm_ram:
-	.long	0x00000000		| B1: CM=00 writethrough for managed RAM
+	.long	0x00000020		| B2: CM=01 copyback for managed RAM (default since 2026-07-30)
 	.balign 4
 Lbt_ptl_done:
 	.long	0			| btrace 'P' one-shot guard (first hat_pteload)
