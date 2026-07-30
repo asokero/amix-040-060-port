@@ -71,8 +71,20 @@ wrapper contract makes it harmless; it is worth a line in the log, not an invest
 29813.7) to within noise, so the number survives the removal of the dbg overlay: the speed was never
 an artifact of instrumentation. `dhry` reads its run count from **stdin**, not argv.
 
-## What is still open
+## Power-cut disk truth — also PASSED (2026-07-31)
 
-The power-cut disk-truth run (`REALHW-COPYBACK-POWERCUT-260730.md`) — the one thing copyback has
-never been asked. A clean reboot lets shutdown's `sync` rescue dirty D-cache lines; a power cut does
-not.
+Run immediately after this, on the same kernel: six 4 MiB files written and synced, **power cut with
+no shutdown**, cold boot on the same image, fsck ran and repaired the expected unclean-UFS damage,
+and all six verified `V0_COMPLETE_MATCH size=4194304 crc=50250`:
+
+```text
+B2RT-RESULT PASS (6 files, every byte intact)
+```
+
+Evidence for the boundary rather than an assumption about it: write phase at uptime ≈ 1 h 23 min,
+verify at uptime 1 min, the verify script's fail-closed kernel-identity check passed, and
+`hat_cm_ram` read `0x20` on both sides — copyback wrote and copyback read. Full record:
+`REALHW-COPYBACK-POWERCUT-260730.md`.
+
+With this, copyback has nothing left unanswered: pressure suite 96/96, power-cut disk truth 6/6,
++64 % Dhrystone, all on the probe-less image that ships.

@@ -1,4 +1,22 @@
-# Copyback power-cut disk truth — run sheet for the shipping kernel (2026-07-30)
+# Copyback power-cut disk truth — ✅ PASSED 2026-07-31, on the shipping kernel
+
+> **RESULT: `B2RT-RESULT PASS (6 files, every byte intact)`.** Six 4 MiB files written and synced on
+> `68040-260730-03`, then the power was cut with no shutdown and no further sync. The machine came
+> back on the same kernel, fsck ran and repaired the expected unclean-UFS damage, and every one of
+> the six files verified `V0_COMPLETE_MATCH size=4194304 crc=50250` — the same CRC the write phase
+> recorded, read back byte for byte. Nothing landed in `lost+found`, no file was short.
+>
+> The reboot boundary is evidenced, not assumed: the write phase ran at uptime ≈ 1 h 23 min, the
+> verify phase at uptime 1 min, and the verify script's own kernel-identity check (which fails
+> closed) passed. `hat_cm_ram` read `0x20` on both sides, so it was copyback that wrote and copyback
+> that read. After the cold boot `cb_icode_calls` / `cb_icode_push` read 1 / 1 again — the ISSUE-38
+> fix fires once per boot as designed — and `cb_rel_reject` / `dma_cmpl_noprep` were both 0.
+>
+> **This was copyback's last unanswered question.** Write-through had passed it twice (B1 7/7, and
+> 8/8 on 2026-07-27); copyback had never been asked. It has now been asked and answered on the image
+> that ships.
+
+## Original run sheet (2026-07-30)
 
 Supersedes the kernel identity in `REALHW-COPYBACK-POWERCUT-260729.md`; the *reasoning* in that
 file still stands and is not repeated here. Short version: a clean reboot lets shutdown's `sync`
