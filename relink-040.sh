@@ -125,6 +125,14 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/dma_cache040.s" -o "$HERE/build/
 # CB-PAGE-LIFECYCLE-CLOSURE.md.  In the WT baseline the loop only invalidates
 # clean lines (harmless) -> hooks are regression-testable before the CM flip.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/cb_release040.s" -o "$HERE/build/cb_release040.o"
+# cb_icode040 (2026-07-30, ISSUE-38 fix): main()'s copyout(icode) writes proc 1's
+# bootstrap text with the CPU, and the 040 ifetch does not snoop the data cache --
+# under copyback the icode stayed in dirty lines, proc 1 executed the still-zero RAM
+# page as `ori.b #0,%d0` off the end into the unmapped 0x80801000 and died before
+# exec.  Gated `cpusha bc` after the icode copyout only.  See the file header for
+# the full evidence chain (incl. why assegat_dbg masked it: its copyout wrapper
+# does the same push unconditionally).  A genuine fix, belongs in base.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/cb_icode040.s" -o "$HERE/build/cb_icode040.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
@@ -223,6 +231,8 @@ m68k-linux-gnu-objcopy \
 	--add-symbol a3091_startdma_orig=.text:0xd40a,function,global \
 	--add-symbol a3091_dma_on=.bss:0x3cc0,object,global \
 	--add-symbol config_orig=.text:0x18f5c,function,global \
+	--weaken-symbol copyout \
+	--add-symbol copyout_orig=.text:0x576,function,global \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -238,11 +248,11 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" \
 	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
 	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
-	"$HERE/build/config040.o"
+	"$HERE/build/config040.o" "$HERE/build/cb_icode040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
@@ -263,6 +273,16 @@ if [ "$HBADDR" = "0005b3c2" ] || [ -z "$HBADDR" ]; then
 	echo "[FAIL] strong hardbus is stock/missing (addr='$HBADDR') -> crossing reads loop forever"; exit 1
 fi
 echo "[OK] native resume @0x$RESADDR + crossing-page hardbus @0x$HBADDR are the strong defs."
+
+# HARD CHECK (2026-07-30, ISSUE-38): the strong `copyout` must be the cb_icode040
+# wrapper, not the stock body at 0x576 -- a kernel whose copyout is stock leaves
+# main()'s icode in dirty copyback lines and proc 1 dies before exec (the whole of
+# ISSUE-38).  Guard shaped exactly like the resume/hardbus ones above.
+COADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="copyout" && $2=="T" {print $1}')
+if [ "$COADDR" = "00000576" ] || [ -z "$COADDR" ]; then
+	echo "[FAIL] strong copyout is stock/missing (addr='$COADDR') -> icode never published to RAM (ISSUE-38)"; exit 1
+fi
+echo "[OK] cb_icode040 copyout wrapper @0x$COADDR is the strong def (stock body kept as copyout_orig)."
 echo
 m68k-linux-gnu-size "$OUT" | sed 's/^/      /'
 

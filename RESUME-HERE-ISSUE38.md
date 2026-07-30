@@ -1,5 +1,20 @@
 # RESUME HERE — ISSUE-38 (2026-07-29): copyback hangs at init's exec without the debug probes
 
+> **2026-07-30 — ISSUE-38 IS NAMED, AND THE TITLE OF THIS FILE IS WRONG.** It does not hang at
+> init's exec; it dies **before** exec. `main+0x1e8`'s `copyout(icode, 0x80800000)` leaves proc 1's
+> bootstrap text in dirty copyback data-cache lines, the 68040 instruction fetch does not snoop the
+> data cache, so proc 1 executes the still-zero RAM page as `ori.b #0,%d0` off the end into the
+> unmapped `0x80801000` and dies of SIGSEGV. The terminal `hat_unload va=48442000 flags=A` is
+> `segu_release` reclaiming the resulting zombie's u-area. The masking object `assegat_dbg` masks it
+> because its `copyout` wrapper does an unconditional `cpusha bc`. Every row of §2's bisect table
+> follows from that one mechanism, and no new hardware boot was spent to find it.
+> **Read `ISSUE38-ICODE-CACHE-FINDING-260730.md` instead of §1-§4 below.** The fix is
+> `prototypes/cb_icode040.s` in the base link; its hardware verdict is still OPEN (one boot of
+> `unix-040-b2-fix38-260730-03`, verdict from telnet). §5 (instrument discipline), §6 (build
+> mechanics) and §8 (what is open after ISSUE-38) below remain current and correct.
+> Do NOT build Codex's six phase markers or its four-object masker bisect: they measure exec, which
+> never runs.
+
 Read this file and nothing else to start. Everything here is measured unless it says otherwise, and
 the open questions are marked as open. `RESUME-HERE-ISSUE22.md` is the previous entry point and is
 now a **closed record** — do not resume from it.

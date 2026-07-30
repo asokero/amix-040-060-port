@@ -1766,6 +1766,23 @@ luuppi. SEURAAVA ASKEL kun tähän tartutaan: ktrap_latchin kenttien tarkka deco
 rekursioketju tallentuu; toistotilasto eri lämpötiloissa. Työkalu valmiina:
 serial2usb-kaappaus toimii nyt (stty 9600 raw + while-cat-luuppi | tee).
 
+## ISSUE-38 — NAMED 2026-07-30: the boot icode is invisible to the 040 ifetch under copyback
+
+Full record: `ISSUE38-ICODE-CACHE-FINDING-260730.md`. Short form: `main+0x1e8`'s
+`copyout(icode, 0x80800000, szicode)` leaves proc 1's bootstrap text in dirty copyback data-cache
+lines; the 68040 instruction fetch does not snoop the data cache; proc 1 executes the still-zero RAM
+page as `ori.b #0,%d0` off the end of the page into the unmapped `0x80801000` and dies of SIGSEGV
+**before exec is entered**. The terminal `hat_unload va=48442000 size=2000 flags=A` is
+`segu_release` reclaiming the resulting zombie's u-area, not an exec-header release. `assegat_dbg`
+masks it because its `copyout` wrapper executes an unconditional `cpusha bc` — the masker is a cache
+instruction, not chatter or timing. Discriminator: `ufault VA=80801000` appears twice in bisect D's
+console and **zero** times in either booting capture, where `copyout dst=80800000 ret=0` shows the
+bytes were copied. Fix: `prototypes/cb_icode040.s` (gated `cpusha bc` after the icode copyout) in the
+base link, guarded by a relink check that rejects a stock `copyout`. **Hardware verdict still OPEN**
+— one boot of `unix-040-b2-fix38-260730-03`, verdict from telnet, then `kpeek cb_icode_push` (must be
+1) with `hat_cm_ram` (must be `0x20`) as the anchor. The 2026-07-29 bisect record below stands as
+measured; only its interpretation ("names the exec path") is superseded.
+
 ## ISSUE-38 — BISECTED 2026-07-29: `assegat_dbg` is what masks it, and that names the path
 
 Five hardware boots, deterministic verdict each time (reaches login, or spins in the scheduler with
