@@ -1,7 +1,10 @@
-# RESUME HERE — ISSUE-22 is CLOSED (2026-07-29): root cause fixed, proven by injection, accepted on hardware
+# ISSUE-22 is CLOSED (2026-07-29): root cause fixed, proven by injection, accepted on hardware
 
-Read this file and nothing else to continue. Everything below is measured unless it says otherwise,
-and the one open question is marked as open.
+> ⚠ **This is a closed record, not the entry point.** To resume work, read
+> **`RESUME-HERE-ISSUE38.md`** — copyback's remaining blocker. This file is kept for the ISSUE-22
+> evidence chain and for the counter addresses in §5, which are still current.
+
+Everything below is measured unless it says otherwise.
 
 ---
 
@@ -162,9 +165,10 @@ Lkx_fn 080FFFB4  xpage_on 080FFFB8 (=1, ANCHOR)  Lkx_depth 080FFFBC
 
 **Left:**
 
-* **Copyback's default.** ISSUE-22 was the last objection and it is now closed. Flipping
-  `hat_cm_ram` to `0x20` in the base link is a policy decision, not a technical one; today the
-  copyback images are still produced by `patch_b2_flip.py`.
+* **Copyback's default — BLOCKED by ISSUE-38, discovered hours after this was written.** ISSUE-22
+  was the last objection *known at the time*; booting the probe-less copyback image then showed it
+  does not boot at all. Flipping `hat_cm_ram` to `0x20` in the base link is no longer a policy
+  decision. See `RESUME-HERE-ISSUE38.md`.
 * **`Lkx_depth`** — still a machine-wide counter compared against a per-context limit. Refuted as
   ISSUE-22, real as a latent defect. Codex's design: a private 200-entry `proc *`-keyed table, not
   an unproved u-area field (`vm-map/ISSUE22-DFC-ARCH-STATE-AUDIT.md`, 7c314b2).
