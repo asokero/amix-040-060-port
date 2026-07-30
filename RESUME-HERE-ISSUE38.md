@@ -1,6 +1,13 @@
 # RESUME HERE — ISSUE-38 (2026-07-29): copyback hangs at init's exec without the debug probes
 
-> **2026-07-30 — ISSUE-38 IS NAMED, AND THE TITLE OF THIS FILE IS WRONG.** It does not hang at
+> **2026-07-30 — ISSUE-38 IS CLOSED ON HARDWARE. This file is a closed record; do not resume from
+> it.** `unix-040-b2-fix38-260730-03` (copyback, **no probes**) boots to telnet on the A3000,
+> `cb_icode_push` = 1 with `hat_cm_ram` = `0x20` as the anchor, and `exectest 20` PASSes. Next unit:
+> the copyback default flip (`hat_cm_ram = 0x20` in the base link) plus the postponed power-cut
+> disk-truth run (`REALHW-COPYBACK-POWERCUT-260729.md`). Read
+> `ISSUE38-ICODE-CACHE-FINDING-260730.md`.
+>
+> **The title of this file is wrong.** It does not hang at
 > init's exec; it dies **before** exec. `main+0x1e8`'s `copyout(icode, 0x80800000)` leaves proc 1's
 > bootstrap text in dirty copyback data-cache lines, the 68040 instruction fetch does not snoop the
 > data cache, so proc 1 executes the still-zero RAM page as `ori.b #0,%d0` off the end into the

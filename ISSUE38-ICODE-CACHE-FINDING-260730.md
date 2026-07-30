@@ -1,8 +1,9 @@
-# ISSUE-38 named: the boot icode is invisible to the 68040 instruction fetch under copyback
+# ISSUE-38 named and CLOSED: the boot icode was invisible to the 68040 instruction fetch under copyback
 
-2026-07-30. Written from measurements already in hand — **no new hardware boot was spent to reach
-this**. The fix built from it is `prototypes/cb_icode040.s`, in the base link, and its hardware
-verdict is still **OPEN** (see §6).
+2026-07-30. Named from measurements already in hand — **no new hardware boot was spent to reach the
+diagnosis**. The fix is `prototypes/cb_icode040.s` in the base link, and it is **hardware-verified**:
+`unix-040-b2-fix38-260730-03` — copyback, no probes — boots to telnet on the A3000, with the
+mechanism confirmed by its own counters rather than inferred from the boot (§6).
 
 ---
 
@@ -136,26 +137,49 @@ hat_cm_ram     0x080FC614      ANCHOR, must read 0x00000020
 
 In `-05` (quiet): `cb_icode_calls 0x080FCA20`, `cb_icode_push 0x080FCA24`, `hat_cm_ram 0x080FC680`.
 
-## 6. What is verified, and what is not
+## 6. HARDWARE VERDICT — 2026-07-30, ISSUE-38 CLOSED
+
+`unix_boot040 unix-040-b2-fix38-260730-03` on the A3000 + Mercury 040. Verdict taken from telnet,
+never from serial (a base image has no `conputc` hook and emits nothing on the serial line by
+design; the port's single stale reader was left untouched precisely because it could prove nothing
+here).
+
+```text
+uname -m                  Amiga (Unlimited) 68040-260730-03    <- copyback, NO probes, reaches login
+kpeek 080FC9B4  (calls)   00000001    the gate matched main's icode copyout exactly once
+kpeek 080FC9B8  (push)    00000001    the cpusha bc actually executed
+kpeek 080FC614  (ANCHOR)  00000020    hat_cm_ram: copyback really was live
+kpeek 080FC9A4  (cb_rel)  000042F2    17138 page releases: the B2 release barrier is running
+```
+
+The counters matter as much as the boot: a boot with `cb_icode_push == 0` would have meant the image
+booted for some other reason. The mechanism is measured, not inferred.
+
+Usability of the fixed image, same session: 30 consecutive `/bin/echo` execs, the native `cc`
+compiling a test program, and
+
+```text
+/tmp/exectest 20 /tmp/exectest
+EXECTEST-RESULT PASS (data+bss verified across every generation)
+```
+
+i.e. the exec path that ISSUE-38 broke now survives 20 generations with data and bss verified, on a
+probe-less copyback kernel. The copyback default flip (`hat_cm_ram = 0x20` in the base link) is
+therefore unblocked; it and the postponed power-cut disk-truth run are separate units.
+
+## 7. What was verified before the boot, and what only hardware could settle
 
 Verified: the mechanism's every step against the linked image (`main+0x1e8`, `segu_release`, `swtch`,
 `assegat_dbg`'s push), the good/bad log contrast, and that the fix does not break `copyout` — the
 `-05` image boots to a banner and forks userland in Amiberry (`68040-260730-05`, pids 117-128).
 
-**Not verified: that the fix makes the probe-less copyback image boot on the A3000.** Amiberry cannot
-test it — it does not model the copyback data cache, which is the entire mechanism. That verdict
-needs one hardware boot of `-03`, taken from **telnet/login**, not from serial: a base image has no
-`conputc` hook and therefore emits nothing on the serial line by design (a silent log would mean the
-instrument was absent, not that the bug was).
+Only hardware could settle whether the fix works: Amiberry does not model the copyback data cache,
+which is the entire mechanism. It did settle the one thing it can — that the wrapper does not break
+`copyout` — and §6 records the hardware verdict that closes the issue.
 
-Boot verdict protocol:
+Residuals deliberately left open (each a separate unit, none of them blocking):
 
-1. `unix_boot040 unix-040-b2-fix38-260730-03` at the AmigaOS CLI.
-2. Verdict = telnet login + `uname -m` → ` 68040-260730-03`.
-3. Then `kpeek` the three addresses in §5: `cb_icode_push` must be 1 and `hat_cm_ram` `0x20`. A boot
-   with `cb_icode_push == 0` would mean it booted for some other reason — the mechanism must be
-   verified, not inferred from the boot.
-4. If it still hangs: photograph the console, then boot `-05` (same fix, serial mirror) with a
-   single-reader capture and the `lsof` bracket; the next question would be whether the icode page's
-   PTE names a different physical page than `copyout` wrote (the ISSUE-10 family), which this fix
-   would not repair.
+* `ptrace`/`adb` POKETEXT writes user text through `copyout` and is not covered by the gate.
+* `ISSUE-10` (amixadm bus error on probe-less kernels) is untouched by this fix and remains open;
+  the two were masked by the same overlay, but for different reasons — this one by `assegat_dbg`'s
+  `cpusha bc`, and that is now explained rather than suspicious.
