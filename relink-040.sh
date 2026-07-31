@@ -371,6 +371,9 @@ python3 "$HERE/prototypes/patch_a3091_dma.py" "$OUT" | tail -6
 echo "[*] ISSUE-21 fix: retarget _start jsr config -> config_cachefix (cache-off handoff)"
 python3 "$HERE/prototypes/patch_config_cachefix.py" "$OUT" | tail -3
 
+echo "[*] per-process fault-depth gate: assert v.v_proc matches the table size"
+python3 "$HERE/prototypes/check_vproc.py" "$OUT"
+
 echo "[*] DBG-TEXT-PUBLISH: publish debugger writes to user text (3 relocation retargets)"
 python3 "$HERE/prototypes/patch_dbgpublish.py" "$OUT" | tail -4
 

@@ -46,14 +46,65 @@
 	.globl	krnxmemflt_orig
 krnxmemflt_orig:
 	linkw	%fp,&0
-	moveml	%d2-%d4/%a2,%sp@-
+	moveml	%d2-%d4/%a2-%a3,%sp@-
 
-| --- bounded nested-fault fail-fast (must be FIRST: it also guards our own body) ---
-	movel	Lkx_depth,%d0
-	addql	&1,%d0
-	movel	%d0,Lkx_depth
+| --- bounded nested-fault fail-fast, PER PROCESS (must be FIRST: it also guards
+|     our own body).  Spec: analyysirepo vm-map/KRNXMEMFLT-PER-PROC-DEPTH-SPEC.md.
+|     The old gate counted ONE machine-global depth, and as_fault may sleep while
+|     it is elevated -- so five unrelated processes at depth one looked exactly
+|     like one process recursing to depth five, and the fifth was rejected without
+|     ever trying as_fault (false EFAULT under u_nofault, kernel panic without it).
+|     Refuted as ISSUE-22's cause, but a real latent defect on a loaded machine.
+|     The cell is chosen by p_pidp->pid_prslot, which pid_assign sets from
+|     (procent - procdir) and pid_exit reads back: stable for the whole process
+|     lifetime, and a process cannot finish pid_exit while its own kernel stack is
+|     asleep inside as_fault -- so the table has no owner-staleness race.
+|     a3 holds the cell for the whole call; it is callee-saved under this ABI and
+|     therefore survives as_fault, cmn_err and the far-page helper. ---
+	clrl	%d2			| sane FA if the gate logs before the decode
+	clrl	%d3			| sane rw likewise (the old code logged stale d2/d3)
+	movew	%sr,%d1			| save IPL...
+	oriw	&0x0700,%sr		| ...spl7: nothing may re-enter the resolver
+					|   between the load and the store of this cell.
+					|   Only resident u/proc/pid loads and private data
+					|   inside -- no call, no page fault.
+	moveal	u+0x730,%a3		| curproc (u.u_procp)
+	movel	%a3,%d0
+	beqw	Lkx_noproc_hit
+	movel	%a3@(264),%d0		| p_pidp
+	beqw	Lkx_noproc_hit
+	moveal	%d0,%a3
+	addql	&1,%a3			| &pid_prslot (24-bit field at pid+1)
+	bfextu	%a3@{&0:&24},%d0	| slot
+	cmpil	&200,%d0		| v.v_proc; the relink asserts it really is 200
+	bccw	Lkx_badslot_hit
+	asll	&2,%d0
+	lea	Lkx_proc_depth,%a3
+	addal	%d0,%a3
+	braw	Lkx_slotok
+Lkx_badslot_hit:
+	addql	&1,Lkx_badslot		| fail VISIBLY, never index past the table
+	lea	Lkx_fallback_depth,%a3
+	braw	Lkx_slotok
+Lkx_noproc_hit:
+	addql	&1,Lkx_noproc
+	lea	Lkx_fallback_depth,%a3
+Lkx_slotok:
+	addql	&1,%a3@			| depth = ++*a3  -- THIS process only
+	addql	&1,Lkx_depth		| active resolvers: instrumentation ONLY now
+	movel	%a3@,%d0		| d0 = this process's depth
+	cmpl	Lkx_maxdepth,%d0
+	blsw	Lkx_nomax1
+	movel	%d0,Lkx_maxdepth
+Lkx_nomax1:
+	movel	Lkx_depth,%d4
+	cmpl	Lkx_maxactive,%d4
+	blsw	Lkx_nomax2
+	movel	%d4,Lkx_maxactive
+Lkx_nomax2:
+	movew	%d1,%sr			| restore IPL BEFORE any branch or call
 	cmpil	&4,%d0
-	bgtw	Lkx_f1			| recursion cap: unresolved (ISSUE-22 candidate 1)
+	bgtw	Lkx_f1			| this process is recursing: unresolved
 
 | --- fault address ---
 	movel	%fp@(8),%sp@-
@@ -172,7 +223,7 @@ Lkx_flog:
 	bccw	Lkx_fail
 	addql	&1,%d0
 	movel	%d0,Lkx_fn
-	movel	Lkx_depth,%sp@-		| nesting depth at the failure
+	movel	%a3@,%sp@-		| THIS process's depth (not the active count)
 	movel	%d3,%sp@-		| rw as decoded from the SSW
 	movel	%d2,%sp@-		| the fault address
 	movel	%d1,%sp@-		| which exit
@@ -269,10 +320,27 @@ Lkx_farfault:
 	lea	%sp@(20),%sp
 	rts
 Lkx_nox:
-	movel	Lkx_depth,%d1
-	subql	&1,%d1
-	movel	%d1,Lkx_depth
-	moveml	%fp@(-16),%d2-%d4/%a2
+| Every return funnels through here, including the depth-five rejection, so the
+| increment is always balanced.  d0 is the resolver's return value and must not be
+| touched by accounting; d1 and the saved SR are the only scratch.
+	movew	%sr,%d1
+	oriw	&0x0700,%sr
+	tstl	%a3@
+	bnew	Lkx_dec1
+	addql	&1,Lkx_underflow	| fail soft: never wrap a depth to UINT_MAX
+	braw	Lkx_dec2
+Lkx_dec1:
+	subql	&1,%a3@
+Lkx_dec2:
+	tstl	Lkx_depth
+	bnew	Lkx_dec3
+	addql	&1,Lkx_underflow
+	braw	Lkx_dec4
+Lkx_dec3:
+	subql	&1,Lkx_depth
+Lkx_dec4:
+	movew	%d1,%sr
+	moveml	%fp@(-20),%d2-%d4/%a2-%a3
 	unlk	%fp
 	rts
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
@@ -290,6 +358,29 @@ xpage_on:
 
 	.data
 	.even
+| Lkx_depth is now AGGREGATE INSTRUMENTATION ONLY: how many resolvers are active
+| machine-wide.  It must never decide a failure again -- that is Lkx_proc_depth's
+| job.  The symbol is kept so existing kpeek recipes keep meaning something.
 Lkx_depth:
 	.long	0
+	.balign	4
+| One depth cell per process slot.  200 == v.v_proc; if that tunable ever grows,
+| this table must grow in the same change (the relink asserts the value).
+Lkx_proc_depth:
+	.space	800,0
+Lkx_fallback_depth:
+	.long	0			| no proc / out-of-range slot land here
+Lkx_badslot:
+	.long	0			| slot >= 200 seen (must stay 0)
+Lkx_noproc:
+	.long	0			| curproc or p_pidp NULL at fault time
+Lkx_underflow:
+	.long	0			| a decrement found the counter already 0
+Lkx_maxdepth:
+	.long	0			| deepest single-process recursion seen
+Lkx_maxactive:
+	.long	0			| most resolvers active at once (the old gate's
+					|   view -- if this exceeds 4 while maxdepth
+					|   stays low, the old global gate WOULD have
+					|   produced a false EFAULT right there)
 	.balign 4			| pad section to a 4-byte multiple
