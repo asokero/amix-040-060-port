@@ -276,3 +276,36 @@ does not mmap a device is worth investigating, and now there is a clean baseline
 My earlier guess — that graphics work produced it — was wrong, and the guess before that ("boot-only,
 never at runtime") was also wrong. Both were stated as hypotheses and both cost one boot each to
 refute, which is the cheapest either could have been.
+
+## Xsvga on X11R5 (the other disk image) — and what it sharpens
+
+The Xsvga server was not on the acceptance disk; the user booted the same kernel
+(`68040-260731-34`) against the X11R5 root and ran it there. **It worked flawlessly** — so both RTG
+drivers are now hardware-verified with a real X server on this kernel: VA2000 through `Xrtg`, and
+Piccolo through Xsvga.
+
+Counters after that session (this root has no `/kpeek`, so it was compiled there first — a compile
+is known to produce zero events):
+
+```text
+hat_cm_ram      0x20     ANCHOR          cb_icode_push   1
+hat_pfnmiss_n   10       = boot baseline, so Xsvga produced ZERO
+hat_badaslot_n  747                      hat_sdtfail_n   0
+Lkx_maxdepth/maxactive  1 / 2            Lkx_badslot/noproc/underflow  0/0/0
+cb_rel_count    21 602                   cb_rel_reject   0        us_odd_user  0
+```
+
+**This sharpens the `hat_pfnmiss_n` mechanism.** Both X servers map device memory — the Piccolo's
+framebuffer through `svgammap`, the VA2000's through `va2000mmap` — and both produce zero events,
+while `devmaptest` produces exactly two per run. So the producer is not "a device mapping". It is
+**installing a mapping over a leaf PTE that already names a different, managed page**, which
+`devmaptest` deliberately constructs (it maps `/dev/mem` over addresses it has already touched, and
+checks the `base+2048` alias) and which an X server never does: it maps the framebuffer into fresh
+address space.
+
+That is a more useful statement than the one in the previous section, and it came free — from a run
+done for a different reason.
+
+**`Lkx_maxactive` = 2 for the fourth time.** Idle boot, 16-burst suite, wolf3d, `Xrtg` with clients,
+and now X11R5 with clients: no workload measured on this hardware has ever had more than two kernel
+fault resolvers active at once, against the retired global gate's cap of 4.
