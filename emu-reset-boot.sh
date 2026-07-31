@@ -12,7 +12,17 @@
 #      pause after 10 s (pass -w in the startup-sequence for the old
 #      wait-forever behaviour on real-HW photo sessions)
 #
-# usage: sh emu-reset-boot.sh [040|060] [serial-logfile]
+# usage: sh emu-reset-boot.sh [040|060|a3640] [serial-logfile] [kernel-image]
+#
+# THE THIRD ARGUMENT (2026-07-31).  The guest's startup-sequence loads DH2:
+# unix-040-dbg, i.e. build/unix-040-dbg by name, so every test used to be staged
+# by copying over that file by hand -- which twice destroyed a real dbg build in
+# one session, once badly enough that drivers got linked in twice.  Pass the image
+# instead and the script stages it, and protects whatever genuine build was there:
+# the previous contents are saved to build/unix-040-dbg.real unless they are just
+# a previously staged test image (tracked in build/.emu-image).
+#   sh emu-reset-boot.sh 040 /tmp/x.log build/unix-040-quiet
+#   sh emu-reset-boot.sh restore                 <- put the saved dbg build back
 #
 # NOTE: the serial-capture nc loop stays in the background across Amiberry
 # restarts; kill it with:  pkill -f 'nc localhost 1234'
@@ -24,6 +34,38 @@ set -e
 
 CPU="${1:-040}"
 LOG="${2:-/tmp/amix-emu-serial-$CPU.log}"
+IMG="${3:-}"
+HERE0=$(cd "$(dirname "$0")" && pwd)
+SLOT="$HERE0/build/unix-040-dbg"
+MARK="$HERE0/build/.emu-image"
+
+if [ "$CPU" = "restore" ]; then
+	if [ -f "$SLOT.real" ]; then
+		cp "$SLOT.real" "$SLOT"; rm -f "$MARK"
+		echo "[*] restored the saved dbg build into $(basename "$SLOT")"
+	else
+		echo "[*] nothing to restore ($SLOT.real does not exist)"
+	fi
+	exit 0
+fi
+
+if [ -n "$IMG" ]; then
+	[ -f "$IMG" ] || { echo "ERROR: kernel image missing: $IMG"; exit 1; }
+	# Protect a genuine dbg build: save it unless the slot already holds a staged
+	# test image (i.e. its checksum matches what we last staged).
+	if [ -f "$SLOT" ]; then
+		cur=$(sha256sum "$SLOT" | cut -d" " -f1)
+		last=$(cat "$MARK" 2>/dev/null | cut -d" " -f1)
+		if [ "$cur" != "$last" ]; then
+			cp "$SLOT" "$SLOT.real"
+			echo "[*] saved the existing $(basename "$SLOT") -> $(basename "$SLOT").real"
+		fi
+	fi
+	cp "$IMG" "$SLOT"
+	sha256sum "$SLOT" | sed "s|$| $IMG|" > "$MARK"
+	BID=$(strings -a "$IMG" 2>/dev/null | grep -m1 "68040-2607" || echo "?")
+	echo "[*] staged $(basename "$IMG") -> $(basename "$SLOT")   build id: $BID"
+fi
 HD="/home/asokero/Asiakirjat/FS-UAE/Hard Drives"
 GOLDEN="$HD/amix_hardfileX11R5-net.hdf"
 DISK="$HD/amix_hardfileX11R5.hdf"
