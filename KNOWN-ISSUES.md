@@ -3623,3 +3623,38 @@ interpretable, as are `us_odd_user` (0) and `wb_dfc_changed`.
 
 **Not being hunted further right now**, deliberately: chasing an intermittent one hardware boot at a
 time buys nothing until there is a rate ([[feedback-pause-elusive-bug-hunting]] applies).
+
+## ⚠ ISSUE-39 (2026-07-31): `hat_sdtalloc` runs out of contiguous memory during the burst suite
+
+Seen on the console during the 16-burst acceptance run on `68040-260731-10`, by a human watching the
+screen. It is a kernel `cmn_err` warning, not a panic:
+
+```text
+hat_sdtalloc(0x40001A70,0x1,0x0) - not enough contiguous memory for segment tables; 1 pages.
+ (called from 0x80B69B4, pid 1751, syscall 0x3(0x3,0x8037F6B0,0x2000))
+```
+
+`0x80B69B4` decodes to **`hat_ptalloc+0x126`**: a page-table allocation asked `hat_sdtalloc` for one
+page of segment-table memory and did not get it, while the victim was inside `read(3, ..., 0x2000)`.
+
+**Data integrity was unaffected in that run.** The suite finished its bursts with every verification
+`V0_COMPLETE_MATCH` — a short or corrupted copy would have shown as `V4_INODE_SHORT` or
+`V5_DATA_MISMATCH`. `cb_rel_reject` and `us_odd_user` both stayed 0.
+
+**Whether this is new is UNKNOWN, and the reason matters.** Both this run and the 2026-07-30 run
+that preceded it used *base* images, which have no `conputc` serial hook — so a console warning
+leaves no trace anywhere. It has very possibly been happening in every burst run since the suite
+existed. Do not record it as a regression of the quieting unit or of anything else landed on 07-31
+without evidence; there is none either way.
+
+**Why it is worth its own number rather than a footnote.** It is direct evidence for the memory
+regime the two open intermittents live in: the `b2repro` stalls of 200-900 s (RESUME §8) and the
+`amixadm` crash, both of which were guessed to be memory pressure and never measured. And
+`hat_ptalloc`'s steal path under pressure is precisely the mechanism behind ISSUE-10 chain II, which
+is why `hat_exec040` disables the exec-time table move.
+
+**The cheap next step is a counter, not a hunt.** `hat_sdtalloc` failures should be counted in
+`.data` the way `hat_badaslot_n` and `cb_icode_push` are, so the rate is readable with `kpeek`
+afterwards instead of depending on someone watching a screen. Sampling `freemem`/`availrmem` across
+a burst run would say how close the machine gets to the edge. Neither needs a hardware session of
+its own — they ride along with the next boot.
