@@ -1,121 +1,128 @@
-# RESUME HERE — 2026-07-31: copyback landed, the base is silent, and the port needs a direction
+# RESUME HERE — end of 2026-07-31: the port is accepted, and four instruments are calibrated
 
 Read this file and nothing else to start. `RESUME-HERE-ISSUE38.md` and `RESUME-HERE-ISSUE22.md` are
-**closed records** — do not resume from them. Everything below is measured unless it says otherwise.
+closed records. Everything below is measured unless it says otherwise.
 
 ## 0. Where the port stands
 
-The 68040 port boots, runs userland, and is now **copyback by default** with the full acceptance
-taken on the image that actually ships:
+The 68040 port is **copyback by default, silent, and accepted on hardware** — the whole battery
+re-run on the image that actually ships, because every earlier claim had been measured on a kernel
+that no longer existed.
 
 ```text
-ISSUE-38          closed on hardware.  main+0x1e8's copyout(icode) left proc 1's bootstrap text in
-                  dirty copyback lines that the 040 ifetch does not snoop; fix = gated cpusha bc in
-                  prototypes/cb_icode040.s.  Records: ISSUE38-ICODE-CACHE-FINDING-260730.md
-copyback default  hat_cm_ram ships 0x20 (prototypes/hat040.s); the WT control is the derived image
-                  (patch_b2_flip.py --wt).  REALHW-COPYBACK-ACCEPTANCE-260730.md
-acceptance        burst suite 96/96 V0, power-cut disk truth 6/6, Dhrystone 30037/s = +64 % over
-                  write-through, exectest 20 PASS -- all probe-less
-base is silent    kdbg_on (prototypes/kdbg040.s) gates 15 diagnostic cmn_err sites; 11 real warnings
-                  stay ungated.  dbg build flips the flag; /dev/kmem can too
+unix-040-260731-10   copyback, silent, no probes    battery 9/9 + burst 96/96
+unix-040-260731-33   + three new units              units verified + burst 96/96
+unix-040-rtg-260731-34  + both RTG drivers          exec/fpu/devmap PASS, wolf3d PASS,
+                                                    VA2000 Xrtg PASS, Piccolo Xsvga PASS
 ```
 
-Current artifacts, NAS `nasu:Public/amix/hwtest-260731/` (`SHA256SUMS-quiet.txt`):
+Acceptance set with roles and `SHA256SUMS.txt`: NAS `amix/acceptance-260731/`, including the
+write-through control built from the same base for a one-boot A/B, and the dbg image for diagnosis
+only — never the subject of a verdict. Full record: `REALHW-ACCEPTANCE-260731.md`.
 
-```text
-unix-040-quiet-base-260731-02   base: copyback, silent, no probes      <- the shipping content
-unix-040-quiet-260731-03        + serial mirror
-unix-040-dbg-260731-04          probe overlay (btrace_on + kdbg_on = 1)
-unix-040-rtg-260731-05          + BOTH RTG drivers (Xsvga cdevsw[67], VA2000 cdevsw[68])
-unix-040-xsvga-only-260731-06   bisect ladder (see §2)
-unix-040-va2000-only-260731-07  bisect ladder
-unix-040-pad-260731-09          bisect ladder: dead space, byte-identical geometry to -06
-unix_boot040                    MANDATORY loader
-```
+Performance, for the record: Dhrystone **30037/s** vs write-through 18292.7/s (+64 %), ~2.6× over
+the no-data-cache baseline of 11538.
 
-## 1. Open issues, honestly graded
+## 1. What landed today
 
-**Blocking nothing, but real:**
+| unit | what it fixes | verified by |
+|---|---|---|
+| `cb_icode040` (ISSUE-38) | the boot icode was invisible to the 040 ifetch under copyback | probe-less copyback boots; `cb_icode_push` = 1 |
+| copyback default | `hat_cm_ram` ships `0x20` | flipped base is one build-id byte from the accepted image |
+| `kdbg040` | base kernel is silent; 15 trace sites gated, 11 real warnings left alone | quiet boot = 1 354 bytes, dbg = 111 754 |
+| `dbgpublish040` (DBG-TEXT-PUBLISH) | ptrace POKETEXT and `/proc` writes published from cache | `dbg_ptrace_*` 4/4, `dbg_procfs_*` 2/2, reads counted 0 |
+| per-proc fault depth | global `Lkx_depth` was a false-EFAULT generator by design | `Lkx_badslot/noproc/underflow` all 0 across every workload |
+| ISSUE-39 counter | `hat_sdtalloc` OOM warning was only ever visible on a console | counter 1 = the one warning photographed |
+| `padtest040`, `z3660*`, A3640 config | tooling and driver work (see §4) | |
 
-* **ISSUE-10 / amixadm — intermittent (2026-07-31).** Crashed at startup on the RTG kernel, then
-  booted clean on the *same image*. So it is probabilistic per boot and **single-boot bisects are
-  invalid**; everything gathered on 07-31 is samples, not verdicts. The ladder above is the right
-  ladder but needs a *rate per image*, measured in the emulator
-  (`test-tools/emu-amixadm-test.sh`, ~4 min/cycle unattended), not one hardware boot per sample.
-* **ISSUE-11** — `wb040.s` WB1 replay data alignment: latent real-HW landmine, emulator never fires it.
-* **ISSUE-16** — RFS client cache 2 KiB geometry: 72 sites, not 5. Unconverted on purpose.
-* **ISSUE-20** — stock `hat_swapout` is a mine if process swap-out is ever re-enabled.
-* **ISSUE-34b** — `cc1` SIGSYS on the 68060 is *not* the vector-61 division defect (34a is proven).
-* **ISSUE-3 / 19 / 29 / 30** — bounded skips and unproven-reachability items, all recorded.
+## 2. The four calibrated instruments
 
-**Known residuals of today's work:**
+This is the part worth carrying forward: each counter now has a *known* meaning, measured one
+variable at a time, so a future reading means something.
 
-* `ptrace` POKETEXT writes user text through `copyout` and is deliberately outside the ISSUE-38
-  gate. A general fix needs a VA→phys ranged push; Codex has been asked for the census.
-* `hat_badaslot_n` reads ~500/boot on hardware where the old print cap only ever showed 8. Not a
-  leak (the skipped descriptors point outside managed RAM), but *every* address-space root carries
-  two of them — nobody has yet asked who writes root[4] and root[6].
+| counter | calibration |
+|---|---|
+| `hat_pfnmiss_n` | ~10 at boot, then **exactly +2 per `devmaptest` run** and zero from everything else — wolf3d, *both* X servers, compiles, two 16-burst suites (570 000+ page releases). The producer is installing a mapping over a leaf PTE that already names a different managed page, which only `devmaptest` deliberately constructs |
+| `hat_sdtfail_n` | ~1 per 16-burst suite; 0 under X, wolf3d, or light load. Console and counter agreed exactly |
+| `Lkx_maxactive` | **2** in every workload measured — idle, burst suite, wolf3d, Xrtg + clients, X11R5 + clients — against the retired gate's cap of 4 |
+| `dbg_ptrace_*` / `dbg_procfs_*` | 0 everywhere except the tests that exercise those paths |
 
-## 2. Three candidate directions
+**Recompute counter addresses after every relink** (`kernel_base + textsize + .data offset`), and read
+the `hat_cm_ram` anchor first: today it caught a stale-address read on the first line.
 
-**A. 68060.** 060-B is complete (dual-CPU binary, emulated-060 login) and 060-C is effectively done.
-What remains before an 060 is usable: **060-D** caches (now much cheaper — the 040 copyback
-campaign did the hard thinking), **060-E** the FPU/060SP work, which ISSUE-34a makes non-optional
-(the 68060 traps *any* constant division into vector 61, so both halves of 060SP are needed, not
-just the FP half), and **060-F** real hardware when a board exists. Codex's queued 060 XPAGE unit
-(`vm-map/XPAGE-COVERAGE-AUDIT.md`, a61d2ac, six items, not to be split) belongs here.
+## 3. Open issues
 
-**B. A3640 (an 040 card with no RAM of its own).** Everything the port assumes about the memory map
-comes from the Mercury: kernel at `0x08000000` in the card's own fast RAM. On an A3640 all RAM is
-motherboard fast RAM and the kernel lands elsewhere, which touches `pstart040`'s DTT/TT setup, the
-`vtop040` DTT0 identity assumption for DMA, and every "phys < 0x08000000" reasoning in the tree. The
-2026-07-09 analysis found the A3640 map emulator-identical, so most of this is testable locally
-*before* the card is in the machine — that is the cheap half and it is worth doing first.
+* **ISSUE-39** (new): `hat_sdtalloc` runs out of contiguous memory during the burst suite, ~1 per
+  run, harmless so far. Now counted. Cheap follow-up: sample `freemem`/`availrmem` across a run to
+  characterise the regime the two intermittents live in.
+* **ISSUE-10 / amixadm**: intermittent — the same image crashed once and booted clean next time, so
+  single-boot bisects are invalid. Needs a *rate* per image, measured in the emulator
+  (`emu-amixadm-test.sh`, ~4 min/cycle, `AMIX_EMU_CPU=040|a3640`). The ladder is built and on the NAS.
+* **ISSUE-11** (wb040 WB1 alignment, latent), **ISSUE-16** (RFS 2 KiB, 72 sites), **ISSUE-20**
+  (`hat_swapout` mine), **ISSUE-34b** (`cc1` SIGSYS on 060), **ISSUE-3/19/29/30**.
+* **Residual from ISSUE-38**: `mprotect(..., PROT_EXEC)` as the general user-code publication
+  boundary is specified by Codex (`USER-CODE-CACHE-ABI-SPEC.md`) and **not implemented**. Today's
+  kernel publishes W→X only incidentally, and a same-protection RWX call cannot publish at all.
+* **`dd.c` completion ordering**: their Z3660 patch (startio before iodone) is off by default because
+  it panics here; whether the stock A3091 path has the same latent race is unanswered.
 
-**C. A driver kernel for the Z3660 (a friend's drivers).** See §3 — it has a prerequisite that
-decides everything else.
+## 4. Side work, done and parked
 
-## 3. Z3660 driver kernel — feasibility
+* **A3640** (040 card with no RAM of its own): emulator half done. The port has **no hardcoded load
+  address** — checked, then confirmed by booting at `0x07000000`. One real finding: a diagnostic
+  gated on a *physical address range* is machine-specific by construction, and one such gate fired
+  200× on that machine. Config `a3000ux-a3640.uae`, `emu-reset-boot.sh a3640`.
+* **Z3660 driver kernel** for a friend's 040-emulation bench: `unix-040-z3660-260731-26` boots with
+  both drivers linked and registered. Their sources' `phystopfn` is 2 KiB and would map the wrong
+  physical page here; `z3660_modelb.py` converts a copy, and the build asserts the shift in the
+  compiled object. Record: `Z3660-KERNEL-FEASIBILITY-260731.md`.
+* **Tooling**: `emu-reset-boot.sh` now takes the kernel image as an argument (it destroyed a real dbg
+  build twice when it was by filename); `real.py` takes `AMIX_CMD_TIMEOUT` and sends `^C` on timeout.
 
-`~/kehitys/amix-z3660scsi` (PISCSI mailbox SCSI) and `~/kehitys/amix-z3660net` (STREAMS/DLPI
-ethernet, `zen0`) are both native AMIX drivers, C, proven on a real A4000 + Z3660 — **against a
-68030 kernel** (`SVR4/68030`, the Z3660's EMU core). Four findings, in the order that matters:
+## 5. Proposed next session
 
-1. **What CPU does the friend's Z3660 present to AMIX?** If it is the emulated 68030, our kernel
-   cannot run there at all and the question is moot. If it can present a 68040/68060, everything
-   below applies. *Nothing else should be built before this is answered.*
-2. **The board lives in Zorro III space (`0x40000000`)**, and this port cannot reach Z3 device
-   apertures today: DTT0 covers 0–1 GB and `0x40000000` is a fill-on-fault kvseg
-   (`amix-zorro3-aperture-limitation`, a one-variable A/B already done on hardware; the fix is
-   scoped at two changes). **That is a hard prerequisite for the SCSI driver**, and it is work we
-   already know how to do.
-3. **Cache mode.** Their own scoping document already names 030-side coherency of the shared window
-   as the top residual risk, and notes the window is mapped *cacheable*, not CI. On our kernel that
-   risk is strictly worse: copyback, no bus snooping, and our DMA coherency hooks cover only the
-   A3000 SDMAC. A Z3660 driver needs either a CI mapping or explicit ranged `cpushl`/`cinvl` — and
-   `CPUSHL` takes a **physical** address on the 040 (the lesson from `cb_release040.s`).
-4. **Page geometry.** Our kernel is Model-B 4 KiB; their sources compile against vanilla headers
-   where `NBPP` is 2048 (`amix-crosscompile-headers-2kib-trap`). Any `btoc`/`ctob`/`sptalloc` page
-   arithmetic in the drivers is silently wrong on our kernel. This is the most likely
-   "compiles, links, boots, then corrupts" failure and it needs a source audit, not a build.
+**First, and small: the `mprotect` publication ABI.** It is the last piece of the story ISSUE-38
+opened, Codex has specified it, it is one wrapper plus a flag, and — unlike anything 060 — **its
+acceptance can be taken on this hardware**: write code into a page, `mprotect(..., PROT_EXEC)`,
+execute it, in a loop, with the counter proving the push ran.
 
-Integration itself is the *easy* part and needs no new mechanism: their build hub
-(`amix-kerntools`, not present locally) rebuilds a source kernel and edits generated tables, which
-we cannot use — but we already do the equivalent by relink. Ethernet wants a `streamtab` pointer in
-`cdevsw[48].d_str`, which is exactly `patch_va2000_cdevsw.py`; SCSI wants a `scsicard[]` row plus a
-`probe=` hook in `sd.c`'s init, which is the class of `patch_a3091_dma.py`'s reloc retarget. Both
-drivers already tolerate an absent board (`autocon()` misses → the queue is never called), so a
-kernel carrying them is safe to boot on our A3000 for a regression check, which is the only thing
-we can verify locally: compiles, links, boots, registers, no regression. The datapath is
-verifiable only on the friend's machine.
+**Second: Model-B headers.** A private `immu.h` with `NBPP 4096` / `PNUMSHFT 12` for everything
+compiled into this kernel. Today's Z3660 work showed the trap in the wild: their driver compiled
+against the vanilla headers would map `2*pa`. This makes correct-by-default what is currently
+correct-by-patcher, and it is a precondition for compiling any reconstructed kernel source later.
 
-## 4. Instrument discipline — unchanged, and it keeps paying
+**Third, riding along: ISSUE-39 characterisation.** Sample `freemem`/`availrmem` across a burst run.
+No extra hardware session — it is one small object plus the existing suite.
 
-* A **base image emits nothing on serial by design**; a silent log is an instrument failure, not a
-  clean run. Take verdicts from telnet, and now also from counters via `kpeek`.
-* **A boot is not proof that a fix fired.** ISSUE-38's acceptance rests on `cb_icode_push` = 1 with
-  `hat_cm_ram` = `0x20` as the anchor, not on the machine reaching a login prompt.
-* **Recompute counter addresses after every relink**: `0x08000000 + textsize + .data offset`.
-* `real.py` takes `AMIX_CMD_TIMEOUT` (default 120 s) and sends `^C` on timeout — the native `cc`
-  needs 900 for anything real.
-* An intermittent needs a **rate**, not a verdict. That is the emulator's job.
+**Not yet: the 060.** See §6.
+
+## 6. Is it 060 time?
+
+Partly — but not the part that looks most attractive.
+
+**What is done:** 060-B (dual-CPU binary boots on an emulated 060) and 060-C are complete, and Codex
+has now given the crossing-page unit a **static acceptance PASS** on all eight audit obligations
+(`M68060-XPAGE-ACCEPTANCE.md`). Its own verdict on the remaining item is the important sentence:
+runtime acceptance needs a **real 68060**, and *Amiberry must not be treated as proof* that a
+hardware format-4 frame delivers FSLW.MA as expected.
+
+**Why a cache campaign is the wrong thing to start.** 060-D would transfer today's copyback thinking
+to the 060 — but its acceptance would be emulator-only, and this project has just spent a week
+learning what that is worth: ISSUE-38 was **invisible in Amiberry**, because Amiberry does not model
+the copyback data cache at all. Building a body of "verified in the emulator" cache claims for the
+060 would manufacture exactly the kind of evidence we have learned to distrust.
+
+**The one 060 unit that is worth doing blind** is the *integer* half of Motorola's 060SP. ISSUE-34a
+is proven: the 68060 traps **any** constant division (`muls.l` → vector 61), so without it no
+ordinary C program runs on an 060 at all — the FPU half is not the blocker, the integer half is. It
+is the same shape as the FPSP integration that already succeeded, and its acceptance is *functional*
+("does the trapped division produce the right answer"), which an emulator can legitimately settle —
+unlike cache or timing behaviour.
+
+**So:** if the goal is "an 060 that boots and runs programs", do 060SP-integer next and leave 060-D
+until there is silicon. If the goal is "an 060 that is trustworthy", the honest answer is that it
+needs a board, and the cheapest path to one may be the friend's Z3660 work — though he is
+implementing an **040** core, so that door is not open yet either.
+
+My recommendation: **§5 first** (all three are hardware-acceptable today), and start 060SP-integer
+after that, explicitly labelled as emulator-functional acceptance.
