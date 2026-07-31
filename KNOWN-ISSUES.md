@@ -2024,7 +2024,13 @@ The fix is safe by construction rather than by argument: with the pad armed, a "
 fault address ≥ `0x80000000` always ends in `as_segat(&kas, userVA) = NULL`, so the rerouted set is
 exactly the set that fails today.
 
-## ISSUE-22 — ⏳ OPEN, and today's clean runs are NOT attributable to the xpage fix
+## ISSUE-22 — (SUPERSEDED 2026-07-29; kept as the record of what was true on 07-28) ⏳ was OPEN, and that day's clean runs were NOT attributable to the xpage fix
+
+> **Superseded.** ISSUE-22 was closed on 2026-07-29 by fault injection — the root cause was
+> `wb040.s` not restoring DFC across the interrupted copy. See "ISSUE-22 — the causal chain, closed
+> 2026-07-29 by fault injection" and "ISSUE-22 — ✅ ACCEPTED 2026-07-29" above. The section below is
+> the honest state of knowledge on 07-28 and is kept because it is what made the injection test the
+> obvious next step; do not read its OPEN marker as current.
 
 **Codex's static verdict (XPAGE-COVERAGE-AUDIT.md, a61d2ac) refutes the equivalence hypothesis on
 two independent grounds, and the hardware A/B agrees with it.**
