@@ -188,3 +188,56 @@ approached the old limit.
 
 **The publish wrappers cost nothing here.** Both `dbg_*` pairs stayed 0 across 570 283 page
 releases, i.e. the retargeting adds no work to any path the burst suite touches.
+
+## Graphics phase on `unix-040-rtg-260731-34`
+
+RTG kernel rebuilt from the `-33` base so it carries the same three units as everything else.
+
+| test | result |
+|---|---|
+| `hat_cm_ram` anchor | **0x20** |
+| `exectest 20` | **PASS** |
+| `fputest` | **PASS** — 040 hardware FP correct |
+| `devmaptest` | **PASS** — device-mmap PFN, canaries 0. This is what all RTG rests on |
+| `svgaprobe` | **PASS** — `CardID=3 (Piccolo)`, 2 MiB framebuffer, blitter, panning |
+| `wolf3d` | **PASS** (user-run from the console) — the hardest fault-path exercise we have |
+| VA2000 X server (`Xrtg`) | **PASS** (user-run) — desktop up, several clients opened |
+| Xsvga X server | **not run** — this disk image does not carry it; it needs the other image |
+
+Device nodes: `svgaprobe` opens `/dev/svga0`, with the digit — `/dev/svga` alone is not enough.
+
+**A correction I have to make.** I read `va2000probe`'s "firmware version = -2147408624" as evidence
+that no VA2000 board was present. That was wrong: the board is in the machine, and its X server
+brought up a desktop with clients. The probe's version read is what is broken, not the hardware.
+The lesson is the one this project keeps relearning — an odd-looking number from an unverified
+instrument is a statement about the instrument until something independent agrees with it.
+
+### Counters, boot to end of the graphics session
+
+| counter | at boot | after | reading |
+|---|---|---|---|
+| `hat_pfnmiss_n` | 10 | **12** | **+2 — the first runtime movement ever recorded** |
+| `hat_badaslot_n` | 512 | 1 289 | +777, scales with teardowns |
+| `hat_sdtfail_n` | 0 | **0** | X did *not* reach the memory-pressure edge; the burst suite does |
+| `Lkx_maxdepth` / `Lkx_maxactive` | 1 / 2 | **1 / 2** | still two, even with an X server and clients |
+| `dbg_ptrace_*` / `dbg_procfs_*` | 0 | **0** | graphics touches neither path |
+| `cb_rel_reject` / `us_odd_user` | 0 / 0 | **0 / 0** | |
+
+**`hat_pfnmiss_n` moved.** Until now it had been a boot-time constant of 10-12 that did not budge
+across `exectest`, an `amixadm` session, a compile load, or two full 16-burst suites — 570 000+ page
+releases without a single event. In this session it went 10 → 12. The session contained several
+native compiles, the test battery, wolf3d and an X server with clients; compiles alone did not move
+it on the previous boot, so the graphics/game workload is the likely source, but **this measurement
+cannot separate wolf3d from X** and should not be reported as if it could.
+
+That matters because the counter names exactly the ISSUE-10 chain: `hat_pteload` found a live leaf
+PTE naming a different pfn and overwrote it. The revmap fix at that site is what stops it being
+fatal, and nothing failed here. But "boot-only" is now falsified, and the next question is which of
+the two workloads produces it — a question one more boot answers cheaply, by running them one at a
+time with a counter read between.
+
+**`Lkx_maxactive` has never exceeded 2** in any workload measured today: idle boot, 16-burst suite
+with six concurrent copies and fork churn, wolf3d, and an X session with several clients. The
+retired global gate's cap was 4, so it had margin everywhere we have looked. It was still the wrong
+design, and the per-process gate costs nothing — but the honest summary is that no measured workload
+came near the old limit.
