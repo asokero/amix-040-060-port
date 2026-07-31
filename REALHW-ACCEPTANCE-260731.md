@@ -147,3 +147,44 @@ Two readings are worth more than a PASS:
 TRACEMEs and stops, then the parent PEEKs a text word, POKEs the same value back four times and
 reads it back. Harmless by construction, and it drives both `procxmt` store paths — the
 already-writable one and the `as_setprot` temporarily-writable one — through `suword`.
+
+## Burst suite on `68040-260731-33` (the three units under load) — CLEAN
+
+```text
+B2REPRO-COPY CLEAN (0 non-V0 in 16 bursts)
+96 x V0_COMPLETE_MATCH      (0 non-V0)
+```
+
+Second full 96/96 of the day, now on the image carrying DBG-TEXT-PUBLISH, the per-process
+fault-depth gate and the ISSUE-39 counter. Counters across the run (fresh boot to end):
+
+| counter | before | after | reading |
+|---|---|---|---|
+| `hat_cm_ram` (ANCHOR) | 0x20 | 0x20 | copyback live throughout |
+| `cb_icode_push` | 1 | 1 | one-shot per boot |
+| `hat_pfnmiss_n` | 10 | **10** | unchanged again — boot-only, third independent confirmation |
+| `hat_badaslot_n` | 545 | 3 126 | +2 581, scales with process teardowns as expected |
+| **`hat_sdtfail_n`** | 0 | **1** | see below |
+| `dbg_ptrace_calls/publish` | 0/0 | **0/0** | the burst path never touches ptrace |
+| `dbg_procfs_calls/publish` | 0/0 | **0/0** | nor procfs writes |
+| `Lkx_badslot/noproc/underflow` | 0/0/0 | **0/0/0** | no fail-soft path taken |
+| `Lkx_maxdepth` / `Lkx_maxactive` | 1 / 2 | **1 / 2** | unchanged under full load |
+| `cb_rel_count` / `cb_rel_reject` | — | 570 283 / **0** | |
+| `us_odd_user` | 0 | **0** | |
+
+**ISSUE-39 now has a number, and it matches the eye.** `hat_sdtfail_n` = 1 for exactly the one
+console warning the user photographed during this run (`pid 1313`, again from `hat_ptalloc+0x126`,
+again inside an 8 KiB `read`, again with first argument `0x40001A70` — the same value as the
+2026-07-30 occurrence). So the event is genuinely rare, roughly once per burst suite, and nothing
+was being hidden by print caps or console scroll. That is the difference between a warning someone
+happened to see and a measured rate.
+
+**`Lkx_maxactive` did not move under load.** Six concurrent 4 MiB copies plus a fork/COW churn per
+burst still produced at most two kernel fault resolvers active at once — the same as an idle boot.
+So the retired global gate had a wide margin in this workload (the cap was 4) and would not have
+produced a false EFAULT here. The gate is still wrong in principle, and X11 with clients is a
+different concurrency profile worth measuring, but the honest statement is that this workload never
+approached the old limit.
+
+**The publish wrappers cost nothing here.** Both `dbg_*` pairs stayed 0 across 570 283 page
+releases, i.e. the retargeting adds no work to any path the burst suite touches.
