@@ -98,6 +98,15 @@ Lvt_user:
 Lvt_zero:
 	clrl	%d2
 Lvt_log:
+| GATED 2026-07-31 (kdbg040.s).  This one was classified "never fires on a healthy
+| boot" from a Mercury-config log -- but its gate is a PHYSICAL ADDRESS RANGE, and
+| that range is a property of the machine, not of health.  On an A3640 (an 040 card
+| with no RAM of its own) the kernel and all its allocations live at 0x07xxxxxx, so
+| the window below is ordinary memory and this fired 200 times (its whole cap) on an
+| otherwise clean boot.  A diagnostic gated on a physical range is machine-specific
+| by construction; it belongs behind the flag with the other traces.
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lvt_done
 	cmpil	&0x07c00000,%d2		| user-page region (below the 0x7EEx buffer cache)
 	bcsw	Lvt_done
 	cmpil	&0x07e00000,%d2

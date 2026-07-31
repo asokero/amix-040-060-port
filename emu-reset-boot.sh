@@ -32,7 +32,15 @@ AMIBERRY=/home/asokero/kehitys/amiberry/build/amiberry
 case "$CPU" in
   040) CONF=/home/asokero/Amiberry/Configurations/a3000ux.uae ;;
   060) CONF=/home/asokero/Amiberry/Configurations/a3000ux060.uae ;;
-  *) echo "usage: $0 [040|060] [serial-logfile]"; exit 1 ;;
+  # a3640 (2026-07-31): an 040 CPU card with NO RAM of its own.  Same machine as
+  # 040 except mbresmem_size=0, so there is no fast RAM at 0x08000000 and the
+  # kernel must load into A3000 motherboard fast RAM at 0x07000000 instead.  The
+  # port turned out to have no hardcoded load address (checked: the only
+  # 0x08000000 in the base objects are comments, a debug-only RAM scan, wb040's
+  # FSLW MA bit mask and a diagnostic print gate), so this config exists to test
+  # that claim rather than to fix anything.
+  a3640) CONF=/home/asokero/Amiberry/Configurations/a3000ux-a3640.uae ;;
+  *) echo "usage: $0 [040|060|a3640] [serial-logfile]"; exit 1 ;;
 esac
 
 [ -f "$GOLDEN" ] || { echo "ERROR: golden image missing: $GOLDEN"; exit 1; }
