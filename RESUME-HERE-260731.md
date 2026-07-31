@@ -98,6 +98,17 @@ No extra hardware session — it is one small object plus the existing suite.
 
 ## 6. Is it 060 time?
 
+> **CORRECTED 2026-08-01, and the correction changes the answer.** This section was first written on
+> the assumption that no 68060 hardware was available. That assumption was wrong and had been
+> wrong in the docs for a long time: the user has a **66 MHz 68060 on a Mercury adapter**
+> (overdrive-style CPU swap), long in use. Real-silicon 060 acceptance is therefore a *scheduling*
+> question. What survives from the analysis below: 060SP's integer half is still what gates 060
+> userland, and emulator cache results are still not evidence. What does **not** survive: the
+> recommendation to defer 060-D and the crossing-page runtime acceptance "until a board exists".
+> The revised plan is in §7.
+
+### The original reasoning (kept, because most of it still holds)
+
 Partly — but not the part that looks most attractive.
 
 **What is done:** 060-B (dual-CPU binary boots on an emulated 060) and 060-C are complete, and Codex
@@ -126,3 +137,28 @@ implementing an **040** core, so that door is not open yet either.
 
 My recommendation: **§5 first** (all three are hardware-acceptable today), and start 060SP-integer
 after that, explicitly labelled as emulator-functional acceptance.
+
+## 7. Revised plan (2026-08-01)
+
+**040 tails first, because the CPU swap is one-way per session.** After the swap the machine is an
+060 machine and any 040 regression needs a swap back, so finish what only the 040 can answer:
+
+1. `mprotect(..., PROT_EXEC)` publication ABI — the last piece of the ISSUE-38 story.
+2. Model-B headers — makes correct-by-default what is currently correct-by-patcher.
+3. ISSUE-39 characterisation (`freemem`/`availrmem` sampling across a burst run), riding along.
+
+**Then swap to the 060 and run it as its own campaign**, in this order:
+
+1. **A first hardware boot of the existing dual-CPU kernel, as a measurement, not as a milestone.**
+   The kernel avoids the vector-61 trap through `lmul060`, so it may well reach userland before
+   060SP exists; wherever it stops is the most valuable single datapoint the 060 side can produce
+   right now. Bring the counters: the anchor, `cb_icode_push`, `Lkx_*`, `hat_sdtfail_n`.
+2. **Codex's crossing-page runtime acceptance** — does a hardware format-4 frame set and deliver
+   FSLW.MA as the unit assumes? This is the one item its static PASS explicitly leaves open, and it
+   is exactly the class of question an emulator cannot settle.
+3. **060SP integer half** (ISSUE-34a), which gates every ordinary C program on the 060 — now with
+   real acceptance available rather than emulator-functional only.
+4. **060-D caches**, with the copyback campaign's machinery and, this time, silicon to accept on.
+
+Expect the 060 to find things the 040 could not: different store-buffer and branch-cache rules, a
+different fault frame, and the same class of "the emulator was lenient" surprises that ISSUE-38 was.

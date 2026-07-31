@@ -220,7 +220,7 @@ inherits for free.** The estimates below assume the current session cadence.
 | **060-C** | dual-CPU consolidation: same binary boot-verified on both 040 and 060 emulator configs; `cpuinfo` userland tool | ~1–2 sessions | one kernel, two CPUs, both regression-boot |
 | **060-D** | caches on (CPU-common phase) + 060 branch cache/store buffer rules | later, shared with 040 | — |
 | **060-E** | FPU: 040 FPSP + 060SP (one combined phase) | later, largest | user FP programs run |
-| **060-F** | real 060 hardware | when a board exists | login on metal |
+| **060-F** | real 060 hardware | **available now** (see below) | login on metal |
 
 Test builds land **early**: the Phase 060-B kernel is precisely the "test build
 somewhere in the future" wished for — it is emulator-bootable the moment §3.1
@@ -368,4 +368,33 @@ Both would have bitten real 060 hardware identically.
 
 Remaining from the plan: 060-C leftovers (optional `cpuinfo` userland tool; a
 64-bit-mul emulator-leniency probe), then the deferred shared phases (caches on,
-FPU/060SP, real 060 hardware when a board exists).
+FPU/060SP, real 060 hardware -- which IS available, see the 2026-08-01 note below).
+
+---
+
+## CORRECTION 2026-08-01: real 68060 hardware IS available
+
+Every "when a board exists" in this document, and the same phrasing that spread from it into
+KNOWN-ISSUES, the roadmap and the resume files, was **wrong**. The user has had a **66 MHz 68060 on
+an adapter for the Mercury** (an overdrive-style CPU swap) in use for a long time. The A3000 can
+therefore be turned into a real 68060 machine by swapping the processor.
+
+What that changes, concretely:
+
+* **060-F is not blocked.** A real-silicon 060 boot is a scheduling question, not a hardware one.
+* **Codex's one open item on the crossing-page unit becomes answerable.**
+  `M68060-XPAGE-ACCEPTANCE.md` gives static acceptance PASS on all eight obligations and says the
+  remaining item -- does a *hardware* format-4 frame set and deliver FSLW.MA as expected -- needs
+  real silicon and that Amiberry must not be treated as proof. That measurement can now be taken.
+* **060-D (caches) stops being emulator-only work.** The argument against starting it was that its
+  acceptance could not be taken; that argument is void. ISSUE-38 remains the reason to distrust
+  emulator cache results, not a reason to avoid the work.
+* **060SP's integer half is still the gate for userland**, independent of hardware: ISSUE-34a proves
+  the 68060 traps any constant division into vector 61, so ordinary C programs cannot run without
+  it. The kernel itself avoids the trap through `lmul060`, so a *boot* may well succeed before that
+  work exists -- which makes a first hardware boot a cheap and informative measurement rather than
+  something to defer until 060SP is done.
+
+The swap is physical and one-way per session: after it the machine is an 060 machine, and 040
+regression work needs a swap back. So 040-side tails should be finished first, then the CPU swapped
+and the 060 sequence run as its own campaign.

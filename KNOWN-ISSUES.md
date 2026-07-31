@@ -2785,7 +2785,12 @@ Tämä selittää osan siitä miksi `bmaptest` ja `pgcold` kuolivat emu-060:llä
 sisältävät vakiojakoja. `proctest`/`exectest`/`msynctst` eivät, ja ne toimivat.
 Ks. ISSUE-34a, `test-tools/issue34-060-unimpl-integer-260727.txt`.
 
-## 060 XPAGE unit — LANDED 2026-07-28, static + both-CPU regression only (no 060 hardware exists)
+## 060 XPAGE unit — LANDED 2026-07-28, static + both-CPU regression only
+
+> **2026-08-01 correction:** the original heading said "no 060 hardware exists". That was wrong --
+> a 66 MHz 68060 on a Mercury adapter has been available all along, so the runtime acceptance
+> Codex asks for in `M68060-XPAGE-ACCEPTANCE.md` (does a hardware format-4 frame deliver FSLW.MA?)
+> is schedulable, not blocked.
 
 Codex's `XPAGE-COVERAGE-AUDIT.md` (a61d2ac) specified six items as **one frame-aware unit**, for the
 stated reason that changing only the address threshold leaves the status loss and the nonconvergence
