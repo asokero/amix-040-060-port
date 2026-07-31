@@ -3576,3 +3576,44 @@ address-space root systematically carries two descriptors pointing outside RAM �
 stock-030 remnants written at address-space creation, which the 040 port never uses because kernel
 VAs go through DTT0/`kptr040`. Worth its own look (who writes root[4] and root[6]?), but it is
 noise, not damage, and it does not block anything.
+
+## ⚠ ISSUE-10 / amixadm is INTERMITTENT — and that invalidates single-boot bisects (2026-07-31)
+
+Recorded so the next session does not repeat the afternoon: `amixadm` crashed at startup on
+`unix-040-rtg-260731-05`, and on a **second boot of the same image** it started cleanly. The trigger
+is therefore probabilistic per boot, not a property of a kernel that a single boot can decide.
+
+Everything gathered today is a set of **samples, not verdicts**:
+
+| kernel | terminal | result | what it is worth |
+|---|---|---|---|
+| `unix-040-quiet-base-260731-02` | telnet | clean | one sample |
+| same | console | clean | one sample |
+| `unix-040-va2000-only-260731-07` (+2.5 KB, the only variant that runs driver code at boot) | console | clean | one sample |
+| `unix-040-rtg-260731-05` (+37 KB, both drivers) | console | **CRASH**, then clean on reboot | the intermittency itself |
+
+The bisect ladder built for it was designed on the assumption of determinism, so its conclusions
+("VA2000 ruled out", "base is clean") are **unproven**, not wrong. The images are kept because they
+are still the right ladder — they just need a rate per image instead of a verdict per boot:
+
+```text
+unix-040-xsvga-only-260731-06   Xsvga only            (+34 KB)
+unix-040-pad-260731-09          DEAD SPACE, no driver, byte-identical section geometry to the
+                                Xsvga image (text 0xec9f4, .data off 0xeca28 size 0x18e00) --
+                                separates "the driver" from "the size" once a rate exists
+```
+
+**Where to do this: the emulator, not the machine.** `test-tools/emu-amixadm-test.sh` runs one
+unattended reproduction cycle in ~4 minutes, and ISSUE-10 reproduces there (2026-07-29, on
+`unix-040-quiet-260729-08`). N cycles per image gives a crash rate; a hardware boot gives one
+sample for the cost of a session. The kernel under test must carry `serdbg` (quiet or dbg), or the
+console NOTICE lines never reach the serial mirror and a silent log is an instrument failure rather
+than a clean run — the same rule that governed ISSUE-38.
+
+Instrumentation is now in place for whenever it does fire: `hat_pfnmiss_n` is a **boot-time constant
+of 10** on the base kernel (measured across 20 exec generations, a full `amixadm` session and a
+compile — it does not move with runtime work), so any other reading taken after a crash is directly
+interpretable, as are `us_odd_user` (0) and `wb_dfc_changed`.
+
+**Not being hunted further right now**, deliberately: chasing an intermittent one hardware boot at a
+time buys nothing until there is a rate ([[feedback-pause-elusive-bug-hunting]] applies).
