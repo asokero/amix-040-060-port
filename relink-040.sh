@@ -148,6 +148,23 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/kdbg040.s" -o "$HERE/build/kdbg0
 # reached by relocation retargeting (patch_dbgpublish.py, below), publishing with
 # cpusha bc.  Spec: analyysirepo vm-map/DEBUGGER-TEXT-PUBLICATION-PATCH-SPEC.md.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/dbgpublish040.s" -o "$HERE/build/dbgpublish040.o"
+# codepub040 (2026-08-01, USER-CODE-PUBLISH): the LAST ISSUE-38 residual -- user
+# space generating its own code (runtime linker text relocation, a JIT, or a
+# read(2) into a buffer that is then jumped to).  Defines the port ABI "a
+# successful mprotect with PROT_EXEC publishes all completed stores", as a strong
+# mprotect wrapping the stock body.  Today's kernel publishes W->X only
+# INCIDENTALLY (hat_chgprot's PTE-coherency tail happens to be a whole-cache push)
+# and a same-protection RWX call cannot publish at all, because segvn_setprot
+# returns success before HAT is reached.  Spec: analyysirepo
+# vm-map/USER-CODE-CACHE-ABI-SPEC.md.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/codepub040.s" -o "$HERE/build/codepub040.o"
+# issue39_040 (2026-08-01): ISSUE-39 characterisation.  Two things no previous
+# session could do: (1) freemem/availrmem/deficit/physmem/... are COMMON symbols
+# placed in .bss by the LOADER, so they have no computable address -- a .data
+# long initialised to the symbol turns each into a loader-resolved pointer that
+# kpeek can follow; (2) hat_sdtfail_count now also latches the memory state at
+# the first and last failure, so the warning stops being just a count.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/issue39_040.s" -o "$HERE/build/issue39_040.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
@@ -248,6 +265,8 @@ m68k-linux-gnu-objcopy \
 	--add-symbol config_orig=.text:0x18f5c,function,global \
 	--weaken-symbol copyout \
 	--add-symbol copyout_orig=.text:0x576,function,global \
+	--weaken-symbol mprotect \
+	--add-symbol mprotect_orig=.text:0x58550,function,global \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -264,11 +283,11 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
 	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
 	"$HERE/build/config040.o" "$HERE/build/cb_icode040.o" "$HERE/build/kdbg040.o" \
-	"$HERE/build/dbgpublish040.o"
+	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
@@ -299,6 +318,17 @@ if [ "$COADDR" = "00000576" ] || [ -z "$COADDR" ]; then
 	echo "[FAIL] strong copyout is stock/missing (addr='$COADDR') -> icode never published to RAM (ISSUE-38)"; exit 1
 fi
 echo "[OK] cb_icode040 copyout wrapper @0x$COADDR is the strong def (stock body kept as copyout_orig)."
+
+# HARD CHECK (2026-08-01, USER-CODE-PUBLISH): the strong `mprotect` must be the
+# codepub040 wrapper, not the stock body at 0x58550.  A kernel whose mprotect is
+# stock still publishes W->X by accident (via hat_chgprot) but cannot publish a
+# same-protection RWX call at all -- i.e. it silently does NOT implement the ABI,
+# and the difference is invisible until a JIT executes stale bytes.
+MPADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="mprotect" && $2=="T" {print $1}')
+if [ "$MPADDR" = "00058550" ] || [ -z "$MPADDR" ]; then
+	echo "[FAIL] strong mprotect is stock/missing (addr='$MPADDR') -> no user-code publication ABI"; exit 1
+fi
+echo "[OK] codepub040 mprotect wrapper @0x$MPADDR is the strong def (stock body kept as mprotect_orig)."
 
 # The shipped cache stage (2026-07-30): the base image is COPYBACK by default now
 # that ISSUE-38 is closed.  Printed, and asserted to be one of the two legal

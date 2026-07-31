@@ -56,12 +56,28 @@ PARINIT_EXPECT=$(printf '%08x' $PARINIT_ADDR)
 echo "      parinit @0x$PARINIT_CUR OK (matches expected 0x$PARINIT_EXPECT)"
 
 
+# Model-B header set (2026-08-01).  The toolchain wrapper injects its own
+# sysroot -I BEFORE every user -I, so the vanilla -I in AMIX_KERNEL_CFLAGS has
+# never actually supplied <sys/immu.h> or <sys/param.h> -- both sysroot copies
+# say the page is 2 KiB.  AMIX_SYSROOT points the compile at the mirror sysroot
+# whose two geometry headers are Model B; the generator refuses to finish unless
+# its probe passes there and FAILS against the stock one.
+echo "[*] Model-B header set (mirror sysroot + geometry probe)"
+sh "$HERE/prototypes/mk_modelb_sysroot.sh" | sed 's/^/      /'
+AMIX_SYSROOT="$HERE/build/sysroot-modelb"
+export AMIX_SYSROOT
+
+# Still needed even with the headers: va2000.c computes its PFN with a HARDCODED
+# `>> 11`, not with phystopfn, and no header can reach a literal.  This is the
+# division of labour -- headers cover macro users, this patcher covers the
+# literal, and check_page_geometry.sh below covers both in the compiled bytes.
 echo "[*] VA2000: Model-B source copy (>>11 -> >>12, exactly one site)"
 python3 "$HERE/prototypes/va2000_modelb.py"
 echo "[*] VA2000: cross-compile build/va2000_040.c"
 VA2000_CFLAGS=$(echo "$AMIX_KERNEL_CFLAGS" | sed 's/-m68020/-m68040/')
 m68k-cbm-sysv4-gcc $VA2000_CFLAGS -I"$HERE/build" \
 	-c "$HERE/build/va2000_040.c" -o "$HERE/build/va2000_040.o"
+sh "$HERE/prototypes/check_page_geometry.sh" "$HERE/build/va2000_040.o" | sed 's/^/      /'
 echo "[*] VA2000: assemble the parinit wrapper"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/parinit_va2000.s" -o "$HERE/build/parinit_va2000.o"
 

@@ -27,6 +27,16 @@ OUT="${2:-$HERE/build/unix-040-z3660}"
 [ -f "$IN" ] || { echo "ERROR: base kernel missing: $IN"; exit 1; }
 echo "[*] base: $(basename "$IN")"
 
+# Model-B header set (2026-08-01).  These drivers are what taught the lesson:
+# unmodified, compiled through the STOCK sysroot, z3660.c emits
+# `moveq #11,%d1; lsrl` twice; through the mirror sysroot the SAME source emits
+# `moveq #12`.  The source rewrite below is now belt-and-braces for phystopfn
+# (it still owns the page COUNTS, which no header can fix).
+echo "[*] Model-B header set (mirror sysroot + geometry probe)"
+sh "$HERE/prototypes/mk_modelb_sysroot.sh" | sed 's/^/      /'
+AMIX_SYSROOT="$HERE/build/sysroot-modelb"
+export AMIX_SYSROOT
+
 echo "[*] Model-B source copies (phystopfn 2 KiB -> 4 KiB; page counts halved, bytes unchanged)"
 python3 "$HERE/prototypes/z3660_modelb.py"
 
@@ -45,10 +55,12 @@ m68k-cbm-sysv4-gcc $CF -I"$V/usr/sys/amiga/alien" -I"$HERE/build" \
 # 11 as a value (a SCSI CDB length compare; a DLPI constant written into a
 # structure), and an over-eager grep on `moveq #11` fails on those.  Asserted in
 # the compiled bytes because a wrong page shift is invisible until it corrupts.
+# Moved into prototypes/check_page_geometry.sh (2026-08-01) so every compiled-in
+# object gets the same check, and widened there to `asrl` as well as `lsrl` -- a
+# SIGNED `>> 11` compiles to asrl and the old check here could not see it.
+sh "$HERE/prototypes/check_page_geometry.sh" \
+	"$HERE/build/z3660_040.o" "$HERE/build/z3660eth_040.o"
 for o in z3660_040 z3660eth_040; do
-	if m68k-linux-gnu-objdump -d "$HERE/build/$o.o" | grep -A1 "moveq #11," | grep -q "lsrl"; then
-		echo "[FAIL] $o.o still shifts by 11 (2 KiB PFN) -- z3660_modelb.py did not take"; exit 1
-	fi
 	m68k-linux-gnu-objdump -d "$HERE/build/$o.o" | grep -A1 "moveq #12," | grep -q "lsrl" \
 		|| { echo "[FAIL] $o.o has no 4 KiB page shift at all -- phystopfn override missing?"; exit 1; }
 done

@@ -69,6 +69,13 @@ echo "      parinit @0x$PARINIT_CUR OK (matches expected 0x$PARINIT_EXPECT)"
 echo "[*] Xsvga: stage the binary driver object"
 cp "$XSVGA_EXP" "$HERE/build/xsvga_exp.o"
 
+# Model-B header set (2026-08-01) -- see relink-040-va2000.sh for why a plain
+# -I cannot do this job (the toolchain wrapper's sysroot -I always wins).
+echo "[*] Model-B header set (mirror sysroot + geometry probe)"
+sh "$HERE/prototypes/mk_modelb_sysroot.sh" | sed 's/^/      /'
+AMIX_SYSROOT="$HERE/build/sysroot-modelb"
+export AMIX_SYSROOT
+
 echo "[*] VA2000: Model-B source copy (>>11 -> >>12, exactly one site)"
 python3 "$HERE/prototypes/va2000_modelb.py"
 
@@ -76,6 +83,7 @@ echo "[*] VA2000: cross-compile build/va2000_040.c"
 VA2000_CFLAGS=$(echo "$AMIX_KERNEL_CFLAGS" | sed 's/-m68020/-m68040/')
 m68k-cbm-sysv4-gcc $VA2000_CFLAGS -I"$HERE/build" \
 	-c "$HERE/build/va2000_040.c" -o "$HERE/build/va2000_040.o"
+sh "$HERE/prototypes/check_page_geometry.sh" "$HERE/build/va2000_040.o" | sed 's/^/      /'
 
 echo "[*] VA2000: assemble the parinit wrapper"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/parinit_va2000.s" -o "$HERE/build/parinit_va2000.o"

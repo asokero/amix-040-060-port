@@ -87,10 +87,10 @@
 | memory for a page-table allocation at least that many times.  Compare it across
 | a burst run to turn "the machine feels like it is under pressure" -- the standing
 | guess behind the b2repro stalls and the amixadm intermittent -- into a number.
-	.globl	hat_sdtfail_count
-hat_sdtfail_count:
-	addql	&1,hat_sdtfail_n
-	jmp	cmn_err			| print exactly as before; args/stack untouched
+| MOVED 2026-08-01: the body now lives in issue39_040.s, which does the same
+| increment and additionally latches freemem/availrmem/deficit at the failure --
+| the characterisation ISSUE-39 was waiting for.  hat_sdtfail_n stays here with
+| the other kdbg counters, and patch_sdtfail.py is unchanged (same symbol name).
 
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
