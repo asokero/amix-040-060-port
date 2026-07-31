@@ -241,3 +241,38 @@ with six concurrent copies and fork churn, wolf3d, and an X session with several
 retired global gate's cap was 4, so it had margin everywhere we have looked. It was still the wrong
 design, and the per-process gate costs nothing — but the honest summary is that no measured workload
 came near the old limit.
+
+## `hat_pfnmiss_n` attributed — one variable at a time
+
+The previous section reported that the counter moved 10 → 12 during a session containing compiles,
+the battery, wolf3d and X, and said explicitly that the measurement could not separate them. It was
+worth one more boot to find out, and the answer is not what I guessed.
+
+Fresh boot of the same kernel, nothing else run, counter read between each step:
+
+| step | `hat_pfnmiss_n` | delta |
+|---|---|---|
+| boot | 10 | — |
+| **wolf3d** (user-run, full session) | 10 | **0** |
+| **X server + several clients** (user-run) | 10 | **0** |
+| one native `cc` compile | 10 | **0** |
+| **`devmaptest`** | **12** | **+2** |
+| `devmaptest` again | 14 | +2 |
+| `devmaptest` a third time | 16 | +2 |
+
+Deterministic: exactly two events per `devmaptest` run, and nothing else in any workload measured
+today produces a single one — including two 16-burst suites totalling over 570 000 page releases.
+
+**So the counter is not watching an anomaly in normal operation.** `devmaptest` maps `/dev/mem`, and
+installing a *device* PFN over a leaf PTE that currently names a managed page is precisely the
+"existing PFN differs from the new one" case. The revmap fix at that site unlinks the old page's
+reverse mapping and registers nothing for the device page, which is why the test passes with its
+canaries clean. Two mappings in the test, two events.
+
+That retires the open question this counter was added for. It also sharpens what a *future* nonzero
+delta means: with device mapping accounted for, any movement of `hat_pfnmiss_n` in a workload that
+does not mmap a device is worth investigating, and now there is a clean baseline to say so against.
+
+My earlier guess — that graphics work produced it — was wrong, and the guess before that ("boot-only,
+never at runtime") was also wrong. Both were stated as hypotheses and both cost one boot each to
+refute, which is the cheapest either could have been.

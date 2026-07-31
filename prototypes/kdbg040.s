@@ -42,7 +42,15 @@
 |   prints, so nobody has ever known their true rate:
 |     hat_pfnmiss_n   hat_pteload found a live leaf PTE naming a DIFFERENT pfn and
 |                     overwrote it (this is ISSUE-10's chain; the revmap fix at that
-|                     site is what stops it being fatal)
+|                     site is what stops it being fatal).
+|                     ATTRIBUTED 2026-07-31, one variable at a time on real hardware:
+|                     ~10 events during boot, then EXACTLY +2 per devmaptest run
+|                     (12 -> 14 -> 16, deterministic).  wolf3d, an X session with
+|                     clients, native compiles and two full 16-burst suites
+|                     (570 000+ page releases) each moved it by ZERO.  So in normal
+|                     operation this is not a stale-PTE anomaly at all: it is the
+|                     legitimate case of a DEVICE mapping replacing a managed page's
+|                     leaf PTE, which is exactly what /dev/mem mmap does.
 |     hat_badaslot_n  hat_free skipped an A region whose pointer-table base failed
 |                     the V3 guard -- i.e. page tables deliberately NOT freed
 |                     ("bounded leak").  Observed A=4 Adesc=400003 and A=6
