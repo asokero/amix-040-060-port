@@ -62,6 +62,28 @@
 |
 | Assemble: m68k-cbm-sysv4-gcc -m68040 -c kdbg040.s -o build/kdbg040.o
 
+	.text
+| ---------------------------------------------------------------------------
+| ISSUE-39 (2026-07-31): hat_sdtalloc's "not enough contiguous memory for segment
+| tables" warning is a real event that was only ever visible as console text --
+| and a base image has no serial hook, so unless a human happened to be watching
+| the screen it left no trace at all.  It was first seen during the 16-burst
+| acceptance run, where it damaged nothing (96/96 verified byte-exact).
+|
+| This island counts it and then tail-jumps into cmn_err, so the warning still
+| prints exactly as before and hat_sdtalloc's stack, arguments and return path are
+| untouched.  patch_sdtfail.py retargets the single cmn_err relocation @0xb64b2
+| (the call whose format string is LC%9 @0xb6297) to here.
+|
+| Reading it: a nonzero hat_sdtfail_n means the machine ran out of contiguous
+| memory for a page-table allocation at least that many times.  Compare it across
+| a burst run to turn "the machine feels like it is under pressure" -- the standing
+| guess behind the b2repro stalls and the amixadm intermittent -- into a number.
+	.globl	hat_sdtfail_count
+hat_sdtfail_count:
+	addql	&1,hat_sdtfail_n
+	jmp	cmn_err			| print exactly as before; args/stack untouched
+
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
@@ -79,5 +101,9 @@ hat_pfnmiss_n:
 	.long	0
 	.globl	hat_badaslot_n
 hat_badaslot_n:
+	.long	0
+| ISSUE-39: hat_sdtalloc could not get contiguous memory for segment tables.
+	.globl	hat_sdtfail_n
+hat_sdtfail_n:
 	.long	0
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
