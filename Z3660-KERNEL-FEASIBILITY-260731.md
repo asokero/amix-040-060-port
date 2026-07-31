@@ -118,7 +118,43 @@ below it, so everything bounces; on a machine whose RAM starts at `0x08000000` (
 nothing would bounce, and the direct path would be taken. If his 040 emulation changes the memory
 map, this threshold needs a second look.
 
-## 5. Remaining work, in order
+## 5. Built, booted — and one edit that had to be turned off
+
+`relink-040-z3660.sh` builds it; `unix-040-z3660-260731-26` (silent) and
+`-quiet-260731-25` (serial mirror) are on the NAS. The quiet one boots clean in Amiberry with no
+board present: banner, no panic, 1 354 bytes of serial log — the same silent boot as the base.
+
+**The dd.c completion-ordering patch is OFF by default, because it panics.** With it applied the
+kernel dies *before the banner*, inside `sdqueue` reached from `startio`, with a wild function
+pointer:
+
+```text
+TRAP  proc = 400B9C00 (pid 0)  psw = 220C   pc = 62
+PANIC: KERNEL FAULT ... vector=0x4 (Illegal Instruction)     pc = byteread+0x2
+backtrace: startio+0xcc <- sdqueue        (then krnlflt -> cmn_err -> panic)
+DOUBLE PANIC: KERNEL FAULT pc=0x807DC64 vector=0x2 (Bus Error), va=4E754F26
+```
+
+The identical image with that one relocation left stock boots clean, so the attribution is exact.
+Two things were learned on the way:
+
+* **An in-place swap is impossible.** Two paths share the single `jsr startio` at `0xc0b6`: the
+  completion path falls into it after `iodone`, and another path pushes `(dp, 2)` at `0xc08e` and
+  `braw`s straight to it from `0xc094`. Reordering the completion path moves the instruction the
+  other path jumps to.
+* **The island transcription is not obviously wrong** — `%a4` is `dp` at the call site (`0xc0a4`
+  writes `dp->bhead` through it), `%a3` is `bp`, and the argument order matches. Whether their
+  ordering is unsafe for the *stock* A3091 path, or the island's context assumption fails on some
+  entry into that site, is **not established** — and it cannot be settled on a machine where their
+  driver never runs. `Z3660_DD_ORDER=1` enables it when there is a Z3660 to validate against.
+
+Also fixed on the way: a compiled C object cannot obey this tree's "every section ends `.balign 4`"
+rule (`z3660_040.o`'s `.data` is 0x3b bytes, odd), and a misaligned `.data` total puts `.bss` at an
+unaligned address — which breaks SDMAC DMA and shows up as root-mount ENXIO. The link order puts the
+hand-written glue last so its `.balign 4` closes both the `.text` and `.data` totals. **Any future C
+compiled into this kernel needs the same treatment.**
+
+## 6. Remaining work, in order
 
 1. `relink-040-z3660.sh`: assemble the init hook (streamtab store), build the four-row `scsicard`
    table object, compile both Model-B driver copies, `ld -r` them in, retarget `0xd74c`, patch the
