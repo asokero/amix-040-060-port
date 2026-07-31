@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-# patch_btrace_on.py -- flip the btrace_on flag to 1 so the DBG kernel emits the
-# early-boot serial phase trace (2026-07-20).  base/quiet leave it 0 (silent).
+# patch_btrace_on.py -- flip the DBG kernel's diagnostic flags to 1.  base/quiet
+# leave them 0 (silent).
+#   btrace_on (2026-07-20)  early-boot serial phase trace (btrace.s)
+#   kdbg_on   (2026-07-31)  the VM diagnostic cmn_err sites in the genuine-fix
+#                           objects (kdbg040.s) -- what makes the BASE kernel quiet
 #
 # btrace.s ships btrace_on = 0 (a .long in .data) so the base/quiet kernels are
 # behaviour-identical.  This runs ONLY in relink-040-dbg.sh, on the FINAL dbg
@@ -42,26 +45,29 @@ def main():
     for i in range(symtab["size"] // sym_ent):
         o = sym_off + i*sym_ent
         st_name = u32(buf, o); e = buf.index(b"\0", str_off+st_name)
-        if buf[str_off+st_name:e] == b"btrace_on":
+        if buf[str_off+st_name:e] == FLAG.encode():
             target = (u32(buf, o+4), u16(buf, o+14))   # (st_value, st_shndx)
             break
     if target is None:
-        raise SystemExit("ABORT: btrace_on symbol not found (btrace.o linked?)")
+        raise SystemExit("ABORT: %s symbol not found (its object linked?)" % FLAG)
 
     st_value, st_shndx = target
     # confirm it is in .data
     data_idx = shdr.index(data)
     if st_shndx != data_idx:
-        raise SystemExit("ABORT: btrace_on shndx %d != .data %d" % (st_shndx, data_idx))
+        raise SystemExit("ABORT: %s shndx %d != .data %d" % (FLAG, st_shndx, data_idx))
 
     fo = data_foff + st_value
     cur = u32(buf, fo)
     if cur == 1:
-        print("  [skip] btrace_on already 1 @0x%x" % st_value); return
+        print("  [skip] %s already 1 @0x%x" % (FLAG, st_value)); return
     if cur != 0:
-        raise SystemExit("ABORT: btrace_on = 0x%08x, expected 0 (or 1)" % cur)
+        raise SystemExit("ABORT: %s = 0x%08x, expected 0 (or 1)" % (FLAG, cur))
     struct.pack_into(">I", buf, fo, 1)
     open(KERNEL, "wb").write(buf)
-    print("  [ok]   btrace_on 0 -> 1 @0x%x (DBG early-boot trace enabled)" % st_value)
+    print("  [ok]   %s 0 -> 1 @0x%x (%s)" % (FLAG, st_value, WHAT[FLAG]))
 
-main()
+WHAT = {"btrace_on": "DBG early-boot serial phase trace enabled",
+        "kdbg_on":   "DBG VM diagnostics enabled (base/quiet stay silent)"}
+for FLAG in ("btrace_on", "kdbg_on"):
+    main()

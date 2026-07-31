@@ -85,6 +85,8 @@ Lgf_ret:
 	cmpil	&0x00010000,%d0
 	bcsw	Lgf_nodbg		| < 0x10000 = null-ish -> skip
 Lgf_dodbg:
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lgf_nodbg
 	movel	Lgf_n,%d1
 	cmpil	&48,%d1
 	bccw	Lgf_nodbg

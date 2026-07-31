@@ -56,6 +56,8 @@ Lbt_ptl_skip:
 	bcsw	Lpo_no
 	cmpil	&0x4044a000,%d2
 	bccw	Lpo_no
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lpo_no
 	movel	Lpo_n,%d0
 	cmpil	&16,%d0
 	bccw	Lpo_no
@@ -86,6 +88,8 @@ Lpo_no:
 	bcsw	Lgt_no
 	cmpil	&0xc1031000,%d2
 	bccw	Lgt_no
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lgt_no
 	movel	Lgt_n,%d0
 	cmpil	&40,%d0
 	bccw	Lgt_no
@@ -107,6 +111,8 @@ Lgt_no:
 |     -- shows whether the boot PROGRESSES past the teardown).  Gated, CE_WARN. ---
 	cmpil	&0x48000000,%d2
 	bcsw	Lpt_nodbg
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lpt_nodbg
 	movel	Lpt_dbgn,%d0
 	cmpil	&40,%d0
 	bccw	Lpt_nodbg
@@ -160,6 +166,8 @@ Lpt_nodbg:
 |     Gated 12, CE_WARN; d2/a2 reloaded after.  Remove once the source is fixed. ---
 	cmpil	&0x80000000,%d2
 	bcsw	Lrd_no
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lrd_no
 	movel	Lrd_n,%d0
 	cmpil	&12,%d0
 	bccw	Lrd_no
@@ -271,6 +279,8 @@ Lbfill:
 | DIAG (gated 8): dump the leaf page-table address hat_ptalloc returned + va.  Localizes
 | whether the bad user-PT base (0x3F0000, unbacked hole) comes straight from hat_ptalloc/
 | hat_sdtalloc (a4 itself bad) or gets truncated later.  cmn_err preserves d2/a4 (callee-saved).
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lba_nodbg
 	movel	Lba_dbgn,%d0
 	cmpil	&8,%d0
 	bccw	Lba_nodbg
@@ -342,6 +352,9 @@ Lbhave:
 	bfextu	%a4@{&0:&20},%d0		| existing PFN (20 bits)  [030: 21]
 	cmpl	%fp@(20),%d0
 	beq	Lpfnok
+	addql	&1,hat_pfnmiss_n		| UNCAPPED: the true rate is the open question (kdbg040.s)
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lreplace
 	movel	Lhp_dbgn,%d0
 	cmpil	&8,%d0
 	bccw	Lreplace		| after 8 prints, skip log, still go to Lreplace
@@ -788,6 +801,8 @@ hat_unload:
 	moveml	%d2-%d5/%a2-%a4,%sp@-
 	movel	%fp@(12),%d2		| d2 = va (loop cursor)
 | DEBUG: print the first few hat_unload calls (va, size, flags) -- remove once stable
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lhl_nodbg
 	movel	Lhl_dbgn,%d0
 	cmpil	&6,%d0
 	bccw	Lhl_nodbg
@@ -1114,6 +1129,8 @@ Lhl_no7:
 	bcsw	Lhl_freego
 	cmpil	&0x80080000,%d2
 	bccw	Lhl_freego
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lhl_freego
 	movel	Lhul_n,%d0
 	cmpil	&12,%d0
 	bccw	Lhl_freego
@@ -1186,6 +1203,8 @@ hat_alloc:
 	moveal	%fp@(8),%a2		| a2 = as
 	| --- one-shot ENTRY marker: proves hat_alloc is reached (proc 1's child path runs).
 	|     If this prints but Lha_msg (post-kmem) does NOT, kmem_zalloc(0x1000) hangs. ---
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lhae_done
 	movel	Lhae_n,%d0
 	bnew	Lhae_done
 	moveq	&1,%d0
@@ -1210,6 +1229,8 @@ Lhae_done:
 	.word	0xf478			| cpusha dc -- push the zeroed root page to RAM
 	movel	%a0,%a2@(20)		| as->hat_root = 040 root VA (a0 = return value too)
 	| --- one-shot DBG marker: proves as_alloc/hat_alloc is reached (newproc returned) ---
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lha_done
 	movel	Lha_n,%d0
 	bnew	Lha_done
 	moveq	&1,%d0
@@ -1263,6 +1284,8 @@ hat_free:
 	movel	%a5,%d0
 	beqw	Lf_nullroot
 | --- one-shot ENTER marker: proves hat_free runs (exec/exit teardown reached) ---
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lhf_nodbg
 	movel	Lhf_n,%d0
 	bnew	Lhf_nodbg
 	moveq	&1,%d0
@@ -1366,6 +1389,9 @@ Lf_badleaf:
 | region WITHOUT reading or freeing it -- same bounded-leak philosophy as Lf_badleaf.
 | root[A] is left as-is; Lf_done frees the whole root page anyway.
 Lf_badA:
+	addql	&1,hat_badaslot_n		| UNCAPPED: the true rate is the open question (kdbg040.s)
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lf_nextA
 	movel	Lhfa_n,%d0
 	cmpil	&8,%d0
 	bccw	Lf_nextA		| capped -> skip silently

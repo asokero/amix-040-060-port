@@ -49,6 +49,8 @@ hat_chgprot:
 	moveq	&7,%d0
 	andl	%d0,%fp@(20)		| prot &= 7
 | --- one-shot ENTER marker: proves hat_chgprot now runs (fork COW write-protect) ---
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lcp_nodbg
 	movel	Lcp_n,%d0
 	bnew	Lcp_nodbg
 	moveq	&1,%d0

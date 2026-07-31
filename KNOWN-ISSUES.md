@@ -3530,3 +3530,49 @@ not-present page), so run it on a fresh boot against something nothing has read 
     cc -o segmaprep segmaprep.c
     ./segmaprep /root/wolf3d/VSWAP.WL6
     # if it wedges: reset, then  cat /segmaprep.state
+
+## ✅ THE BASE KERNEL IS SILENT (2026-07-31) — and the counter that replaced the print cap found something
+
+`prototypes/kdbg040.s` adds one flag, `kdbg_on` (ships 0; `patch_btrace_on.py` flips it to 1 in the
+dbg build alongside `btrace_on`; pokeable live through `/dev/kmem`). 15 `cmn_err` sites inside the
+genuine-fix objects are now gated by it — two instructions each (`tstl kdbg_on` + a branch to the
+site's existing skip label, so no site's register discipline changes).
+
+Classified by what a **healthy** boot actually does (`test-tools/issue22-serial45-260728.log`):
+
+* **Gated** (fires on a healthy boot = narration): `hat_dup040 ENTER` (137×, and it never stopped —
+  every 64th fork forever), `ufault` 48×, `GOTmap` 40×, `ptload` 40×, `segmap-map` 16×, `FREELEAF`
+  12×, `ptload2` 12×, `Lballoc leaf` 8×, `hat_unload` 6×, `hat_alloc`/`hat_free`/`hat_chgprot040`
+  ENTER, `first private-page copy`.
+* **Not gated** (never fires on a healthy boot — their silence is what makes them worth reading):
+  `hat_unlock invalid sde`, `pte not in revmap` ×2, `hatfree BAD-slot`, `hat_ptfree LEAK`,
+  `vtop pool`, `VTOPALIAS`, `KERNVA-WITH-PROC`, `wb040 replay UNRESOLVED`, `krnxflt FAILEXIT`,
+  `segkmem_setprot invalid segment`.
+
+Verified in Amiberry, both directions: quiet image = **1 354 bytes of serial log, zero DBG lines**
+(and `cb_icode_push` = 1 read over the Amiberry IPC, so the boot progressed — with a silent kernel,
+absence of output is no longer evidence of progress); dbg image = **111 754 bytes**, every line back.
+
+### The finding: `hat_badaslot_n` = 439 per boot, where the print cap only ever showed 8
+
+Two anomaly-shaped sites fired on **every** healthy boot behind an 8-print cap, so their true rate
+had never been visible. They now carry uncapped counters (`hat_pfnmiss_n`, `hat_badaslot_n`).
+First reading, from one emulator boot:
+
+```text
+hat_pfnmiss_n     10     (cap showed 8 — the COW-replacement path, a small constant)
+hat_badaslot_n   439     (cap showed 8 — 431 events were invisible)
+```
+
+`Lf_badA` fires when an address-space root's A-slot names a pointer table **outside managed RAM**
+(`[pages_base, pages_end)`), and `hat_free` then skips that A region. The observed descriptors are
+the same two on every teardown, on hardware and in the emulator: `A=4 Adesc=400003 table=400000` and
+`A=6 Adesc=3F0003 table=3F0000` — addresses in the 0x200000–0x7000000 hole, which is not RAM on this
+machine at all.
+
+**So it is not a memory leak:** nothing reclaimable is being skipped, because those are not managed
+pages. The skip is the correct action. What is now measured, and was not before, is that *every*
+address-space root systematically carries two descriptors pointing outside RAM — most likely inert
+stock-030 remnants written at address-space creation, which the 040 port never uses because kernel
+VAs go through DTT0/`kptr040`. Worth its own look (who writes root[4] and root[6]?), but it is
+noise, not damage, and it does not block anything.

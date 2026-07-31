@@ -77,6 +77,8 @@ hat_dup:
 |     every-Nth), generous enough that a crash-adjacent boot log now carries
 |     recent hat_dup context instead of just the first fork of the session. ---
 	addql	&1,Lhd_n
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lhd_nodbg
 	movel	Lhd_n,%d0
 	cmpil	&128,%d0
 	blsw	Lhd_log			| first 128 -> log
@@ -584,6 +586,8 @@ Lhd_oldcalc:
 Lhd_copy:
 | --- one-shot marker: the FIRST real private-page duplication (the code path the
 |     old stub never ran; confirms plain-fork COW dup actually happens) ---
+	tstl	kdbg_on			| base is SILENT; dbg flips this (kdbg040.s)
+	beqw	Lhd_cnodbg
 	movel	Lhd_cn,%d0
 	bnew	Lhd_cnodbg
 	moveq	&1,%d0
