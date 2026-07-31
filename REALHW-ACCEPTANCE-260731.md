@@ -106,3 +106,44 @@ closing with a counter.
   Neither touches the I/O path, but "does not touch" is an argument, not a measurement — a repeat
   burst run on this image is the honest completion of the set.
 * `hat_dup_cow` (fork/COW pressure) — binary lives in the analysis repo's `runtime-tests/`.
+
+## The three 07-31 units, hardware-verified on `68040-260731-33`
+
+One boot, three units, and the counters match the tests' semantics rather than merely being nonzero:
+
+| test | result |
+|---|---|
+| `exectest 20` | **PASS** — no regression from any of the three units |
+| `proctest` | **PASS** — incl. CHILD-PRIV-WRITE and CHILD-COW-WRITE |
+| `ptracepoke` (new) | **PASS** — 4 POKETEXTs at `0x80000650`, word `0x4e560000`, 0 fails |
+
+```text
+                       before   after
+dbg_publish_on              1       1     publication enabled
+dbg_ptrace_calls            0       4     <- exactly the 4 POKETEXTs ptracepoke does
+dbg_ptrace_publish          0       4     every one of them published
+dbg_procfs_calls            0       2     <- proctest's two child writes
+dbg_procfs_publish          0       2     both published
+hat_sdtfail_n               0       0     no memory pressure in a light run (expected)
+Lkx_badslot/noproc/underflow 0/0/0  0/0/0 no fail-soft path taken
+Lkx_maxdepth                1       1     deepest single-process recursion
+Lkx_maxactive               2       2     most resolvers active at once
+hat_cm_ram (ANCHOR)      0x20    0x20
+cb_icode_push               1       1
+```
+
+Two readings are worth more than a PASS:
+
+* **`dbg_procfs_calls` = 2, not more.** `proctest` also *reads* process memory through the same
+  `prusrio`/`uiomove` body, and those reads did not increment anything — so the UIO_WRITE direction
+  gate does exactly what the spec required, and publication is not being spent on reads.
+* **`Lkx_maxactive` = 2 while `Lkx_maxdepth` = 1.** Two kernel fault resolvers were active at the
+  same instant during an ordinary boot, in different processes. The retired global gate counted
+  precisely that as "depth 2". It is far from the cap of 4, so it was never fatal here — but it is a
+  direct measurement of the aggregation the old design could not distinguish, on an idle machine.
+  Under burst load the same number is the one to watch.
+
+`ptracepoke.c` (new, in the acceptance set) forks so the child's text VA matches the parent's,
+TRACEMEs and stops, then the parent PEEKs a text word, POKEs the same value back four times and
+reads it back. Harmless by construction, and it drives both `procxmt` store paths — the
+already-writable one and the `as_setprot` temporarily-writable one — through `suword`.
