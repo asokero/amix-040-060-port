@@ -17,6 +17,12 @@
 # result from a base image would be an instrument failure, not a clean run.
 #
 # usage: sh emu-amixadm-test.sh <image> <label> [settle-seconds] [watch-seconds]
+#
+# AMIX_EMU_CPU selects the emulated machine (2026-07-31): 040 (default, A3000 +
+# Mercury-like 32 MB at 0x08000000) or a3640 (an 040 card with NO RAM of its own,
+# so 16 MB of motherboard RAM only).  The amixadm trigger is intermittent and the
+# a3640 machine is a different memory-pressure regime, which is exactly the kind of
+# variable a rate measurement should sweep.
 
 set -e
 HERE=$(cd "$(dirname "$0")/.." && pwd)
@@ -28,8 +34,8 @@ LOG="/tmp/emu-amixadm-$LABEL.log"
 
 [ -f "$IMG" ] || { echo "no such image: $IMG"; exit 2; }
 cp "$IMG" "$HERE/build/unix-040-dbg"
-echo "[*] $LABEL: booting $(basename "$IMG") -> $LOG"
-sh "$HERE/emu-reset-boot.sh" 040 "$LOG" > /dev/null 2>&1
+echo "[*] $LABEL: booting $(basename "$IMG") on ${AMIX_EMU_CPU:-040} -> $LOG"
+sh "$HERE/emu-reset-boot.sh" "${AMIX_EMU_CPU:-040}" "$LOG" > /dev/null 2>&1
 
 # The login prompt comes from getty via the tty, NOT through the conputc mirror, so
 # there is no "ready" string to wait for.  Wait for the kernel's own output to stop.
