@@ -36,6 +36,26 @@ which is the whole of ISSUE-40.
 
 Q5's "observed residual timing can change" understates this. The SDT half alone is exactly zero.
 
+**Confirmed on real hardware the same day** (A3000+Mercury 040, `68040-260801-12`,
+`REALHW-ISSUE40-PART1-260801.md`, NAS `amix/hwtest-260801b/`), with every prediction registered
+before the machine was switched on:
+
+```text
+300 x fork+exec, edge ON    availrmem -315      pages_pp_kernel +315
+300 x fork+exec, edge OFF   availrmem -316      pages_pp_kernel +320
+300 x fork                  availrmem  -24 / 0
+i40_pgfreed_n = 0     i40_held_n = 3440 = i40_sec2_n 2284 + i40_sec3_n 1156   (exactly)
+i40_bad_n = 0         i40_err_n = 0        cb_rel_reject = 0
+hat_badaslot_n        +2 over 1665 teardowns ON   vs   +975 over 654 teardowns OFF
+exectest 20 PASS, hat_dup_cow 1/32/256 PASS, hat_pfnmiss_n exactly +2 per devmaptest
+```
+
+Residual `p_sdtbits` sampled at five moments on hardware: `0x000e5fff`, `0x000e017f`,
+`0x5fffffff`, `0x000e0017`, `0x000e0bff` — densely shared pages, up to 22 of 32 units occupied,
+with the freed object punched out of the middle. `i40_last_n = 1` in every hardware sample (the
+last object released was a one-unit allocation), where the emulator saw an 18-unit object at
+index 0 with 13 crumbs above it. Same allocator behaviour, busier mix.
+
 ## What the implementation needs
 
 We write the `.s`. These are the facts we cannot safely derive from the binary in the time we have,

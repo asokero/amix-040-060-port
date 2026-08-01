@@ -72,8 +72,14 @@ ISSUE-38's death reproduced on demand in userland. Photo on the NAS.
 > `hat_sdtfree` only credits when `p_sdtbits` reaches zero, so the "secondary" `ptdat` leak is what
 > pins every exec's page. **ISSUE-40 stays open and needs both halves.** Record:
 > `ISSUE40-LEGACY-SDT-LANDED-260801.md`; contract request: `ISSUE40-PTDAT-CODEX-QUESTIONS.md`.
-> No hardware exposure spent — the pre-registered criterion cannot pass with half the fix in.
-> Base is now `68040-260801-12` (textsize `0xe46ec`); all counter addresses moved, recompute per image.
+> **RAUTAVAHVISTUS samana iltana** (`REALHW-ISSUE40-PART1-260801.md`, NAS `amix/hwtest-260801b/`):
+> jokainen ennalta kirjattu ennuste toteutui, myös negatiivinen. `availrmem` **−315 korjaus päällä,
+> −316 pois** (300 × fork+exec), fork tasainen; `i40_pgfreed_n = 0`, `i40_held_n = 3440 = sec2+sec3`
+> tarkalleen; `i40_bad_n = 0` (muotovartija ei joutunut hylkäämään mitään oikealla muistikartalla);
+> `hat_badaslot_n` **+2 / 1665 teardownia päällä vs +975 / 654 pois**. Turvallisuus puhdas:
+> `exectest 20` PASS, `hat_dup_cow` 1/32/256 PASS, `hat_pfnmiss_n` tarkalleen +2 per devmaptest,
+> `cb_rel_reject` 0. Patteristoa 9/9 EI ajettu: se ajetaan kerran, molempien puolikkaiden jälkeen.
+> Base on `68040-260801-12` (textsize `0xe46ec`); kaikki laskuriosoitteet siirtyivät, laske per image.
 
 
 
