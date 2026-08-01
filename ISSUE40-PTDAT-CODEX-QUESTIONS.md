@@ -1,5 +1,8 @@
 # Follow-up for Codex — the `ptdat` half is the gate, not a residual
 
+*Measured twice: emulator first, then real hardware the same day, with every prediction registered
+in the script headers before the machine was switched on. Both agree.*
+
 Your `ISSUE40-LEGACY-SDT-TEARDOWN-CONTRACT.md` was implemented exactly as specified and every static
 checklist item holds. The edge fires: across a boot plus a 419-teardown workload it released 629
 legacy objects, `i40_bad_n = 0`, `i40_err_n = 0`, and `hat_badaslot_n` moved **+2 with the edge on vs
@@ -105,5 +108,13 @@ kernel        build/unix-040        68040-260801-12  textsize 0xe46ec
               sha256 d1acde8d3442c348924bf9ab9ffb8639a53394d18f54305a13380fc94822f24b
 measured on   build/unix-040-quiet  68040-260801-11  textsize 0xe472c
 source        kernelsupport         prototypes/legacysdt040.s + hat040.s @ Lhf_nodbg
-record        kernelsupport/ISSUE40-LEGACY-SDT-LANDED-260801.md
+                                    commits f893413, cc7e134, c7cfd56
+records       kernelsupport/ISSUE40-LEGACY-SDT-LANDED-260801.md   (emulator, re-scoping)
+              kernelsupport/REALHW-ISSUE40-PART1-260801.md        (hardware, all predictions)
+logs          NAS amix/hwtest-260801b/i40regr.log, i40d.log
 ```
+
+The counters named above are permanent parts of the kernel (`prototypes/legacysdt040.s`), not a
+one-off probe: `i40_pgfreed_n` is how part 2's acceptance will be read. When the `ptdat` lifetime
+lands, `i40_pgfreed_n` must start rising with `i40_sec3_n` and `i40_held_n` must stop — and that is
+checkable on the same image, in one boot, with `i40_on` as the control.
