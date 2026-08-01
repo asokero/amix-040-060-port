@@ -82,8 +82,12 @@ their cached pages to the free list. Real pages are being freed and re-listed ex
 should be. It is only `availrmem` — the *accounting* of available resident memory — that
 ratchets down and never gets credited back.
 
-> ISSUE-40 is an `availrmem` accounting leak: a path that decrements it on the way in without a
-> matching increment on the way out. Pages are not being lost; the kernel's belief about them is.
+> ~~ISSUE-40 is an `availrmem` accounting leak: a path that decrements it on the way in without a
+> matching increment on the way out. Pages are not being lost; the kernel's belief about them is.~~
+
+**⚠ THAT INFERENCE WAS WRONG — see "Codex's prediction, and my error" below.** A real 4 KiB page
+is retained per `exec`. `freemem` looked healthy because it includes reclaimable cache traffic
+that can return more pages than the leak holds; it is not the ownership counter.
 
 That also supplies the mechanism for the slowdown: as `availrmem` falls, every consumer that
 sizes itself against available resident memory becomes more conservative, and the pageout
@@ -131,6 +135,45 @@ before. It fit the symptom perfectly.
 **It is not that.** `Lpf_n` (`.data+0x17f26`, runtime `0x080FC4AE`) reads **0** after thousands
 of execs, so that exit is never taken. Checked before writing it down, which is the only reason
 it is a footnote here instead of a correction later.
+
+## Codex's prediction, and my error
+
+`AVAILRMEM-ACCOUNTING-AUDIT.md` (analyysirepo, commit d27a303) answered the task, and it
+anticipated my reasoning in order to refute it:
+
+> "The observation that `freemem` recovers after deleting test files does not refute this physical
+> leak. `freemem` includes reclaimable/cache-page traffic; the workload can return more cached
+> file pages than the SDT allocator holds. `pages_pp_kernel` is the direct ownership counter."
+
+It named a counter I had not been reading and a pre-registered, falsifiable prediction: across
+300 fork+exec, `availrmem −300`, `availsmem −300`, `pages_pp_kernel +300`, with
+`availrmem + pages_pp_kernel` invariant. Measured on hardware (`issue40c.sh`), with
+`pages_pp_kernel` at `.data+0xb528` = `0x080EFAB0` recomputed independently before trusting it:
+
+```text
+phase          availrmem  availsmem  pages_pp_kernel |  d_ar    d_as   d_ppk | d_ar+d_ppk
+baseline            1252      25300             6481 |
+300 x fork          1260      25423             6473 |    +8    +123      -8 |    +0
+300 x fork+exec      941      25104             6792 |  -319    -319    +319 |    +0
+300 x fork+exec      633      24796             7100 |  -308    -308    +308 |    +0
+300 x fork           625      24788             7108 |    -8      -8      +8 |    +0
+```
+
+**All three counters move by the same magnitude with the predicted signs, and
+`availrmem + pages_pp_kernel` is conserved exactly in every phase.** The fork control does not
+move. So it is **not** a pure accounting bug: one real 4 KiB page is genuinely retained by the
+SDT allocator per dynamic `exec`, and a naked `availrmem++` would make the counters offer a page
+that is not there.
+
+Root cause, from the audit: a dynamic `exec` creates a **17-unit** legacy SDT allocation for
+libc through `segvn_create → hat_map → hat_growsdt → hat_sdtalloc`. Two 17-unit allocations
+cannot share a 32-unit SDT page, so every exec address space gets its own 4 KiB backing page —
+and the port's own `hat_free040` (`0x000d82bc`) tears down only the live 040 A/B/C tree, never
+calling `hat_growsdt(..., 0)` / `hat_sdtfree`. Debit in retained stock code, missing lifetime
+edge in the port's override.
+
+That is the third time in one day that a measurement corrected me on this issue, and the first
+time the correction was predicted in advance by the analysis rather than found afterwards.
 
 ## Handed to Codex
 

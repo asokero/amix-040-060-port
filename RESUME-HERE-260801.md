@@ -103,16 +103,29 @@ landing in that window — a **race**, not fragmentation. The stock message's wo
 a red herring. This also retires the size-recording instrument I had proposed.
 `ISSUE39-MEMORY-REGIME-260801.md`.
 
-**⚠ ISSUE-40 (candidate), and it is probably the bigger finding:** `availrmem` fell
+**⚠ ISSUE-40 — root-caused the same day, and it is the bigger finding:** `availrmem` fell
 **monotonically and linearly** across the whole 100-minute run — 3981 → 1847 pages, ~21 pages/min,
 min and max both falling every 10-minute bucket, no recovery anywhere. Suite durations tracked it:
 24m37s, 27m03s, 34m56s, **45m56s** for identical work. Nobody could have seen this before today:
 `availrmem` is a COMMON symbol and had no readable address until this morning's pointer table.
 `ISSUE40-AVAILRMEM-DECLINE-260801.md`.
 
-**The first thing to run next session, before anything else:** sample `availrmem` **idle** for ten
-minutes after a suite. Recovers → reclaim latency. Does not recover → something is lost per unit
-of work, and the bisect is `burst4.sh`'s copies against its `hat_dup_cow` half.
+**Answered, all on 2026-08-01.** It does not recover (two loads, two permanent steps, ten idle
+minutes return nothing). Bisected to `exec`: **exactly one page per exec, zero per fork**, with an
+exact denominator (`test-tools/leaktest.c`). Codex's `AVAILRMEM-ACCOUNTING-AUDIT.md` (d27a303)
+root-caused it and predicted the confirming counter signature, which hardware then produced
+exactly: 300 fork+exec → `availrmem −319/−308`, `availsmem −319/−308`, `pages_pp_kernel
++319/+308`, with `availrmem + pages_pp_kernel` conserved in every phase and the fork control flat.
+
+**It is a real retained page, not lost accounting** — my "freemem is healthy so it is only
+accounting" inference was wrong and Codex refuted it in advance. A dynamic `exec` makes a 17-unit
+legacy SDT allocation for libc; 17 units cannot share a 32-unit SDT page, so each exec AS keeps
+its own 4 KiB backing page, and the port's `hat_free040` never calls
+`hat_growsdt(..., 0)` / `hat_sdtfree`. **Do not fix it with a naked `availrmem++`** — the page is
+genuinely held.
+
+**Next on this:** the fix is a real unit — carry the legacy-SDT lifetime edge into `hat_free040`
+— plus the secondary `ptdat` metadata leak the audit documents separately.
 
 ## 5. Still owed
 1. **The ISSUE-40 idle-recovery check** (above) — cheapest and most informative.
