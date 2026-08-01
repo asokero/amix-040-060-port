@@ -1,4 +1,4 @@
-# RESUME HERE — end of 2026-08-01: base 68040-260801-04 is fully accepted on hardware
+# RESUME HERE — end of 2026-08-01: the 040 side is closed; next is the ISSUE-40 fix, then the 060
 
 Read this and `RESUME-HERE-260731.md` (still the standing record of where the port is).
 Everything below is measured unless it says otherwise.
@@ -7,8 +7,14 @@ Base kernel: `build/unix-040`, build id **68040-260801-04**, textsize `0xe4588`.
 
 ## 0. The headline
 
-**Battery 9/9 + `ptracepoke`, burst 96/96, and the publication ABI accepted** — the full record is
-`REALHW-ACCEPTANCE-260801.md`. The base is `unix-040` = `68040-260801-04`.
+**Everything on the 040 list is done and accepted on hardware**: battery 9/9 + `ptracepoke`,
+burst 96/96, the `mprotect` publication ABI, and the Model-B header set — the last of these via
+`unix-040-rtg-260801-05`, which boots, drives the physical Piccolo (`CardID=3`) and the VA2000,
+and **runs X11R5 with `twm` and `xterm` on screen**. Full record: `REALHW-ACCEPTANCE-260801.md`.
+Base `unix-040` = `68040-260801-04`; RTG = `68040-260801-05`.
+
+**Two things are open, and neither is an acceptance gap:** the ISSUE-40 fix (below), and the 060
+campaign.
 
 **The `mprotect(PROT_EXEC)` publication ABI is accepted on the A3000 + Mercury 040**, by a
 one-byte A/B that is decisive in both directions. With the barrier on, `codepub` passes and
@@ -124,8 +130,12 @@ its own 4 KiB backing page, and the port's `hat_free040` never calls
 `hat_growsdt(..., 0)` / `hat_sdtfree`. **Do not fix it with a naked `availrmem++`** — the page is
 genuinely held.
 
-**Next on this:** the fix is a real unit — carry the legacy-SDT lifetime edge into `hat_free040`
-— plus the secondary `ptdat` metadata leak the audit documents separately.
+**Next on this, and it is now the main open piece of engineering:** carry the legacy-SDT lifetime
+edge into `hat_free040`, plus the secondary `ptdat` metadata leak the audit documents separately.
+Scale of the problem: ~6900 pages at boot, one per `exec`; a burst suite eats 5000 in 100 minutes,
+so a machine running compiles and X degrades within hours and needs a reboot. It is the most
+user-visible defect found today. Acceptance criterion is already measured and pre-registered:
+`pages_pp_kernel` must stop rising per exec, with `availrmem + pages_pp_kernel` still conserved.
 
 ## 5. Still owed
 1. **The ISSUE-40 idle-recovery check** (above) — cheapest and most informative.

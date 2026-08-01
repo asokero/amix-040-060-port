@@ -56,6 +56,49 @@ as absent from real workloads on hardware as the 100-exec measurement said it wa
   publication barrier's cost was settled by counting instead — 100 execs and a full `cc` compile
   produced zero publications.
 
+## RTG kernel — `unix-040-rtg-260801-05`, the Model-B header set's hardware exposure
+
+The same base with both graphics drivers linked in, and the **first kernel ever compiled through
+the Model-B mirror sysroot** (`MODELB-HEADERS-260801.md`). Booted 18:05.
+
+Its `.text` is `0xed5b4` against the base's `0xe4588`, so **every counter address moves**;
+`rtgcheck.sh` reads the two anchors first and refuses to continue if either is wrong.
+
+| check | result |
+|---|---|
+| boot to multiuser | **`68040-260801-05`** |
+| anchors | `hat_cm_ram` @`0x081058B4` = `0x20`; `i39_magic` @`0x08105FC8` = `0x49333921` |
+| `devmaptest` | **PASS** — 3194/4096 non-zero, canaries clobbered 0 |
+| `exectest 20` | **PASS** |
+| `hat_pfnmiss_n` | 10 → 12, **exactly +2** — the 31.7. calibration now holds on a *different kernel* |
+| Xsvga driver on the physical Piccolo | `CardID=3 (Piccolo) FrameBufSize=2097152 MaxPixClk=85 Blitter=1 Panning=1` |
+| VA2000 driver | `open(/dev/va2000) OK, fd=3` — `cdevsw[68]` live |
+| **X11R5 on the Piccolo** | **PASS — `twm` and `xterm` on screen, keyboard and mouse responding** |
+| `codepub` under X | 98 → 178, `calls == exec == push` throughout |
+| `hat_sdtfail_n` | 0 |
+
+`hat_pfnmiss_n` stayed at 12 **with X running**, which is what the 2026-07-31 calibration
+predicts ("~10 at boot, exactly +2 per `devmaptest`, and zero from wolf3d, both X servers,
+compiles and two burst suites"). Starting X made ~80 `PROT_EXEC` `mprotect` calls — the X server
+and its clients are dynamically linked — and **every one of them performed the barrier**.
+
+Two things recorded as they are, not as one would like them:
+
+* `/dev/va2000` **did not exist** on this root disk and was created here
+  (`mknod /dev/va2000 c 68 0`). `/dev/svga0` has been there since 1992 and is what `Xsvga` uses.
+* **`Xrtg` is not on this root disk, nor on the NAS.** The VA2000 *kernel driver* is proven
+  registered and openable; **X on top of it is not tested here**. That is a gap in coverage, not
+  a failure, and it blocks nothing.
+
+Under X at 20 minutes uptime: `availrmem` 6559, `pages_pp_kernel` 1162 — draining per ISSUE-40 as
+every kernel does today, healthy otherwise. The i39 pointer resolved to `0x081263f0` on this
+kernel against `0x0811c5b4` on the base, which is exactly why the pointer table exists: a
+computed `.bss` offset would have been wrong.
+
+**Verdict: the Model-B header set is accepted on hardware.** It is inert for the shipped drivers
+by construction (the va2000 object is byte-identical with and without it), and the kernel built
+through it boots, drives both cards, and runs X.
+
 ## Artefacts
 
 NAS `amix/hwtest-260801/`: `battery-260801.log`, `burstloop.log`, `memwatch-burst.log`,
