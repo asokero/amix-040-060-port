@@ -120,11 +120,61 @@ Also from this run: `hat_pfnmiss_n` read **10** before and **10** after 96 burst
 2026-07-31 calibration ("~10 at boot, then exactly +2 per `devmaptest` and nothing from any other
 workload, including two 16-burst suites") now holds across a third suite.
 
+## Measurement 5 — the failure fired, and it refutes my prediction
+
+Four consecutive suites, no reboot (`burstrepeat.sh 4`), 12:40 → 14:53. All four **96/96**.
+`hat_sdtalloc` failed **once**, in suite 1, and the latch caught it:
+
+```text
+i39_fail_n              1
+i39_fail_freemem        0        <- freemem was ZERO at the failure
+i39_fail_availrmem      4003 pages
+i39_fail_deficit        0
+suites 2, 3, 4          no further failure
+```
+
+**The prediction written in this file and in the resume file was wrong.** It said a *high*
+`freemem` at the failure would confirm fragmentation. The latch says `freemem = 0`: the failure
+happens at complete free-list exhaustion, not with memory to spare. The corrected reading:
+
+* Depletion is **necessary** — the failure occurs exactly at `freemem = 0`.
+* Depletion is **not sufficient** — measurements 1–4 spent minutes at `freemem = 0` without a
+  single failure, and this run spent 75 further minutes at `freemem` ≈ 100 pages without one.
+* So the extra ingredient is contiguity **under** exhaustion, not contiguity **instead of** it:
+  `hat_sdtalloc` wants a contiguous multi-page block, and when the free list is empty the pages
+  that trickle back are not adjacent. That is a narrower and more testable statement than
+  "fragmentation" was.
+
+`availrmem` was 4003 pages at the failure — plentiful. The constraint is the free list, as every
+earlier measurement said.
+
+Rate: **1 failure in 4 suites** (64 bursts), against ~1/suite estimated on 31.7. Same order of
+magnitude, too few events to call a rate.
+
+The failure fired when memory was at its *least* pressured for the whole run and did not fire
+again as conditions worsened — see `ISSUE40-AVAILRMEM-DECLINE-260801.md`, which is the other and
+probably larger thing this run found.
+
+## An instrument bug, stated because the rule requires it
+
+`memwatch.c` had its three latch offsets each one too high: its `sdtfail` column and its closing
+"failures during/before this run" line were reading `i39_fail_freemem`, not `i39_fail_n`, and so
+printed 0 for 100 minutes while the real counter read 1. Fixed 2026-08-01.
+
+Nothing else was affected — indices 1..7 (`freemem`, `availrmem`, `availsmem`, `deficit`,
+`nscan`, `physmem`, `maxmem`) were correct, and `physmem` × 4 KiB matching the machine's actual
+RAM is what proves it. Every number quoted in this file came either from those columns or from
+`kpeek` at the absolute addresses, which was right throughout. But a column that reads a
+different variable than its heading claims is exactly the failure this project keeps a rule
+about, and it was mine.
+
 ## What is still owed
 
-The failure itself. When it next fires, the latch answers the question in one reading: a **high**
-`freemem` at `i39_fail_freemem` confirms fragmentation outright and turns ISSUE-39 into a
-kernel-map question. Everything needed is on the machine (`/payload.bin`, `/tmp/hat_dup_cow`,
+More events. One latched failure fixes the *conditions* (`freemem = 0`, `availrmem` plentiful)
+but cannot separate "the free list is empty" from "the free list is empty AND fragmented". The
+next step is a `hat_sdtalloc` call-site instrument that records the **requested size** and
+whether a contiguous block of that size existed — the question the latch cannot answer.
+Everything else needed is on the machine (`/payload.bin`, `/tmp/hat_dup_cow`,
 `/tmp/burstrun.sh`), so repeat runs cost one command. Logs from this run:
 NAS `amix/hwtest-260801/{memwatch-burst.log,burstloop.log}`.
 

@@ -54,7 +54,16 @@
 #define KTOP		0x08400000L	/* generous upper bound for image + bss */
 #define PGBYTES		4096
 
-/* offsets (in longs) from i39_magic, matching prototypes/issue39_040.s */
+/* Offsets in LONGS from i39_magic.  This table is the .data order of
+ * prototypes/issue39_040.s and nothing else -- keep them in the same order and
+ * count them together, because on 2026-08-01 the three latch indices below were
+ * each one too high, so a 100-minute run reported i39_fail_freemem where it said
+ * "hat_sdtalloc failures" and printed 0 while the real counter read 1.  Nothing
+ * else was affected (indices 1..7 were right, and physmem x 4 KiB matching the
+ * machine's RAM proved it), and the authoritative reading came from kpeek at the
+ * absolute addresses -- but the lesson is the project's own: an instrument is
+ * not trusted until it is verified against a known value. */
+#define O_MAGIC		0	/* i39_magic */
 #define O_FREEMEM	1
 #define O_AVAILRMEM	2
 #define O_AVAILSMEM	3
@@ -62,9 +71,12 @@
 #define O_PHYSMEM	5
 #define O_MAXMEM	6
 #define O_NSCAN		7
-#define O_FAIL_N	9
-#define O_FAIL_FREE	10
-#define O_FAIL_AVAILR	11
+#define O_FAIL_N	8	/* i39_fail_n -- the first of the latch group */
+#define O_FAIL_FREE	9
+#define O_FAIL_AVAILR	10
+#define O_FAIL_DEFICIT	11
+#define O_FAIL_FREE_L	12
+#define O_FAIL_AVAILR_L	13
 
 static int fd = -1;
 
@@ -210,10 +222,10 @@ char **argv;
 		printf("  latched at the FIRST failure: freemem %ld  availrmem %ld  deficit %ld\n",
 		       rdlong(base + (O_FAIL_FREE * 4), &ok),
 		       rdlong(base + (O_FAIL_AVAILR * 4), &ok),
-		       rdlong(base + (12 * 4), &ok));
+		       rdlong(base + (O_FAIL_DEFICIT * 4), &ok));
 		printf("  latched at the LAST  failure: freemem %ld  availrmem %ld\n",
-		       rdlong(base + (13 * 4), &ok),
-		       rdlong(base + (14 * 4), &ok));
+		       rdlong(base + (O_FAIL_FREE_L * 4), &ok),
+		       rdlong(base + (O_FAIL_AVAILR_L * 4), &ok));
 	}
 	(void) close(fd);
 	return (0);

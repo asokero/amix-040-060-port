@@ -83,21 +83,40 @@ Anchor read first every time: `hat_cm_ram` @`0x080FC888` = `0x20`, `i39_magic` @
 Dhrystone is **not on this root disk**, so the +64 % figure was not re-measured — the zero-rate
 result makes it moot for this unit, but note it if a timing comparison is wanted later.
 
-## 4. Still owed
+## 4. The rate experiment, and the thing it found by accident
 
-1. **An ISSUE-39 failure, which still has not been caught.** The burst suite ran 96/96 with the
-   machine under 200 KiB free for 45 % of 22 minutes and the scanner active 60 % of the time, and
-   produced **zero** failures — against ~1/suite on 31.7. One zero is not a fix (Poisson P(0) ≈
-   37 % at that rate); it is more evidence that depletion is necessary but not sufficient. Repeat
-   with `nohup sh /tmp/burstrun.sh &` (~22 min, everything already staged) until it fires, then
-   read `i39_fail_freemem` @`0x080FCFC0`: a **high** freemem there confirms fragmentation.
-2. **The Model-B header set has had no hardware exposure** — it is inert for the shipped drivers
-   (the va2000 object is byte-identical with and without it), but no RTG kernel built through it
-   has been booted on the machine.
+Four consecutive suites, no reboot, 12:40 → 14:53, all **96/96**.
 
-Counter addresses for build 68040-260801-04 are listed in full in the three record files.
+**ISSUE-39 fired once, and refuted the prediction.** The latch: `freemem` = **0** at the failure,
+`availrmem` 4003 (plentiful). I had written that a *high* freemem would confirm fragmentation;
+it is the opposite. Corrected reading: depletion is necessary (the failure is exactly at
+`freemem = 0`) but not sufficient (75 further minutes near zero produced nothing), so the extra
+ingredient is contiguity **under** exhaustion. Details and the next instrument in
+`ISSUE39-MEMORY-REGIME-260801.md`.
 
-## 5. Then the 060
+**⚠ ISSUE-40 (candidate), and it is probably the bigger finding:** `availrmem` fell
+**monotonically and linearly** across the whole 100-minute run — 3981 → 1847 pages, ~21 pages/min,
+min and max both falling every 10-minute bucket, no recovery anywhere. Suite durations tracked it:
+24m37s, 27m03s, 34m56s, **45m56s** for identical work. Nobody could have seen this before today:
+`availrmem` is a COMMON symbol and had no readable address until this morning's pointer table.
+`ISSUE40-AVAILRMEM-DECLINE-260801.md`.
+
+**The first thing to run next session, before anything else:** sample `availrmem` **idle** for ten
+minutes after a suite. Recovers → reclaim latency. Does not recover → something is lost per unit
+of work, and the bisect is `burst4.sh`'s copies against its `hat_dup_cow` half.
+
+## 5. Still owed
+1. **The ISSUE-40 idle-recovery check** (above) — cheapest and most informative.
+2. **The Model-B header set has had no hardware exposure.** `build/unix-040-rtg-260801`
+   (`68040-260801-05`) is built and staged on the NAS with `unix_boot040` and SHA256SUMS; it just
+   needs a boot. Its addresses are **not** the base's: textsize `0xed5b4`, `hat_cm_ram` =
+   `0x081058B4`, `codepub_on` = `0x08105FB8`, `i39_magic` = `0x08105FC8`.
+3. **A `hat_sdtalloc` size/contiguity instrument** — the latch fixes the conditions but cannot
+   separate "empty free list" from "empty and fragmented".
+
+Counter addresses for build 68040-260801-04 are listed in full in the record files.
+
+## 6. Then the 060
 
 Unchanged from `RESUME-HERE-260731.md` §7: measurement boot on the existing dual-CPU kernel →
 Codex's crossing-page runtime acceptance (FSLW.MA on a real format-4 frame) → 060SP integer half
