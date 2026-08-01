@@ -46,32 +46,63 @@ this morning (`prototypes/issue39_040.s`) there was no way to read it from userl
 port has been running burst suites since July. The first long run with the instrument attached
 found this in 100 minutes.
 
-## What this is NOT yet
+## What this was not yet, when first written
 
-* **Not proven to be leaked pages.** `availrmem` is an accounting variable. A path that
-  decrements it without a matching increment looks exactly like a real page leak from here.
-  This port already has form for that class of bug — ISSUE-20 (`hat_swapout` mine), and the
-  `segu` u-page keepcnt hold that was ISSUE-7.
+* Not proven to be leaked pages rather than lost accounting — **now answered below: accounting.**
+* Not proven to be unbounded — **still open**, though two clean per-load steps make a saturating
+  cache hard to sustain as an explanation.
 * **Not proven to be new.** Nothing in `codepub040` or `issue39_040` allocates memory, so it is
   very unlikely to have been introduced today, but "unlikely" is not measured. The instrument is
-  new; the behaviour probably is not.
-* **Not proven to be unbounded.** A cache growing to a ceiling would look like this for a while
-  and then flatten. Nothing flattened inside 100 minutes, but 100 minutes is what there was.
+  new; the behaviour probably is not. Dating it needs one run on `unix-040-260731-33`.
 
-## The one measurement that settles the first question
+## ANSWERED — it does not recover, and it is an ACCOUNTING leak, not a page leak
 
-**Does `availrmem` recover when the load stops?** Sample it idle for ten minutes after a suite.
+Run on a **fresh boot** of the same base, 15:03–15:32: baseline idle → load → 10 min idle →
+load → 10 min idle, reading both variables at every boundary (`issue40.sh`).
 
-* Recovers → it is reclaimable accounting, and the story is about reclaim latency, not a leak.
-* Does not recover → pages or accounting are being lost per unit of work, and the next question
-  is *which* work: `burst4.sh` is 6 concurrent 4 MiB copies plus `hat_dup_cow 64`, so bisect the
-  copies against the fork/COW half.
+```text
+phase             freemem  availrmem   d(availrmem)
+boot+0s              4880       6878
+baseline idle        4873       6872          -6      <- 2 min idle: flat
+after load 1         5606       5750       -1122
+idle+5min            5369       5721         -29
+idle+10min           5293       5687         -34      <- no recovery, still drifting DOWN
+after load 2         4222       4643       -1044
+idle+5min            4262       4636          -7
+idle+10min           4231       4607         -29      <- no recovery again
+```
 
-This was not done because the machine had to be shut down. It is cheap and it is the first thing
-to run next session, before anything else on this list.
+**Two loads, two near-identical permanent steps: −1122 and −1044 pages** (~4.3 MiB each). Ten
+minutes of idle returns nothing; it keeps drifting slowly downward. That is answer (b): something
+is lost per unit of work, and the step is reproducible enough to be a per-load constant.
 
-Second measurement, nearly as cheap: run the same experiment on the **31.7. accepted image**
-(`unix-040-260731-33`, on the NAS) with the same instrument spliced in, to date the behaviour.
+**And the shape names the class of bug.** `freemem` behaves *correctly* throughout — after load 1
+it stood at 5606, **higher** than the 4873 baseline, because deleting the test files returned
+their cached pages to the free list. Real pages are being freed and re-listed exactly as they
+should be. It is only `availrmem` — the *accounting* of available resident memory — that
+ratchets down and never gets credited back.
+
+> ISSUE-40 is an `availrmem` accounting leak: a path that decrements it on the way in without a
+> matching increment on the way out. Pages are not being lost; the kernel's belief about them is.
+
+That also supplies the mechanism for the slowdown: as `availrmem` falls, every consumer that
+sizes itself against available resident memory becomes more conservative, and the pageout
+scanner runs more. Identical suites got 87 % slower over the same period.
+
+It matches this port's known bug class — ISSUE-20 (`hat_swapout` mine) and the `segu` u-page
+keepcnt hold that was ISSUE-7 are both of exactly this shape.
+
+Baseline is per-boot: a fresh boot reads 6878 again, so nothing is being lost across reboots.
+
+## Next: which half of the work does it
+
+`issue40b.sh` (running 2026-08-01 15:38) alternates the two halves of the load — sequential file
+IO alone, then the fork/exec storm alone, twice each — so a per-load step is visible against its
+own neighbours instead of a drifting baseline. Result to follow.
+
+Then, nearly as cheap: run the same experiment on the **31.7. accepted image**
+(`unix-040-260731-33`, on the NAS) to date the behaviour, since nothing in today's units
+allocates memory and this is very unlikely to be new.
 
 ## Relationship to ISSUE-39
 
