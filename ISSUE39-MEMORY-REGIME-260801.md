@@ -1,7 +1,8 @@
 # ISSUE-39 characterisation — the memory regime, and a negative result that narrows it
 
 Instruments: `prototypes/issue39_040.s` (kernel), `test-tools/memwatch.c` (userland).
-Measured 2026-08-01 in the emulator on `unix-040` build id 68040-260801-04.
+Measured 2026-08-01 on build id 68040-260801-04, first in the emulator (measurements 1–2) and
+then on the A3000 + Mercury 040 (measurements 3–4). Both agree.
 
 ## The obstacle that had blocked this, and how it is gone
 
@@ -85,22 +86,53 @@ Real hardware reaches `freemem = 0` too, and again produces **no** `hat_sdtalloc
 emulator and the machine agree, so the negative result is not an artefact of emulation. The
 pointer table resolved to the same addresses on both.
 
-## What is still owed
+## Measurement 4 — the burst suite itself, and the regime is now a number
 
-The burst suite specifically — that is where the ~1 failure/run was measured, and no other
-workload has reproduced it. Everything needed is now on the machine.
+The accepted battery re-run on this base (A3000 + Mercury 040, `68040-260801-04`):
+`burstloop.sh 4` = 4 rounds × 4 bursts × (6 × 4 MiB concurrent copies + `hat_dup_cow 64`),
+with `memwatch` sampling once a second across the whole thing. 11:02:53 → 11:24:43, ~22 minutes.
 
-The burst suite is where the ~1 failure/run was measured, and it needs the hardware (the A3000
-was powered off for this whole session). The run is now one command longer:
-
-```sh
-./memwatch <i39_magic addr> 900 500 > /memwatch.log 2>&1 &
-sh burstloop.sh 4
-kpeek <i39_fail_n addr> 6        # the latch: freemem/availrmem at first and last failure
+```text
+burst result            96/96 correct sums, zero anomalies
+memwatch, 1213 samples  freemem  min 0   max 4470   mean 883 pages (3.4 MiB)
+                        45 % of samples below 50 pages (200 KiB free)
+                        60 % of samples with the pageout scanner running
+                        availrmem 4573..5200 -- barely moves, again
+hat_sdtfail_n = 0       i39_fail_n = 0
 ```
 
-If the latch shows a *high* `freemem` at the failure, fragmentation is confirmed outright and
-this becomes a kernel-map question rather than a memory-pressure one.
+The machine enters the regime within **five seconds** of the first burst and stays in it for
+twenty minutes. This is the workload that produced ~1 failure per 16-burst suite on 2026-07-31 —
+and this time it produced **none**.
+
+Two honest readings, and the difference matters:
+
+* A single zero against a rate of ~1/suite is **not** evidence of a fix — for a Poisson process
+  with mean 1, P(0) ≈ 37 %. Nothing in this session should have changed `hat_sdtalloc`, and
+  nothing here claims it did.
+* What the run *does* establish is the **regime, as a number instead of a guess**: sustained
+  depletion is where ISSUE-39 lives (45 % of a 22-minute run under 200 KiB free, scanner active
+  60 % of the time), and yet depletion alone does not fire it — a full suite spent almost
+  entirely inside that regime produced zero failures. Necessary, not sufficient. The remaining
+  variable is contiguity.
+
+Also from this run: `hat_pfnmiss_n` read **10** before and **10** after 96 bursts. The
+2026-07-31 calibration ("~10 at boot, then exactly +2 per `devmaptest` and nothing from any other
+workload, including two 16-burst suites") now holds across a third suite.
+
+## What is still owed
+
+The failure itself. When it next fires, the latch answers the question in one reading: a **high**
+`freemem` at `i39_fail_freemem` confirms fragmentation outright and turns ISSUE-39 into a
+kernel-map question. Everything needed is on the machine (`/payload.bin`, `/tmp/hat_dup_cow`,
+`/tmp/burstrun.sh`), so repeat runs cost one command. Logs from this run:
+NAS `amix/hwtest-260801/{memwatch-burst.log,burstloop.log}`.
+
+Repeat the run with:
+
+```sh
+nohup sh /tmp/burstrun.sh > /tmp/burstrun.out 2>&1 &     # ~22 min, detached
+```
 
 Runtime addresses for build 68040-260801-04 (`0x08000000 + textsize 0xe4588 + .data offset`) —
 **recompute after every relink**, and read the `hat_cm_ram` anchor at `0x080FC888` (must be

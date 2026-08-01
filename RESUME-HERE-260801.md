@@ -72,21 +72,25 @@ Anchor read first every time: `hat_cm_ram` @`0x080FC888` = `0x20`, `i39_magic` @
 | `codepub` with barrier OFF | **User BUS ERROR, ifetch off the page** (the point) |
 | barrier restored | PASS again; `exec - push` accounts for every skipped publication |
 | `exectest 20` | **PASS** |
+| burst battery on this base | **96/96, zero anomalies** (~22 min) |
 | `hat_pfnmiss_n` after everything | **10** — the 31.7. calibration holds exactly |
 | cost: 100 execs + a full `cc` compile | **zero** publications; nothing for a benchmark to show |
-| ISSUE-39: 90 s load, `freemem` min **0** | `hat_sdtfail_n` = `i39_fail_n` = **0** |
+| ISSUE-39 across the burst suite | regime quantified; `hat_sdtfail_n` = `i39_fail_n` = **0** |
 
 Dhrystone is **not on this root disk**, so the +64 % figure was not re-measured — the zero-rate
 result makes it moot for this unit, but note it if a timing comparison is wanted later.
 
 ## 4. Still owed
 
-1. **The ISSUE-39 burst suite specifically.** No other workload reproduces the failure, on either
-   machine. `./memwatch 080FCF9C 900 500 &` alongside `burstloop.sh 4`, then read the latch
-   (`i39_fail_freemem` @`0x080FCFC0`). A *high* `freemem` at the failure confirms fragmentation
-   outright and turns ISSUE-39 into a kernel-map question.
-2. **A full battery + burst re-run on this base**, since the base changed (codepub040 +
-   issue39_040). `exectest 20` passed; the rest of the 9/9 has not been re-run on `-04`.
+1. **An ISSUE-39 failure, which still has not been caught.** The burst suite ran 96/96 with the
+   machine under 200 KiB free for 45 % of 22 minutes and the scanner active 60 % of the time, and
+   produced **zero** failures — against ~1/suite on 31.7. One zero is not a fix (Poisson P(0) ≈
+   37 % at that rate); it is more evidence that depletion is necessary but not sufficient. Repeat
+   with `nohup sh /tmp/burstrun.sh &` (~22 min, everything already staged) until it fires, then
+   read `i39_fail_freemem` @`0x080FCFC0`: a **high** freemem there confirms fragmentation.
+2. **The rest of the 9-test battery on `-04`.** `exectest 20` and the burst suite passed;
+   `bmaptest` (needs `/pgc`), `devmaptest`, `proctest`, `mlocktest`, `fputest`, `msynctst`,
+   `mincoretst`, `bigargv` have not been re-run since the base changed.
 3. **The Model-B header set has had no hardware exposure** — it is inert for the shipped drivers
    (the va2000 object is byte-identical with and without it), but no RTG kernel built through it
    has been booted on the machine.

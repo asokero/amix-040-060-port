@@ -129,6 +129,10 @@ which independently confirms the "~4 per login" figure measured in the emulator.
 ### Regression and cost, on hardware
 
 * `exectest 20` — **PASS** (data+bss verified across every generation).
+* **The accepted burst battery, re-run on this base: 96/96, zero anomalies** (4 rounds ×
+  4 bursts × 6 × 4 MiB concurrent copies + `hat_dup_cow 64`, ~22 min). `codepub_push` tracked
+  `codepub_exec` throughout — the `exec - push` gap stayed at exactly 5, the historical deficit
+  from the A/B, so every publication in the suite was performed.
 * `hat_pfnmiss_n` = **10** after everything this session ran — codepub, exectest, a fork storm,
   90 s of memwatch. The 2026-07-31 calibration ("~10 at boot, then nothing but `devmaptest`")
   holds exactly.
