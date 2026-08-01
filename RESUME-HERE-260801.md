@@ -1,4 +1,4 @@
-# RESUME HERE — end of 2026-08-01: the publication ABI is accepted on hardware
+# RESUME HERE — end of 2026-08-01: base 68040-260801-04 is fully accepted on hardware
 
 Read this and `RESUME-HERE-260731.md` (still the standing record of where the port is).
 Everything below is measured unless it says otherwise.
@@ -6,6 +6,9 @@ Everything below is measured unless it says otherwise.
 Base kernel: `build/unix-040`, build id **68040-260801-04**, textsize `0xe4588`.
 
 ## 0. The headline
+
+**Battery 9/9 + `ptracepoke`, burst 96/96, and the publication ABI accepted** — the full record is
+`REALHW-ACCEPTANCE-260801.md`. The base is `unix-040` = `68040-260801-04`.
 
 **The `mprotect(PROT_EXEC)` publication ABI is accepted on the A3000 + Mercury 040**, by a
 one-byte A/B that is decisive in both directions. With the barrier on, `codepub` passes and
@@ -71,9 +74,9 @@ Anchor read first every time: `hat_cm_ram` @`0x080FC888` = `0x20`, `i39_magic` @
 | `codepub` with barrier ON | **PASS**, unpublished read **STALE** |
 | `codepub` with barrier OFF | **User BUS ERROR, ifetch off the page** (the point) |
 | barrier restored | PASS again; `exec - push` accounts for every skipped publication |
-| `exectest 20` | **PASS** |
+| **full battery on this base** | **9/9 PASS** + `ptracepoke` PASS (`REALHW-ACCEPTANCE-260801.md`) |
 | burst battery on this base | **96/96, zero anomalies** (~22 min) |
-| `hat_pfnmiss_n` after everything | **10** — the 31.7. calibration holds exactly |
+| `hat_pfnmiss_n` | **+2 across the whole battery**, and only `devmaptest` can do that — the 31.7. calibration confirmed to the digit |
 | cost: 100 execs + a full `cc` compile | **zero** publications; nothing for a benchmark to show |
 | ISSUE-39 across the burst suite | regime quantified; `hat_sdtfail_n` = `i39_fail_n` = **0** |
 
@@ -88,10 +91,7 @@ result makes it moot for this unit, but note it if a timing comparison is wanted
    37 % at that rate); it is more evidence that depletion is necessary but not sufficient. Repeat
    with `nohup sh /tmp/burstrun.sh &` (~22 min, everything already staged) until it fires, then
    read `i39_fail_freemem` @`0x080FCFC0`: a **high** freemem there confirms fragmentation.
-2. **The rest of the 9-test battery on `-04`.** `exectest 20` and the burst suite passed;
-   `bmaptest` (needs `/pgc`), `devmaptest`, `proctest`, `mlocktest`, `fputest`, `msynctst`,
-   `mincoretst`, `bigargv` have not been re-run since the base changed.
-3. **The Model-B header set has had no hardware exposure** — it is inert for the shipped drivers
+2. **The Model-B header set has had no hardware exposure** — it is inert for the shipped drivers
    (the va2000 object is byte-identical with and without it), but no RTG kernel built through it
    has been booted on the machine.
 
