@@ -79,5 +79,21 @@ matches both, and `relink-040-z3660.sh` now calls it.
 object. Rebuilt `unix-040-rtg` end to end through the new path: clean, `[OK] va2000_040.o:
 1 page shift(s), all by 12 (4 KiB)`, reloc validation 0 complaints.
 
+## Staged for hardware exposure
+
+`build/unix-040-rtg-260801` (build id **68040-260801-05**) is the RTG kernel — both graphics
+drivers — built on the accepted base **through the mirror sysroot**, reloc validation 0
+complaints, `[OK] va2000_040.o: 1 page shift(s), all by 12 (4 KiB)`. It is on the NAS as
+`amix/hwtest-260801/unix-040-rtg-260801-05` with `unix_boot040` and `SHA256SUMS-260801.txt`.
+
+Booting it is the one thing this header set still owes: it is *inert* for the shipped drivers
+(the va2000 object is byte-identical with and without the override, verified), so the boot is a
+no-regression check rather than a test of the geometry — but "inert by construction" and "boots"
+are different claims and only one of them has been made.
+
+**Its counter addresses are NOT the base's** — textsize `0xed5b4`, so
+`hat_cm_ram` = `0x081058B4`, `codepub_on` = `0x08105FB8`, `i39_magic` = `0x08105FC8`.
+Recompute before reading anything, as always.
+
 This is also the precondition recorded for compiling any reconstructed kernel source later:
 whatever gets compiled next inherits the right geometry without anyone remembering to ask.
