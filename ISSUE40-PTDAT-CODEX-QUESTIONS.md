@@ -115,6 +115,18 @@ logs          NAS amix/hwtest-260801b/i40regr.log, i40d.log
 ```
 
 The counters named above are permanent parts of the kernel (`prototypes/legacysdt040.s`), not a
-one-off probe: `i40_pgfreed_n` is how part 2's acceptance will be read. When the `ptdat` lifetime
-lands, `i40_pgfreed_n` must start rising with `i40_sec3_n` and `i40_held_n` must stop — and that is
-checkable on the same image, in one boot, with `i40_on` as the control.
+one-off probe.
+
+> **⚠ CORRECTED BY CODEX, and the correction is right.** An earlier version of this paragraph said
+> part 2's acceptance would be `i40_pgfreed_n` rising with `i40_sec3_n` while `i40_held_n` stops.
+> It cannot be. `hat_legacy_sdt_free` runs at `hat_free::Lhf_nodbg`, **before** the A/B/C walk that
+> calls `hat_ptfree`, and `i40_pgfreed_n`/`i40_held_n` sample `availrmem` only around the
+> `hat_growsdt` call inside it. The `ptdat` credit happens later, outside that window. Requiring
+> those counters to move would be requiring the wrong instrument to move — and worse, it would
+> invite reordering the teardown to make them move, which the contract explicitly forbids.
+>
+> Part 2 therefore carries its own site counter, `ptd_pgfreed_n`
+> (`prototypes/ptdatfree040.s`), sampled across the new `hat_sdtfree(ptd, 1)` call. The mandatory
+> end-to-end criterion is unchanged and instrument-independent: the one-page-per-dynamic-exec slope
+> disappears, fork stays flat, `availrmem + pages_pp_kernel` stays conserved. `i40_pgfreed_n`
+> staying at zero after part 2 is expected, not a failure.
