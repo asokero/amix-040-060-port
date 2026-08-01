@@ -1271,6 +1271,13 @@ Lha_done:
 |     free is hat_sdtfree(ptrtable,8) but hat_sdtfree's pages[] pfn lookup is still
 |     030 (>>11, unpatched) and never yet exercised; leaking unblocks teardown and
 |     isolates the walk port.  TODO v2: patch hat_sdtfree pfn shifts + free here.
+|   * ISSUE-40 (2026-08-01): the 030 tail ALSO released each region's legacy SDT
+|     with hat_growsdt(hatp, section, 0), and that edge was missing entirely --
+|     not just for the native pointer tables above but for the allocations the
+|     RETAINED stock hat_map/hat_growsdt still makes on every exec.  Restored as
+|     a call to hat_legacy_sdt_free (prototypes/legacysdt040.s) at Lhf_nodbg,
+|     i.e. BEFORE the A/B/C walk, because the legacy descriptors occupy the same
+|     root words the walk reads and clears.
 | Frame is identical to the 030 original (linkw -32, d2-d4/a2-a5) so restore offsets
 | match.  Arg: arg@8 = as (as@(20) = 040 root).
 	.globl	hat_free
@@ -1299,6 +1306,20 @@ hat_free:
 	moveal	%fp@(8),%a0		| reload a5 (callee-saved, but be safe)
 	moveal	%a0@(20),%a5
 Lhf_nodbg:
+| --- ISSUE-40 (2026-08-01): release this AS's RETAINED legacy-SDT allocations
+|     BEFORE the native walk touches the root page.  The 030 destructor did this
+|     with hat_growsdt(hatp, section, 0); we never did, so every dynamic exec
+|     permanently kept the 4 KiB page holding libc's 17-unit section-3 SDT
+|     (availrmem -1/exec, availrmem + pages_pp_kernel conserved => a REAL page).
+|     The order is the whole risk: the legacy section 2/3 descriptors ARE root
+|     words 0x10..0x1f, i.e. native entries A4..A7, and the walk below both reads
+|     and clears them.  prototypes/legacysdt040.s + analyysirepo vm-map/
+|     ISSUE40-LEGACY-SDT-TEARDOWN-CONTRACT.md carry the full argument.
+	movel	%fp@(8),%sp@-		| as
+	jsr	hat_legacy_sdt_free
+	addqw	&4,%sp
+	moveal	%fp@(8),%a0		| a5 is callee-saved across the call and
+	moveal	%a0@(20),%a5		|   as@(20) is unchanged -- reload anyway
 	clrl	%fp@(-20)		| A = 0
 Lf_A:
 	movel	%fp@(-20),%d0

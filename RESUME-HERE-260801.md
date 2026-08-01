@@ -63,6 +63,20 @@ ISSUE-38's death reproduced on demand in userland. Photo on the NAS.
 
 ## 3. ISSUE-40 — the open work
 
+> **UPDATE, later on 2026-08-01 — half of it landed and the other half turned out to be the gate.**
+> Codex's legacy-SDT teardown edge is implemented (`prototypes/legacysdt040.s`, called from
+> `hat040.s` at `Lhf_nodbg`) and provably fires — `hat_badaslot_n` moves **+2** with it on vs **+631**
+> with it gated off, over the same 419 teardowns. It returns **zero pages**: `i40_pgfreed_n = 0`,
+> `i40_held_n = 434`, and the residual bitmap of a page that stayed charged is `0x7FFC0000` — thirteen
+> one-unit `ptdat` crumbs sitting immediately above an 18-unit SDT object at index 0 of its page.
+> `hat_sdtfree` only credits when `p_sdtbits` reaches zero, so the "secondary" `ptdat` leak is what
+> pins every exec's page. **ISSUE-40 stays open and needs both halves.** Record:
+> `ISSUE40-LEGACY-SDT-LANDED-260801.md`; contract request: `ISSUE40-PTDAT-CODEX-QUESTIONS.md`.
+> No hardware exposure spent — the pre-registered criterion cannot pass with half the fix in.
+> Base is now `68040-260801-12` (textsize `0xe46ec`); all counter addresses moved, recompute per image.
+
+
+
 **`availrmem` loses exactly one page per `exec`, zero per `fork`, and it never comes back.**
 Measured with an exact denominator (`test-tools/leaktest.c`); root-caused by Codex
 (`amix-kernel-analysis/vm-map/AVAILRMEM-ACCOUNTING-AUDIT.md`, d27a303); confirmed on hardware by

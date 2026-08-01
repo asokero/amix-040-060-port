@@ -165,6 +165,18 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/codepub040.s" -o "$HERE/build/co
 # kpeek can follow; (2) hat_sdtfail_count now also latches the memory state at
 # the first and last failure, so the warning stops being just a count.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/issue39_040.s" -o "$HERE/build/issue39_040.o"
+# legacysdt040 (2026-08-01, ISSUE-40 fix): hat_free040 tore down only the native
+# 040 A/B/C tree and never released the LEGACY SDT allocations that the retained
+# stock hat_map -> hat_growsdt -> hat_sdtalloc path still makes on every exec --
+# a 17-unit object for libc that cannot share a 32-unit p_sdtbits page, so every
+# dynamic exec kept a 4 KiB page for good (availrmem -1/exec on hardware, with
+# availrmem + pages_pp_kernel conserved => a real page, NOT lost accounting).
+# Restores the 030 destructor's hat_growsdt(hatp, section, 0) edge for sections
+# 2 and 3, before the native walk overwrites the descriptors that name them.
+# Calls the RETAINED hat_growsdt body -- hence the globalize below, and hence
+# this must never be weakened.  Contract: analyysirepo
+# vm-map/ISSUE40-LEGACY-SDT-TEARDOWN-CONTRACT.md.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/legacysdt040.s" -o "$HERE/build/legacysdt040.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
@@ -198,6 +210,7 @@ m68k-linux-gnu-objcopy \
 	--globalize-symbol hat_pteload \
 	--globalize-symbol hat_ptalloc \
 	--globalize-symbol hat_sdtalloc \
+	--globalize-symbol hat_growsdt \
 	--globalize-symbol hat_pt2ptdat \
 	--globalize-symbol hat_ptfree \
 	--globalize-symbol free_pts \
@@ -283,16 +296,36 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
 	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
 	"$HERE/build/config040.o" "$HERE/build/cb_icode040.o" "$HERE/build/kdbg040.o" \
-	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o"
+	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o" \
+	"$HERE/build/legacysdt040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem; do
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem \
+         hat_growsdt hat_legacy_sdt_free i40_magic i40_on i40_calls i40_sec2_n i40_sec3_n i40_empty_n i40_bad_n i40_err_n i40_pgfreed_n i40_held_n i40_last_n i40_last_base i40_last_bits; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
-m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'kptr040|kroot040|sysseginit|segkmem_mapin|kptbl|syssegs|hardbus_orig' \
+m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'kptr040|kroot040|sysseginit|segkmem_mapin|kptbl|syssegs|hardbus_orig|hat_growsdt' \
 	| sed 's/^/      /' || echo "      (none)"
+
+# HARD CHECK (2026-08-01, ISSUE-40): legacysdt040.o CALLS the retained hat_growsdt,
+# which is a file-LOCAL 't' in the stock image.  `ld -r` does NOT fail on an
+# unresolved symbol, so a missing --globalize-symbol would produce a kernel whose
+# teardown edge jumps to address 0 -- i.e. a silent, catastrophic regression that
+# only shows up at the first process exit.  Shaped like the resume/hardbus guards.
+GSADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="hat_growsdt" && $2=="T" {print $1}')
+LSADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="hat_legacy_sdt_free" && $2=="T" {print $1}')
+if [ -z "$GSADDR" ]; then
+	echo "[FAIL] hat_growsdt is not a global T -> ISSUE-40 teardown edge is unbound"; exit 1
+fi
+if [ -z "$LSADDR" ]; then
+	echo "[FAIL] hat_legacy_sdt_free missing -> ISSUE-40 fix not linked in"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U hat_growsdt$' >/dev/null 2>&1; then
+	echo "[FAIL] hat_growsdt still UND after globalize -> the call would go to 0"; exit 1
+fi
+echo "[OK] ISSUE-40 edge bound: hat_legacy_sdt_free @0x$LSADDR -> retained hat_growsdt @0x$GSADDR."
 
 # HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
 # remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired
