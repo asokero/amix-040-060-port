@@ -155,6 +155,54 @@ The failure fired when memory was at its *least* pressured for the whole run and
 again as conditions worsened — see `ISSUE40-AVAILRMEM-DECLINE-260801.md`, which is the other and
 probably larger thing this run found.
 
+## Measurement 6 — the console line settles it, and my contiguity story was also wrong
+
+The failure printed on the console (photo: NAS `amix/hwtest-260801/issue39-console-260801.jpg`),
+and it carries what no counter could:
+
+```text
+hat_sdtalloc(0x40001894,0x1,0x0) - not enough contiguous memory for segment tables; 1 pages.
+ (called from 0x80B69B4, pid 3909, syscall 0x3B(0x800122EC,0x800120C0,0x80012168))
+```
+
+**The failing request was for ONE page.** Contiguity is meaningless for a single page — there is
+nothing to fragment. The allocator failed because there was no page at all, which is exactly
+what the latch said (`freemem = 0`).
+
+So the "contiguity under exhaustion" reading above is **also wrong**, and the answer is simpler
+than either of my attempts:
+
+> ISSUE-39 is plain free-list exhaustion. It needs two things to coincide — `freemem = 0`, and a
+> `hat_sdtalloc` call landing inside that window. It is a **race**, not a fragmentation
+> phenomenon, and the stock message's word "contiguous" is a red herring inherited from generic
+> message text.
+
+That also explains "necessary but not sufficient" without any extra mechanism: minutes at
+`freemem = 0` produce no failure whenever nobody happens to call.
+
+Everything else in the line checks out against the image:
+
+```text
+called from 0x80B69B4  ->  kernel .text 0xb69b4 = the return address of
+                           hat_ptalloc's call to hat_sdtalloc at 0xb69ae
+0xb69a6: pea 1         ->  the page count is a HARDCODED 1 at this site
+syscall 0x3B = 59      ->  execve, with three user pointers (path, argv, envp)
+```
+
+`hat_sdtalloc` has exactly **two** call sites in this kernel: `hat_growsdt` (0xb6198) and
+`hat_ptalloc` (0xb69ae). The one that fired is the fixed-size one, on the **exec** path: a new
+address space needs a page table, and the free list was empty at that instant. pid 3909 is
+burst-suite exec traffic.
+
+**This retires the instrument proposed below.** There is no point recording `hat_sdtalloc`'s
+requested size — at the site that fires it is a literal `pea 1`.
+
+Relationship to ISSUE-40, stated as a *mechanism* and not as a prediction, because predicting is
+what went wrong twice on this page: if `availrmem` drains, `freemem = 0` windows get longer, so
+the ISSUE-39 rate should rise with uptime. This run's single event went the other way — it fired
+in suite 1 when memory was least pressured, and not once during the following 75 minutes. One
+event settles nothing either way.
+
 ## An instrument bug, stated because the rule requires it
 
 `memwatch.c` had its three latch offsets each one too high: its `sdtfail` column and its closing
@@ -170,11 +218,13 @@ about, and it was mine.
 
 ## What is still owed
 
-More events. One latched failure fixes the *conditions* (`freemem = 0`, `availrmem` plentiful)
-but cannot separate "the free list is empty" from "the free list is empty AND fragmented". The
-next step is a `hat_sdtalloc` call-site instrument that records the **requested size** and
-whether a contiguous block of that size existed — the question the latch cannot answer.
-Everything else needed is on the machine (`/payload.bin`, `/tmp/hat_dup_cow`,
+Arguably nothing, for the characterisation: the console line closed it. What remains is a
+*policy* question — whether a one-page allocation failure on the exec path should be a warning
+at all, or whether that path should wait for a page instead of proceeding. The burst suites were
+96/96 with it happening, so it is not currently harmful.
+
+The live question is ISSUE-40, which is what actually drives the machine to `freemem = 0`.
+Everything needed is on the machine (`/payload.bin`, `/tmp/hat_dup_cow`,
 `/tmp/burstrun.sh`), so repeat runs cost one command. Logs from this run:
 NAS `amix/hwtest-260801/{memwatch-burst.log,burstloop.log}`.
 

@@ -87,11 +87,20 @@ result makes it moot for this unit, but note it if a timing comparison is wanted
 
 Four consecutive suites, no reboot, 12:40 → 14:53, all **96/96**.
 
-**ISSUE-39 fired once, and refuted the prediction.** The latch: `freemem` = **0** at the failure,
-`availrmem` 4003 (plentiful). I had written that a *high* freemem would confirm fragmentation;
-it is the opposite. Corrected reading: depletion is necessary (the failure is exactly at
-`freemem = 0`) but not sufficient (75 further minutes near zero produced nothing), so the extra
-ingredient is contiguity **under** exhaustion. Details and the next instrument in
+**ISSUE-39 is closed as a characterisation, and it is simpler than either thing I predicted.**
+The latch said `freemem` = **0** at the failure (I had predicted a *high* freemem would show
+fragmentation — wrong). Then the console line settled it outright:
+
+```text
+hat_sdtalloc(0x40001894,0x1,0x0) - not enough contiguous memory for segment tables; 1 pages.
+ (called from 0x80B69B4, pid 3909, syscall 0x3B(...))
+```
+
+**The request was for ONE page** — nothing to fragment. `0x80B69B4` is the return address of
+`hat_ptalloc`'s call at `.text 0xb69ae`, whose page count is a hardcoded `pea 1`, on the **exec**
+path (syscall 0x3B = 59). So: plain free-list exhaustion, needing `freemem = 0` *and* a call
+landing in that window — a **race**, not fragmentation. The stock message's word "contiguous" is
+a red herring. This also retires the size-recording instrument I had proposed.
 `ISSUE39-MEMORY-REGIME-260801.md`.
 
 **⚠ ISSUE-40 (candidate), and it is probably the bigger finding:** `availrmem` fell
@@ -111,8 +120,7 @@ of work, and the bisect is `burst4.sh`'s copies against its `hat_dup_cow` half.
    (`68040-260801-05`) is built and staged on the NAS with `unix_boot040` and SHA256SUMS; it just
    needs a boot. Its addresses are **not** the base's: textsize `0xed5b4`, `hat_cm_ram` =
    `0x081058B4`, `codepub_on` = `0x08105FB8`, `i39_magic` = `0x08105FC8`.
-3. **A `hat_sdtalloc` size/contiguity instrument** — the latch fixes the conditions but cannot
-   separate "empty free list" from "empty and fragmented".
+3. *(retired — the console line answered it: the request is a hardcoded one page.)*
 
 Counter addresses for build 68040-260801-04 are listed in full in the record files.
 
