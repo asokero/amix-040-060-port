@@ -70,7 +70,25 @@ allocations, or long-lived fragmentation accumulated across rounds.
 The two counters reading 0 together is also the instrument cross-check — `hat_sdtfail_n`
 (kdbg040) and `i39_fail_n` (issue39_040) are incremented independently in the same wrapper.
 
+## Measurement 3 — the same negative result on real silicon
+
+Repeated on the A3000 + Mercury 040 (`68040-260801-04`) later the same day, 90 s, load scaled up
+(8 × 8 MiB IO concurrent with six shells × 80 execs):
+
+```text
+freemem   min 0   max 4631   mean 2781 pages
+availrmem min 5414 max 6482
+hat_sdtfail_n = 0        i39_fail_n = 0
+```
+
+Real hardware reaches `freemem = 0` too, and again produces **no** `hat_sdtalloc` failure. The
+emulator and the machine agree, so the negative result is not an artefact of emulation. The
+pointer table resolved to the same addresses on both.
+
 ## What is still owed
+
+The burst suite specifically — that is where the ~1 failure/run was measured, and no other
+workload has reproduced it. Everything needed is now on the machine.
 
 The burst suite is where the ~1 failure/run was measured, and it needs the hardware (the A3000
 was powered off for this whole session). The run is now one command longer:
