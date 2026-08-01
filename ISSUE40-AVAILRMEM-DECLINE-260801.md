@@ -94,13 +94,52 @@ keepcnt hold that was ISSUE-7 are both of exactly this shape.
 
 Baseline is per-boot: a fresh boot reads 6878 again, so nothing is being lost across reboots.
 
-## Next: which half of the work does it
+## Bisected: it is `exec`, and it is exactly one page
 
-`issue40b.sh` (running 2026-08-01 15:38) alternates the two halves of the load — sequential file
-IO alone, then the fork/exec storm alone, twice each — so a per-load step is visible against its
-own neighbours instead of a drifting baseline. Result to follow.
+First halving (`issue40b.sh`, alternating so each step is read against its own neighbours):
 
-Then, nearly as cheap: run the same experiment on the **31.7. accepted image**
+```text
+file IO alone      -46, -53 pages
+fork/exec alone   -988, -982 pages
+```
+
+Then with an **exact denominator** — `test-tools/leaktest.c` does exactly N forks, or exactly N
+fork+exec pairs, because the shell loops used until then were themselves forking and exec'ing
+(`k=\`expr $k + 1\``) and a ratio over a guessed denominator is not a measurement:
+
+```text
+                            availrmem      delta / 300
+settled                          2299
+300 x fork + exit                2300           +1     <- fork loses NOTHING
+300 x fork + exit                2284          -16
+300 x fork + exec + exit         1980         -304     <- -1.013 per pair
+300 x fork + exec + exit         1665         -315     <- -1.050 per pair
+```
+
+> **Exactly one page of `availrmem` per `exec`. Zero per `fork`.**
+
+The file-IO half's ~50 pages is consistent with its own process count (8 `dd` + 8 `cat` per
+round, plus shell overhead) rather than with the IO.
+
+## A hypothesis, eliminated by measurement before it reached the record
+
+Our own `hat_ptfree` (`hat040.s` V2.1) credits `availrmem` **only** on the path that reaches
+`page_free`; its `Lpf_leak` exit is even commented "leak (V1 behavior)" and its print is capped
+at 8 — the exact shape of a defect that hides, and the shape this project has been bitten by
+before. It fit the symptom perfectly.
+
+**It is not that.** `Lpf_n` (`.data+0x17f26`, runtime `0x080FC4AE`) reads **0** after thousands
+of execs, so that exit is never taken. Checked before writing it down, which is the only reason
+it is a footnote here instead of a correction later.
+
+## Handed to Codex
+
+`ISSUE40-AVAILRMEM-TASK.md` carries the fact, a complete census of every `availrmem` writer in
+the image mapped to its function, the 3b2 source contract for each, and the eliminated
+hypothesis. The acceptance criterion is stated so a wrong answer is refutable: the site must
+predict **−1 per exec and 0 per fork**.
+
+Still worth doing here, and cheap: run the same experiment on the **31.7. accepted image**
 (`unix-040-260731-33`, on the NAS) to date the behaviour, since nothing in today's units
 allocates memory and this is very unlikely to be new.
 
