@@ -177,6 +177,17 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/issue39_040.s" -o "$HERE/build/i
 # this must never be weakened.  Contract: analyysirepo
 # vm-map/ISSUE40-LEGACY-SDT-TEARDOWN-CONTRACT.md.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/legacysdt040.s" -o "$HERE/build/legacysdt040.o"
+# ptdatfree040 (2026-08-02, ISSUE-40 part 2): the half that actually returns the
+# page.  Part 1 released the legacy SDT and got ZERO pages back on hardware
+# (i40_pgfreed_n = 0 over 3440 releases) because hat_sdtfree only credits when
+# p_sdtbits reaches zero -- and our hat_ptfree discarded pp->p_ptdats without
+# removing its four active_pts/free_pts records or returning their 64-byte
+# hat_sdtalloc unit, so every table page ever allocated left a permanent crumb.
+# hat_ptdat_retire() is the exact retained inverse behind a stronger ownership
+# gate (p_keepcnt == 1, p_ptbits == 1, unlocked record, reciprocal links), called
+# from hat_ptfree.  It CALLS retained hat_sdtfree -- hence the globalize below.
+# Contract: analyysirepo vm-map/ISSUE40-PTDAT-TEARDOWN-CONTRACT.md.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ptdatfree040.s" -o "$HERE/build/ptdatfree040.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
@@ -211,6 +222,7 @@ m68k-linux-gnu-objcopy \
 	--globalize-symbol hat_ptalloc \
 	--globalize-symbol hat_sdtalloc \
 	--globalize-symbol hat_growsdt \
+	--globalize-symbol hat_sdtfree \
 	--globalize-symbol hat_pt2ptdat \
 	--globalize-symbol hat_ptfree \
 	--globalize-symbol free_pts \
@@ -297,16 +309,18 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
 	"$HERE/build/config040.o" "$HERE/build/cb_icode040.o" "$HERE/build/kdbg040.o" \
 	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o" \
-	"$HERE/build/legacysdt040.o"
+	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
 for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem \
-         hat_growsdt hat_legacy_sdt_free i40_magic i40_on i40_calls i40_sec2_n i40_sec3_n i40_empty_n i40_bad_n i40_err_n i40_pgfreed_n i40_held_n i40_last_n i40_last_base i40_last_bits; do
+         hat_growsdt hat_legacy_sdt_free i40_magic i40_on i40_calls i40_sec2_n i40_sec3_n i40_empty_n i40_bad_n i40_err_n i40_pgfreed_n i40_held_n i40_last_n i40_last_base i40_last_bits \
+         hat_sdtfree hat_ptdat_retire ptd_magic ptd_on ptd_calls ptd_retired_n ptd_pgfreed_n \
+         ptd_keep0_n ptd_keepn_n ptd_meta_n ptd_badlink_n ptd_wake_n ptd_tblfreed_n; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
-m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'kptr040|kroot040|sysseginit|segkmem_mapin|kptbl|syssegs|hardbus_orig|hat_growsdt' \
+m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'kptr040|kroot040|sysseginit|segkmem_mapin|kptbl|syssegs|hardbus_orig|hat_growsdt|hat_sdtfree' \
 	| sed 's/^/      /' || echo "      (none)"
 
 # HARD CHECK (2026-08-01, ISSUE-40): legacysdt040.o CALLS the retained hat_growsdt,
@@ -326,6 +340,22 @@ if m68k-linux-gnu-nm "$OUT" | grep -E ' U hat_growsdt$' >/dev/null 2>&1; then
 	echo "[FAIL] hat_growsdt still UND after globalize -> the call would go to 0"; exit 1
 fi
 echo "[OK] ISSUE-40 edge bound: hat_legacy_sdt_free @0x$LSADDR -> retained hat_growsdt @0x$GSADDR."
+
+# HARD CHECK (2026-08-02, ISSUE-40 part 2): same shape for the ptdat edge.  This
+# one is worse if it slips: hat_ptfree runs on every table-page free, so an
+# unbound hat_sdtfree would jump to 0 from the middle of address-space teardown.
+SFADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="hat_sdtfree" && $2=="T" {print $1}')
+PRADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="hat_ptdat_retire" && $2=="T" {print $1}')
+if [ -z "$SFADDR" ]; then
+	echo "[FAIL] hat_sdtfree is not a global T -> ISSUE-40 ptdat edge is unbound"; exit 1
+fi
+if [ -z "$PRADDR" ]; then
+	echo "[FAIL] hat_ptdat_retire missing -> ISSUE-40 part 2 not linked in"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U hat_sdtfree$' >/dev/null 2>&1; then
+	echo "[FAIL] hat_sdtfree still UND after globalize -> the call would go to 0"; exit 1
+fi
+echo "[OK] ISSUE-40 ptdat edge bound: hat_ptdat_retire @0x$PRADDR -> retained hat_sdtfree @0x$SFADDR."
 
 # HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
 # remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired

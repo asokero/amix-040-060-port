@@ -1597,10 +1597,31 @@ hat_ptfree:
 | count can never be misread as a reverse-map pointer once the page recycles (3B2
 | vm/anon page_abort does `if (PP_ISMAPPED) hat_pageunload` on that field).  page_free's
 | own entry swap_anon(pp->p_vnode,..) is safe: page_get pages carry no vnode identity.
-| Preserves ALL registers (moveml d0-d1/a0-a1 + C callee-saved) -- callers (hat_free
-| B-loop, stock hat_unload paths) keep live state across this call.
-	moveml	%d0-%d1/%a0-%a1,%sp@-
-	movel	%sp@(20),%d0		| table base (16 saved + retaddr + arg0)
+| Preserves ALL registers (moveml + C callee-saved) -- callers (hat_free B-loop,
+| stock hat_unload paths) keep live state across this call.
+|
+| V3 (2026-08-02, ISSUE-40 part 2): the page's ptdat METADATA is retired before the
+| page is.  V2.1 threw away pp->p_ptdats without removing the four records from
+| active_pts/free_pts or returning their 64-byte hat_sdtalloc unit, so every table
+| page ever allocated left a permanent one-unit crumb in an SDT backing page -- and
+| those crumbs are what pinned ISSUE-40's page (part 1 released the legacy SDT and
+| got ZERO pages back on hardware; residual p_sdtbits 0x000e5fff .. 0x5fffffff).
+| The retirement itself is prototypes/ptdatfree040.s (contract: analyysirepo
+| vm-map/ISSUE40-PTDAT-TEARDOWN-CONTRACT.md); this routine keeps the page half.
+|
+| Two changes here beyond the call:
+|   * the early `clrl pp@(32)` is GONE from the decision path.  It destroyed the
+|     only pointer to the records before this code knew whether it owned the page.
+|     p_ptdats is now cleared inside the retirement, still before page_free -- so
+|     the "no stale field once the page recycles" invariant is unchanged.
+|   * `keepcnt > 1` no longer decrements.  Dropping the hold without retiring the
+|     metadata separates the page from the HAT's accounting and leaves no owner
+|     that knows which credits and list nodes remain; a counted fail-closed leak is
+|     the safer half of that trade (contract P3).  ptd_keepn_n counts it.
+| With ptd_on = 0 the whole V2.1 body runs again unchanged (Lpf_old), so the A/B
+| control arm is the previous kernel and not a third behaviour.
+	moveml	%d0-%d1/%a0-%a2,%sp@-
+	movel	%sp@(24),%d0		| table base (20 saved + retaddr + arg0)
 	movel	%d0,%d1
 	andil	&0xfff,%d1
 	bnew	Lpf_leak		| not page-aligned -> not ours -> leak (V1 behavior)
@@ -1610,25 +1631,61 @@ hat_ptfree:
 	bcsw	Lpf_leak
 	cmpl	pages_end,%d0
 	bccw	Lpf_leak
-	subl	pages_base,%d0
-	moveq	&60,%d1
-	mulsl	%d1,%d0
-	moveal	%d0,%a0
-	addal	pages,%a0		| a0 = pp = pages + (pfn - pages_base)*60
+	subl	pages_base,%d0		| page index
+	movel	%d0,%d1
+	lsll	&6,%d1			| index * 64
+	lsll	&2,%d0			| index * 4
+	subl	%d0,%d1			| index * 60 -- no muls.l (ISSUE-34: the 68060
+	moveal	%d1,%a2			|   traps every 64-bit muls.l form)
+	addal	pages,%a2		| a2 = pp = pages + (pfn - pages_base)*60
 | V2.1 (boot-verified V2 hit PANIC page_free: pp@(2) keepcnt!=0): mirror the 3B2 reference
 | release (vm_hat.c:2334 PAGE_RELE + accounting).  page_get hands the page out HELD
 | (p_keepcnt@(2) = 1) and hat_ptalloc charged availrmem/availsmem/pages_pp_kernel; the
 | release must undo both, and page_free panics unless keepcnt/mapping/lck/cow are all 0.
-	clrl	%a0@(32)		| clear p_mapping/p_ptdats union (stale pt_inuse)
-	tstw	%a0@(2)
+	movel	%a2,%sp@-
+	jsr	hat_ptdat_retire	| proves ownership, then REMOVE_PT x4 +
+	addqw	&4,%sp			|   hat_sdtfree(ptd,1) + clears p_ptbits/p_ptdats
+	tstl	%d0
+	beqw	Lpf_release		| 0 = retired -> the page hold is proven 1
+	tstl	ptd_on
+	beqw	Lpf_old			| gated off -> run the V2.1 body verbatim
+	braw	Lpf_ret			| fail closed -> touch NOTHING (counted there)
+Lpf_release:
+	subqw	&1,%a2@(2)		| PAGE_RELE, proven 1 -> 0
+	addql	&1,availrmem
+	addql	&1,availsmem
+	subql	&1,pages_pp_kernel
+	clrl	%sp@-			| dontneed = 0
+	movel	%a2,%sp@-		| pp
+	jsr	page_free
+	addqw	&8,%sp
+	addql	&1,ptd_tblfreed_n
+| A successful release PUBLISHES a real page, so it is a valid progress event for
+| hat_ptalloc's fresh-page retry (it sleeps on &free_pts at 0xb6cd2 under
+| HAT_CANWAIT, reachable from hat_pteload and hat_dup under real memory pressure).
+| Wake AFTER the accounting and page_free, never on a fail-closed path -- nothing
+| became available there.  hat_unlock's existing wake is not a substitute: it
+| publishes no page.
+	tstl	pt_waiting
+	beqw	Lpf_ret
+	pea	1
+	pea	free_pts
+	jsr	wakeprocs
+	addqw	&8,%sp
+	clrl	pt_waiting
+	addql	&1,ptd_wake_n
+	braw	Lpf_ret
+Lpf_old:
+	clrl	%a2@(32)		| clear p_mapping/p_ptdats union (stale pt_inuse)
+	tstw	%a2@(2)
 	beqw	Lpf_leak		| keepcnt already 0 = not a held page_get page -> leak+log
-	subqw	&1,%a0@(2)		| PAGE_RELE: drop our keep (page_get's hold)
+	subqw	&1,%a2@(2)		| PAGE_RELE: drop our keep (page_get's hold)
 	bnew	Lpf_held		| someone else still holds it -> do NOT free
 	addql	&1,availrmem
 	addql	&1,availsmem
 	subql	&1,pages_pp_kernel
 	clrl	%sp@-			| dontneed = 0
-	movel	%a0,%sp@-		| pp
+	movel	%a2,%sp@-		| pp
 	jsr	page_free
 	addqw	&8,%sp
 	braw	Lpf_ret
@@ -1640,14 +1697,14 @@ Lpf_leak:
 	bccw	Lpf_ret			| after 8 prints, silent leak
 	addql	&1,%d0
 	movel	%d0,Lpf_n
-	movel	%sp@(20),%d1		| table arg
+	movel	%sp@(24),%d1		| table arg
 	movel	%d1,%sp@-
 	pea	Lpf_msg
 	pea	2
 	jsr	cmn_err
 	lea	%sp@(12),%sp
 Lpf_ret:
-	moveml	%sp@+,%d0-%d1/%a0-%a1
+	moveml	%sp@+,%d0-%d1/%a0-%a2
 	rts
 	nop				| pad .text to a 4-byte multiple
 
