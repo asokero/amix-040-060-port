@@ -143,17 +143,17 @@ which independently confirms the "~4 per login" figure measured in the emulator.
 
 **Verdict: the ABI is accepted on hardware.** The one-byte A/B is decisive in both directions.
 
-## Owed before this session (all discharged above)
+## What the acceptance program asked for, against what it got
 
-The decisive test needs the A3000 (10.0.10.10), which was **powered off for this whole session**
-(`No route to host` from first contact to last). What is owed:
+The spec's plan predicted that with publication disabled the generated code would return the
+*stale value*. It does worse than that, and the difference is the finding: on the very first
+publication of a freshly mmapped page there is no stale value to return — RAM holds zeros — so
+the CPU executes the zero page and dies of an instruction fetch. The stale-value case is only
+visible on the *second* generation, which is why T1 writes A, publishes, runs it hard, and only
+then overwrites with B. Both halves were observed on hardware in the same run.
 
-1. `codepub.c` on real copyback with `codepub_on = 1` → T1 step 4 must return 22.
-2. Same image, `codepub_on = 0` → T1 step 3 is expected to report **STALE (11)**, and step 4 is
-   then *allowed to fail*. That failure is the finding; it is what proves cache ownership rather
-   than accidental context-switch invalidation.
-3. `exectest 20` + one burst suite for regression, and Dhrystone against the accepted
-   30037/s to confirm the barrier costs nothing measurable.
+The remaining item from that plan, "run on real 68060 later", is unchanged and belongs to the
+060 campaign.
 
 Counter addresses **for the build that ships this** (`kernel_base + textsize + .data offset`,
 textsize `0xe4588`) — recompute after any relink:
