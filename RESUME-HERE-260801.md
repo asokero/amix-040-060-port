@@ -61,7 +61,21 @@ ISSUE-38's death reproduced on demand in userland. Photo on the NAS.
   in that window: a race. The stock message's word "contiguous" is a red herring. Two earlier
   readings of mine (both involving fragmentation) were wrong; the record documents them.
 
-## 3. ISSUE-40 — the open work
+## 3. ISSUE-40 — CLOSED on hardware 2026-08-02
+
+> **★ Both halves landed and hardware-proven: `REALHW-ISSUE40-CLOSED-260802.md`.** Kernel
+> `68040-260802-01`. 300 x fork+exec moves `availrmem` by **exactly 0** with the fix on and by
+> **-317** with part 2 gated off, in the same boot; fork flat; `availrmem + pages_pp_kernel`
+> conserved. Turning it back on returned **324 pages** the control phase had leaked, so the backlog
+> drains too. 30716 calls / 26934 retirements with
+> `ptd_keep0_n = ptd_keepn_n = ptd_meta_n = ptd_badlink_n = 0`. Safety: `exectest 20`,
+> `hat_dup_cow` 1/32/256, `devmaptest` all PASS, `hat_pfnmiss_n` exactly +2, `cb_rel_reject` 0.
+> **Remaining: criteria 4 and 5 only** — the full battery 9/9 + burst 96/96, and a long burst run
+> with `memwatch` to confirm the ~21 pages/min decline is gone. One session.
+> Open, logged, not chased: `issue40e.sh` died on the machine with `sh: no space` while the machine
+> was demonstrably healthy; the acceptance was driven from the host instead. See the method note.
+
+## 3b. ISSUE-40 — how it looked while open
 
 > **UPDATE, later on 2026-08-01 — half of it landed and the other half turned out to be the gate.**
 > Codex's legacy-SDT teardown edge is implemented (`prototypes/legacysdt040.s`, called from
