@@ -86,9 +86,11 @@ Two things recorded as they are, not as one would like them:
 
 * `/dev/va2000` **did not exist** on this root disk and was created here
   (`mknod /dev/va2000 c 68 0`). `/dev/svga0` has been there since 1992 and is what `Xsvga` uses.
-* **`Xrtg` is not on this root disk, nor on the NAS.** The VA2000 *kernel driver* is proven
-  registered and openable; **X on top of it is not tested here**. That is a gap in coverage, not
-  a failure, and it blocks nothing.
+* **`Xrtg` is not on this root disk, nor on the NAS**, so X on the VA2000 was not exercised *in
+  this session*. Read that as disk scope, not as project status: **`Xrtg` on the VA2000 is
+  hardware-proven** — desktop up with several clients, user-run, `REALHW-ACCEPTANCE-260731.md`
+  §"VA2000 X server (`Xrtg`) PASS". What is untested is only whether it still works on the
+  *newest* kernel build, and nothing in these units touches that path.
 
 Under X at 20 minutes uptime: `availrmem` 6559, `pages_pp_kernel` 1162 — draining per ISSUE-40 as
 every kernel does today, healthy otherwise. The i39 pointer resolved to `0x081263f0` on this

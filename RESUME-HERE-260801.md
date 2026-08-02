@@ -148,8 +148,11 @@ implementation: `ISSUE40-CODEX-FOLLOWUP-QUESTIONS.md`.
 
 ## 4. Coverage gaps, stated plainly
 
-* **`Xrtg` is not on this root disk or the NAS**, so X *on the VA2000* was never tested — the
-  driver is proven registered and openable, nothing more.
+* **`Xrtg` is not on this root disk or the NAS**, so X on the VA2000 was not exercised *this
+  session*. ⚠ An earlier version of this line said it "was never tested" — that was wrong and the
+  user corrected it: **`Xrtg` on the VA2000 is hardware-proven** (2026-07-27, user-run, desktop up
+  with several clients — `REALHW-ACCEPTANCE-260731.md`). The only open part is re-verification on
+  the newest kernel build, and no unit since has touched that path.
 * `/dev/va2000` did not exist on the X11R5 disk and was created on 2026-08-01
   (`mknod /dev/va2000 c 68 0`). `/dev/svga0` has been there since 1992.
 * Dhrystone is not on this root disk, so the +64 % copyback figure was not re-measured. The
