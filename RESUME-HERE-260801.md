@@ -61,7 +61,18 @@ ISSUE-38's death reproduced on demand in userland. Photo on the NAS.
   in that window: a race. The stock message's word "contiguous" is a red herring. Two earlier
   readings of mine (both involving fragmentation) were wrong; the record documents them.
 
-## 3. ISSUE-40 — CLOSED on hardware 2026-08-02
+## 3. ISSUE-40 — CLOSED AND FULLY ACCEPTED on hardware 2026-08-02
+
+> **★ All five pre-registered criteria met: `REALHW-ISSUE40-ACCEPTANCE-260802.md`.** Clean boot of
+> `68040-260802-01`. Battery **10/10**, burst **96/96 x 4**, `hat_pfnmiss_n` exactly +2 and unmoved
+> by anything else. `availrmem` in ten-minute buckets over 65 minutes of load:
+> 6953 / 6950 / 6944 / 6944 / 6945 / 6942 / 6939 — **14 pages of drift**, i.e. ~0.2 pages/min where
+> it used to lose ~21. Suite wall-clocks **17m21s / 16m32s / 16m38s / 17m02s** where they used to
+> inflate 24m37s → 45m56s (+87 %), which settles that the slowdown was a consequence of the leak.
+> 62 989 `ptdat` retirements with `ptd_calls == ptd_retired_n` at every checkpoint and
+> `keep0 = keepN = meta = badlink = wake = 0`. Two units: `prototypes/legacysdt040.s` +
+> `prototypes/ptdatfree040.s` with `hat_ptfree` V3. Open and logged, not chased: the `sh: no space`
+> harness failure, and `ptd_wake_n` still unexercised (the `pt_waiting` path has never fired).
 
 > **★ Both halves landed and hardware-proven: `REALHW-ISSUE40-CLOSED-260802.md`.** Kernel
 > `68040-260802-01`. 300 x fork+exec moves `availrmem` by **exactly 0** with the fix on and by
