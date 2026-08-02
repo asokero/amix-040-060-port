@@ -1,0 +1,18 @@
+--- a/src/z3660.c
++++ b/src/z3660.c
+@@ -66,8 +66,14 @@
+ #define	VPOSR		0xDFF004	/* Agnus/Alice id: bits 8-14 >= 0x22 -> AGA */
+ #define	PISCSI_OFFSET	0x00002000	/* register window within the board */
+ #define	BOUNCE_OFFSET	0x00080000	/* bounce buffer within the board */
+-#define	BOUNCE_PAGES	32		/* 64KB bounce; Amix NBPP is 2KB, not 4KB! */
+ #define	MAXXFER		65536		/* max bytes per piscsi op */
++#define	BOUNCE_BYTES	MAXXFER		/* the bounce holds exactly one max transfer */
++/* Page COUNT, not byte size: sptalloc() takes pages, so this must follow the
++ * kernel's page size.  NBPP comes from <sys/immu.h> (included above) and is
++ * 2048 on a stock Amix kernel, 4096 on a 4 KiB-page one -- the mapped WINDOW
++ * stays 64 KB either way.  A hardcoded count maps the wrong amount of memory
++ * on the other kernel, silently. */
++#define	BOUNCE_PAGES	((BOUNCE_BYTES + NBPP - 1) / NBPP)
+ #define	BOUNCE_THRESH	0x08000000	/* buffers below this are bounced by the ARM */
+ 
+ /* piscsi command-register offsets (added to the register-window base) */

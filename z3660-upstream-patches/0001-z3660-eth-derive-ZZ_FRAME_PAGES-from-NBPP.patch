@@ -1,0 +1,30 @@
+--- a/src/z3660eth.h
++++ b/src/z3660eth.h
+@@ -44,14 +44,23 @@
+ #define ZZ_RX_MAX_SLOTS	 64		/* firmware FRAME_MAX_BACKLOG (overrun range) */
+ 
+ /*
+- * sptalloc page counts (Amix NBPP = 2048, NOT 4096 -- see z3660.c).
+- *   regs page : 1 page at board_base+0 covers 0x000..0x7FF (regs 0x104..0x1A8)
++ * sptalloc() takes PAGE COUNTS, so they must follow the kernel's page size:
++ * NBPP is 2048 on a stock Amix kernel and 4096 on a 4 KiB-page one, while the
++ * windows below are fixed by the firmware memory map and stay the same size.
++ *   regs page : 1 page at board_base+0 covers 0x000..0x7FF (regs 0x104..0x1A8);
++ *               one page is enough at either page size, so this one is a count.
+  *   frame rgn : map board_base+0x07ED0000 for the full 64-slot overrun range
+- *               (128 KB = 64 pages) so any ZZ_ETH_RX_ADDR value is mapped;
++ *               so any ZZ_ETH_RX_ADDR value is mapped; that range is exactly
++ *               ZZ_RX_MAX_SLOTS * ZZ_FRAME_SIZE = 128 KB.
+  *               txwin = frame_region + (0x07EE0000-0x07ED0000) = +0x10000.
++ * NBPP comes from <sys/immu.h>, which z3660eth.c includes before this header.
+  */
++#ifndef NBPP
++#error "z3660eth.h needs NBPP -- include <sys/immu.h> before this header"
++#endif
+ #define ZZ_REGS_PAGES	1
+-#define ZZ_FRAME_PAGES	64			/* 64 * 2048 = 128 KB */
++#define ZZ_FRAME_BYTES	(ZZ_RX_MAX_SLOTS * ZZ_FRAME_SIZE)	/* 128 KB */
++#define ZZ_FRAME_PAGES	((ZZ_FRAME_BYTES + NBPP - 1) / NBPP)
+ #define ZZ_TXWIN_OFF	(ZZ_TXFRAME_OFF - ZZ_RXBACKLOG_OFF)	/* 0x10000 */
+ 
+ /* ---- ethernet framing (mirrors aen.h / hydra.h) ---- */
