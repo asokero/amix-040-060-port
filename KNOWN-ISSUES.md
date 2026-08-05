@@ -2491,6 +2491,50 @@ Serialit puhtaat. ⚠️ Ei rautaa; VA2000/Piccolo-kortteja ei testattu tällä.
 
 ## ISSUE-34: JAKAUTUU KAHTEEN — 34a (todistettu) 68060 tappaa vakiojaon; 34b (auki) cc1:n SIGSYS ei ole tämä
 
+> **⚠⚠ KORJAUS 5.8.2026, RAUDALLA MITATTU — alla oleva "ketju on puhdas" ei pidä paikkaansa
+> sillä koneella jolla ajamme.** Ks. `060-F0-MEASUREMENT-260805.md`.
+>
+> Oikealla 68060:llä `cc` kuolee heti, ja konsoli nimeää syyn itse:
+> `SIGKILL sent to pid 263 (.../2.7.2.3/cpp ...) because of vector 0xF4, pc=0x80006ED6`
+> — 0xF4/4 = **vektori 61**, ja `0x80006ED6` on `mulsl #-2078209981,%d0,%d1` (ext 0x1c00,
+> bit10 = 1 = 64-bittinen tulos). Enkooderipohjainen skannaus (`test-tools/scan060.py`):
+> **cpp 2 osumaa, cc1 104 osumaa**; `libc.so.1`, `ld.so.1`, `as` ja `ld` = **0**.
+>
+> Kaksi syytä miksi alla oleva taulukko sanoi "clean", kumpikin todennettavissa:
+> 1. **Se skannasi eri binäärit.** Vanillan `gcc-cc1` on 666 440 B ja `gcc-cpp` 46 468 B;
+>    koneella `/usr/local/lib/gcc-lib/m68k-cbm-sysv4/2.7.2.3/` sisältää `cc1` 1 250 916 B ja
+>    `cpp` 92 296 B. Dokumentin oma varaus ("nämä ovat VANILLA-asennuksen binäärit") oli
+>    oikea ja se osui juuri tähän.
+> 2. **Mittari itse.** Tämän puun 2.8.1-aikainen `objdump` tulostaa 64-bittisen muodon
+>    pilkulla (`mulsl #imm,%d0,%d1`), EI Motorolan `Dh:Dl`-merkinnällä — grep joka etsii
+>    `:%d`-parin raportoi puhtaaksi tiedoston joka on niitä täynnä. Toistin tämän virheen
+>    itse tänään ennen kuin vaihdoin enkooderipohjaiseen tarkistukseen.
+>
+> **Luokkapäätelmä "käskykantaluokka on SULJETTU POIS" on siis kumottu** koneen omilla
+> binääreillä.
+>
+> **`cc1` MITATTU SUORAAN — se on 34a, ei 34b.** Rikkinäisen gcc-cpp:n voi ohittaa
+> esikäsittelemällä AT&T:n cpp:llä ja syöttämällä `.i`:n suoraan:
+> `/usr/ccs/lib/cpp x.c > x.i` (rc=0), sitten `cc1 x.i -o x.s` → **`Killed`, rc=137 =
+> 128+9 = SIGKILL**, konsoli: `vector 0xF4, pc=0x80021530` — ja `0x80021530` on skannauksen
+> listassa `mulsl #-2115558717,%d1,%d0`. **Alkuperäinen 34b-havainto (cc1 = SIGSYS 12) ei
+> toistu tällä raudalla**; se sopii siihen että se tehtiin vanillan cc1:llä (666 440 B,
+> aidosti puhdas) tai emussa, ei asennetulla 1 250 916 B:n binäärillä.
+>
+> **SIGSYS on silti olemassa ja sillä on nyt pienempi koti:** AT&T:n `/usr/ccs/lib/acomp`
+> kuolee **status 140 = 128+12 = SIGSYS** liukulukukoodissa (`test-tools/fpmin3.c`: double-
+> palauttava silmukka), mutta kääntää kokonaislukukoodin ongelmitta (`fpmin1.c`, `fpmin2.c`).
+> **Negatiivinen todiste raudalta:** kernelissä on täsmälleen yksi tällainen viesti
+> (`u_trap WARNING: SIGKILL sent to pid %d (%s) because of vector 0x%x, pc=0x%x`), eli se
+> ilmoittaa VAIN SIGKILL-tapot — ja koska jokainen vektori-61-tappo tulosti rivin mutta
+> acompin kuolema ei tulostanut mitään, **acomp ei kuole vektoriin 61.** Vektorin numero
+> vaatii `nullvect`-proben; vektori 11 (060-FPU) on yhä hypoteesi.
+>
+> Käyttökelpoinen kiertotie mittauksille: **`/usr/ccs/bin/cc`** (AT&T:n alkuperäinen ajuri,
+> 1991) kääntää natiivisti 060:llä — se emittoi `divsll` (32-bit dividend) eikä magic
+> multiplyä. `test-tools/mkall060.sh` kääntää patteriston sillä (13/14; `fputest` vaatii
+> ristikäännöksen, ks. `fputest060.c`).
+
 **⚠ KORJAUS 27.7. iltapäivä, samana päivänä kirjattu.** Kirjasin aamulla juurisyyn
 "todistetuksi" koko ISSUE-34:lle. Se oli liian laaja. Se signaaliero jonka merkitsin
 auki-jääväksi (`cc1` = 12/SIGSYS, eristetty repro = 9/SIGKILL) osoittautui ratkaisevaksi.
