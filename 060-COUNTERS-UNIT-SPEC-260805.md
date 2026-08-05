@@ -112,6 +112,46 @@ hardware boot; and `pcr_boot`'s `0xFFFFFFFF` sentinel makes a silently-skipped r
 
 ---
 
+## Emulator verification — DONE 2026-08-05, both CPU configs
+
+Image `68040-260805-01`, textsize **`0xe48b8`** (the loader's own `tsize=000e48b8` confirms it
+independently), `check_relink_relocs.py`: **0 complaints**. Counters read live over the Amiberry
+IPC (`READ_MEM`, **tab-separated** — space separators return `Unknown command`), which needs no
+guest tooling and does not halt the emulator.
+
+| symbol | emulated 040 | emulated 060 | reading |
+|---|---|---|---|
+| `cputype` | 40 | 60 | loader prints `kernel cputype set to 60` |
+| `pcr_boot` | **0xFFFFFFFF** | **0x04300601** | 040 gate holds; 060 revision `0x0430`, **ESS=1**, EDEBUG=0 |
+| `x60_fmt4_n` | **0** | 8354 | equals `wb_dfc_n` (8354) — on the 060 essentially every fault frame is format 4 |
+| `x60_ma_n` | **0** | 11 | MA tier is reached |
+| `x60_compat_n` | **0** | 3 | compat tier is reached |
+| `x60_rw_read_n` | **0** | 11 | all MA crossings so far were reads |
+| `x60_rw_write_n` | **0** | 0 | **not yet exercised** — acceptance test 2 needs a write/RMW crossing |
+| `x60_far_fail_n` | **0** | 0 | no permanent far-page failure in a clean boot |
+| `x60_last_fa` | 0 | `0xC10DBFFE` | offset 0xFFE — two bytes before a page boundary |
+| `x60_last_fslw` | 0 | `0x01810200` | RW field (24-23) = 11 = **locked RMW**, MA clear, TM=1 (user data) |
+| `wb_replay_n` | 1944 | **0** | the format-7 helper does not run on the 060, as designed |
+
+Both gates verified in the direction that would have caught a mistake: the 040 executed **no**
+`x60_*` increment and left `pcr_boot` at its sentinel (a leaking `movec %pcr` would have taken an
+illegal-instruction trap instead), and the 060 moved every counter that has a reachable path.
+
+**Note on the emulator's PCR.** ESS=1 here is *Amiberry's* choice and says nothing about the real
+machine — the hardware answer is one `/kpeek` away, which is the entire point of the unit.
+
+**Two things the emulator run did NOT establish**, per campaign rule 4:
+
+* **MA fidelity.** UAE cores may set MA differently from real silicon. `x60_compat_n = 3` means the
+  emulator produced crossing frames with MA clear; on hardware that same reading would be new
+  evidence that reopens the acceptance verdict. Here it is simply not proof either way.
+* **The write/RMW path** (`x60_rw_write_n` = 0). A boot does not generate a write crossing that
+  reaches the MA tier. Hardware needs a targeted workload — `segspan`, `readtail`, or the wolf3d
+  ISSUE-37 case.
+
+Aside found while running this: `emu-reset-boot.sh` prints `build id: ?` because it reads the id
+from a fixed offset that this image's new `.data` symbols moved. Cosmetic, not fixed here.
+
 ## Verification order
 
 1. Build. `check_relink_relocs.py` must report 0.
