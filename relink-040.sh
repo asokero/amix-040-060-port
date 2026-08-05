@@ -91,6 +91,11 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/inituname040.s" -o "$HERE/build/
 #   lmul060    = portable lmul (stock's 64-bit muls.l forms trap on the 68060)
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/cputype060.s" -o "$HERE/build/cputype060.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/lmul060.s"    -o "$HERE/build/lmul060.o"
+#   isp61_060  = vector 61 (unimplemented integer): emulates the ONE form the installed
+#                userland uses -- immediate-source 64-bit MULS.L/MULU.L, 103 measured sites,
+#                zero elsewhere in libc/ld.so/as/ld.  Everything else declines, counted, to
+#                nullvect.  cputype-gated, so the 040 never enters it.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/isp61_060.s"  -o "$HERE/build/isp61_060.o"
 # ISSUE-13 (2026-07-12): bp_map/bp_mapout were left as stock 030 bodies (2 KiB, retired
 # st_top1 tree) -> corrupt the NFS page-I/O temp mapping.  bp_map040 rewrites both for
 # the live 040 kptr040 tree (4 KiB, phys|0x19).  Both GLOBAL T -> plain --weaken-symbol.
@@ -304,7 +309,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/uvatosde040.o" "$HERE/build/prfastmap040.o" "$HERE/build/prumap040.o" "$HERE/build/haltsys040.o" \
 	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o" \
 	"$HERE/build/inituname040.o" \
-	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" \
+	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" "$HERE/build/isp61_060.o" \
 	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
 	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
 	"$HERE/build/config040.o" "$HERE/build/cb_icode040.o" "$HERE/build/kdbg040.o" \
@@ -617,6 +622,13 @@ else
 	echo
 	echo "[*] FPSP=0 -- building WITHOUT the Motorola FPSP (A/B / bisect build)"
 fi
+
+# F2 (2026-08-06): retarget M68Kvec[61] -> isp61_vec.  AFTER the FPSP block on purpose:
+# an FPSP `ld -r` would otherwise supersede the retarget, and running it here means FPSP=0
+# and FPSP=1 images get identical vector-61 behaviour.  No FPSP script touches slot 61.
+echo
+echo "[*] ISP: retarget M68Kvec[61] (unimplemented integer) -> isp61_vec"
+python3 "$HERE/prototypes/patch_isp_vec61.py" "$OUT" | tail -2
 
 echo
 echo "[*] reloc validation:"
