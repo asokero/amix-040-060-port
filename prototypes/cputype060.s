@@ -19,4 +19,22 @@
 	.globl	cputype
 cputype:
 	.long	40			| 40 = 68040 (default), 60 = 68060 (loader-poked)
+| pcr_boot (F1, 2026-08-05): the 68060 Processor Configuration Register as it stood at boot,
+| captured once in pstart040.s behind a cputype==60 gate (movec %pcr is 060-only and traps as
+| illegal on the 040).  The kernel has NEVER read or written PCR -- verified by disassembly on
+| 2026-08-05 -- so its content is whatever AmigaOS/SetPatch left, and that includes:
+|     bits 31-16  revision / ID  (0x0430xx on the 68060)
+|     bit 1       EDEBUG
+|     bit 0       ESS -- superscalar dispatch enable
+| WHY THIS MATTERS: F0 measured Dhrystone at exactly 2.0x the 68040, i.e. precisely the clock
+| ratio (66/33).  With ESS=0 a superscalar 060 dispatches one instruction per clock and that
+| ratio is the whole expected result; with ESS=1 it is not, and something else is the limit.
+| 68060-prestudy.md §3.4 says "we leave ESS=0 (reset default) during bring-up", but SetPatch --
+| now known to be MANDATORY before unix_boot -- loads 68060.library, which normally enables it.
+| No performance claim on this machine survives until this word is read.  060-D waits for it.
+| SENTINEL: 0xFFFFFFFF means the read never executed (040 boot, or the gate misfired), which is
+| what distinguishes "not measured" from "measured as zero".
+	.globl	pcr_boot
+pcr_boot:
+	.long	0xffffffff
 	.balign	4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

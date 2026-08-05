@@ -237,6 +237,9 @@ wb060_sswsynth:
 					| d1 cannot serve: the RW test below masks it down to
 					| bits 24-23, which is what a first cut of this change
 					| returned by mistake.
+	addql	&1,x60_fmt4_n		| F1 instrumentation: every fmt-4 frame, both wrappers
+	movel	%d2,x60_last_fslw	| capture FSLW HERE -- the movew below overwrites bits
+					| 31-16 (MA, RW, SIZE, TT, TM) in the frame itself
 	movel	%d2,%d1
 	movel	%d1,%d0
 	swap	%d0
@@ -316,6 +319,11 @@ wb060_xpage:
 	andil	&0xfff,%d1
 	cmpil	&0xff8,%d1
 	bcsw	Lwx_none		| neither MA nor the window -> nothing to do
+	addql	&1,x60_compat_n		| F1: compat tier taken.  compat > 0 with ma == 0 for a
+					| KNOWN crossing is new evidence and reopens the XPAGE
+					| acceptance -- that is why this counter is separate
+	movel	%d0,x60_last_fa		| d0 still holds the UNMASKED FA here (the window test
+					| above masked d1, not d0)
 	andil	&0xfffff000,%d0
 	addil	&0x1000,%d0		| next page base
 	moveq	&1,%d1			| rw = S_READ (unchanged in this tier)
@@ -325,7 +333,11 @@ wb060_xpage:
 					| failing that access would be a NEW bug
 | --- tier 1: MA set -> Linux/m68k's rule, real rw, and the result KEPT ---
 Lwx_ma:
+	addql	&1,x60_ma_n		| F1: MA tier -- the architecture contract, and reading
+					| 1 is the hardware answer M68060-XPAGE-ACCEPTANCE.md
+					| has been waiting for
 	movel	%a2@(72),%d0		| FA
+	movel	%d0,x60_last_fa		| F1: capture BEFORE the round-up below rewrites d0
 	addil	&0xfff,%d0
 	andil	&0xfffff000,%d0		| round_page(FA + PAGE_SIZE - 1): the page the transfer
 					| actually needs, regardless of how far before the
@@ -335,12 +347,18 @@ Lwx_ma:
 	cmpil	&0x01000000,%d1		| == 10 = pure read?
 	bnew	Lwx_wr
 	moveq	&1,%d1			| S_READ
+	addql	&1,x60_rw_read_n	| F1
 	braw	Lwx_go
 Lwx_wr:
 	moveq	&2,%d1			| S_WRITE -- covers write AND locked RMW, the same
 					| classification sswsynth applies to the near page
+	addql	&1,x60_rw_write_n	| F1
 Lwx_go:
 	bsrw	Lwx_call
+	tstl	%d0			| F1: count ONLY the MA tier's failures -- the compat
+	beqs	Lwx_maok		| tier discards its result by design, so counting it
+	addql	&1,x60_far_fail_n	| here would misreport the retry-loop condition
+Lwx_maok:
 	rts				| d0 = as_fault's result, PROPAGATED to the wrapper
 Lwx_call:
 	movel	%d1,%sp@-		| rw
@@ -560,4 +578,38 @@ wb_dfc_forced:
 	.globl	wb_sfc_changed
 wb_sfc_changed:
 	.long	0			| faults returning with an SFC the caller did not set
+| --- 060 fault-path instrumentation (F1, 2026-08-05; 060-COUNTERS-UNIT-SPEC-260805.md) ---
+| M68060-XPAGE-ACCEPTANCE.md is a STATIC pass whose runtime verdict is blocked on one thing:
+| nothing counted format-4 frames, so a booting 060 proved the paths were SURVIVED, not
+| EXERCISED.  These are pure instrumentation -- no control flow, no policy, no register use
+| (addql/movel to absolute addresses only).  Every one of them sits inside a branch that only a
+| fmt-4 frame reaches, so the 040 executes none of them.
+	.globl	x60_fmt4_n
+x60_fmt4_n:
+	.long	0			| format-4 frames seen by the wrappers (user AND kernel)
+	.globl	x60_ma_n
+x60_ma_n:
+	.long	0			| MA tier taken -- the architecture contract
+	.globl	x60_compat_n
+x60_compat_n:
+	.long	0			| compat tier taken (MA clear, FA & 0xfff >= 0xff8)
+	.globl	x60_rw_read_n
+x60_rw_read_n:
+	.long	0			| MA tier: far as_fault got S_READ
+	.globl	x60_rw_write_n
+x60_rw_write_n:
+	.long	0			| MA tier: far as_fault got S_WRITE (write AND locked RMW)
+	.globl	x60_far_fail_n
+x60_far_fail_n:
+	.long	0			| MA tier: far-page resolve failed and was PROPAGATED.
+					| NOT incremented for the compat tier, which discards its
+					| result by design -- counting that as a failure would
+					| misreport the one thing this counter exists to catch.
+	.globl	x60_last_fa
+x60_last_fa:
+	.long	0			| last faulting FA (frame+72), unmodified
+	.globl	x60_last_fslw
+x60_last_fslw:
+	.long	0			| last FSLW, captured in sswsynth BEFORE it overwrites
+					| bits 31-16 in place -- after that the only copy is d5
 	.balign 4

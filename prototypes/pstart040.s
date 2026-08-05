@@ -393,6 +393,19 @@ Lkroot:
 	movel	%d0,%sp@-		| (btrace is flag-gated: base/quiet stay silent; dbg prints
 	jsr	btrace_hex		|  'D' + 80008000, the HW-session acceptance line)
 	addqw	&4,%sp
+| ---- F1 (2026-08-05): capture the 68060 PCR, once, right after the caches reach their final
+| state.  `movec %pcr,%d0` (control register 0x808) exists ONLY on the 060 and traps as an
+| illegal instruction on the 040, so it is gated on the loader-poked `cputype` -- which is
+| already valid this early, since unix_boot writes it before the kernel is entered.  The 040
+| therefore executes exactly one extra compare-and-branch here and nothing else.
+| pcr_boot ships as 0xFFFFFFFF, so a skipped or misfiring read stays distinguishable from a
+| real PCR of 0.  See cputype060.s for what the bits mean and why this blocks 060-D.
+	movel	cputype,%d0
+	cmpil	&60,%d0
+	bnew	Lps_nopcr
+	.word	0x4e7a,0x0808		| movec %pcr,%d0   (68060 only)
+	movel	%d0,pcr_boot
+Lps_nopcr:
 
 | ---- 0xfe6: tail (verbatim, except the Model B v-halving below) ----
 	pea	0x45			| btrace 'E' -- about to jsr vstart
