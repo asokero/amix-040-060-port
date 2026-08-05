@@ -284,7 +284,13 @@ Decoded against NetBSD's definitions, on the 68060:
 | 29 | `0x20000000` | `DC60_ESB` — store buffer enable | **off** |
 
 So the plan's §5 reading is confirmed on hardware: `0x80008000` means the same thing on both CPUs,
-and the branch cache and store buffer are the two unused knobs. Nothing was changed, as instructed.
+and the branch cache and store buffer are two unused knobs. Nothing was changed, as instructed.
+
+**There is a third knob the plan does not list, and it is not in CACR: `PCR` bit 0 (ESS,
+superscalar dispatch).** The kernel never reads or writes PCR — verified by disassembly — so its
+state is inherited from AmigaOS and currently unmeasured. See §9; it has to be read before any
+060-D work, because with ESS=0 the 060 is dispatching one instruction per clock and the cache
+knobs are the smaller effect.
 
 The honest limit: this is the value the kernel *writes*, verified in memory, not a `movec %cacr,%d0`
 readback. A dbg image already prints the real register (`btrace 'D' + CACR` in `pstart040.s`), so
@@ -389,12 +395,38 @@ consecutive runs of 1 000 000 iterations (50 000 is now too few to time on this 
 | 68040 @ 33 MHz, copyback | 30 000.0 / 30 037.5 / 29 813.7 | KNOWN-ISSUES, three boots |
 | **68060 @ 66 MHz, copyback, `68060-260802-01`** | **60 423 / 60 545 / 60 423** | this session |
 
-**+102 % over the 040 — almost exactly the clock ratio (66/33 = 2.0).** A 68060 is superscalar and
-should beat a 68040 *per clock*, not merely track it. Landing on the clock ratio says the extra
-execution capability is not reaching the score, and the two obvious suspects are already in the
-campaign: the **branch cache is off** (§6) and the A3000's memory bus is still 33 MHz. Dhrystone is
-small enough to sit in cache, so this is a hint rather than a verdict — but it is the first
-quantitative argument for 060-D that came from hardware rather than from the manual.
+**+102 % over the 040 — almost exactly the clock ratio (66/33 = 2.0).**
+
+### What was actually enabled during that measurement
+
+| feature | state | evidence |
+|---|---|---|
+| instruction cache | **on** | `CACR = 0x80008000`, bit 15 |
+| data cache | **on** | `CACR` bit 31 |
+| data cache mode | **copyback** | `hat_cm_ram = 0x20` = CM=01, read back live at `0x080FCB68` |
+| branch cache (`IC60_EBC`) | **off** | not in the CACR word |
+| store buffer (`DC60_ESB`) | **off** | not in the CACR word |
+| **superscalar dispatch (PCR bit 0, ESS)** | **UNKNOWN** | see below |
+
+**The kernel contains no PCR access at all** — a disassembly search for `movec` to/from control
+register `0x808` finds nothing. So PCR holds whatever AmigaOS left in it, and two things point in
+opposite directions:
+
+* `68060-prestudy.md` §3.4 states the intent plainly: *"we leave ESS=0 (reset default) during
+  bring-up."* With ESS=0 the 060 issues one instruction per clock, and then **doubling the clock is
+  the entire expected result** — there is nothing to explain.
+* But SetPatch is now known to be mandatory before `unix_boot` (§0), and SetPatch is exactly what
+  loads `68060.library`, which normally enables ESS. Since the kernel never touches PCR, that
+  setting would survive into AMIX.
+
+Neither is a measurement, so **the honest statement is that it is not known whether this Dhrystone
+ran superscalar or scalar**, and no performance conclusion — including any claim about the branch
+cache — can be drawn from the 2.0× ratio until PCR is read.
+
+**Cheapest way to close it:** a `cputype == 60`-gated three-instruction unit in the boot path that
+does `movec %pcr,%d0` into a new global, readable with `/kpeek` (PCR is 060-only and traps as
+illegal on the 040, hence the gate). That is F5's `cpuinfo`/PCR item, and it should now come
+*before* any 060-D cache work, because it changes what 060-D is even trying to fix.
 
 ---
 
@@ -421,6 +453,10 @@ Consequences for the sequence:
   `/usr/ccs/bin/cc -o fpmin3 fpmin3.c` on the 060. That is a better starting point than `cc1`,
   which cannot even be reached now that `cpp` dies first.
 * **F5 (`cpuinfo`) partly answered for free:** `fpu_present = 1`, so this is a full 68060.
+* **F5's PCR read is promoted ahead of 060-D.** The kernel has no PCR access, so superscalar
+  dispatch (ESS) is inherited from AmigaOS and unmeasured — and until it is read, no performance
+  number on this machine can be attributed to anything. Three instructions behind a `cputype == 60`
+  gate, plus one `/kpeek`.
 
 ## Artifacts
 
