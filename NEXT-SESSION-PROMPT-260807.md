@@ -23,7 +23,10 @@ Ei uutta kernelikoodia ennen kuin tämä on ajettu — kaksi yksikköä odottaa 
 ## Kerneli
 
 `build/unix-040`, build id **`68040-260806-06`**, textsize **`0xe4bb8`**.
-Bannerin PITÄÄ lukea `68060-260806-06` ja `uname -m` sama. Boottaa `unix_boot040`:llä.
+Bannerin ja `uname -m`:n PITÄÄ lukea **`68040-260806-06`** — `stamp_buildid.py` kirjoittaa aina
+`68040`-etuliitteen riippumatta siitä kummalla piillä imagea ajetaan, joten `68060-260806-06`
+on vain meidän puhekielinen nimi tälle imagelle 060:llä eikä koskaan sitä mitä kone tulostaa.
+Boottaa `unix_boot040`:llä.
 **SetPatch on ajettava AmigaOS:ssä ENNEN `unix_boot`ia** — muuten AttnFlags ei kerro 060:stä,
 loader kirjoittaa `cputype = 40` ja kerneli paniikkaa `ptestr`:ssä. Tämä on mitattu, ei arvaus.
 
