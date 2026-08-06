@@ -105,3 +105,63 @@ test-tools/protfault.c                             the split test
 amix-kernel-analysis/vm-map/XPAGE-FPROT-CONTRACT.md   Codex's static contract analysis (0a3aab3)
 kernel 68040-260806-02                             the accepted image that panics
 ```
+
+---
+
+# Fix landed: `segvn_prot040.s`, kernel `68040-260806-05`
+
+`prototypes/segvn_prot040.s` restores the SVR4 rejection as a tail-call wrapper around the
+stock body (`--globalize-symbol` + `--weaken-symbol segvn_faultpage`, `segvn_faultpage_orig`
+at `0xac01a`). It is **not** CPU-gated: the defect is generic and breaks both CPUs identically,
+so gating it would leave the 040 broken.
+
+Every field it reads was confirmed twice — from the vanilla headers and from the stock
+function's own prologue:
+
+```text
+seg_ops.fault takes NO hat arg (vm/seg.h)  -> arg1 = seg, and seg->s_data is +28
+struct segvn_data: mon_t lock (2)          -> pageprot @2, prot @3  (matches %a4@(2)/%a4@(3))
+struct vpage: vp_prot is the first 4-bit field -> TOP nibble (matches bfextu ...,0,4)
+PROT_READ 1 / WRITE 2 / EXEC 4, S_READ 1 / S_WRITE 2 / S_EXEC 3, FC_PROT 4
+FC_PROT is confirmed a second time by segvn_fault's own segment-wide `moveq #4,%d0`
+```
+
+## Measured, emulated, one variable at a time
+
+| case | 040 unfixed (`260806-02`) | 040 fixed (`260806-05`) | 060 fixed (`260806-05`) |
+|---|---|---|---|
+| A whole segment protected | PASS (SIGSEGV) | PASS (SIGSEGV) | PASS (SIGSEGV) |
+| B page 2 of 2, aligned write | **PANIC** `as_fault+0xcc` | **PASS (SIGSEGV)** | **PASS (SIGSEGV)** |
+| C page 2 of 2, crossing write | **PANIC** `usrxmemflt: no as allocated` | protection bypass | retry loop, machine alive |
+
+Counters after a 040 boot: `segvn_prot_pp_n` = 93 with `segvn_prot_n` = 0 — the per-page branch
+is genuinely exercised by ordinary system activity and rejects nothing spuriously. That pairing
+is the evidence that a later PASS means something; `pp_n` = 0 would have made it vacuous.
+
+**Case B is fixed.** It is the case that took the machine down, it contains no page crossing,
+and it now terminates with the correct signal on both CPUs.
+
+## Case C is a different defect, and the fix changed its shape
+
+C still fails, differently on each CPU, and both are improvements on a panic:
+
+* **060: retry loop, kernel still schedulable.** The far-page write is now rejected, but the
+  process is not signalled — this is exactly the second half Codex specified and this evening's
+  measurements support: `u_trap` selects the signal from `usrxmemflt`'s `k_siginfo_t`
+  out-parameter, and `trapsig` queues nothing while `si_signo == 0`. Our wrapper returns nonzero
+  without populating it. The remaining work is that translation, not more VM work.
+* **040: protection bypass** — the store into the protected page *succeeded*. On the 040 the CPU
+  has already performed the access internally and `wb040_replay` re-issues the pending write-backs;
+  that replay is not subject to the check restored here. Whether the replay should consult
+  protection, or whether the frame should be discarded once the fault is fatal, is an open
+  question and **a new one** — the unfixed kernel panicked before ever reaching this state, so
+  this is not a regression but a defect that only became observable once the panic was removed.
+
+Neither is a reason to hold the fix: a machine that stays up and reports is strictly better than
+one that panics, and both remaining behaviours are now diagnosable.
+
+## Still true
+
+**Hardware stays on `68060-260806-02`.** This kernel has not been booted on the Amiga. Before it
+is, case C wants resolving, and the battery + burst regression should be re-run — this change is
+in a hot generic VM path, not in a CPU-gated corner.

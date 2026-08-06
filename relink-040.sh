@@ -55,6 +55,7 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/getfault040.s"  -o "$HERE/build/
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/userspace040.s" -o "$HERE/build/userspace040.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/vtop040.s"      -o "$HERE/build/vtop040.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/wb040.s"        -o "$HERE/build/wb040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segvn_prot040.s" -o "$HERE/build/segvn_prot040.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ptest040.s"     -o "$HERE/build/ptest040.o"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/uvatosde040.s"  -o "$HERE/build/uvatosde040.o"
 # prfastmap040 (ISSUE-17/18): replaces prfastmapin's dead 030 SDE walk with a real
@@ -233,6 +234,7 @@ m68k-linux-gnu-objcopy \
 	--globalize-symbol free_pts \
 	--globalize-symbol pt_waiting \
 	--globalize-symbol usrxmemflt \
+	--globalize-symbol segvn_faultpage \
 	--globalize-symbol krnxmemflt \
 	"$HERE/build/unix-stage1"
 m68k-linux-gnu-objcopy \
@@ -273,6 +275,8 @@ m68k-linux-gnu-objcopy \
 	--add-symbol vtop_orig=.text:0xb7568,function,global \
 	--weaken-symbol usrxmemflt \
 	--add-symbol usrxmemflt_orig=.text:0x5aede,function,global \
+	--weaken-symbol segvn_faultpage \
+	--add-symbol segvn_faultpage_orig=.text:0xac01a,function,global \
 	--weaken-symbol krnxmemflt \
 	--add-symbol krnxmemflt_stock=.text:0x5b140,function,global \
 	--weaken-symbol segu_get \
@@ -305,7 +309,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/pstart040.o" "$HERE/build/kvm040.o" "$HERE/build/hat040.o" \
 	"$HERE/build/hat_chgprot040.o" "$HERE/build/hat_pagesync040.o" "$HERE/build/hat_exec040.o" "$HERE/build/hat_dup040.o" \
 	"$HERE/build/getfault040.o" "$HERE/build/userspace040.o" \
-	"$HERE/build/vtop040.o" "$HERE/build/wb040.o" "$HERE/build/ptest040.o" \
+	"$HERE/build/vtop040.o" "$HERE/build/wb040.o" "$HERE/build/ptest040.o" "$HERE/build/segvn_prot040.o" \
 	"$HERE/build/uvatosde040.o" "$HERE/build/prfastmap040.o" "$HERE/build/prumap040.o" "$HERE/build/haltsys040.o" \
 	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o" \
 	"$HERE/build/inituname040.o" \
@@ -318,7 +322,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem \
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig segvn_faultpage segvn_faultpage_orig segvn_prot_magic segvn_prot_pp_n segvn_prot_n krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem \
          hat_growsdt hat_legacy_sdt_free i40_magic i40_on i40_calls i40_sec2_n i40_sec3_n i40_empty_n i40_bad_n i40_err_n i40_pgfreed_n i40_held_n i40_last_n i40_last_base i40_last_bits \
          hat_sdtfree hat_ptdat_retire ptd_magic ptd_on ptd_calls ptd_retired_n ptd_pgfreed_n \
          ptd_keep0_n ptd_keepn_n ptd_meta_n ptd_badlink_n ptd_wake_n ptd_tblfreed_n; do
