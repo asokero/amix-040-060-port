@@ -3707,3 +3707,87 @@ is why `hat_exec040` disables the exec-time table move.
 afterwards instead of depending on someone watching a screen. Sampling `freemem`/`availrmem` across
 a burst run would say how close the machine gets to the edge. Neither needs a hardware session of
 its own — they ride along with the next boot.
+
+---
+
+## ✅ ISSUE-41 (2026-08-06): `segvn_faultpage` had no per-page permission check — partial `mprotect` + a denied write PANICKED the kernel
+
+**Status: FIXED** in `prototypes/segvn_prot040.s`, kernel `260806-05` and later (commits
+8f4a704 finding, ee16389 fix, 8bde13a + 46c8424 regression). Record:
+`SEGVN-PAGEPROT-PANIC-260806.md`. Predicted statically by Codex
+(`amix-kernel-analysis/vm-map/XPAGE-FPROT-CONTRACT.md`, 0a3aab3) before it was reproduced.
+
+**Symptom.** Any program that `mprotect`s *part* of a mapping read-only and then writes it takes
+the machine down:
+
+```text
+PANIC: KERNEL FAULT psw=0x2000, pc=0x80AE1D4 (as_fault+0xcc), fmt=0x7, vector=0x2
+kernel stack full of ktraps -> k_trap -> usrxmemflt, ~90 frames
+```
+
+Reproduced on the emulated **68040** with an aligned write and **no page crossing**, on
+`68040-260806-02` — the image accepted on real hardware that morning. Protecting a *whole*
+segment behaves correctly, which is the diagnostic difference.
+
+**Cause.** Linked AMIX `segvn_faultpage@0xac01a` loads `vpage->vp_prot` and jumps straight into
+the fault body; the SVR4 rejection between them is absent:
+
+```c
+if ((vpage->vp_prot & protchk) == 0) return FC_PROT;   /* 3B2 seg_vn.c:1074-1095 */
+```
+
+The denied write therefore enters the COW/revalidation body, the mapping is reloaded
+**read-only**, and `as_fault` returns 0. The instruction restarts, faults identically, and the
+retry recurses until the kernel stack is gone. The compiler even emitted the `switch (rw)` whose
+`protchk` result is never used — the rejection was dropped from the source, not optimised away.
+`segvn_fault@0xac46a` still performs the equivalent check for the **segment-wide** case
+(`moveq #4,%d0` = `FC_PROT`), which is why case A passes.
+
+Codex reports the function's first `0x60` bytes are byte-identical to vanilla `stand/unix`, so
+**this is a stock AMIX omission, not a 040/060 port regression.** It presumably breaks the 030
+kernel too; untested there.
+
+**Fix.** A tail-call wrapper (`--globalize-symbol` + `--weaken-symbol segvn_faultpage`,
+`segvn_faultpage_orig` at `0xac01a`) performing the rejection. **Not CPU-gated** — the defect
+breaks both CPUs identically. Counters `segvn_prot_pp_n` / `segvn_prot_n` / `segvn_prot_last_addr`.
+
+**Verified.** `protfault` case B: PANIC → SIGSEGV on both emulated CPUs. Battery 11/11 on the
+040 *and* the 060, burst 96/96 on the 040, `hat_pfnmiss_n` +2 exactly. The load-bearing pair is
+`segvn_prot_pp_n` = 1687 with `segvn_prot_n` = 1: the restored check ran constantly and denied
+only the one access that was meant to be denied.
+
+**Not verified on hardware.** The Amiga is still on `68060-260806-02`.
+
+**Worth checking:** anything in the installed system that uses partial-mapping protection — X11,
+`ld.so`'s GOT handling, `malloc` guard pages — has been running on a kernel where that pattern
+was fatal.
+
+---
+
+## ⏳ ISSUE-42 (2026-08-06): on the 68040, `wb040_replay` completes a write into a PROTECTED page — protection bypass
+
+**Status: OPEN**, and it is a *correctness* bug rather than a crash. Found once ISSUE-41's panic
+stopped hiding it. Record: `SIGINFO-TRANSLATION-260806.md` §"Still open".
+
+**Symptom.** `protfault` case C on the emulated 68040 with kernel `260806-05`/`-06`: a misaligned
+write starting at `page_end - 2`, crossing into an `mprotect(PROT_READ)` page, **succeeds**. The
+child survives and exits with the protection-bypass status instead of dying of SIGSEGV.
+
+```text
+040   case a PASS   case b PASS   case c FAIL: the protected store SUCCEEDED
+060   case a PASS   case b PASS   case c PASS  (fixed by the F4 siginfo translation)
+```
+
+**Suspected mechanism, not yet proven.** The 68040 has already performed the access internally
+and reports it through write-back frames; `wb040_replay` re-issues the pending write-backs with
+`moves`. No protection check in this chain covers that replay. The 060 has no write-backs, which
+is consistent with C passing there.
+
+**The open question is a contract question, not a coding one:** should the replay consult
+protection before re-issuing, or should pending write-backs be discarded once the fault is known
+to be fatal? Both have consequences for the ISSUE-7/ISSUE-22 class this replay exists to serve,
+so it should be answered from the SVR4/68040 contract rather than guessed. Suitable for the same
+kind of `amix-kernel-analysis` audit that produced ISSUE-41.
+
+**Not a regression.** The unfixed kernel panicked before ever reaching this state, so this
+became *observable* only after ISSUE-41 was fixed — it was presumably always there.

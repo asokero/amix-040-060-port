@@ -31,6 +31,38 @@ binary** whose 040 behaviour is byte-identical:
 Everything else — Model B, the HAT, MMU programming, CPUSH/CINV, the loader, the relink machinery
 — is bit-identical between the two CPUs and needs no 060 work at all.
 
+## 0b. Status as of 2026-08-06 (added after the first three phases ran)
+
+| phase | state |
+|---|---|
+| **F0** measurement boot | ✅ done on hardware, `060-F0-MEASUREMENT-260805.md` |
+| **F1** fault-path counters | ✅ landed, `060-COUNTERS-UNIT-SPEC-260805.md`; found the XPAGE defect immediately |
+| **F2** vector 61 | ✅ **accepted on real hardware**, `REALHW-F2-ACCEPTANCE-260806.md` — the machine has a working GCC again |
+| F3 vector 11 / 060 FPSP | not started |
+| F4 060-D caches | not started; F0 changed its premise, see below |
+| F5 `cpuinfo` + PCR | partially done — PCR is read at boot into `pcr_boot` |
+
+**A naming collision to be aware of.** Work done on 2026-08-06 is labelled `F3` and `F4` *inside*
+`prototypes/wb040.s` comments, but those refer to the XPAGE far-page classification and the
+`k_siginfo_t` translation — **not** to this plan's F3 (vector 11) and F4 (caches). That work was
+unplanned: it came out of F1's instrumentation. This plan's numbering is unchanged; read the
+source labels as "the third and fourth units of 6 August", nothing more.
+
+**What F0 changed in the plan.** `pcr_boot = 0x04300601` on every boot, i.e. **ESS = 1**:
+superscalar dispatch is already on, because SetPatch enables it and the kernel never writes PCR.
+§5's premise that we are running scalar during bring-up is therefore wrong, and the Dhrystone
+ratio of exactly 2.0× the 040 is *not* explained by dispatch. Branch cache (still off) and the
+33 MHz bus are the remaining candidates, which makes 060-D more interesting, not less.
+
+**Unplanned work that came out of F1, and its consequence for item A.** Instrumenting the fault
+path exposed a generic VM defect that had nothing to do with the 060: `segvn_faultpage` was
+missing SVR4's per-page permission check, so any partial `mprotect` followed by a denied write
+panicked the kernel on **both** CPUs (ISSUE-41, fixed). The 060 half — translating a far-page
+`faultcode_t` into `u_trap`'s `k_siginfo_t` — is also done, and `protfault` now passes 3/3 on the
+emulated 060. Item A's remaining hardware test 3 is therefore *ready* to run rather than blocked.
+One defect is still open from that work: ISSUE-42, a protection bypass in `wb040_replay` on the
+**040**.
+
 ## 1. What is genuinely open
 
 | # | item | state | why it matters |
@@ -221,12 +253,15 @@ mapped the collisions: ISP owns 61; FPSP owns 11, 48–55 and 60; our 040 hooks 
 ## 8. Sequence
 
 ```text
-F0  measurement boot on 68040-260802-01, native mul64test first   <- one hardware session
-F1  060 fault-path counters -> XPAGE runtime acceptance (item A)  <- one unit + one session
-F2  vector 61 (ISP or targeted emulator), order set by F0         <- gated by §2's answer
+F0  measurement boot on 68040-260802-01, native mul64test first   <- DONE 2026-08-05
+F1  060 fault-path counters -> XPAGE runtime acceptance (item A)  <- DONE 2026-08-05
+F2  vector 61 (ISP or targeted emulator), order set by F0         <- DONE, hardware-accepted 08-06
+--  unplanned, out of F1: ISSUE-41 segvn fix (both CPUs) + siginfo translation (060)  <- DONE in emu
+==> NEXT: one hardware session for the 260806-06 line (battery, burst, power-cut, protfault a/b/c)
 F3  vector 11 / 060 FPSP; closes ISSUE-34b if the hypothesis holds
-F4  060-D: branch cache, then a store-buffer decision
-F5  cpuinfo tool + PCR revision (any time; smallest item on the list)
+F4  060-D: branch cache, then a store-buffer decision (ESS is ALREADY on -- see §0b)
+F5  cpuinfo tool + PCR revision (PCR half done: pcr_boot is read at boot)
+--  ISSUE-42: wb040_replay protection bypass on the 040 -- analysis task, not a coding task
 ```
 
 Everything before F2 is measurement and instrumentation on a kernel that already boots. That is
