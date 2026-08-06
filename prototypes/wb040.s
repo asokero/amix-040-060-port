@@ -90,7 +90,8 @@ usrxmemflt:
 	bsrw	wb060_xpage
 	tstl	%d0			| item 4: a PERMANENT far-page failure must reach the
 	beqw	Lu_done			| caller instead of being masked by the near page's
-	movel	%d0,%d4			| success -- otherwise the restart loops forever
+	bsrw	Lu_siginfo		| success -- otherwise the restart loops forever
+	movel	%d0,%d4			| F4: d4 = si_signo, per the stock return contract
 Lu_done:
 	bsrw	Lwb_dfcinject		| ISSUE-22 fault injection (see Lwb_dfcinject)
 	bsrw	Lwb_dfccheck		| count DFC corruption whether or not the fix is on
@@ -264,6 +265,57 @@ Lws_none:
 Lws_ret:
 	rts
 
+| Lu_siginfo (F4, 2026-08-06) -- faultcode_t -> k_siginfo_t for the USER fault path.
+|
+| WHY THIS EXISTS.  Returning nonzero from usrxmemflt is not enough to kill the process, which
+| cost a whole evening to establish: x60_far_fail_n rose 32 340 times with no signal delivered.
+| The stock resolver's contract, read from the binary (vanilla 0x5b120..0x5b12e):
+|
+|     5b120:  moveal %fp@(12),%a0 / movel %d0,%a0@     infop->si_signo = <signal>
+|     5b12a:  moveal %fp@(12),%a0 / movel %a0@,%d0     return infop->si_signo
+|
+| and u_trap@0x5a5a2 then selects its /proc fault class by comparing infop->si_signo against
+| SIGSEGV 11 / SIGBUS 10 / SIGFPE 8, while trapsig queues NOTHING while si_signo == 0.  Our
+| wrapper left infop exactly as the SUCCESSFUL near-page call had set it -- zero.  The observable
+| consequence was the 060 console printing "NOTICE: User BUS ERROR ... FAULT:1" once per retry:
+| FAULT:1 is u_trap's default class, i.e. the signal number never arrived.
+|
+| si_addr names the DENIED FAR address (x60_far_addr), not the frame's near FA.  On a crossing
+| access the CPU reports where the transfer STARTED, which is the page that was fine; reporting
+| that to the process would be actively misleading.
+|
+| Field offsets from sys/siginfo.h: si_signo +0, si_code +4, si_errno +8, _fault._addr +12.
+| Codes from the same header: SEGV_MAPERR 1, SEGV_ACCERR 2, BUS_ADRERR 2.
+|
+| KERNEL PATH DELIBERATELY UNTOUCHED.  krnxmemflt has no siginfo argument and keeps the plain
+| zero/nonzero resolver convention; the shared far helper must never hand it a signal number.
+| in:  d0 = faultcode_t, fp@(12) = infop
+| out: d0 = si_signo.  Clobbers d0/d1/a0, all scratch here.
+Lu_siginfo:
+	moveal	%fp@(12),%a0		| infop, the same slot the stock resolver writes
+	movel	%d0,%d1			| d1 = faultcode_t
+	moveq	&11,%d0			| SIGSEGV
+	cmpil	&4,%d1			| FC_PROT?
+	bnes	Lus_nomap
+	moveq	&2,%d1			| SEGV_ACCERR -- invalid permissions
+	bras	Lus_store
+Lus_nomap:
+	cmpil	&3,%d1			| FC_NOMAP?
+	bnes	Lus_bus
+	moveq	&1,%d1			| SEGV_MAPERR -- address not mapped
+	bras	Lus_store
+Lus_bus:
+	moveq	&10,%d0			| SIGBUS for FC_HWERR / FC_OBJERR and anything unknown:
+	moveq	&2,%d1			| BUS_ADRERR.  Deliberately not silently mapped to
+					| SIGSEGV -- a hardware error is not a protection error.
+Lus_store:
+	movel	%d0,%a0@		| si_signo
+	movel	%d1,%a0@(4)		| si_code
+	clrl	%a0@(8)			| si_errno
+	movel	x60_far_addr,%a0@(12)	| si_addr = the denied far address
+	addql	&1,x60_siginfo_n
+	rts
+
 | wb060_xpage (060-B, 2026-07-10): the 060 fmt-4 counterpart of wb040_replay's byte-wise
 | page-crossing handling (the ISSUE-7 class).  The 060 has no write-backs -- it RESTARTS
 | the faulted instruction -- but for a misaligned access that CROSSES a page boundary it
@@ -340,6 +392,8 @@ Lwx_ma:
 	movel	%d0,x60_last_fa		| F1: capture BEFORE the round-up below rewrites d0
 	addil	&0xfff,%d0
 	andil	&0xfffff000,%d0		| round_page(FA + PAGE_SIZE - 1): the page the transfer
+	movel	%d0,x60_far_addr	| F4: si_addr must name the DENIED far page, not the
+					| near FA the CPU put in the frame
 					| actually needs, regardless of how far before the
 					| boundary the operand or opword started
 	movel	%d5,%d1
@@ -439,7 +493,9 @@ Lwx_prot:
 Lwx_protfail:
 	moveml	%sp@+,%d0-%d1/%a1
 	addql	&1,x60_fprot_fail_n	| permanent: turn the retry loop into a signal
-	moveq	&1,%d0			| nonzero -> MA tier counts it and propagates
+	moveq	&4,%d0			| FC_PROT -- a real faultcode_t, because the user wrapper
+					| now TRANSLATES this into a k_siginfo_t.  krnxmemflt still
+					| only tests it against zero, so its contract is unchanged.
 	rts
 Lwx_protout:
 	lea	%sp@(12),%sp		| drop the saved copies; d0 = as_fault's own result
@@ -719,4 +775,14 @@ x60_last_afret:
 x60_last_psr2:
 	.long	0			| the 030-form PSR from the VERIFY ptest.  0x800 here with
 					| afret 0 is the whole finding in two numbers.
+	.globl	x60_far_addr
+x60_far_addr:
+	.long	0			| F4: the rounded far page of the last MA-tier crossing.
+					| This is what si_addr reports -- the frame's FA points at
+					| the NEAR page, which is precisely the page that was fine.
+	.globl	x60_siginfo_n
+x60_siginfo_n:
+	.long	0			| F4: far-page failures translated into a k_siginfo_t.
+					| If this moves and the process still does not die, the
+					| defect is downstream of us, not in the translation.
 	.balign 4
