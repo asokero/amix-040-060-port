@@ -121,3 +121,141 @@ test-tools/xpagetest.c          the test (T1/T2 pass, T3 is the finding)
 prototypes/wb040.s              Lwx_call, the hardcoded F_INVAL
 060-COUNTERS-UNIT-SPEC-260805.md  the counters that made this measurable
 ```
+
+---
+
+# Update, same evening: F_PROT was necessary but not sufficient — and the missing piece is named
+
+Two kernels were built and measured on the emulated 060 after the fix above was written.
+Both refuted a hypothesis, and the second one produced the diagnosis.
+
+## Attempt 1 — classify the far page (`68040-260806-03`)
+
+`Lwx_callp` runs `ptest` on the rounded-up far address and asks `as_fault` for `F_PROT` when
+the page is resident, write-protected, and the access is a write. T1 and T2 were unaffected
+(`x60_fprot_n` +0, as expected: their far pages are *absent*). **T3 still live-locked**, and
+the new counter said exactly where:
+
+```text
+x60_fprot_n     590 422     the F_PROT branch DOES fire -- ptest classified it correctly
+x60_rw_write_n  590 424     i.e. on essentially every iteration
+x60_far_fail_n        0     ...and as_fault still returns success
+x60_compat_n          5     (+0)
+```
+
+So the classification was right and the resolve was still a no-op. **Refuted: "the wrong
+fault type is the whole problem."**
+
+## Attempt 2 — verify the resolve, then declare it permanent (`68040-260806-04`)
+
+`Lwx_prot` now re-runs `ptest` after `as_fault` and treats "still write-protected" as a
+permanent failure, which the MA tier propagates. Two new counters record what each side
+claimed. On the emulated 060, T3:
+
+```text
+x60_fprot_n       32 340     branch taken
+x60_fprot_fail_n  32 340     every single one declared permanent
+x60_fprot_ok_n         0     none genuinely resolved
+x60_far_fail_n    32 340     and PROPAGATED to the wrapper (it was 0 before)
+x60_last_afret    0x00000000  <- as_fault's own answer: "success"
+x60_last_psr2     0x00000800  <- the page, after that success: STILL write-protected
+```
+
+Those last two numbers are the finding in its final form: **`as_fault(as, page, 4, F_PROT,
+S_WRITE)` returns 0 on an `mprotect`-ed read-only page without making it writable.** That is
+measured, on both attempts, and it is why no amount of retrying could ever have worked.
+
+**T3 still live-locked** — which refutes the second hypothesis too: propagating a permanent
+failure out of `wb060_xpage` is not enough on its own.
+
+## Why propagation alone does not terminate the process
+
+`u_trap`'s call site in the stock kernel (vanilla `stand/unix`, `0x5a586`):
+
+```text
+5a586:  moveq #-40,%d0 / addl %fp,%d0 / movel %d0,%sp@-   arg2 = &fp@(-40)
+5a590:  movel %d0,%sp@-                                    arg1 = frame
+5a592:  jsr usrxmemflt
+5a59c:  tstl %d0
+5a59e:  beqw 5a64c                    0 -> resolved, return
+5a5a2:  moveq #11,%d4 / cmpl %fp@(-40),%d4 ...  -> signal 6
+5a5b6:  moveq #10,%d4 / cmpl %fp@(-40),%d4 ...  -> signal 5
+5a5d8:  moveq  #8,%d4 / cmpl %fp@(-40),%d4 ...  -> signal 9
+5a5ec:                                          -> signal 1
+```
+
+`usrxmemflt`'s second argument is an **out-parameter**: a nonzero return says "not resolved",
+and `*arg2` says *which* fault, which is what selects the signal. Our wrapper returns nonzero
+but never writes that code — it still holds whatever the *successful* `usrxmemflt_orig` call
+left there. So the termination path is entered with a fault code we did not set.
+
+This is a read of the call site, not a deduction from behaviour: the disassembly above is the
+evidence. What is **not** yet established is which value belongs in `*arg2` for this case
+(the constants 8/10/11 have not been traced to their definitions), and whether writing it is
+sufficient or `get_fault` at `0x5a5f8` also has to agree.
+
+## State of the code
+
+`prototypes/wb040.s` now contains the classification, the verification, and five counters
+(`x60_fprot_n`, `x60_fprot_ok_n`, `x60_fprot_fail_n`, `x60_last_afret`, `x60_last_psr2`).
+It does **not** fix T3. It is landed anyway, deliberately, for three reasons:
+
+* it makes the defect diagnosable instead of a wedge — `far_fail_n` and `fprot_fail_n` now
+  move, and `last_afret`/`last_psr2` name the cause in two words;
+* the read path and the compat tier are byte-for-byte unchanged, and T1/T2 still pass with
+  `x60_fprot_n` +0;
+* the legitimate COW case is handled correctly by construction (`fprot_ok_n` separates it),
+  so nothing that used to work has been made worse.
+
+**T3 must still not be run on hardware.** The live-lock is unchanged in effect.
+
+## Next step, stated as a question rather than a plan
+
+The remaining work is a contract question about stock code, not about ours: *what fault code
+does `u_trap` expect in `*arg2` for a protection violation, and does `get_fault` need to
+agree?* That is a source/binary reading task — exactly the kind that belongs in an
+`amix-kernel-analysis` audit rather than in another build-and-measure round.
+
+## And a third refutation: T3 breaks the 68040 too
+
+Running the same test on the **emulated 68040** — which never enters `wb060_xpage` at all, because
+that helper is gated on a format-4 frame — produced:
+
+```text
+F2 kernel (68040-260806-02, no fix):   T1 PASS, T2 PASS, "T3 write crossing at c1039ffe", then hung
+F4 kernel (68040-260806-04, with fix): T1 PASS, then PANIC "usrxmemflt: no as allocated"
+                                       with a recursive kernel backtrace (8005A1E8->800D9598 x N)
+```
+
+Since the 040 cannot execute a single instruction of the code this finding is about, **T3 is not a
+purely 060 problem, and `wb060_xpage` is not its only cause.** That refutes the framing of the
+original finding above, which attributed the whole behaviour to the hardcoded `F_INVAL`.
+
+The two 040 runs also differ from each other, and the difference is not yet separable from the
+test's own instrumentation: `xpagetest` only `fflush`es *after* printing the T3 banner, so the F2
+run reached that flush and the F4 run did not. That places the F4 panic somewhere in T3's setup
+(`mmap` / `mprotect` / `signal` / `setjmp`) rather than in the crossing write — but it is one run
+per kernel, and this project's own rule is that a one-boot bisect does not count
+(`amix-260731-units-and-acceptance`). The F4 kernel's T1+T2 were then run **three times in a row on
+the 040 and passed 3/3**, so whatever the panic was, it is not a deterministic regression in the
+paths T1 and T2 exercise.
+
+**Conclusion for now: `xpagetest` T3 is not a trustworthy instrument.** It wedges or panics the
+machine on both CPUs, by at least two different mechanisms, and until it is rewritten to fail
+cleanly it cannot be used to judge a kernel. T1 and T2 remain sound and are what the hardware
+acceptance rests on.
+
+## What is landed, and what it is worth
+
+`prototypes/wb040.s` keeps the classification, the verification and the five counters. Verified:
+
+* emulated 060 — T1/T2 PASS, `x60_fprot_n` +0 on those (their far pages are absent, so the new
+  branch is correctly not taken), and T3 now reports its own diagnosis instead of wedging silently;
+* emulated 040 — boots, T1/T2 PASS 3/3, `cputype` 0x28.
+
+Not verified, and explicitly not claimed:
+
+* that it fixes T3 — it does not, measured twice;
+* that the 040 T3 panic is unrelated to it — one run each, unseparated from the test's own fault;
+* anything at all on hardware. **This kernel has not been booted on the Amiga and should not be
+  until T3 is a clean instrument and the `u_trap` fault-code contract is known.**

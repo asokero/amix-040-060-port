@@ -354,12 +354,96 @@ Lwx_wr:
 					| classification sswsynth applies to the near page
 	addql	&1,x60_rw_write_n	| F1
 Lwx_go:
-	bsrw	Lwx_call
+	bsrw	Lwx_callp
 	tstl	%d0			| F1: count ONLY the MA tier's failures -- the compat
 	beqs	Lwx_maok		| tier discards its result by design, so counting it
 	addql	&1,x60_far_fail_n	| here would misreport the retry-loop condition
 Lwx_maok:
 	rts				| d0 = as_fault's result, PROPAGATED to the wrapper
+| Lwx_callp -- the MA tier's resolve, with the far page CLASSIFIED first (F3, 2026-08-06).
+|
+| WHY.  Lwx_call below asks as_fault the question "this page is not present" (F_INVAL).  For a
+| far page that IS present but write-protected that question has no answer: as_fault finds the
+| page mapped, has nothing to demand-fault, returns 0, and the 060 restarts the instruction into
+| the same protection violation.  Measured, not deduced: xpagetest T3 span 397 213 successful
+| resolves with x60_far_fail_n == 0 (XPAGE-FPROT-FINDING-260806.md).
+|
+| The near page has always been classified -- usrxmemflt picks F_INVAL vs F_PROT from ptest's
+| 030-form PSR.  This asks the same question about the far page, through the same routine, and
+| only in the one case where the answer can differ: a WRITE.  For a read, a write-protected page
+| is not a fault at all, so F_INVAL remains exactly right and the old path is taken unchanged.
+|
+| The shape is deliberately the one krnxmemflt040.s already uses and this port has proven:
+| resident-and-writable or absent -> F_INVAL (the graceful revalidation path), write into a
+| write-protected resident page -> F_PROT.  A kernel far page is safe here too: ptest's 060 walk
+| covers only the live URP, so a VA outside it returns 030 I and we fall through to F_INVAL --
+| i.e. today's behaviour, not a new one.
+|
+| ptest is C-ABI and its 060 walk clobbers d0/d1/a0/a1 -- a1 is our `as`, so all three are saved.
+| It costs one software table walk per MA-tier crossing WRITE, which x60_ma_n says is rare
+| (13 in a whole boot); x60_fprot_n exists so the cost and the path are both countable.
+| in:  d0 = far page base, d1 = rw (S_READ 1 / S_WRITE 2), a1 = as
+| out: d0 = as_fault result.  Preserves d2-d4/a2-a3 exactly like Lwx_call.
+Lwx_callp:
+	cmpil	&2,%d1
+	bnew	Lwx_call		| not a write -> F_INVAL is the right question, as before
+	moveml	%d0-%d1/%a1,%sp@-	| ptest clobbers d0,d1,a0,a1
+	movel	%d0,%sp@-		| ptest(far page base)
+	jsr	ptest
+	addqw	&4,%sp
+	btst	&11,%d0			| 030-form PSR W = resident and write-protected?
+	bnew	Lwx_prot
+	moveml	%sp@+,%d0-%d1/%a1
+	braw	Lwx_call		| absent, or resident+writable -> F_INVAL, unchanged
+| Lwx_prot -- resolve, then VERIFY, then give up permanently.
+|
+| MEASURED, 2026-08-06, emulated 060, kernel 68040-260806-03: classifying the far page and
+| asking F_PROT was necessary but NOT sufficient.  xpagetest T3 still live-locked, and the
+| counters said exactly where: x60_fprot_n 590 422 (the branch fires), x60_far_fail_n 0
+| (as_fault returns success), and the instruction restarts into the same violation forever.
+|
+| So this branch does not trust as_fault's return value alone.  It re-runs ptest afterwards and
+| treats "still resident and write-protected" as a PERMANENT failure, which the MA tier then
+| propagates and the wrapper turns into a signal.  That is the only formulation that cannot
+| live-lock regardless of WHY the resolve did nothing -- and a retry loop is a far worse outcome
+| than a signal, because it wedges the CPU with no diagnosis.
+|
+| The legitimate COW case is unaffected: there the second ptest shows the page writable and the
+| instruction restarts once, successfully.  x60_fprot_ok_n and x60_fprot_fail_n separate the two,
+| and x60_last_afret keeps as_fault's own answer so a future reader does not have to re-derive
+| what it claimed.
+Lwx_prot:
+	moveml	%sp@+,%d0-%d1/%a1
+	addql	&1,x60_fprot_n		| F3: the branch that did not exist before
+	moveml	%d0-%d1/%a1,%sp@-	| keep far base / rw / as across as_fault
+	movel	%d1,%sp@-		| rw = S_WRITE
+	pea	1			| type = F_PROT
+	pea	4			| len
+	movel	%d0,%sp@-		| addr = the far page
+	movel	%a1,%sp@-		| as
+	jsr	as_fault
+	lea	%sp@(20),%sp
+	movel	%d0,x60_last_afret	| what as_fault actually claimed
+	tstl	%d0
+	bnew	Lwx_protout		| as_fault reported failure -> propagate it unchanged
+	movel	%sp@,%sp@-		| ptest(far page base) again -- did anything change?
+	jsr	ptest
+	addqw	&4,%sp
+	movel	%d0,x60_last_psr2	| the verdict, kept for the same reason
+	btst	&11,%d0
+	bnew	Lwx_protfail		| STILL write-protected: the resolve changed nothing
+	moveml	%sp@+,%d0-%d1/%a1
+	addql	&1,x60_fprot_ok_n	| genuinely resolved (the COW case)
+	clrl	%d0
+	rts
+Lwx_protfail:
+	moveml	%sp@+,%d0-%d1/%a1
+	addql	&1,x60_fprot_fail_n	| permanent: turn the retry loop into a signal
+	moveq	&1,%d0			| nonzero -> MA tier counts it and propagates
+	rts
+Lwx_protout:
+	lea	%sp@(12),%sp		| drop the saved copies; d0 = as_fault's own result
+	rts
 Lwx_call:
 	movel	%d1,%sp@-		| rw
 	clrl	%sp@-			| type = F_INVAL
@@ -612,4 +696,27 @@ x60_last_fa:
 x60_last_fslw:
 	.long	0			| last FSLW, captured in sswsynth BEFORE it overwrites
 					| bits 31-16 in place -- after that the only copy is d5
+	.globl	x60_fprot_n
+x60_fprot_n:
+	.long	0			| F3: MA-tier crossing WRITE into a resident, write-
+					| protected far page -> as_fault(F_PROT).  Zero on every
+					| boot so far, which is exactly why the defect it fixes
+					| stayed invisible until xpagetest T3 went looking.
+	.globl	x60_fprot_ok_n
+x60_fprot_ok_n:
+	.long	0			| F_PROT resolved AND verified writable afterwards
+					| (the legitimate COW case)
+	.globl	x60_fprot_fail_n
+x60_fprot_fail_n:
+	.long	0			| F_PROT "succeeded" but the page is still protected ->
+					| declared permanent.  This is the counter that turns a
+					| live-lock into a diagnosable signal; if it moves, a
+					| process died for a reason we can name.
+	.globl	x60_last_afret
+x60_last_afret:
+	.long	0			| as_fault's own return value on the last F_PROT attempt
+	.globl	x60_last_psr2
+x60_last_psr2:
+	.long	0			| the 030-form PSR from the VERIFY ptest.  0x800 here with
+					| afret 0 is the whole finding in two numbers.
 	.balign 4
