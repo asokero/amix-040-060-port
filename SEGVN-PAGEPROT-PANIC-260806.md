@@ -200,8 +200,38 @@ traffic to starve the machine; one such run left a wedged process behind. That c
 itself confirmation of Codex's Q1/Q2 reading: `FAULT:1` is `u_trap`'s default class, i.e. the
 `k_siginfo_t` never carried a signal number.
 
+### The same battery on the emulated 68060
+
+```text
+battery       11/11 PASS, no FAIL line anywhere
+hat_pfnmiss_n 10 -> 12       +2 EXACTLY, same calibration as the 040 run
+segvn_prot_pp_n  1011        the restored check ran
+segvn_prot_n        1        and denied exactly one access (protfault case b)
+```
+
+The 060-specific counters, which the 040 run cannot exercise at all:
+
+```text
+x60_fmt4_n     23 754   format-4 frames seen
+x60_ma_n           39   MA tier taken; rw_read 37, rw_write 2
+x60_compat_n       11
+x60_far_fail_n      0   no far-page resolve failed
+x60_fprot_n         0   the F_PROT branch never fired -- correct, since the battery runs
+                        protfault a and b only, and neither has a protected FAR page
+isp61_entry_n  43 413   vector-61 emulations during the battery
+isp61_ok_n     43 413   every one succeeded
+isp61_muls_n   43 413   every failure counter 0
+```
+
+`isp61_entry_n` = 43 413 here against 43 503 measured on the real 68060 for the same battery
+— close enough to be the same workload, which is a useful cross-check on the emulator as a
+regression gate.
+
+Both CPUs therefore pass the full battery on this kernel, with the same `segvn_prot_n` = 1
+signature on each.
+
 ### Not done
 
-The full battery has **not** been run on the emulated 060 — only the boot and protfault a/b/c.
-Both CPUs boot and both pass a and b, which satisfies the campaign's both-CPU boot rule, but
-the 060 battery is outstanding and should be run before this kernel goes near hardware.
+Burst was run on the emulated 040 only (96/96). The hardware regression — battery, burst and
+the power-cut disk truth — is still outstanding, and hardware remains on `68060-260806-02`
+until it is run.
