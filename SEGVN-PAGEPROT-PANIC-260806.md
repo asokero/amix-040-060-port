@@ -165,3 +165,43 @@ one that panics, and both remaining behaviours are now diagnosable.
 **Hardware stays on `68060-260806-02`.** This kernel has not been booted on the Amiga. Before it
 is, case C wants resolving, and the battery + burst regression should be re-run — this change is
 in a hot generic VM path, not in a CPU-gated corner.
+
+## Regression: battery and burst, emulated 68040, `68040-260806-05`
+
+The fix sits in a hot generic VM path, so the full suite was run rather than the protfault
+cases alone.
+
+```text
+battery       11/11 PASS   proctest, fputest, mlocktest, msynctst, mincoretst, bigargv,
+                           ptracepoke, bmaptest, devmaptest, exectest 20, mul64test
+                           (+ protfault a and b, both PASS)
+              no FAIL line, no error, no panic anywhere in the log
+burst         96/96 sums, four rounds, no bus error and no bad-address marker
+hat_pfnmiss_n 10 -> 12     +2 EXACTLY, the devmaptest calibration, on a fourth kernel
+```
+
+The counters that matter for *this* change:
+
+```text
+segvn_prot_pp_n   1687     the per-page branch ran 1687 times across battery + burst
+segvn_prot_n         1     and rejected EXACTLY ONCE -- protfault case b, the one access
+                           that was supposed to be denied
+segvn_prot_last_addr 0xC1034000   that case's page 2
+```
+
+That pairing is the whole argument that the fix is not over-eager: 1687 ordinary faults
+went through the restored check and 1686 of them were permitted. A check that rejected
+anything real would have shown up as a failed test, and a check that never ran would have
+left `pp_n` at 0 and made the 11/11 meaningless.
+
+Note the battery deliberately runs protfault **a and b only**. Case c still retries, and on
+the 060 it prints a `NOTICE: User BUS ERROR ... FAULT:1` line per iteration — enough console
+traffic to starve the machine; one such run left a wedged process behind. That console line is
+itself confirmation of Codex's Q1/Q2 reading: `FAULT:1` is `u_trap`'s default class, i.e. the
+`k_siginfo_t` never carried a signal number.
+
+### Not done
+
+The full battery has **not** been run on the emulated 060 — only the boot and protfault a/b/c.
+Both CPUs boot and both pass a and b, which satisfies the campaign's both-CPU boot rule, but
+the 060 battery is outstanding and should be run before this kernel goes near hardware.
