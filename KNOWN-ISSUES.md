@@ -3791,3 +3791,13 @@ kind of `amix-kernel-analysis` audit that produced ISSUE-41.
 
 **Not a regression.** The unfixed kernel panicked before ever reaching this state, so this
 became *observable* only after ISSUE-41 was fixed — it was presumably always there.
+
+**Task written 2026-08-07: `ISSUE42-WBREPLAY-CODEX-TASK.md`.** Two facts found while writing it
+sharpen the question above. (1) The replay runs **only where the stock resolver returned 0**
+(`wb040.s:83-87`), so it is not on a "fault is fatal" branch at all — the resolver resolved the
+*near* page and a write-back may target the *far* page it never examined. (2) There is **no
+real-68040 datapoint**: the machine is a 68060 now, and `wb040.s`'s own verified comment says the
+emulator never sets WB1S valid, so an emulator artifact is a live hypothesis. The task also asks
+where the permission is actually lost (PTE vs segment protection) and whether the replay's
+`DFC = WBxS & 7` buys it a privilege it should not have — either would move the fix out of
+`wb040.s` entirely.
