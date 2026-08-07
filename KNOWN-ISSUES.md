@@ -3764,7 +3764,11 @@ was fatal.
 
 ---
 
-## ⏳ ISSUE-42 (2026-08-06): on the 68040, `wb040_replay` completes a write into a PROTECTED page — protection bypass
+## ⏳ ISSUE-42 (2026-08-06): on the 68040, a denied write-back replay is swallowed — missing fault propagation, silent lost store
+
+> **Retitled 2026-08-07.** This was filed as "completes a write into a protected page — protection
+> bypass". That was an over-claim, and both the Codex audit and a direct measurement refute it:
+> the replay store **does** fault, and the error is then discarded. See "Corrected mechanism" below.
 
 **Status: OPEN**, and it is a *correctness* bug rather than a crash. Found once ISSUE-41's panic
 stopped hiding it. Record: `SIGINFO-TRANSLATION-260806.md` §"Still open".
@@ -3778,16 +3782,40 @@ child survives and exits with the protection-bypass status instead of dying of S
 060   case a PASS   case b PASS   case c PASS  (fixed by the F4 siginfo translation)
 ```
 
-**Suspected mechanism, not yet proven.** The 68040 has already performed the access internally
-and reports it through write-back frames; `wb040_replay` re-issues the pending write-backs with
-`moves`. No protection check in this chain covers that replay. The 060 has no write-backs, which
-is consistent with C passing there.
+**Corrected mechanism (2026-08-07): the store is denied, and the denial is thrown away.**
+Codex's audit (`amix-kernel-analysis/vm-map/ISSUE42-WBREPLAY-PROTECTION-CONTRACT.md`, 8fd31fd)
+plus a counter measurement on the emulated 040 establish the real chain:
 
-**The open question is a contract question, not a coding one:** should the replay consult
-protection before re-issuing, or should pending write-backs be discarded once the fault is known
-to be fatal? Both have consequences for the ISSUE-7/ISSUE-22 class this replay exists to serve,
-so it should be answered from the SVR4/68040 contract rather than guessed. Suitable for the same
-kind of `amix-kernel-analysis` audit that produced ISSUE-41.
+* the live PTE **is** write-protected — this is not an `mprotect`/hat accounting bug;
+* the emulated write-back carries **FC = 1 (user data)**, so no supervisor privilege is involved;
+  a supervisor FC would not have helped anyway — the W bit binds supervisor writes too, though FC
+  does select a different translation;
+* the far-page replay store **faults correctly**;
+* `Lwb_fail` (`wb040.s:661`) restores `u_nofault`, counts, prints a capped `cmn_err`, and `rts` —
+  the failure is not propagated, so the outer resolver's original success (`d4 = 0`) flows out and
+  the process resumes with no signal.
+
+Measured on the emulated 040, kernel `260806-06`, across a single `protfault c`:
+
+```text
+Lwbf_n          0 -> 1     exactly one replay store failed permanently
+wb_replay_odd  82 -> 82    unchanged: the failing replay used FC = 1, not a supervisor code
+wb_replay_n 10785 -> 11063 (background replay traffic)
+```
+
+**So what is proven is missing fault propagation and a silent lost/partial store — NOT that the
+protected page's bytes changed.** `protfault` case C infers "the store succeeded" from "the child
+survived", which does not follow; its FAIL message currently over-claims and should be reworded.
+Whether page 2's contents actually change is still unmeasured.
+
+The 060 has no write-backs, which is consistent with C passing there.
+
+**The contract question is ANSWERED (2026-08-07, Codex 8fd31fd):** validate WB1/WB2/WB3
+**independently**. A write-back address differing from the original FA is *not* grounds to drop
+it. The first permanently denied **user** write-back must stop the replay and become a protection
+fault for *that* write-back's address. This matches the write-back ordering Motorola requires and
+the fault-propagating implementations in NetBSD and Linux m68k; discarding is wrong, and so is
+today's silent swallow. Implementation is not yet written.
 
 **Not a regression.** The unfixed kernel panicked before ever reaching this state, so this
 became *observable* only after ISSUE-41 was fixed — it was presumably always there.
