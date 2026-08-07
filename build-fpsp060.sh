@@ -102,8 +102,60 @@ build_one fpsp  "$HERE/build/fpsp060.o"  "00d490"
 echo
 build_one pfpsp "$HERE/build/pfpsp060.o" "006c20"
 
+# ---------------------------------------------------------------------------
+# M2a: the packaged object the kernel actually links -- table, image and AMIX call-outs as
+# ONE assembly unit.  Concatenated rather than linked: the SysV4 assembler has no .incbin,
+# and the table entries are symbol differences, which are only link-time constants inside a
+# single unit.  Adjacency is then true by construction, not by linker input order.
+# ---------------------------------------------------------------------------
+PKGSRC="$HERE/build/fpsp060_pkg.s"
+PKGOBJ="$HERE/build/fpsp060_pkg.o"
+
 echo
-echo "[OK] M1 complete."
+echo "[*] M2a: concatenate head + image + glue -> $(basename "$PKGSRC")"
+cat "$HERE/prototypes/fpsp060_head.s" "$SP/fpsp.S" "$HERE/prototypes/fpsp060_glue.s" > "$PKGSRC"
+m68k-linux-gnu-gcc -x assembler-with-cpp -m68060 -c "$PKGSRC" -o "$PKGOBJ"
+
+TOP=$(m68k-linux-gnu-nm "$PKGOBJ" | awk '$3=="fpsp060_top"{print $1}')
+IMG=$(m68k-linux-gnu-nm "$PKGOBJ" | awk '$3=="fpsp060_image"{print $1}')
+[ "$TOP" = "00000000" ] || { echo "[FAIL] fpsp060_top at 0x$TOP, must be 0"; exit 1; }
+[ "$IMG" = "00000080" ] || { echo "[FAIL] fpsp060_image at 0x$IMG, must be 0x80 (table = 128 B)"; exit 1; }
+echo "      fpsp060_top = 0x$TOP, fpsp060_image = 0x$IMG (table is exactly 128 bytes)"
+
+echo "[*] decode the entry-point table THROUGH the call-out section"
+m68k-linux-gnu-objcopy -O binary --only-section=.text "$PKGOBJ" "$WORK/pkg.bin"
+python3 - "$WORK/pkg.bin" <<-'PY'
+	import sys
+	b = open(sys.argv[1], 'rb').read()
+	# every call-out slot must be a plausible relative address inside this object
+	bad = 0
+	for i in range(32):
+	    v = int.from_bytes(b[i*4:i*4+4], 'big')
+	    if not (0 < v < len(b)):
+	        print("      [FAIL] call-out slot %d = 0x%08x is not inside the object" % (i, v))
+	        bad += 1
+	print("      32 call-out slots all point inside the object")
+	for off, name in ((0x30, 'fline'), (0x38, 'unsupp'), (0x40, 'effadd')):
+	    o = 128 + off
+	    op = int.from_bytes(b[o:o+2], 'big')
+	    tgt = o + 2 + int.from_bytes(b[o+2:o+6], 'big')
+	    ok = op == 0x60ff and 128 < tgt < len(b)
+	    print("      TOP+128+0x%02x -> 0x%05x  _060_fpsp_%-6s %s"
+	          % (off, tgt, name, "" if ok else "<-- NOT a bra.l into the image"))
+	    bad += 0 if ok else 1
+	if bad:
+	    sys.exit("[FAIL] packaged layout is wrong")
+	PY
+
+for s in fpsp060_vec11 f60_magic f60_entry_n f60_mem_n f60_real_n f60_access_n f60_done_n; do
+	m68k-linux-gnu-nm "$PKGOBJ" | grep -qE " [A-Za-z] $s\$" || { echo "[FAIL] $s not defined"; exit 1; }
+done
+echo "      glue symbols defined"
+UND=$(m68k-linux-gnu-nm "$PKGOBJ" | grep ' U ' | awk '{print $2}' | tr '\n' ' ')
+echo "      unresolved (kernel supplies these): $UND"
+
+echo
+echo "[OK] M1 + M2a complete."
 sha256sum "$HERE/build/fpsp060.o" "$HERE/build/pfpsp060.o"
 echo
 echo "     Entry points for M2's glue, as offsets from the TOP of the call-out section:"

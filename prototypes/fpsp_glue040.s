@@ -38,7 +38,15 @@ fpsp_vec11:
 	movel	%sp@+,%d0		| restore d0; SP now exactly as CPU left it
 	jmp	fpsp_fline		| master F-line dispatcher (raw frame on sp)
 Lv11_stock:
-	jmp	nullvect		| non-040: existing F-line / SIGSYS path
+| F3 M2a (2026-08-07): the 68060 has its own support package.  Measured before this branch
+| existed: an unimplemented FP instruction on the 060 fell through here to nullvect and became
+| SIGSYS -- kvp_vec[11] moved 0 -> 4 across fp060probe (060-FPU-STATE-260807.md).  The 040 path
+| above is untouched; this only redirects what used to be dropped.
+	cmpl	#60,cputype
+	bne	Lv11_null
+	jmp	fpsp060_vec11		| 060: Motorola's M68060 FPSP, via prototypes/fpsp060_glue.s
+Lv11_null:
+	jmp	nullvect		| neither 040 nor 060: existing F-line / SIGSYS path
 
 | ============================================================================
 | M4: the FP ARITHMETIC exception vectors 48-55.  Same shape as fpsp_vec11:

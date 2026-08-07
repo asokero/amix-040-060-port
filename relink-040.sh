@@ -337,7 +337,9 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          hat_sdtfree hat_ptdat_retire ptd_magic ptd_on ptd_calls ptd_retired_n ptd_pgfreed_n \
          ptd_keep0_n ptd_keepn_n ptd_meta_n ptd_badlink_n ptd_wake_n ptd_tblfreed_n \
          nullvect nullvect_orig kvp_magic kvp_on kvp_n kvp_user_n kvp_super_n kvp_over_n \
-         kvp_last_vec kvp_last_pc kvp_vec; do
+         kvp_last_vec kvp_last_pc kvp_vec \
+         fpsp060_top fpsp060_image fpsp060_vec11 f60_magic f60_entry_n f60_mem_n f60_real_n \
+         f60_access_n f60_done_n f60_reserved_n f60_last_co; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
@@ -617,9 +619,21 @@ if [ "$FPSP" = "1" ]; then
 	m68k-linux-gnu-gcc -x assembler-with-cpp -m68040 -I"$FPWORK" \
 		-c "$HERE/prototypes/fpsp_glue040.s" -o "$HERE/build/fpsp_glue040.o"
 
-	echo "[*] FPSP 3/4: ld -r  base + fpsp040.o + fpsp_glue040.o"
+	# F3 M2a (2026-08-07): Motorola's M68060 FPSP, packaged as ONE unit (128-byte call-out
+	# table + image + AMIX call-outs).  fpsp_vec11 now sends cputype == 60 into it instead of
+	# dropping to nullvect.  FPSP060=0 leaves the 060 on the old SIGSYS path for an A/B.
+	FPSP060="${FPSP060:-1}"
+	FPSP060_OBJ=""
+	if [ "$FPSP060" = "1" ]; then
+		echo "[*] FPSP 2b/4: 68060 package build/fpsp060_pkg.o"
+		sh "$HERE/build-fpsp060.sh" >/dev/null
+		[ -f "$HERE/build/fpsp060_pkg.o" ] || { echo "[FAIL] fpsp060_pkg.o not built"; exit 1; }
+		FPSP060_OBJ="$HERE/build/fpsp060_pkg.o"
+	fi
+
+	echo "[*] FPSP 3/4: ld -r  base + fpsp040.o + fpsp_glue040.o${FPSP060_OBJ:+ + fpsp060_pkg.o}"
 	m68k-cbm-sysv4-ld -r -o "$OUT.fpsp" "$OUT" \
-		"$HERE/build/fpsp040.o" "$HERE/build/fpsp_glue040.o"
+		"$HERE/build/fpsp040.o" "$HERE/build/fpsp_glue040.o" $FPSP060_OBJ
 	mv "$OUT.fpsp" "$OUT"
 
 	for s in fpsp_vec11 fpsp_done fpsp_fline fpsp_unimp fpsp_unsupp \
