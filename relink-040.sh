@@ -97,6 +97,13 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/lmul060.s"    -o "$HERE/build/lm
 #                zero elsewhere in libc/ld.so/as/ld.  Everything else declines, counted, to
 #                nullvect.  cputype-gated, so the 040 never enters it.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/isp61_060.s"  -o "$HERE/build/isp61_060.o"
+#   kvecprobe040 = F3 M0 (2026-08-07): wrap nullvect and count the vector of every exception
+#                that reaches it.  The kernel names a vector only for SIGKILL kills, so a
+#                SIGSYS ("bad system call") cannot currently be attributed -- which is what
+#                blocks judging F3 and what leaves wolf3d/xv unexplained.  NOT cputype-gated:
+#                it measures both CPUs, and the 040 numbers are the control.  Data flag
+#                kvp_on = 0 takes it out of the path within one boot.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/kvecprobe040.s" -o "$HERE/build/kvecprobe040.o"
 # ISSUE-13 (2026-07-12): bp_map/bp_mapout were left as stock 030 bodies (2 KiB, retired
 # st_top1 tree) -> corrupt the NFS page-I/O temp mapping.  bp_map040 rewrites both for
 # the live 040 kptr040 tree (4 KiB, phys|0x19).  Both GLOBAL T -> plain --weaken-symbol.
@@ -285,6 +292,8 @@ m68k-linux-gnu-objcopy \
 	--add-symbol swapinub_stock=.text:0x000a9e5c,function,global \
 	--weaken-symbol inituname \
 	--add-symbol inituname_orig=.text:0x00049140,function,global \
+	--weaken-symbol nullvect \
+	--add-symbol nullvect_orig=.text:0x11b4,function,global \
 	--weaken-symbol lmul \
 	--weaken-symbol bp_map \
 	--weaken-symbol bp_mapout \
@@ -314,6 +323,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o" \
 	"$HERE/build/inituname040.o" \
 	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" "$HERE/build/isp61_060.o" \
+	"$HERE/build/kvecprobe040.o" \
 	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
 	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
 	"$HERE/build/config040.o" "$HERE/build/cb_icode040.o" "$HERE/build/kdbg040.o" \
@@ -325,7 +335,9 @@ echo "[*] overridden symbols (each must be a single strong def):"
 for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig segvn_faultpage segvn_faultpage_orig segvn_prot_magic segvn_prot_pp_n segvn_prot_n x60_far_addr x60_siginfo_n krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem \
          hat_growsdt hat_legacy_sdt_free i40_magic i40_on i40_calls i40_sec2_n i40_sec3_n i40_empty_n i40_bad_n i40_err_n i40_pgfreed_n i40_held_n i40_last_n i40_last_base i40_last_bits \
          hat_sdtfree hat_ptdat_retire ptd_magic ptd_on ptd_calls ptd_retired_n ptd_pgfreed_n \
-         ptd_keep0_n ptd_keepn_n ptd_meta_n ptd_badlink_n ptd_wake_n ptd_tblfreed_n; do
+         ptd_keep0_n ptd_keepn_n ptd_meta_n ptd_badlink_n ptd_wake_n ptd_tblfreed_n \
+         nullvect nullvect_orig kvp_magic kvp_on kvp_n kvp_user_n kvp_super_n kvp_over_n \
+         kvp_last_vec kvp_last_pc kvp_vec; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
