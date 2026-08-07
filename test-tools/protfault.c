@@ -26,6 +26,23 @@
  *
  * Pages are touched before mprotect so that a fault reports policy, not demand paging.
  *
+ * 2026-08-07 -- SURVIVAL IS NOT PROOF THAT THE PAGE CHANGED.  This test used to print
+ * "the protected store SUCCEEDED (protection bypass)" whenever the child lived, which
+ * infers a mechanism it never measured.  Codex's ISSUE-42 audit
+ * (amix-kernel-analysis/vm-map/ISSUE42-WBREPLAY-PROTECTION-CONTRACT.md) plus a counter
+ * reading on the emulated 040 show the opposite: the 68040 write-back replay store DOES
+ * fault (Lwbf_n 0->1 for one case C, with wb_replay_odd unchanged, so FC = 1 user data),
+ * and Lwb_fail then swallows the failure and returns the outer resolver's success.  So a
+ * surviving child means "no signal arrived", nothing more.
+ *
+ * The child therefore snapshots the target bytes after mprotect and reads them back if it
+ * lives, and the two outcomes are now reported apart:
+ *
+ *   exit BYPASS    no signal AND the protected bytes changed -> the store reached the page
+ *   exit SWALLOWED no signal and the protected bytes are intact -> denial thrown away
+ *
+ * Both are failures; they are different bugs, and a fix for one is not a fix for the other.
+ *
  * usage: protfault [a|b|c]        (default: all three, in order)
  */
 
@@ -38,7 +55,8 @@
 #include <sys/wait.h>
 
 #define PG	4096
-#define BYPASS	42		/* child exit status if the protected store SUCCEEDED */
+#define BYPASS	42		/* survived, and the protected bytes CHANGED */
+#define SWALLOWED 43		/* survived, protected bytes intact: the denial was discarded */
 #define DEADLINE 8		/* seconds the parent waits after `ready` */
 
 static int alarmed = 0;
@@ -77,7 +95,13 @@ int wfd;
 	char *base;
 	char *target;
 	int npages;
+	int prot_off;
+	int i;
+	int changed;
 	volatile long *lp;
+	volatile char *vp;
+	unsigned char before[4];
+	unsigned char after[4];
 
 	npages = (kase == 'a') ? 1 : 2;
 	base = zmap(npages);
@@ -92,14 +116,25 @@ int wfd;
 		if (mprotect(base, (size_t) PG, PROT_READ) < 0)
 			_exit(71);
 		target = base;			/* aligned write inside the protected page */
+		prot_off = 0;			/* all four bytes are on the protected page */
 	} else {
 		if (mprotect(base + PG, (size_t) PG, PROT_READ) < 0)
 			_exit(71);
-		if (kase == 'b')
+		if (kase == 'b') {
 			target = base + PG + 64;	/* wholly inside page 2, aligned */
-		else
+			prot_off = 0;
+		} else {
 			target = base + PG - 2;		/* CROSSES into page 2 */
+			prot_off = 2;			/* target[2],[3] land on page 2 */
+		}
 	}
+
+	/* Snapshot AFTER mprotect: the protected page stays readable, so this is the
+	   reference the post-store comparison needs.  Read through a volatile pointer so
+	   the compiler cannot satisfy the second read from this one. */
+	vp = (volatile char *) target;
+	for (i = 0; i < 4; i++)
+		before[i] = (unsigned char) vp[i];
 
 	(void) write(wfd, "r", 1);		/* ready: arm the parent's deadline */
 	(void) close(wfd);
@@ -107,7 +142,28 @@ int wfd;
 	lp = (volatile long *) target;
 	*lp = 0x5a5a5a5aL;			/* exactly one store; this must fault */
 
-	_exit(BYPASS);				/* reached only if protection was bypassed */
+	/* Reached only if no signal arrived -- which says nothing yet about whether the
+	   protected bytes moved.  Read them back and report which of the two it was. */
+	for (i = 0; i < 4; i++)
+		after[i] = (unsigned char) vp[i];
+
+	changed = 0;
+	for (i = prot_off; i < 4; i++)
+		if (after[i] != before[i])
+			changed = 1;
+
+	printf("  child survived the store.  protected bytes:");
+	for (i = prot_off; i < 4; i++)
+		printf(" %02x->%02x", before[i], after[i]);
+	if (prot_off > 0) {
+		printf("   unprotected half:");
+		for (i = 0; i < prot_off; i++)
+			printf(" %02x->%02x", before[i], after[i]);
+	}
+	printf("\n");
+	fflush(stdout);
+
+	_exit(changed ? BYPASS : SWALLOWED);
 }
 
 static int
@@ -173,7 +229,12 @@ int kase;
 		printf("case %c FAIL: terminated by signal %d\n", kase, sig);
 		verdict = 1;
 	} else if (code == BYPASS) {
-		printf("case %c FAIL: the protected store SUCCEEDED (protection bypass)\n", kase);
+		printf("case %c FAIL: no signal AND the protected bytes CHANGED\n", kase);
+		printf("  the store reached the protected page -- a real protection bypass\n");
+		verdict = 1;
+	} else if (code == SWALLOWED) {
+		printf("case %c FAIL: no signal, but the protected bytes are INTACT\n", kase);
+		printf("  the store was denied and the denial was discarded -- ISSUE-42, not a bypass\n");
 		verdict = 1;
 	} else {
 		printf("case %c SKIP: child exited %d (setup failure, not a kernel result)\n",

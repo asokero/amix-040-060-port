@@ -3804,9 +3804,23 @@ wb_replay_n 10785 -> 11063 (background replay traffic)
 ```
 
 **So what is proven is missing fault propagation and a silent lost/partial store — NOT that the
-protected page's bytes changed.** `protfault` case C infers "the store succeeded" from "the child
-survived", which does not follow; its FAIL message currently over-claims and should be reworded.
-Whether page 2's contents actually change is still unmeasured.
+protected page's bytes changed.**
+
+**Measured 2026-08-07** (`protfault` now snapshots the target bytes after `mprotect` and reads
+them back if the child lives, instead of inferring the mechanism from survival):
+
+```text
+case c, emulated 040, 260806-06
+  protected bytes:  01->01  00->00      page 2 is UNTOUCHED -- there is no protection bypass
+  unprotected half: 00->5a  00->5a      page 1 DID take the store
+  Lwbf_n            1 -> 2              one more permanently-denied replay, swallowed as before
+```
+
+**ISSUE-42 is therefore a silently TORN store.** The half of the misaligned write that lands on
+the writable page is applied, the half that would land on the protected page is denied, the denial
+is discarded, and the process continues with no signal and no error — holding half of a store it
+believes completed. That is worse than a lost store and better than a bypass, and it is neither of
+the two things this issue was originally filed as.
 
 The 060 has no write-backs, which is consistent with C passing there.
 
