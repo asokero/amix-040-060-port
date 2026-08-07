@@ -2555,7 +2555,19 @@ joka ON todellinen ja ON todistettu, **ei ole se joka rikkoo `cc1`:n.** Kaksi er
 * **ISSUE-34a — TODISTETTU.** 64-bittinen `muls.l`/`divs.l` tappaa minkä tahansa
   käyttäjäprosessin 68060:llä koska `M68Kvec[61]` on `nullvect`. Yhden käskyn eristetty
   repro, 6/6 korrelaatio suiten yli. Seisoo täysin omilla ansioillaan. Yksityiskohdat alla.
-* **ISSUE-34b — AUKI.** `cc1` kuolee SIGSYS:iin (12) 060:llä ja toimii 040:llä. Koko
+* **ISSUE-34b — RATKAISTU MEKANISMILTAAN 7.8.2026, korjaus kesken (F3).** Juurisyy on
+  mitattu eikä enää päätelty: 040:n FPSP on `cputype`-portitettu pois (`fpsp_glue040.s`),
+  joten **060:llä ei ole mitään FP-tukipakettia** ja toteuttamaton FP-käsky putoaa
+  `nullvect`iin = SIGSYS. Käyttäjätilan koe oikealla 060:llä (`test-tools/fp060probe.c`):
+  `fsin/fetox/flogn/fmovecr` kuolevat signaaliin 12, `fadd/fsqrt/fintrz` eivät. Ja M0:n
+  vektoriprobe mittasi vektorin suoraan: `kvp_vec[11]` 0 → **4** yhden `fp060probe`-ajon yli.
+  **`fmovecr` on tavallinen tapaus, ei eksoottinen** — se lataa FPU:n ROM-vakiot (0.0, 1.0),
+  gcc käyttää sitä liukulukuvakioihin, ja userland-skannaus laski 287 esiintymää. Siksi
+  `x = 1.0;` riittää tappamaan prosessin. Kirjanpito `060-FPU-STATE-260807.md`, korjaus
+  `060-F3-FPSP-PLAN-260807.md` (M0/M1 valmiit, M2a kytkentä todistettu, M2b kesken).
+  ⚠ Alla oleva vanha analyysi on osin kumottu: `cc1` kuolee **vektoriin 61**, ei SIGSYS:iin
+  (F0), joten alkuperäinen havainto lepää `acomp`in varassa. Historia säilytetty sellaisenaan.
+* **ISSUE-34b — vanha analyysi (osin kumottu, ks. yllä).** `cc1` kuolee SIGSYS:iin (12) 060:llä ja toimii 040:llä. Koko
   kääntäjäketju on puhdas toteuttamattomista käskyistä, joten **käskykantaluokka on
   SULJETTU POIS suoralla todisteella.** SIGSYS on kirjaimellisesti "bad system call", mikä
   siirtää haun **syscall-/trap-polulle** eikä ISA:aan. Mikä 060:llä eroaa meidän

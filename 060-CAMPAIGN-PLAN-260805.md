@@ -38,7 +38,7 @@ Everything else — Model B, the HAT, MMU programming, CPUSH/CINV, the loader, t
 | **F0** measurement boot | ✅ done on hardware, `060-F0-MEASUREMENT-260805.md` |
 | **F1** fault-path counters | ✅ landed, `060-COUNTERS-UNIT-SPEC-260805.md`; found the XPAGE defect immediately |
 | **F2** vector 61 | ✅ **accepted on real hardware**, `REALHW-F2-ACCEPTANCE-260806.md` — the machine has a working GCC again |
-| F3 vector 11 / 060 FPSP | not started |
+| **F3** vector 11 / 060 FPSP | 🔄 **in progress**, `060-F3-FPSP-PLAN-260807.md` — M0 ✅ vector probe, M1 ✅ package builds, M2a ⚠ wiring proven and panics, M2b blocked on the call-out contract |
 | F4 060-D caches | not started; F0 changed its premise, see below |
 | F5 `cpuinfo` + PCR | partially done — PCR is read at boot into `pcr_boot` |
 

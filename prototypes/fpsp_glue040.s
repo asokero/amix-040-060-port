@@ -42,11 +42,20 @@ Lv11_stock:
 | existed: an unimplemented FP instruction on the 060 fell through here to nullvect and became
 | SIGSYS -- kvp_vec[11] moved 0 -> 4 across fp060probe (060-FPU-STATE-260807.md).  The 040 path
 | above is untouched; this only redirects what used to be dropped.
+|
+| GUARDED BY THE PREPROCESSOR, and that guard is load-bearing: relink-040.sh defines
+| HAVE_FPSP060 only when it actually links build/fpsp060_pkg.o.  Without the guard, an
+| FPSP060=0 build left `jmp fpsp060_vec11` as an UNRESOLVED reference -- caught by the reloc
+| validator (1 complaint, `U fpsp060_vec11`) -- which on a 68060 would have jumped an
+| unimplemented FP instruction into whatever the loader left at that address.  That is strictly
+| worse than the SIGSYS it replaced, so the branch must not exist unless its target does.
+#ifdef HAVE_FPSP060
 	cmpl	#60,cputype
 	bne	Lv11_null
 	jmp	fpsp060_vec11		| 060: Motorola's M68060 FPSP, via prototypes/fpsp060_glue.s
+#endif
 Lv11_null:
-	jmp	nullvect		| neither 040 nor 060: existing F-line / SIGSYS path
+	jmp	nullvect		| no 060 package linked: existing F-line / SIGSYS path
 
 | ============================================================================
 | M4: the FP ARITHMETIC exception vectors 48-55.  Same shape as fpsp_vec11:

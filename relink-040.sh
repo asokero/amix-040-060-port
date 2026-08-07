@@ -615,14 +615,26 @@ if [ "$FPSP" = "1" ]; then
 	[ -f "$HERE/build/fpsp040.o" ] || { echo "[FAIL] fpsp040.o not built"; exit 1; }
 	[ -f "$FPWORK/fpsp.defs" ]     || { echo "[FAIL] fpsp.defs missing at $FPWORK"; exit 1; }
 
-	echo "[*] FPSP 2/4: assemble AMIX glue prototypes/fpsp_glue040.s"
-	m68k-linux-gnu-gcc -x assembler-with-cpp -m68040 -I"$FPWORK" \
+	# The 060 branch in fpsp_vec11 exists only when its target is actually linked -- see the
+	# comment at Lv11_stock for why an unresolved jmp there is worse than no branch at all.
+	FPSP060="${FPSP060:-0}"
+	[ "$FPSP060" = "1" ] && GLUE060="-DHAVE_FPSP060" || GLUE060=""
+
+	echo "[*] FPSP 2/4: assemble AMIX glue prototypes/fpsp_glue040.s${GLUE060:+ (with 060 branch)}"
+	m68k-linux-gnu-gcc -x assembler-with-cpp -m68040 -I"$FPWORK" $GLUE060 \
 		-c "$HERE/prototypes/fpsp_glue040.s" -o "$HERE/build/fpsp_glue040.o"
 
 	# F3 M2a (2026-08-07): Motorola's M68060 FPSP, packaged as ONE unit (128-byte call-out
-	# table + image + AMIX call-outs).  fpsp_vec11 now sends cputype == 60 into it instead of
-	# dropping to nullvect.  FPSP060=0 leaves the 060 on the old SIGSYS path for an A/B.
-	FPSP060="${FPSP060:-1}"
+	# table + image + AMIX call-outs).  fpsp_vec11 sends cputype == 60 into it instead of
+	# dropping to nullvect.
+	#
+	# DEFAULT IS OFF WHILE M2b IS UNFINISHED.  M2a proved the wiring -- vector 11 reaches the
+	# package -- and then panicked: KERNEL FAULT vector 0x6 at fpsp060_image+0x1fb6, which
+	# disassembles as DATA, i.e. control flow left the rails.  The leading cause is in our own
+	# stubs (the _060_real_* exits jmp to nullvect, which expects a RAW exception frame at (sp),
+	# not the package's frame).  Until M2b lands, an FPSP060=1 build is knowingly unbootable on
+	# a 68060 and must not be handed to hardware.  See 060-F3-FPSP-PLAN-260807.md.
+	#     FPSP060=1 sh relink-040.sh    <- opt in, emulator only
 	FPSP060_OBJ=""
 	if [ "$FPSP060" = "1" ]; then
 		echo "[*] FPSP 2b/4: 68060 package build/fpsp060_pkg.o"
