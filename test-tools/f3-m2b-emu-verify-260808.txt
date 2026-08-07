@@ -1,0 +1,165 @@
+F3 M2b -- 68060 FPSP call-outs: emulator verification, 2026-08-08
+=================================================================
+
+Kernel: 68040/68060-260807-09, one image, both emulator CPU configurations.
+Built by:  sh relink-040.sh          (FPSP060 now defaults to 1)
+Reloc validation: TOTAL complaints: 0
+textsize 0xf2508 (base 0xe4c24 + the 54 KiB package)
+
+The image rebuilt from a clean tree after the default flip differs from the one measured
+below in EXACTLY TWO BYTES, both of them the build-id digits (-09 vs -11).  So what was
+accepted here and what `sh relink-040.sh` now produces are the same kernel.
+
+Counter block, recomputed for this image (0x08000000 + textsize + nm(.data)):
+  f60_magic 0810B164   entry 0810B168   mem 0810B16C   real 0810B170   access 0810B174
+  done 0810B178   reserved 0810B17C   last_co 0810B180   memfail 0810B184
+  arith 0810B188   bsun 0810B18C   fline 0810B190   trap 0810B194   trace 0810B198
+  fpudis 0810B19C   superdone 0810B1A0
+  kvp_vec[11] 0810ABCC
+f60_magic read back 46503630 ("FP60") before anything else was believed.
+
+
+1. fp060probe -- emulated 68060.  PRE-REGISTERED, and it came out exactly.
+--------------------------------------------------------------------------
+The probe was extended for M2b: the result now travels back through a pipe and is compared
+against the IEEE-754 bit pattern.  Survival is not correctness -- protfault's lesson.
+
+  fadd       OK  3FF0000000000000  (0 ulp)
+  fsqrt      OK  3FE6A09E667F3BCD  (0 ulp)
+  fintrz     OK  0000000000000000  (0 ulp)
+  fsin       OK  3FDEAEE8744B05F0  (0 ulp)
+  fetox      OK  3FFA61298E1E069C  (0 ulp)
+  flogn      OK  BFE62E42FEFA39EF  (0 ulp)
+  fmovecr    OK  400921FB54442D18  (0 ulp)     <- pi, exact
+  FP060PROBE bad=0
+
+All four that were SIGSYS on 2026-08-07 are now bit-exact.  Counters across that one run:
+
+  f60_entry_n    0 -> 4      one package entry per trapping instruction
+  f60_mem_n      0 -> 4      one real instruction fetch each (M2a declined instead)
+  f60_done_n     0 -> 4      four normal completions through ureturn
+  f60_real_n     0           no exception exit of any class
+  f60_access_n   0           in particular no access-error exit
+  f60_memfail_n  0           no copyin/copyout failed
+  f60_last_co    12          = _060_fpsp_done
+  kvp_vec[11]    0 -> 0      vector 11 no longer reaches nullvect at all
+
+2. fputest060 -- Test C runs to completion, first time on this CPU
+------------------------------------------------------------------
+Built -O, the same shape as the binary measured on 2026-08-07 (fmovecrx #50 at +0x57a on
+forktest's main path).  Verified by disassembly before running, because a -O0 build does NOT
+emit that fmovecr and would have measured nothing.
+
+  FPUTEST Test A PASS
+  FPUTEST fork CHILD  1.5^12*1000 = 129746  (expect 129746)
+  FPUTEST fork PARENT 1.25^-12*100000 = 6871  (expect 6871)
+  RCC=0
+
+It used to die before its first printf (rc 140 = SIGSYS).  Counters moved 4 -> 6 on
+entry/mem/done, real still 0.  FP context switching under load is now measured on the 060.
+
+3. Battery -- 11/11 on BOTH emulator CPUs, one image
+-----------------------------------------------------
+Sources compiled in the guest by /usr/ccs/bin/cc (mkall6.sh); all 12 built with no error on
+both CPUs -- itself worth noting on the 060, where the toolchain story is delicate.
+
+  emu-060   31 PASS lines, 0 FAIL, battery6-060.raw
+  emu-040   31 PASS lines, 0 FAIL, battery6-040.raw
+  identical RESULT lines on both: PROCTEST, FPUTEST Test A, MLOCKTEST, MSYNC-OK, MINCORE,
+  BIGARGV, PTRACEPOKE, BMAPTEST, DEVMAPTEST, EXECTEST, MUL64, PROTFAULT a+b
+
+4. The 040 path, proven by counter rather than by inspection
+------------------------------------------------------------
+Same image on the emulated 040:
+
+  boots to login, banner 68040-260807-09
+  fp060probe 7/7 bit-exact -- handled by the 68040 package, and it agrees with the 68060
+    package to the last bit on all seven values
+  battery 11/11
+  EVERY f60_* counter still 0 after both      <- the 060 package is inert on a 040
+
+5. D2 settled by measurement: FULL fpsp.sa, not pfpsp.sa
+---------------------------------------------------------
+The two packages have byte-identical entry-point tables (M1), so this could only be decided
+by running.  Built with `FPSP060_VARIANT=pfpsp FPSP060=1 sh relink-040.sh` (new switch),
+emulated 060, same probe:
+
+  fadd/fsqrt/fintrz  OK
+  fsin/fetox/flogn/fmovecr  DIED by signal 12 (SIGSYS)
+  FP060PROBE bad=4
+
+and the counters name the mechanism instead of leaving it to inference:
+
+  f60_entry_n   4     the partial package IS entered -- the wiring is identical
+  f60_mem_n     0     it never even fetches the instruction
+  f60_real_n    4     it declines
+  f60_fline_n   4     ...through _060_real_fline
+  f60_last_co   7     = the fline slot
+  f60_done_n    0
+
+Byte-exactly what Codex predicted statically from pfpsp.s:3817-3854 ("does not emulate FP
+unimplemented instructions").  Full package it is.
+
+6. Motorola's own ftest -- and why its "failed" is NOT ours
+------------------------------------------------------------
+build-ftest060.sh converts dist/ftest.sa (NetBSD did not; only fpsp/pfpsp are converted in
+that tree) and builds it as an AMIX user program: 128-byte call-out section -> printf, then
+the image, then the runner.  The FPSP under test is the kernel's.
+
+  ftest060 main     "Unimplemented <ea>..."  DIED by signal 9
+  ftest060 unimp    "Unimplemented FP instructions...1 failed"
+  ftest060 enabled  "Enabled SNAN/OPERR/overflow/underflow/DZ/inexact...1 failed" (all six)
+
+Attribution, one item at a time:
+
+* main -> SIGKILL is vector 60 (unimplemented effective address), which is F3 M3 and
+  deliberately not hooked.  Expected.
+
+* enabled -> f60_arith_n stayed 0 and f60_entry_n did not move for any of the six.  The
+  emulated FPU never raised an enabled FP exception, so neither the package nor our
+  _060_real_* exits ran at all.  These six exits are therefore UNMEASURED, not broken, and
+  they stay that way until hardware.  Recorded rather than glossed.
+
+* unimp "1 failed" -> chk_test prints the sub-test counter and nothing else, so
+  test-tools/ftunimp0.c replicates sub-test 1 (unimp_0) exactly and prints every field
+  Motorola compares.  Result:
+
+      fp0    BFBF0000 80000000 00000000   OK   (all 96 bits)
+      fpcr   00000000                     OK
+      fpsr   08000208                     OK   (N + INEX2 + accrued INX)
+      fpiar  = the fsin's own address     OK
+      ccr    0000                         OK
+      d0-d7/a0-a6 unchanged across the trap     OK
+
+  The instruction is emulated correctly in every respect the suite specifies.  What fails is
+  upstream of the FPSP:
+
+      FPU CANNOT HOLD DEF_FPREGS: group 0..7 loaded 7FFF0000 FFFFFFFF FFFFFFFF,
+                                  read back 3FFF0000 00000000 00000000 before any trap
+      -> 8 of 8 FP registers mangled by the LOAD alone
+
+  Every ftest sub-test begins with `fmovm.x DEF_FPREGS,&0xff` -- that extended NaN into all
+  eight FP registers -- and ends by requiring fp1-fp7 to be unchanged.  The snapshot above is
+  taken between the load and the fsin, so no kernel code has run; the emulated 68060 FPU
+  simply cannot represent the value.  ftest cannot pass under Amiberry whatever the FPSP does.
+
+  CONSEQUENCE: Motorola's suite is built, runs, and is correctly wired, but its verdict is
+  owed from real silicon.  It is on the M5 run list.
+
+7. Not run
+-----------
+* burst.  burstloop.sh is not in the repo -- it is staged on the machine, and the emulator's
+  guest filesystem is reset to the golden image on every boot.  Reconstructing it was out of
+  scope for M2b; it belongs to the M5 hardware run list where /payload.bin and /pgc persist.
+* Anything on vectors 55 and 60 (M3), and enabled FP exceptions (see 6).
+
+8. Files
+---------
+prototypes/fpsp060_glue.s     the M2b call-outs (this unit)
+build-fpsp060.sh              + FPSP060_VARIANT=fpsp|pfpsp for D2
+build-ftest060.sh             Motorola's test suite as an AMIX binary
+test-tools/fp060probe.c       now checks VALUES, through a pipe, FP-free in the parent
+test-tools/ftest060*.{c,s}    the ftest harness
+test-tools/ftunimp0*.{c,s}    the unimp_0 dissector
+test-tools/batteryrun6.sh     battery re-addressed for textsize 0xf2508 + the f60 block
+test-tools/mkall6.sh          guest-side compile of the battery

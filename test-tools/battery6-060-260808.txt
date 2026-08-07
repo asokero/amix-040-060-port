@@ -1,0 +1,278 @@
+# battery on the emulated 68060, kernel 68040/68060-260807-09 (F3 M2b), 2026-08-08
+=== ANCHORS ===
+hat_cm_ram:
+KPEEK 0810a808 = 00000020  (/dev/mem)
+segvn_prot block:
+KPEEK 0810aae4 = 53564e21  (/dev/mem)
+KPEEK 0810aae8 = 000001ff  (/dev/mem)
+KPEEK 0810aaec = 00000000  (/dev/mem)
+KPEEK 0810aaf0 = 00000000  (/dev/mem)
+KPEEK 0810aaf4 = 00000000  (/dev/mem)
+cputype:
+KPEEK 0810ab48 = 0000003c  (/dev/mem)
+
+=== BEFORE ===
+KPEEK 0810aaa8 = 00007258  (/dev/mem)
+KPEEK 0810aaac = 00000053  (/dev/mem)
+KPEEK 0810aab0 = 00000035  (/dev/mem)
+KPEEK 0810aab4 = 0000004a  (/dev/mem)
+KPEEK 0810aab8 = 00000009  (/dev/mem)
+KPEEK 0810aabc = 00000000  (/dev/mem)
+KPEEK 0810aac0 = c1015ffe  (/dev/mem)
+KPEEK 0810aac4 = 01428200  (/dev/mem)
+KPEEK 0810aac8 = 00000000  (/dev/mem)
+KPEEK 0810aacc = 00000000  (/dev/mem)
+KPEEK 0810aad0 = 00000000  (/dev/mem)
+KPEEK 0810aad4 = 00000000  (/dev/mem)
+KPEEK 0810aad8 = 00000000  (/dev/mem)
+KPEEK 0810aadc = c1016000  (/dev/mem)
+KPEEK 0810aae0 = 00000000  (/dev/mem)
+KPEEK 0810b084 = 00000001  (/dev/mem)
+KPEEK 0810b088 = 00000001  (/dev/mem)
+KPEEK 0810b08c = 00000000  (/dev/mem)
+KPEEK 0810b090 = 0000000a  (/dev/mem)
+KPEEK 0810b094 = 0000003a  (/dev/mem)
+KPEEK 0810b098 = 00000000  (/dev/mem)
+KPEEK 0810b09c = 00000001  (/dev/mem)
+KPEEK 0810b0a0 = 00000000  (/dev/mem)
+KPEEK 0810b0a4 = 00000000  (/dev/mem)
+KPEEK 0810b0a8 = 00000000  (/dev/mem)
+KPEEK 0810b0ac = 00000000  (/dev/mem)
+KPEEK 0810b0b0 = 00000001  (/dev/mem)
+KPEEK 0810b0b4 = 000000b2  (/dev/mem)
+KPEEK 0810b0b8 = 000000b2  (/dev/mem)
+KPEEK 0810b0bc = 000000b2  (/dev/mem)
+KPEEK 0810b0c0 = 49333921  (/dev/mem)
+KPEEK 0810b0c4 = 08125f74  (/dev/mem)
+KPEEK 0810b0c8 = 0812a778  (/dev/mem)
+KPEEK 0810b0cc = 08122690  (/dev/mem)
+KPEEK 0810b0d0 = 08125860  (/dev/mem)
+KPEEK 0810b0d4 = 08125f68  (/dev/mem)
+KPEEK 0810b0d8 = 08123bec  (/dev/mem)
+KPEEK 0810b0dc = 08120928  (/dev/mem)
+KPEEK 0810b0e0 = 00000000  (/dev/mem)
+KPEEK 0810b0e4 = 00000000  (/dev/mem)
+KPEEK 0810b0e8 = 00000000  (/dev/mem)
+KPEEK 0810b0ec = 00000000  (/dev/mem)
+KPEEK 0810b0f0 = 00000000  (/dev/mem)
+KPEEK 0810b0f4 = 00000000  (/dev/mem)
+KPEEK 0810b0f8 = 49343021  (/dev/mem)
+KPEEK 0810b0fc = 00000001  (/dev/mem)
+KPEEK 0810b100 = 000003da  (/dev/mem)
+KPEEK 0810b104 = 000003c6  (/dev/mem)
+KPEEK 0810b108 = 000001ed  (/dev/mem)
+KPEEK 0810b10c = 00000201  (/dev/mem)
+KPEEK 0810b110 = 00000000  (/dev/mem)
+KPEEK 0810b114 = 00000000  (/dev/mem)
+KPEEK 0810b118 = 00000001  (/dev/mem)
+KPEEK 0810b11c = 000005b2  (/dev/mem)
+KPEEK 0810b120 = 00000001  (/dev/mem)
+KPEEK 0810b124 = 097694c0  (/dev/mem)
+KPEEK 0810b128 = feb7ffff  (/dev/mem)
+KPEEK 0810b12c = 50544421  (/dev/mem)
+KPEEK 0810b130 = 00000001  (/dev/mem)
+KPEEK 0810b134 = 0000165c  (/dev/mem)
+KPEEK 0810b138 = 0000165c  (/dev/mem)
+KPEEK 0810b13c = 000000f8  (/dev/mem)
+KPEEK 0810b140 = 00000000  (/dev/mem)
+KPEEK 0810b144 = 00000000  (/dev/mem)
+KPEEK 0810b148 = 00000000  (/dev/mem)
+KPEEK 0810b14c = 00000000  (/dev/mem)
+KPEEK 0810b150 = 00000000  (/dev/mem)
+KPEEK 0810b154 = 0000165c  (/dev/mem)
+f60:
+KPEEK 0810b164 = 46503630  (/dev/mem)
+KPEEK 0810b168 = 00000008  (/dev/mem)
+KPEEK 0810b16c = 00000008  (/dev/mem)
+KPEEK 0810b170 = 00000000  (/dev/mem)
+KPEEK 0810b174 = 00000000  (/dev/mem)
+KPEEK 0810b178 = 00000008  (/dev/mem)
+KPEEK 0810b17c = 00000000  (/dev/mem)
+KPEEK 0810b180 = 0000000c  (/dev/mem)
+KPEEK 0810b184 = 00000000  (/dev/mem)
+KPEEK 0810b188 = 00000000  (/dev/mem)
+KPEEK 0810b18c = 00000000  (/dev/mem)
+KPEEK 0810b190 = 00000000  (/dev/mem)
+KPEEK 0810b194 = 00000000  (/dev/mem)
+KPEEK 0810b198 = 00000000  (/dev/mem)
+KPEEK 0810b19c = 00000000  (/dev/mem)
+KPEEK 0810b1a0 = 00000000  (/dev/mem)
+
+======== proctest ========
+proctest: child pid=509 priv=80004000 cow=80007000 absent=8000a000
+T1 PASS: read private resident page (bad=0)
+T2 PASS: read COW page (bad=0)
+T3 PASS: read absent page as zeros (bad=0)
+T4 PASS: write private page n=4096 errno=0
+T5 PASS: write COW page n=4096 errno=0
+T6a PASS: re-read private after write (bad=0)
+T6b PASS: re-read COW after write (bad=0)
+T7 PASS: page-crossing read, first 3072 bytes (bad=0)
+CHILD-PRIV-WRITE PASS
+CHILD-COW-WRITE PASS
+PROCTEST parent fails=0
+PROCTEST-RESULT PASS
+======== fputest ========
+FPUTEST add=10000 sub=4000 mul=21000 div=7000  (expect 10000 4000 21000 7000)
+FPUTEST 1/3=333333 sqrt2=1414213  checksum=1747546 (expect 333333 1414213 / 1747546)
+FPUTEST Test A PASS -- 040 hardware FP arithmetic correct
+======== mlocktest ========
+mlocktest: arena=800031b0 base=80004000 (page-aligned)
+T1 PASS: memcntl(base+2048) -> EINVAL (4 KiB PAGEOFFSET gate)
+T2 PASS: MC_LOCK + MC_UNLOCK round trip on 2 pages
+T3 PASS: 20 MC_LOCK/MC_UNLOCK cycles, no accounting drift
+T4 PASS: plock(PROCLOCK) + plock(UNLOCK)
+T5 PASS: 10 plock lock/unlock cycles
+MLOCKTEST fails=0 skipped=0
+MLOCKTEST-RESULT PASS
+======== msynctst ========
+MSYNC-OK path=/msync_test.dat sz=65536
+======== mincoretst ========
+MINCORE VEC rc 0 changed 8 tail intact
+MINCORE ALIGN2K rc -1 errno 22
+MINCORE PASS
+======== bigargv ========
+BIGARGV PASS 45 args 4500 bytes
+======== ptracepoke ========
+PTRACEPOKE addr=0x80000584 word=0x480effff pokes=4 fails=0
+PTRACEPOKE-RESULT PASS
+======== bmaptest /pgc ========
+bmaptest: fs_bsize 8192, NDADDR 12 (direct ends at 98304), file 163840 B
+  the behaviour-changing interval is roundup(size,PAGESIZE) vs bsize:
+  sizes 4097..6144 round to 6144 (<8192, READ) old vs 8192 (SKIP) new
+  T1a direct, len 4096               off=8192    len=4096        OK
+  T1b direct, len 6144               off=8192    len=6144        OK
+  T2a indirect, len 4097             off=106496  len=4097        OK
+  T2b indirect, len 5000             off=106496  len=5000        OK
+  T2c indirect, len 6144             off=106496  len=6144        OK
+  T2d indirect, len 4096             off=106496  len=4096        OK
+  T2e indirect, len 6145             off=106496  len=6145        OK
+  T3  indirect unaligned             off=106996  len=6144        OK
+  T4a indirect SYNC 5000             off=106496  len=5000  SYNC  OK
+  T4b direct   SYNC 6144             off=8192    len=6144  SYNC  OK
+  T5  fragment growth                200 x 100 B appends           OK
+BMAPTEST fails=0
+BMAPTEST-RESULT PASS
+======== devmaptest ========
+devmaptest: PAGESIZE assumed 4096
+    kernel-base window non-zero bytes: 3435/4096
+  T1 PASS: /dev/mem same-offset identical=1, base+2048 aliases correctly=1
+  T2 PASS: mincore over a 4-page device mapping wrote 4 entries, canary bytes clobbered = 0
+DEVMAPTEST fails=0
+DEVMAPTEST-RESULT PASS
+======== exectest 20 ========
+EXECTEST-RESULT PASS (data+bss verified across every generation)
+======== mul64test ========
+MUL64 before
+MUL64 after  q=12345 (expect 12345)
+MUL64-RESULT PASS
+======== protfault a ========
+protfault: protected-page fault contract, one child per case
+  PREDICTION under test (XPAGE-FPROT-CONTRACT.md Q3): on a kernel without
+  the segvn_faultpage permission check, A terminates and B does NOT --
+  and B contains no page crossing, so on a 68040 no 060 code is involved.
+
+---- case a: one page, whole mapping protected (segment-wide path)
+case a PASS: child terminated by SIGSEGV
+
+PROTFAULT fails=0
+PROTFAULT-RESULT PASS
+======== protfault b ========
+protfault: protected-page fault contract, one child per case
+  PREDICTION under test (XPAGE-FPROT-CONTRACT.md Q3): on a kernel without
+  the segvn_faultpage permission check, A terminates and B does NOT --
+  and B contains no page crossing, so on a 68040 no 060 code is involved.
+
+---- case b: two pages, page 2 protected, aligned write INSIDE page 2
+case b PASS: child terminated by SIGSEGV
+
+PROTFAULT fails=0
+PROTFAULT-RESULT PASS
+
+=== AFTER ===
+KPEEK 0810aaa8 = 00007950  (/dev/mem)
+KPEEK 0810aaac = 00000056  (/dev/mem)
+KPEEK 0810aab0 = 00000037  (/dev/mem)
+KPEEK 0810aab4 = 0000004b  (/dev/mem)
+KPEEK 0810aab8 = 0000000b  (/dev/mem)
+KPEEK 0810aabc = 00000000  (/dev/mem)
+KPEEK 0810aac0 = c07feffc  (/dev/mem)
+KPEEK 0810aac4 = 01428200  (/dev/mem)
+KPEEK 0810aac8 = 00000000  (/dev/mem)
+KPEEK 0810aacc = 00000000  (/dev/mem)
+KPEEK 0810aad0 = 00000000  (/dev/mem)
+KPEEK 0810aad4 = 00000000  (/dev/mem)
+KPEEK 0810aad8 = 00000000  (/dev/mem)
+KPEEK 0810aadc = 80001000  (/dev/mem)
+KPEEK 0810aae0 = 00000000  (/dev/mem)
+KPEEK 0810b084 = 00000001  (/dev/mem)
+KPEEK 0810b088 = 00000001  (/dev/mem)
+KPEEK 0810b08c = 00000000  (/dev/mem)
+KPEEK 0810b090 = 0000000c  (/dev/mem)
+KPEEK 0810b094 = 0000003a  (/dev/mem)
+KPEEK 0810b098 = 00000000  (/dev/mem)
+KPEEK 0810b09c = 00000001  (/dev/mem)
+KPEEK 0810b0a0 = 00000004  (/dev/mem)
+KPEEK 0810b0a4 = 00000004  (/dev/mem)
+KPEEK 0810b0a8 = 00000002  (/dev/mem)
+KPEEK 0810b0ac = 00000002  (/dev/mem)
+KPEEK 0810b0b0 = 00000001  (/dev/mem)
+KPEEK 0810b0b4 = 000000b4  (/dev/mem)
+KPEEK 0810b0b8 = 000000b2  (/dev/mem)
+KPEEK 0810b0bc = 000000b2  (/dev/mem)
+KPEEK 0810b0c0 = 49333921  (/dev/mem)
+KPEEK 0810b0c4 = 08125f74  (/dev/mem)
+KPEEK 0810b0c8 = 0812a778  (/dev/mem)
+KPEEK 0810b0cc = 08122690  (/dev/mem)
+KPEEK 0810b0d0 = 08125860  (/dev/mem)
+KPEEK 0810b0d4 = 08125f68  (/dev/mem)
+KPEEK 0810b0d8 = 08123bec  (/dev/mem)
+KPEEK 0810b0dc = 08120928  (/dev/mem)
+KPEEK 0810b0e0 = 00000000  (/dev/mem)
+KPEEK 0810b0e4 = 00000000  (/dev/mem)
+KPEEK 0810b0e8 = 00000000  (/dev/mem)
+KPEEK 0810b0ec = 00000000  (/dev/mem)
+KPEEK 0810b0f0 = 00000000  (/dev/mem)
+KPEEK 0810b0f4 = 00000000  (/dev/mem)
+KPEEK 0810b0f8 = 49343021  (/dev/mem)
+KPEEK 0810b0fc = 00000001  (/dev/mem)
+KPEEK 0810b100 = 00000413  (/dev/mem)
+KPEEK 0810b104 = 000003fb  (/dev/mem)
+KPEEK 0810b108 = 00000214  (/dev/mem)
+KPEEK 0810b10c = 00000217  (/dev/mem)
+KPEEK 0810b110 = 00000000  (/dev/mem)
+KPEEK 0810b114 = 00000000  (/dev/mem)
+KPEEK 0810b118 = 00000003  (/dev/mem)
+KPEEK 0810b11c = 0000060c  (/dev/mem)
+KPEEK 0810b120 = 00000001  (/dev/mem)
+KPEEK 0810b124 = 09584140  (/dev/mem)
+KPEEK 0810b128 = 0010005f  (/dev/mem)
+KPEEK 0810b12c = 50544421  (/dev/mem)
+KPEEK 0810b130 = 00000001  (/dev/mem)
+KPEEK 0810b134 = 0000179f  (/dev/mem)
+KPEEK 0810b138 = 0000179f  (/dev/mem)
+KPEEK 0810b13c = 00000102  (/dev/mem)
+KPEEK 0810b140 = 00000000  (/dev/mem)
+KPEEK 0810b144 = 00000000  (/dev/mem)
+KPEEK 0810b148 = 00000000  (/dev/mem)
+KPEEK 0810b14c = 00000000  (/dev/mem)
+KPEEK 0810b150 = 00000000  (/dev/mem)
+KPEEK 0810b154 = 0000179f  (/dev/mem)
+f60:
+KPEEK 0810b164 = 46503630  (/dev/mem)
+KPEEK 0810b168 = 00000008  (/dev/mem)
+KPEEK 0810b16c = 00000008  (/dev/mem)
+KPEEK 0810b170 = 00000000  (/dev/mem)
+KPEEK 0810b174 = 00000000  (/dev/mem)
+KPEEK 0810b178 = 00000008  (/dev/mem)
+KPEEK 0810b17c = 00000000  (/dev/mem)
+KPEEK 0810b180 = 0000000c  (/dev/mem)
+KPEEK 0810b184 = 00000000  (/dev/mem)
+KPEEK 0810b188 = 00000000  (/dev/mem)
+KPEEK 0810b18c = 00000000  (/dev/mem)
+KPEEK 0810b190 = 00000000  (/dev/mem)
+KPEEK 0810b194 = 00000000  (/dev/mem)
+KPEEK 0810b198 = 00000000  (/dev/mem)
+KPEEK 0810b19c = 00000000  (/dev/mem)
+KPEEK 0810b1a0 = 00000000  (/dev/mem)
+BATTERYRUN6-DONE

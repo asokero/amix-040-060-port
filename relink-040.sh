@@ -339,7 +339,8 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          nullvect nullvect_orig kvp_magic kvp_on kvp_n kvp_user_n kvp_super_n kvp_over_n \
          kvp_last_vec kvp_last_pc kvp_vec \
          fpsp060_top fpsp060_image fpsp060_vec11 f60_magic f60_entry_n f60_mem_n f60_real_n \
-         f60_access_n f60_done_n f60_reserved_n f60_last_co; do
+         f60_access_n f60_done_n f60_reserved_n f60_last_co f60_memfail_n f60_arith_n \
+         f60_bsun_n f60_fline_n f60_trap_n f60_trace_n f60_fpudis_n f60_superdone_n; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
@@ -617,24 +618,31 @@ if [ "$FPSP" = "1" ]; then
 
 	# The 060 branch in fpsp_vec11 exists only when its target is actually linked -- see the
 	# comment at Lv11_stock for why an unresolved jmp there is worse than no branch at all.
-	FPSP060="${FPSP060:-0}"
+	FPSP060="${FPSP060:-1}"
 	[ "$FPSP060" = "1" ] && GLUE060="-DHAVE_FPSP060" || GLUE060=""
 
 	echo "[*] FPSP 2/4: assemble AMIX glue prototypes/fpsp_glue040.s${GLUE060:+ (with 060 branch)}"
 	m68k-linux-gnu-gcc -x assembler-with-cpp -m68040 -I"$FPWORK" $GLUE060 \
 		-c "$HERE/prototypes/fpsp_glue040.s" -o "$HERE/build/fpsp_glue040.o"
 
-	# F3 M2a (2026-08-07): Motorola's M68060 FPSP, packaged as ONE unit (128-byte call-out
+	# F3 (2026-08-07/08): Motorola's M68060 FPSP, packaged as ONE unit (128-byte call-out
 	# table + image + AMIX call-outs).  fpsp_vec11 sends cputype == 60 into it instead of
-	# dropping to nullvect.
+	# dropping to nullvect.  Without it a 68060 kills any process that executes an FP
+	# instruction it does not retire in hardware -- and `fmovecr`, which is how compilers load
+	# the constants 0.0 and 1.0, is one of them, so `x = 1.0;` was enough.
 	#
-	# DEFAULT IS OFF WHILE M2b IS UNFINISHED.  M2a proved the wiring -- vector 11 reaches the
-	# package -- and then panicked: KERNEL FAULT vector 0x6 at fpsp060_image+0x1fb6, which
-	# disassembles as DATA, i.e. control flow left the rails.  The leading cause is in our own
-	# stubs (the _060_real_* exits jmp to nullvect, which expects a RAW exception frame at (sp),
-	# not the package's frame).  Until M2b lands, an FPSP060=1 build is knowingly unbootable on
-	# a 68060 and must not be handed to hardware.  See 060-F3-FPSP-PLAN-260807.md.
-	#     FPSP060=1 sh relink-040.sh    <- opt in, emulator only
+	# DEFAULT IS ON since M2b (2026-08-08).  M2a's default-off was because its call-outs all
+	# declined and the first trapping instruction panicked the kernel; M2b implements them.
+	# Emulator acceptance, both CPU configs, one image (68040/68060-260807-09):
+	#     060  fp060probe 7/7 bit-exact (0 ulp), f60 entry 4 / mem 4 / done 4, real 0
+	#          fputest060 fork completes -- it used to die before its first printf
+	#          battery 11/11
+	#     040  fp060probe 7/7 bit-exact via the 040 package, every f60 counter still 0
+	#          battery 11/11
+	# HARDWARE ACCEPTANCE (M5) IS STILL OWED.  Escape hatch, one variable:
+	#     FPSP060=0 sh relink-040.sh              <- 060 back on the old SIGSYS path
+	#     FPSP060_VARIANT=pfpsp sh ...            <- D2 control: partial package, measured to
+	#                                                fail all four (real_fline x4, done 0)
 	FPSP060_OBJ=""
 	if [ "$FPSP060" = "1" ]; then
 		echo "[*] FPSP 2b/4: 68060 package build/fpsp060_pkg.o"

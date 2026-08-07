@@ -107,13 +107,23 @@ build_one pfpsp "$HERE/build/pfpsp060.o" "006c20"
 # ONE assembly unit.  Concatenated rather than linked: the SysV4 assembler has no .incbin,
 # and the table entries are symbol differences, which are only link-time constants inside a
 # single unit.  Adjacency is then true by construction, not by linker input order.
+#
+# D2 (full vs partial) is decided by MEASUREMENT, not by reading module lists, so the variant
+# is a variable:  FPSP060_VARIANT=pfpsp sh build-fpsp060.sh  builds the partial package into
+# exactly the same wrapper.  The two entry-point tables are byte-identical (M1), so the only
+# way to tell them apart is to run fp060probe against each.
 # ---------------------------------------------------------------------------
+VARIANT="${FPSP060_VARIANT:-fpsp}"
+case "$VARIANT" in
+fpsp|pfpsp) ;;
+*) echo "[FAIL] FPSP060_VARIANT must be fpsp or pfpsp, got '$VARIANT'"; exit 1 ;;
+esac
 PKGSRC="$HERE/build/fpsp060_pkg.s"
 PKGOBJ="$HERE/build/fpsp060_pkg.o"
 
 echo
-echo "[*] M2a: concatenate head + image + glue -> $(basename "$PKGSRC")"
-cat "$HERE/prototypes/fpsp060_head.s" "$SP/fpsp.S" "$HERE/prototypes/fpsp060_glue.s" > "$PKGSRC"
+echo "[*] M2a: concatenate head + $VARIANT image + glue -> $(basename "$PKGSRC")"
+cat "$HERE/prototypes/fpsp060_head.s" "$SP/$VARIANT.S" "$HERE/prototypes/fpsp060_glue.s" > "$PKGSRC"
 m68k-linux-gnu-gcc -x assembler-with-cpp -m68060 -c "$PKGSRC" -o "$PKGOBJ"
 
 TOP=$(m68k-linux-gnu-nm "$PKGOBJ" | awk '$3=="fpsp060_top"{print $1}')
