@@ -83,8 +83,28 @@ verify)
 		echo "B2RT   /b2dt survives, so the write phase does NOT need repeating."
 		exit 3
 	fi
-	WROTE_MIN=`sed -n 's/.*up \([0-9]*\) min.*/\1/p' $DIR/EXPECT`
-	NOW_MIN=`uptime | sed -n 's/.*up \([0-9]*\) min.*/\1/p'`
+	# `uptime` prints THREE forms: "up 39 mins" below an hour, "up  1:15" above it, and
+	# "up 2 days,  3:45" above a day.  The original guard understood only the first, so above
+	# an hour WROTE_MIN came out EMPTY and the -n test skipped the guard silently: it failed
+	# OPEN, the opposite of what its own comment promises.  Found and worked around by hand in
+	# REALHW-260806-06-ACCEPTANCE.md (defect 1); fixed here 2026-08-09.
+	#
+	# The leading clock ("  6:04pm") also contains H:MM, so the H:MM pattern is anchored after
+	# "up" -- matching the clock instead would compare wall times and call every run a reboot.
+	up_minutes() {
+		_hh=`echo "$1" | sed -n 's/.*up  *\([0-9][0-9]*\):\([0-9][0-9]\).*/\1/p'`
+		_mm=`echo "$1" | sed -n 's/.*up  *\([0-9][0-9]*\):\([0-9][0-9]\).*/\2/p'`
+		if [ -n "$_hh" ]; then expr $_hh \* 60 + $_mm; return; fi
+		_d=`echo "$1" | sed -n 's/.*up  *\([0-9][0-9]*\) day.*/\1/p'`
+		if [ -n "$_d" ]; then expr $_d \* 1440; return; fi
+		echo "$1" | sed -n 's/.*up  *\([0-9][0-9]*\) *min.*/\1/p'
+	}
+	WROTE_MIN=`up_minutes "\`cat $DIR/EXPECT\`"`
+	NOW_MIN=`up_minutes "\`uptime\`"`
+	# Still fails open if BOTH are unparseable, but that is now a genuinely unknown format
+	# rather than the ordinary case of a machine that has been up an hour.
+	[ -z "$WROTE_MIN" ] && echo "B2RT WARN: could not parse the writer's uptime -- guard skipped"
+	[ -z "$NOW_MIN" ] && echo "B2RT WARN: could not parse the current uptime -- guard skipped"
 	if [ -n "$WROTE_MIN" ] && [ -n "$NOW_MIN" ] && [ "$NOW_MIN" -gt "$WROTE_MIN" ]; then
 		echo "B2RT ABORT: uptime went UP ($WROTE_MIN -> $NOW_MIN min): no reboot happened."
 		echo "B2RT   This would only show the page cache still holds the data."
