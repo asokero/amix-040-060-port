@@ -13,6 +13,12 @@ differs from the emulator-accepted `-09` in exactly two bytes, both build-id dig
 `fp060probe` returns on hardware is identical to the emulator's, and Motorola's own
 unimplemented-instruction suite — which could not be made to pass under Amiberry — passes here.
 
+**And F3's founding question is answered (§8):** xv now loads and displays a JPEG under X11, and
+wolf3d gets through its menus to the level load. Their SIGSYS *was* the missing FPSP. wolf3d still
+dies there, but of a 64-bit integer multiply the F2 vector-61 handler was scoped not to cover —
+named to the instruction word by the kernel's own instrumentation, and not a floating-point fault
+at all.
+
 ## 0. Which image, and why we believe it is that image
 
 The package variant could not be taken on faith: the D2 control experiment (M2b §5) built the
@@ -252,9 +258,14 @@ was made afterwards, between reboots:
 
 Verified against all six shapes (including the two that broke the original) before landing.
 
-## 8. Attribution: wolf3d and xv
+## 8. Attribution: wolf3d and xv — ANSWERED
 
-Deferred to the RTG kernel — wolf3d and xv can only be exercised there.
+Run on `unix-040-rtg-f3` (`68060-260809-01`), because wolf3d and xv can only be exercised there.
+
+**Verdict, up front:** xv's SIGSYS **was** the missing FPSP and xv now works. wolf3d's was too —
+it now gets through the menus, where it used to die — but it does not survive: it dies later at
+**vector 61**, an unimplemented *integer* instruction, which is F2's package and not F3's. The
+FPSP was entered 632 times by wolf3d alone and declined **nothing**.
 
 **The RTG image on disk was stale and would have measured the wrong kernel.**
 `build/unix-040-rtg` (2026-08-07 00:37) predates the M2b base (12:55 the same day) and carries
@@ -306,6 +317,90 @@ Read `f60_magic` @`08114190` = `46503630` first, then, for each program:
 The third and fourth rows are the ones worth the trip: either would move the cause somewhere this
 campaign has not looked, and both are distinguishable in a single run.
 
+### The measurement: three phases, one program each
+
+The first pass ran both programs before any counter was read, so the totals were joint. They were
+then re-run one at a time, with a counter read between each — including **X11 started on its own**,
+so that xv's figure could not inherit the X server's work.
+
+Baseline `B0` (after the joint first pass): f60 `entry 878 / mem 968 / done 878`, `kvp_vec[11] 0`,
+`kvp_vec[61] 1`, ISP `entry 345189 / ok 345188`, `unsupported 1`.
+
+| Δ | wolf3d alone | X11 startup alone | xv alone |
+|---|---|---|---|
+| `f60_entry_n` | **+632** | **0** | **+84** |
+| `f60_mem_n` | +722 | 0 | +84 |
+| `f60_done_n` | **+632** | 0 | **+84** |
+| `f60_real_n` / `access` / `memfail` / `arith` | 0 | 0 | 0 |
+| `kvp_vec[11]` | **0** | 0 | **0** |
+| `kvp_vec[61]` | **+1** | 0 | 0 |
+| `isp61_entry_n` | +47434 | 0 | 0 |
+| `isp61_ok_n` | +47433 | 0 | 0 |
+| `isp61_unsupported_n` | **+1** | 0 | 0 |
+
+Each block is internally consistent, which is why it is believable: for wolf3d, Δ`entry` 47434 =
+Δ`ok` 47433 + Δ`unsupported` 1, and Δ`ok` = Δ`mulu` 45106 + Δ`muls` 2327.
+
+xv was additionally measured across its whole lifetime, because the first attempt left the image
+on screen: **startup + load + display = 84, idling with the image displayed = 0 over 20 s, exit =
+0.** So 84 is xv's complete figure, not a partial one.
+
+### What each number settles
+
+* **xv — attribution confirmed.** It needs the FPSP 84 times to open one JPEG, and every one was
+  served. Before F3 the *first* of those 84 would have killed it; xv could not have worked at all.
+  This is the M0 question, answered.
+* **wolf3d — the FPSP is exonerated by counter, not by inference.** 632 entries, 632 completions,
+  zero exits of any class, and `kvp_vec[11]` never left 0: not one FP instruction reached
+  `nullvect`. The FPSP covered everything wolf3d asked of it.
+* **wolf3d's remaining death is F2's, and it is named exactly.** Console: `u_trap WARNING: SIGKILL
+  ... because of vector 0xF4, pc=0x8000995A` (0xF4 = 61 × 4 = vector 61, unimplemented integer).
+  The kernel's own ISP instrumentation agrees to the bit and goes further:
+
+  ```
+  isp61_unsupported_n  1 -> 2      exactly one declined instruction
+  isp61_last_pc        8000995a    identical to the console's pc
+  isp61_last_insn      4c2e2c01
+  ```
+
+  `4c2e2c01` decodes as **`muls.l (d16,%a6),%d1:%d2`** — signed 64-bit multiply, operand from the
+  stack frame. `isp61_last_insn` is a `copyin` of the faulting PC *in the running process*, so it
+  identifies the instruction better than any disassembly of a file could. (The NAS copy of the
+  binary is the same size but holds zeros at that address, so it is a different build and could
+  not corroborate — the kernel's own reading is the stronger source anyway.)
+
+  The cause is in our own source, `prototypes/isp61_060.s:83`:
+
+  ```
+  	cmpiw	&0x4c3c,%a5@	| opword: long multiply, immediate source, ONLY
+  	bnew	Lisp_unsup	|   (excludes ... every register/memory source form)
+  ```
+
+  F2 deliberately scoped itself to opword `0x4C3C`, the **immediate**-source form the compiler
+  emits for division by a constant — ISSUE-34's trigger. wolf3d's `0x4C2E` is the same multiply
+  with a **memory** source, explicitly outside that subset. The extension needed is small and now
+  precisely specified, and it has a ready-made regression test: wolf3d dies at the same PC on the
+  same instruction on every run, so the fix is verifiable to the instruction.
+* **X11 on the RTG driver uses neither package.** Every counter was byte-identical across a full X
+  server and window-manager startup: no FPSP entry, no ISP entry, no trap of any kind. Never
+  measured before, and it is what makes xv's 84 attributable to xv.
+
+### A pre-registration that failed, recorded rather than rounded away
+
+Before phase 3 this document predicted xv's delta would be **246**, reasoning that `B0`'s 878 =
+wolf3d (632) + xv, with X measured at 0. The measured value was **84**, leaving **162 entries
+unaccounted for**.
+
+wolf3d's own figure is not in doubt — it crashed at the identical PC on the identical instruction
+both times, so it reached the same point — and xv's whole lifetime is now measured at 84 including
+exit, so teardown does not explain it either. The likely explanation is that the first xv run did
+more: a different image, or more interaction with it. That is cheap to test (re-run xv on the same
+image; 84 again means image-dependence is confirmed) but it was not chased here.
+
+**It changes none of the conclusions above, which rest on the per-program deltas rather than on
+their sum.** It is recorded because a prediction registered in advance is worth nothing if a miss
+is quietly dropped.
+
 ## Status after this run
 
 * **`68060-260807-11` is the hardware baseline**, replacing `68060-260806-06`. Everything `-06`
@@ -320,7 +415,13 @@ campaign has not looked, and both are distinguishable in a single run.
     `Unimplemented <ea>`.
   * **M4** — IEEE vectors 48–54. `ftest060 enabled` shows they fire on hardware and bypass the
     package entirely; `f60_arith_n` has still never moved.
-  * **Attribution (§8)** — wolf3d and xv, deferred to `unix-040-rtg-f3`.
+* **F3's founding question is closed (§8).** xv's SIGSYS was the missing FPSP; xv works. wolf3d's
+  was too, and it now reaches the level load — where it dies of something else entirely.
+* **New, and it belongs to F2 rather than F3:** the vector-61 handler declines
+  `muls.l (d16,%a6),%d1:%d2`. `prototypes/isp61_060.s:83` accepts only opword `0x4C3C`
+  (immediate source); wolf3d's `0x4C2E` takes its operand from memory. Small, precisely specified,
+  and wolf3d is its regression test — it fails at the same PC on the same instruction every run.
+  ISSUE-34's family, one form wider than F2 scoped for.
   * `_060_real_fpu_disabled` remains implemented but unexercised: `f60_fpudis_n` is 0 here too. If
     it ever moves, something is turning the FPU off behind our back and that is to be investigated,
     not tolerated.
