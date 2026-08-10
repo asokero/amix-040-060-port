@@ -1,0 +1,121 @@
+F3 M3 -- vectors 55 and 60 wired to the 68060 FPSP: verification, 2026-08-10
+============================================================================
+
+Kernel: 68040/68060-260810-02, one image, both emulator CPUs and real silicon.
+Built by:  sh relink-040.sh          (FPSP060 defaults to 1)
+Reloc validation: TOTAL complaints: 0
+textsize 0xf264c
+
+WHAT M3 IS
+----------
+Two more package entries, in the shape vector 11 has used since M2b:
+
+  vector 55 -> fpsp060_top+128+0x38  _060_fpsp_unsupp   unimplemented DATA TYPE
+  vector 60 -> fpsp060_top+128+0x40  _060_fpsp_effadd   unimplemented EFFECTIVE ADDRESS
+
+Both leave through the call-outs M2b already provides, so this milestone is wiring and not
+new mechanism -- which is exactly why it could be deferred until something measured needed it.
+
+WHAT NEEDED IT
+--------------
+Motorola's own suite named vector 60 on hardware in M5: `ftest060 main` died at its FIRST
+sub-test with `Unimplemented <ea>`, console `vector 0xF0, pc=0x80000CAC` (the kernel prints the
+vector OFFSET, 60 x 4).  Disassembled, that PC is `fmulx #-2.0,%fp0` -- a 64-bit multiply of an
+extended-precision IMMEDIATE.  REALHW-260807-11-ACCEPTANCE.md section 4b.
+
+Vector 55 had a 68040 branch since 2026-07-24 (the Xsvga X server was seen dying of SIGILL on a
+denormal); the 68060 fell through to nullvect until now.
+
+CHECKED BEFORE WIRING
+---------------------
+* M68Kvec[55], [60] and [61] all point at nullvect in the STOCK kernel -- read out of
+  .rela.text at 0x1454 / 0x1468 / 0x146c rather than assumed.
+* The package entry table really has the entries at the documented offsets.  Disassembled at
+  fpsp060_top+128:  +0x30 bra.l -> fline, +0x38 -> unsupp (= image+0x668, matching the plan's
+  static read), +0x40 -> effadd.  Each is an 8-byte slot holding a 6-byte bra.l.
+
+A DEFECT THIS CHANGE EXPOSED, AND IT WOULD HAVE SHIPPED SILENTLY
+-----------------------------------------------------------------
+The first build aborted the ISP step:
+
+    ABORT: M68Kvec[60] is fpsp_vec60, expected nullvect -- refusing to touch 61
+
+patch_isp_vec61.py uses vector 60 as a LANDMARK -- "a cheap independent check that we are
+looking at the vector table and not at something that merely lives at the right offset".  That
+was correct until M3 legitimately retargeted 60, and because the FPSP vectors are patched
+BEFORE the ISP, the landmark fired and **vector 61 went unpatched**.  That kernel would have
+carried the 2026-08-09 muls.l fix and never reached it: wolf3d would have died again, and the
+failure would have looked like the fix regressing.
+
+Fixed by making the landmark the SET of values this build system can legitimately place there
+(nullvect or fpsp_vec60) rather than a single value.  A random location holds neither symbol,
+so the check keeps its entire purpose.  The check was not removed.
+
+Final vector table, audited from the BUILT image rather than from the script's output:
+
+  [11] fpsp_vec11   [48] fpsp_vec48   [49] nullvect   [50] nullvect   (49/50 by design)
+  [51..55] fpsp_vec51..55             [60] fpsp_vec60 <- new          [61] isp61_vec
+
+1. HARDWARE, 68060-260810-02 -- the verdict, and only silicon can give it
+--------------------------------------------------------------------------
+The emulator cannot render a verdict on ftest at all: its FPU cannot hold DEF_FPREGS' extended
+NaN, which every sub-test loads first (ftunimp0 proved that, 2026-08-08).
+
+  Testing 68060 FPSP started:
+  	Unimplemented <ea>...passed              <- vector 60
+  	Unimplemented data type/format...passed  <- vector 55
+  	Non-maskable overflow...  DIED by signal 8
+
+Yesterday this same group died at the FIRST sub-test with signal 9.  Counters:
+
+  f60_effadd_n   0 -> 9      vector 60 entered nine times
+  f60_unsupp_n   0 -> 3      vector 55 entered three times
+  f60_entry_n    0 -> 12     = 9 + 3, so every entry was one of the two
+  f60_done_n     0 -> 12     == entry: all twelve completed normally
+  f60_real_n / access_n / memfail_n   0     no exit of any class
+  f60_last_co    12 = _060_fpsp_done
+  kvp_vec[60]    0           nothing fell through to nullvect
+
+Regressions on the same boot: fp060probe bad=0, ftest060 unimp died=0, isp61ea bad=0.
+
+2. THE NEXT WALL, named by the test itself
+-------------------------------------------
+`Non-maskable overflow` dies with signal 8 = SIGFPE, and **f60_arith_n is still 0** -- the
+package's arithmetic exit never ran.  The overflow went straight to vector 53 and out through
+nullvect, bypassing the package entirely.  That is M4 (IEEE vectors 48-54), the same finding
+`ftest060 enabled` produced from the other direction in M5, now located precisely.
+
+So M3 gives M4 a ready first test case exactly as M5 gave M3 one.
+
+3. Emulated 68060
+------------------
+  ftest060 main runs to completion, died=0 (it died by signal 9 before M3)
+  f60_effadd_n 1, f60_unsupp_n 0, entry 1 = done 1, real 0, kvp_vec[60] 0
+  fp060probe bad=0, ftest060 unimp died=0, isp61ea bad=0
+  battery 31 PASS / 0 FAIL
+
+Recorded honestly: the four sub-tests report "failed" here, which is the NaN limitation and not
+M3 -- the same way `unimp` reported "1 failed" until hardware.  And **vector 55 was never
+exercised on the emulator** (f60_unsupp_n stayed 0 even though the data-type sub-test ran), so
+the emulator tested one of the two vectors M3 wires.  Hardware exercised both.
+
+4. Emulated 68040 -- the control
+---------------------------------
+Same image, same binaries:
+
+  ftest060 main runs, fp060probe bad=0, isp61ea bad=0
+  EVERY f60_* counter 0 and EVERY isp61_* counter 0 -- only the two magics are non-zero
+  battery 31 PASS / 0 FAIL, and both blocks STILL all-zero afterwards
+
+The 68040 enters neither the 060 package nor the ISP even once, so the cputype gates hold
+across all the new vectors -- proven by counter, not by reading the gate.  The same binary
+returns the same seven fp060probe values through the 68040 package, which is also an
+independent check on the 060 emulation: two entirely different execution paths, one answer.
+
+5. Files
+---------
+prototypes/fpsp060_glue.s      fpsp060_vec55 / fpsp060_vec60 + f60_unsupp_n / f60_effadd_n
+prototypes/fpsp_glue040.s      fpsp_vec55 made three-way; fpsp_vec60 added (68060-only)
+prototypes/patch_fpsp_vectors.py   vector 60 added to the retarget table
+prototypes/patch_isp_vec61.py      landmark widened to a set (see above)
+test-tools/batteryrun9.sh      re-addressed for textsize 0xf264c; f60 block read as 18 longs

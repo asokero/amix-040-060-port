@@ -105,6 +105,47 @@ fpsp060_vec11:
 	jmp	fpsp060_top+128+0x30	| _060_fpsp_fline
 
 | ============================================================================
+| M3 (2026-08-10): the other two package entries.  Identical shape to vector 11 -- the raw
+| frame stays untouched on (sp), supervisor CACR goes in first, and the package leaves through
+| the SAME call-outs M2b already provides (_060_fpsp_done, the _060_real_* family).  So this
+| milestone is wiring, not new mechanism, which is why it could be deferred until something
+| measured needed it.
+|
+| WHAT NEEDED IT.  Motorola's own suite named vector 60 on hardware: `ftest060 main` died with
+| `Unimplemented <ea>` and the console printed `vector 0xF0, pc=0x80000CAC` (the kernel prints
+| the vector OFFSET, 60 x 4).  Disassembled, that PC is
+|     fmulx #-2.0,%fp0      -- a 64-bit multiply of an extended-precision IMMEDIATE
+| i.e. an addressing mode the 68060 does not implement.  REALHW-260807-11-ACCEPTANCE.md 4b.
+|
+| Vector 55 is unimplemented DATA TYPE: denormals and packed decimal.  The 68040 side has been
+| hooked since 2026-07-24, when the Xsvga X server was seen dying of SIGILL on exactly this
+| (fpsp_glue040.s).  The 060 fell through to nullvect until now.
+|
+| Both bump f60_entry_n as well as their own counter, so the invariant that has been the most
+| useful thing in this unit -- entry == done + the real_* exits -- keeps holding across all
+| three entry points, while the per-vector counters still say WHICH one ran.
+| ============================================================================
+	.globl	fpsp060_vec55
+fpsp060_vec55:
+	movel	%d0,%sp@-		| temp save d0 (as vector 11: touch nothing else)
+	movel	sup_cacr,%d0
+	.word	0x4e7b,0x0002		| movec %d0,%cacr  (kernel cache mode)
+	addql	#1,f60_entry_n
+	addql	#1,f60_unsupp_n
+	movel	%sp@+,%d0		| restore d0; SP exactly as the CPU left it
+	jmp	fpsp060_top+128+0x38	| _060_fpsp_unsupp
+
+	.globl	fpsp060_vec60
+fpsp060_vec60:
+	movel	%d0,%sp@-
+	movel	sup_cacr,%d0
+	.word	0x4e7b,0x0002		| movec %d0,%cacr
+	addql	#1,f60_entry_n
+	addql	#1,f60_effadd_n
+	movel	%sp@+,%d0
+	jmp	fpsp060_top+128+0x40	| _060_fpsp_effadd
+
+| ============================================================================
 | _060_fpsp_done -- the package emulated the instruction, advanced the PC in the frame and
 | restored the user register and FP state.  This is NOT an exception: entering nullvect here
 | would call u_trap for an event that no longer exists.
@@ -538,4 +579,12 @@ f60_fpudis_n:
 	.globl	f60_superdone_n
 f60_superdone_n:
 	.long	0			| completions whose origin was supervisor mode
+| M3 (2026-08-10) appended at the END so every address already published for this block --
+| batteryrun6/7/8.sh read "f60_magic .. f60_superdone_n, 16 longs" -- keeps its offset.
+	.globl	f60_unsupp_n
+f60_unsupp_n:
+	.long	0			| vector 55 entries: unimplemented DATA TYPE
+	.globl	f60_effadd_n
+f60_effadd_n:
+	.long	0			| vector 60 entries: unimplemented EFFECTIVE ADDRESS
 	.balign	4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

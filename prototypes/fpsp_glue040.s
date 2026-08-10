@@ -90,7 +90,48 @@ name:					;\
 	FPSP_VEC(fpsp_vec52, fpsp_operr)	| FP operand error
 	FPSP_VEC(fpsp_vec53, fpsp_ovfl)		| FP overflow
 	FPSP_VEC(fpsp_vec54, fpsp_snan)		| FP signaling NaN
-	FPSP_VEC(fpsp_vec55, fpsp_unsupp)	| FP unimplemented DATA TYPE
+
+| ============================================================================
+| F3 M3 (2026-08-10): vectors 55 and 60 need a THREE-way stub, so they leave the macro.
+|
+| 55 (unimplemented DATA TYPE) already had a 68040 branch; the 68060 fell through to nullvect.
+| 60 (unimplemented EFFECTIVE ADDRESS) is a 68060-only vector -- on the 68040 that slot is
+| unassigned and nothing should ever arrive there, so its 040 branch is nullvect by design and
+| not by omission.  Verified before wiring: M68Kvec[55], [60] and [61] all point at nullvect in
+| the stock kernel (readelf .rela.text, 0x1454 / 0x1468 / 0x146c).
+|
+| Both guards are load-bearing for the same reason vector 11's is: relink-040.sh defines
+| HAVE_FPSP060 only when build/fpsp060_pkg.o is actually linked, and a jmp to a symbol that
+| does not exist is worse than the signal it replaces.
+| ============================================================================
+	.globl	fpsp_vec55
+fpsp_vec55:
+	cmpl	#40,cputype
+	bne	Lv55_not040
+	movel	%d0,%sp@-
+	movel	sup_cacr,%d0
+	.word	0x4e7b,0x0002
+	movel	%sp@+,%d0
+	jmp	fpsp_unsupp		| 040: the 68040 package (denormal / packed operand)
+Lv55_not040:
+#ifdef HAVE_FPSP060
+	cmpl	#60,cputype
+	bne	Lv55_null
+	jmp	fpsp060_vec55		| 060: _060_fpsp_unsupp
+#endif
+Lv55_null:
+	jmp	nullvect
+
+	.globl	fpsp_vec60
+fpsp_vec60:
+#ifdef HAVE_FPSP060
+	cmpl	#60,cputype
+	bne	Lv60_null
+	jmp	fpsp060_vec60		| 060: _060_fpsp_effadd
+#endif
+Lv60_null:
+	jmp	nullvect		| 68040: vector 60 is unassigned, so this is unreachable
+					| there -- and stays counted by kvp_vec if it ever is not
 
 | ============================================================================
 | fpsp_done -- the package fully emulated the instruction (PC already advanced

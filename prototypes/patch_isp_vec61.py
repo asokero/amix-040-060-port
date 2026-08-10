@@ -68,12 +68,20 @@ def main():
     if VEC60_OFF not in slots:
         raise SystemExit("ABORT: no .rela.text reloc at M68Kvec[60] 0x%x -- table moved?" % VEC60_OFF)
 
-    # vector 60 must still be nullvect: a cheap independent check that we are looking at
-    # the vector table and not at something that merely lives at the right offset.
+    # Vector 60 is a LANDMARK: a cheap independent check that we are looking at the real
+    # vector table and not at something that merely lives at the right offset.  A random
+    # location holds neither of these symbols, so the check keeps its whole point.
+    #
+    # It used to demand nullvect, and that was correct until F3 M3 (2026-08-10) legitimately
+    # retargeted vector 60 to fpsp_vec60 -- patch_fpsp_vectors.py runs BEFORE this script, so
+    # the landmark fired and vector 61 silently went unpatched, which would have shipped a
+    # kernel with the muls.l fix present but never reached.  The landmark is therefore the SET
+    # of values this build system can legitimately have put there, not a single value.
+    VEC60_OK = (OLD_TARGET, "fpsp_vec60")
     r60 = u32(b, slots[VEC60_OFF] + 4)
-    if symname(r60 >> 8) != OLD_TARGET:
-        raise SystemExit("ABORT: M68Kvec[60] is %s, expected %s -- refusing to touch 61"
-                         % (symname(r60 >> 8), OLD_TARGET))
+    if symname(r60 >> 8) not in VEC60_OK:
+        raise SystemExit("ABORT: M68Kvec[60] is %s, expected one of %s -- refusing to touch 61"
+                         % (symname(r60 >> 8), " / ".join(VEC60_OK)))
 
     hit = slots[VEC61_OFF]
     rinfo = u32(b, hit + 4); cur = rinfo >> 8; typ = rinfo & 0xff

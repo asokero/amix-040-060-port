@@ -35,6 +35,12 @@ VECTORS = [
     (53, "fpsp_vec53", "ovfl   -- overflow"),
     (54, "fpsp_vec54", "snan   -- signaling NaN"),
     (55, "fpsp_vec55", "unsupp -- unimplemented DATA TYPE"),
+    # F3 M3 (2026-08-10).  Vector 60 is a 68060-only vector: on the 68040 the slot is
+    # unassigned and nothing arrives there, so fpsp_vec60's 040 branch is nullvect by design.
+    # Motorola's own ftest060 named this vector on hardware -- `Unimplemented <ea>`, console
+    # `vector 0xF0` (the kernel prints the vector OFFSET) at an fmul.x with an extended
+    # immediate.  See REALHW-260807-11-ACCEPTANCE.md section 4b.
+    (60, "fpsp_vec60", "effadd -- unimplemented EFFECTIVE ADDRESS (68060 only)"),
 ]
 
 
