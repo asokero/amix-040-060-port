@@ -132,11 +132,56 @@ Same image, 12/12 compiled in the guest, 31 PASS, 0 FAIL -- identical to the 680
 So the 040 path is untouched by measurement and not merely by construction, on both the unit
 test and the full battery.
 
-4. Not run
+5. HARDWARE -- accepted 2026-08-10 on 68060-260809-03 (unix-040-rtg-isp)
+------------------------------------------------------------------------
+Amiga 3000, 68060 @ 66 MHz, solon.  isp61_magic read at 08113C50 before anything else was
+believed; every counter 0 at boot; kvp_vec[11] and kvp_vec[61] both 0.
+
+5a. isp61ea on real silicon -- IDENTICAL to the emulator, number for number
+
+  7/7 OK, bad=0, and the same seven bit patterns as emu-060 and emu-040
+  postinc  declined (status 0x9)
+  entry 8 = ok 7 + unsupported 1     mulu 2 + muls 5 = 7
+  mem_n 4   reg_n 1                  last_pc 80000608   last_insn 4c180c01
+  ifetch / nonuser / badframe / trace / opfetch_fail   all 0
+
+d16neg passed on hardware: the sign-extension is right on real silicon, and that is the case
+wolf3d could never have exposed.
+
+5b. wolf3d -- THE END-TO-END CASE.  It gets past the level load.
+
+The game started and the level loaded -- the exact point at which it died on 2026-08-09.
+Counter deltas across that one run (baseline = the isp61ea state above):
+
+  isp61_entry_n         8 -> 315496     (+315488)
+  isp61_ok_n            7 -> 315495     (+315488)
+  isp61_mulu_n          2 ->  84207     ( +84205)
+  isp61_muls_n          5 -> 231288     (+231283)
+  isp61_mem_n           4 -> 228438     (+228434)   <- THE FORM THAT USED TO DECLINE
+  isp61_reg_n           1 ->      1     (      0)   wolf3d's single Dn site was not reached
+  isp61_unsupported_n   1 ->      1     (      0)   <- PRE-REGISTERED, and it held
+  isp61_opfetch_fail_n  0 ->      0
+  kvp_vec[61]           1 ->      1     (      0)   the same single event as unsupported_n
+  kvp_vec[11]           0 ->      0     no FP instruction reached nullvect either
+
+The accounting closes: ok = mulu + muls exactly, entry = ok + unsupported exactly, and by
+source imm 87054 + mem 228434 + reg 0 = 315488.
+
+READ THE 1s CAREFULLY.  isp61_unsupported_n and kvp_vec[61] are both 1, and both are
+isp61ea's own deliberate (a0)+ case from 5a -- not wolf3d.  wolf3d declined NOTHING and
+reached nullvect NOT ONCE.  A later reader seeing "unsupported = 1" must not mistake it for
+a failure; that is why the baseline is written out above.
+
+228438 memory-operand multiplies served in a single session, on the encoding that was
+declining one day earlier.  The census said 20 static sites; this is what 20 sites cost in a
+render loop.
+
+6. Not run
 -----------
-* Hardware.  wolf3d is the end-to-end case and it is deterministic to the instruction --
-  same PC, same encoding on both runs -- so the acceptance is: wolf3d gets past the level
-  load, isp61_mem_n moves, isp61_unsupported_n stays 0.
+* A full battery on the RTG kernel.  The change lives in the base, and the base passed 11/11
+  on both emulated CPUs; the RTG image adds only the two graphics drivers, which this change
+  does not touch and which have their own hardware history.  Worth doing if the RTG kernel
+  ever becomes a baseline in its own right.
 
 5. Files
 ---------
