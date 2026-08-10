@@ -176,12 +176,47 @@ a failure; that is why the baseline is written out above.
 declining one day earlier.  The census said 20 static sites; this is what 20 sites cost in a
 render loop.
 
-6. Not run
------------
-* A full battery on the RTG kernel.  The change lives in the base, and the base passed 11/11
-  on both emulated CPUs; the RTG image adds only the two graphics drivers, which this change
-  does not touch and which have their own hardware history.  Worth doing if the RTG kernel
-  ever becomes a baseline in its own right.
+5c. Battery on the RTG kernel, on hardware -- 11/11
+
+Run because the RTG image had never carried a battery of its own, on hardware or anywhere.
+Sources compiled in the guest by /usr/ccs/bin/cc: 12/12, no errors.  batteryrun8.sh is
+re-addressed for textsize 0xfb608 -- the two graphics drivers move EVERY anchor, so not one
+of batteryrun7.sh's addresses applies.
+
+  31 PASS, 0 FAIL
+  PROCTEST, FPUTEST Test A, MLOCKTEST, MSYNC-OK, MINCORE, BIGARGV, PTRACEPOKE,
+  BMAPTEST, DEVMAPTEST, EXECTEST, MUL64, PROTFAULT a+b
+
+Counters after it, and this is the point of reading them:
+
+  the ENTIRE isp61 block is byte-identical to the post-wolf3d state -- entry 315496,
+  mem 228438, unsupported 1, last_insn 4c3c1400.  The battery caused ZERO vector-61 traps.
+
+That confirms on hardware what the emulator already showed: the battery is a regression net,
+not an instrument for this unit.  Even MUL64-RESULT PASS costs nothing here.  isp61ea is the
+instrument; without it this change could have shipped with nothing under test having run.
+
+  f60 after the battery: entry 634 = done 634, real 0, last_co 12.
+  634 = wolf3d's 632 + the battery's own fputest Test A (2).  wolf3d's 632 FPSP entries
+  reproduce EXACTLY the figure measured on the previous RTG build (68060-260809-01) in
+  REALHW-260807-11-ACCEPTANCE.md section 8 -- two different kernel builds, same count.
+
+6. Two defects in the harness, found and fixed here rather than glossed
+-----------------------------------------------------------------------
+batteryrun8.sh was generated from batteryrun6.sh by substitution, and substitution is exactly
+where stale addresses survive:
+
+  * ONE ANCHOR DID NOT SUBSTITUTE.  `cputype` still pointed at the -11 image's 0810AB48.  It
+    would not have crashed -- it would have printed an unrelated kernel variable labelled
+    "cputype".  Caught by auditing every address in the script against nm, which is now the
+    rule for a re-addressed runner: check all of them, not the ones you edited.
+  * THE LOG NAME AND SENTINEL DID NOT SUBSTITUTE either (battery6 -> battery8 never matched,
+    because the source said battery6).  The run wrote to /tmp/battery6.log and printed
+    BATTERYRUN6-DONE.  The "verify the log file appears" rule fired correctly and, followed
+    properly, showed the run was HEALTHY under a different name -- not failed.  Both the wrong
+    conclusions available at that moment were wrong in opposite directions.
+  * The AFTER isp61 read was silently dropped for the same reason, so 5c's after-state was
+    read live instead.  Both are fixed in the committed batteryrun8.sh.
 
 5. Files
 ---------
