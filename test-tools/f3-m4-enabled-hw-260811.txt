@@ -1,0 +1,97 @@
+F3 M4 -- the five unmeasured enabled classes, measured on silicon, 2026-08-11
+=============================================================================
+
+Kernel: 68060-260810-03, real hardware (solon).  Instrument: test-tools/fpenab060.{c,_asm.s},
+built from the recipes in amix-kernel-analysis/vm-map/F3-M4-UNMEASURED-CLASSES-AUDIT.md.
+Every FPCR enable, input operand, instruction and expected FP0/FPSR/FPIAR is Motorola's, taken
+from dist/ftest.s via that audit.  Nothing was chosen to make a case pass.
+
+WHY A NEW INSTRUMENT.  Motorola's `enabled` group runs all six sub-tests in ONE process, and on
+a signal-delivering Unix the first SIGFPE kills it -- so five of six classes had never executed.
+One child per class, the fp060probe / ftunimp0 / isp61ea shape.
+
+RESULT: THE MAP IS NOW PROVEN FOR ALL SIX CLASSES; FIVE OF SIX ARE BIT-EXACT
+-----------------------------------------------------------------------------
+```
+  OPERR v52  OK  fp0 ffff0000:00000000:00000000  fpsr 01002080  fpiar 800005b0  sigs 1
+  OVFL  v53  OK  fp0 7fff0000:00000000:00000000  fpsr 02001048  fpiar 80000614  sigs 1
+  UNFL  v51  OK  fp0 00000000:40000000:00000000  fpsr 00000800  fpiar 80000678  sigs 1
+  DZ    v50  FP0  got 7fff0000:ffffffff:ffffffff  want 40000000:80000000:00000000
+             FPSR got 00000000  want 02000410
+             FPIAR got 00000000  want 800006da
+  INEX  v49  OK  fp0 50000000:80000000:00000000  fpsr 00000208  fpiar 8000073c  sigs 1
+  SNAN  v54  OK  fp0 7fff0000:80000000:00000001  fpsr 01004080  fpiar 8000079e  sigs 1
+```
+
+FPIAR is compared against the instruction's own exported label, not against a constant typed a
+second time.  Counter deltas across the run, and this is the part that settles attribution:
+
+```
+  f60_vec49_n .. f60_vec54_n   +1 each      all six vectors reached the package
+  f60_snan_n .. f60_inex_n     +1 each      all six left through their OWN class call-out
+  f60_entry_n +6   f60_real_n +6   f60_arith_n +6   f60_done_n +0
+```
+
+So for every class the vector→entry→call-out chain is correct, DZ included.  The M4 map -- a
+permutation, verified statically 9 of 9 from relocations -- is now confirmed by measurement.
+
+THE ONE ANOMALY: DZ's user-visible state, and a hypothesis that explains all three symptoms
+--------------------------------------------------------------------------------------------
+Using the audit's three-way split:
+
+1. wrong vector or wrong package class  -> **ruled out**: f60_vec50_n +1 and f60_dz_n +1,
+   correctly paired, exactly like the five that pass.
+2. right class, wrong package destination/FPSR/FPIAR
+3. right package state, and the SIGNAL path changed it
+
+The evidence points hard at 3, and specifically at an FP state RESET rather than a restore:
+
+```
+  FP0   = 7fff0000:ffffffff:ffffffff     a NaN with every mantissa bit set
+  FPSR  = 0
+  FPIAR = 0
+```
+
+**That triple is the 68k FPU's reset state.** An `frestore` of a null/reset frame format leaves
+exactly that: FP data registers NaN, FPSR and FPIAR zero.  It is not a plausible arithmetic
+result of `fdiv.b #0` on +2 (which is ±Inf), and FPSR/FPIAR being *both* zero is not something
+an arithmetic path produces -- it is what initialisation produces.
+
+So the leading hypothesis is: **on the DZ path the interrupted FP context is reset instead of
+restored across the signal return.**  Stated as a hypothesis, not a conclusion: what is
+measured is the triple above plus correct counters; the mechanism is inferred.
+
+Why only DZ, when five other classes take the same shared exit body and the same signal route,
+is the question that has to be answered next.  Note `_060_fpsp_dz` is the one entry the audit
+records as *adjusting the operand* before exiting (`fpsp.s:3749-3813`), which makes the state it
+leaves behind different from the others by construction.
+
+This is exactly the defect class this instrument was built to find, and it is localised on the
+first run: not "DZ is broken" but "DZ's kernel wiring is right and its post-state is reset".
+
+A DEFECT IN THE INSTRUMENT, FOUND THE SAME WAY
+------------------------------------------------
+The first run reported SNAN as taking no signal at all (`f60_vec54_n` +0).  That was this test's
+fault, not the kernel's: the audit's table does not give SNAN's fixture (it is the control), so
+the input was chosen here -- and `7fff0000:40000000:00000000` sets mantissa bit 62, the QUIET
+bit.  A quiet NaN does not signal.  Corrected to `7fff0000:80000000:00000001` (integer bit set,
+quiet bit clear, one mantissa bit set so it is a NaN and not an Inf), SNAN passes bit-exactly.
+
+Recorded because it is the same lesson twice over: a case that measures nothing looks identical
+to a case that passes, unless a counter says the code was entered.
+
+AN ASSEMBLY TRAP WORTH KEEPING
+--------------------------------
+FPIAR is updated by every FP instruction EXCEPT moves to/from the control registers.  So
+`fmovem.x %fp0,mem` -- the obvious way to capture the result -- overwrites the FPIAR being
+measured.  The snapshot therefore reads FPIAR and FPSR first through control-register moves,
+and FP0 only after.  Reversed, every class would report a wrong FPIAR and it would look like a
+kernel defect.
+
+STATUS
+-------
+* M4's vector map: proven on silicon for all six classes.
+* The shared exit body and `0x6000`: confirmed correct by the audit from three independent
+  implementations, and now consistent with five bit-exact classes.
+* OPERR, OVFL, UNFL, INEX, SNAN: closed.
+* **DZ: open.**  Kernel wiring correct, user-visible post-state is the FPU reset state.
