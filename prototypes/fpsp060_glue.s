@@ -282,40 +282,23 @@ Lco_fparith:
 | Memory-to-memory ON PURPOSE: this runs before nullvect saves the user's registers, so
 | touching a data register here would corrupt what the signal handler and the resumed user code
 | see.  That would have been a real bug introduced by a diagnostic.
-| *** A NULL FRAME MUST NOT BE RESTORED ***  (measured and fixed 2026-08-11)
-| DZ came back from a returning SIGFPE handler with FP0 = an all-ones NaN and FPSR = FPIAR = 0
-| -- the FPU RESET state -- while the five other classes returned Motorola's exact post-state
-| through this same body.  Instrumenting the frame's first word named it in one run:
+| Motorola's three-instruction prelude, restored verbatim 2026-08-11 after a guard added here
+| turned out to be a bug of its own.  Between 2026-08-10 and -11 this read
 |
-|     OPERR 0x7fff    INEX 0x4000    DZ 0x0000
+|     tstw %sp@ ; beq -> discard the frame without restoring it
 |
-| DZ's fsave yields a NULL frame, because _fpsp_dz has already done `frestore FP_SRC(%a6)` and
-| left nothing pending (fpsp.s:3810).  And `frestore` of a null frame is the DOCUMENTED way to
-| RESET the FPU -- so this sequence was resetting the user's floating-point state.  The
-| `movew #0x6000,2(sp)` was a second bug in the same case: writing a status word into a frame
-| that is not there.
+| on the theory that DZ's fsave produced a NULL frame.  It does not.  Codex's audit
+| (vm-map/FPU-LAZY-CONTRACT-AUDIT.md, 64b55cf) showed the discriminator on a 68060 is at
+| frame+2, not at word zero: word zero is the extended SOURCE OPERAND's exponent.  The three
+| words measured here -- OPERR 0x7fff, INEX 0x4000, DZ 0x0000 -- are exactly the exponents of
+| -Inf, +2 and 0, i.e. of this test's own operands.  So the guard classified a ZERO SOURCE
+| OPERAND as a null frame and threw the state away, which is a second bug rather than a fix.
 |
-| Motorola's skeleton does not guard this because its sample exits with `rte` immediately; the
-| 68040 package DOES guard it (`cmpib #65,%sp@` before touching the frame).  The right shape was
-| already in this tree, in the other file.
-|
-| The frame SIZE was measured rather than assumed, because popping the wrong amount would
-| corrupt the exception frame nullvect is about to read -- a far worse bug, and one that would
-| hit all six classes instead of one.  sp either side of the fsave: 0x40001fb8 -> 0x40001fac on
-| BOTH a null and a non-null frame, i.e. always 12 bytes.  Lco_bsun's own `addl #0xc,%sp`
-| independently agrees.
-|
-| CCR only, and no data register: this runs before nullvect saves the user's registers.
-	tstw	%sp@			| null frame -> nothing is pending
-	beqw	Lco_nullfr
-	movew	#0x6000,%sp@(0x2)	| clear the pending exception in its status word
+| The correct sequence for all six IEEE exits, DZ included, is Motorola's: FSAVE, write the
+| idle status 0x6000 at offset TWO, FRESTORE.  A word-zero null guard has no place in it.
+	movew	%sp@,f60_last_fsave+2	| diagnostic only: word zero = the source exponent
+	movew	#0x6000,%sp@(0x2)	| idle status at offset TWO -- the real discriminator
 	frestore %sp@+			| balanced: sp is the raw frame again
-	jmp	nullvect		| vector 48-54 -> u_trap -> stock SIGFPE policy
-Lco_nullfr:
-	addql	#1,f60_nullfr_n		| how often the "nothing pending" case is taken
-	lea	%sp@(12),%sp		| discard the null frame -- 12 bytes, measured above.
-					| addql cannot encode 12, and lea touches no data register.
-	jmp	nullvect		| FPU left exactly as the package left it
 
 | ---- BSUN (vector 48 via an FP conditional on an unordered compare) ----------------------
 | Its prelude differs: clear the NaN condition in the FPSR and DISCARD the saved state rather
@@ -730,7 +713,4 @@ f60_vec54_n:
 f60_last_fsave:
 	.long	0			| format word of the fsave frame Lco_fparith saw, in the
 					| low half.  Diagnostic for the DZ reset (2026-08-11).
-	.globl	f60_nullfr_n
-f60_nullfr_n:
-	.long	0			| arithmetic exits whose fsave frame was NULL (the DZ case)
 	.balign	4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

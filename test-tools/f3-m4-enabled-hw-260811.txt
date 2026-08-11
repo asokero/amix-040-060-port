@@ -213,3 +213,51 @@ before another instruction is written.
 STATUS UNCHANGED FROM ROUND 2: five of six enabled classes are bit-exact on silicon; DZ returns
 the FPU reset state because stock `fpu_save` reads a null frame as "no live FP state", which the
 68060 FPSP invalidates.  The cause is known exactly.  The fix is not.
+
+===============================================================================
+CORRECTION (2026-08-11, after Codex's FPU-LAZY-CONTRACT-AUDIT.md, 64b55cf)
+===============================================================================
+**The null-frame diagnosis above is WRONG, and so was the guard written from it.**
+
+On a 68060 the frame discriminator is at **frame + 2**, not at word zero.  Word zero belongs to
+the extended SOURCE OPERAND and carries its exponent.  Motorola writes the exception/idle status
+at `2 + FP_SRC` and NetBSD tests byte two for exactly this reason.
+
+The three words measured in ROUND 1 are therefore not null/non-null tags at all -- they are the
+exponents of this test's own operands, and they predict themselves:
+
+    OPERR   source -Inf        exponent 0x7fff     measured 0x7fff
+    INEX    source +2          exponent 0x4000     measured 0x4000
+    DZ      source  0          exponent 0x0000     measured 0x0000
+
+So DZ never demonstrated a null frame.  The five passing classes passed because their operand's
+exponent happened to be non-zero, which is not a property anyone should be relying on.
+
+CONSEQUENCES, each of which invalidates something asserted earlier in this file:
+
+* `f60_nullfr_n` counted "word zero was zero", not "the frame was null".
+* The 7100 figure from `f60_nullsave_n` was collected through the same wrong predicate and
+  cannot support the cost estimate that was built on it.  It must be remeasured at byte two.
+* **The guard added in ROUND 2 was itself a defect**: `tstw %sp@` classifies a ZERO SOURCE
+  OPERAND as a null frame and discards the state.  It has been removed and Motorola's original
+  three-instruction prelude -- FSAVE, write 0x6000 at offset TWO, FRESTORE -- is restored for
+  all six IEEE exits including DZ (68040-260811-06).
+* The same offset error exists in stock `fpu_save` (0x144) and `fpu_restore` (0x15e), which
+  test byte zero.  That, not a null frame, is why DZ's registers are dropped: for a zero source
+  operand byte zero reads as zero and the stock code concludes there is no live FP state.
+
+WHAT SURVIVES.  The symptom, the counters, the class attribution and the conclusion that the
+cause is in stock context handling rather than in the M4 wiring all stand.  What was wrong was
+the mechanism -- and it was wrong because a byte offset was assumed rather than read from the
+060's frame definition.
+
+Also settled by the audit, and worth recording as a negative: bit 0 of `u.u_fpu.ustate` is
+**UFPRWRT**, meaning a programmatically modified register image.  It is not a lazy-FPU ownership
+flag, its only confirmed setter is `procxmt` / old ptrace at 0x47fac, and the /proc path
+`prsetfpregs` does NOT set it -- a separate latent gap.  All 22 `_fpsp_done` exits were walked
+and no genuine null-frame-with-live-registers state was found statically.
+
+THE CORRECTIVE UNIT is now specified rather than guessed: a cputype-gated 68060 state path that
+tests `fp+0x72` in `fpu_save`/`fpu_restore`, keeps the inherited UFPRWRT semantics and ordering,
+uses a full 12-byte 68060 reset frame in `fpu_setup`, and leaves the 68040 byte-identical.  Not
+started.
