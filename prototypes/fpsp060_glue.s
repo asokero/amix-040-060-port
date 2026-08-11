@@ -146,6 +146,53 @@ fpsp060_vec60:
 	jmp	fpsp060_top+128+0x40	| _060_fpsp_effadd
 
 | ============================================================================
+| M4 (2026-08-10): the six IEEE arithmetic vectors.
+|
+| THE MAP IS A PERMUTATION AND THAT IS THE WHOLE RISK HERE.  The package's entry slots run in
+| Motorola's order -- snan, operr, ovfl, unfl, dz, inex -- while the CPU's vectors run
+| 48 bsun, 49 inex, 50 dz, 51 unfl, 52 operr, 53 ovfl, 54 snan.  Neither sequence is ascending
+| in the other, so a slid-by-one mistake routes an overflow into the underflow handler: it does
+| not crash, it returns a plausible wrong number.  The table below is therefore written out
+| vector by vector, and every line is PROVED at run time by its own counter (see Lco_snan..).
+|
+| Cross-checked two ways before wiring: the call-out table in fpsp060_head.s runs
+| bsun, snan, operr, ovfl, unfl, dz, inex -- the same order minus bsun -- and M1 decoded the
+| entry slots from the linked .text.  The nine slots were re-decoded for M4 and every one holds
+| a real bra.l to a distinct target, so none of the six is a reserved stub.
+|
+| VECTOR 48 (BSUN) IS DELIBERATELY NOT HERE.  The package exports a call-out for it
+| (_060_real_bsun, and Lco_bsun implements it) but NO entry: the OS never dispatches vector 48
+| into the package on the 68060.  That is the mirror image of the 68040, which hooks 48 and
+| leaves 49/50 alone -- and the 040's stated reason, "the package exports no entry for them",
+| is exactly the reason applied here, just landing on different vectors.  Neither map was
+| copied from the other; the same rule was applied to each package separately.
+| ============================================================================
+| TWO counters per class, and they are not redundant.  The ENTRY counter below says "this
+| vector reached the package"; the EXIT counter (f60_snan_n .. f60_inex_n, bumped in Lco_*)
+| says "the package signalled this class".  They can legitimately differ: if the package FIXES
+| an exception up and completes through _060_fpsp_done, an entry counter moves and no exit
+| counter does -- and with only exit counters that run would look like nothing happened at all.
+| Since M4 is the first time any of this code has ever executed, the pair is the difference
+| between knowing and assuming.
+#define F60VEC(name, off, vctr)		\
+	.globl	name			;\
+name:					;\
+	movel	%d0,%sp@-		;\
+	movel	sup_cacr,%d0		;\
+	.word	0x4e7b,0x0002		;\
+	addql	#1,f60_entry_n		;\
+	addql	#1,vctr			;\
+	movel	%sp@+,%d0		;\
+	jmp	fpsp060_top+128+off
+
+	F60VEC(fpsp060_vec49, 0x28, f60_vec49_n)	| 49 inexact       -> _060_fpsp_inex
+	F60VEC(fpsp060_vec50, 0x20, f60_vec50_n)	| 50 divide-by-0   -> _060_fpsp_dz
+	F60VEC(fpsp060_vec51, 0x18, f60_vec51_n)	| 51 underflow     -> _060_fpsp_unfl
+	F60VEC(fpsp060_vec52, 0x08, f60_vec52_n)	| 52 operand error -> _060_fpsp_operr
+	F60VEC(fpsp060_vec53, 0x10, f60_vec53_n)	| 53 overflow      -> _060_fpsp_ovfl
+	F60VEC(fpsp060_vec54, 0x00, f60_vec54_n)	| 54 signaling NaN -> _060_fpsp_snan
+
+| ============================================================================
 | _060_fpsp_done -- the package emulated the instruction, advanced the PC in the frame and
 | restored the user register and FP state.  This is NOT an exception: entering nullvect here
 | would call u_trap for an event that no longer exists.
@@ -194,23 +241,34 @@ Lcd_super:
 | (LV+44) and FP_DST (LV+56) are 12 apart -- which is what makes Motorola's `addl #0xc,%sp` in
 | the BSUN sequence below balance.
 | ============================================================================
+| M4 (2026-08-10) gives each class its OWN counter as well as f60_last_co.  f60_last_co keeps
+| only the LAST class, and `ftest060 enabled` runs all six sub-tests in one process -- so with
+| last_co alone a vector wired to the WRONG entry would still move f60_arith_n, still leave a
+| plausible last_co, and look correct.  The six counters are what make the vector -> entry map
+| provable in a single run instead of merely asserted from a table.
 Lco_snan:
 	movel	#1,f60_last_co
+	addql	#1,f60_snan_n
 	braw	Lco_fparith
 Lco_operr:
 	movel	#2,f60_last_co
+	addql	#1,f60_operr_n
 	braw	Lco_fparith
 Lco_ovfl:
 	movel	#3,f60_last_co
+	addql	#1,f60_ovfl_n
 	braw	Lco_fparith
 Lco_unfl:
 	movel	#4,f60_last_co
+	addql	#1,f60_unfl_n
 	braw	Lco_fparith
 Lco_dz:
 	movel	#5,f60_last_co
+	addql	#1,f60_dz_n
 	braw	Lco_fparith
 Lco_inex:
 	movel	#6,f60_last_co
+	addql	#1,f60_inex_n
 Lco_fparith:
 	addql	#1,f60_real_n
 	addql	#1,f60_arith_n
@@ -587,4 +645,45 @@ f60_unsupp_n:
 	.globl	f60_effadd_n
 f60_effadd_n:
 	.long	0			| vector 60 entries: unimplemented EFFECTIVE ADDRESS
+| M4 (2026-08-10): one counter per IEEE class, so `ftest060 enabled` can prove that each
+| vector reached the entry it was wired to.  Appended at the end for the same reason as M3's.
+	.globl	f60_snan_n
+f60_snan_n:
+	.long	0			| _060_real_snan   (vector 54)
+	.globl	f60_operr_n
+f60_operr_n:
+	.long	0			| _060_real_operr  (vector 52)
+	.globl	f60_ovfl_n
+f60_ovfl_n:
+	.long	0			| _060_real_ovfl   (vector 53)
+	.globl	f60_unfl_n
+f60_unfl_n:
+	.long	0			| _060_real_unfl   (vector 51)
+	.globl	f60_dz_n
+f60_dz_n:
+	.long	0			| _060_real_dz     (vector 50)
+	.globl	f60_inex_n
+f60_inex_n:
+	.long	0			| _060_real_inex   (vector 49)
+| Per-VECTOR entry counters.  See the F60VEC comment: these say the vector reached the package,
+| the six above say the package signalled that class, and an exception the package repairs
+| silently moves only these.
+	.globl	f60_vec49_n
+f60_vec49_n:
+	.long	0
+	.globl	f60_vec50_n
+f60_vec50_n:
+	.long	0
+	.globl	f60_vec51_n
+f60_vec51_n:
+	.long	0
+	.globl	f60_vec52_n
+f60_vec52_n:
+	.long	0
+	.globl	f60_vec53_n
+f60_vec53_n:
+	.long	0
+	.globl	f60_vec54_n
+f60_vec54_n:
+	.long	0
 	.balign	4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

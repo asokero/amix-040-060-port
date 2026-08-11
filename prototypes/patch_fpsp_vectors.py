@@ -29,7 +29,13 @@ R_68K_32 = 1
 # vector -> glue dispatch entry (each gates on cputype==40, then jumps to the
 # Motorola package entry with the raw exception frame untouched on (sp))
 VECTORS = [
-    (48, "fpsp_vec48", "bsun   -- branch/set on unordered"),
+    (48, "fpsp_vec48", "bsun   -- branch/set on unordered (68040 only: the 060 package"
+                       " exports a call-out for bsun but no ENTRY)"),
+    # F3 M4 (2026-08-10).  49 and 50 are 68060-only, the mirror of 48: the 68040 completes
+    # both in hardware and its package exports no entry, but the 68060 package DOES export
+    # dz and inex entries.  Same rule, different vectors -- see fpsp_glue040.s.
+    (49, "fpsp_vec49", "inex   -- inexact result (68060 only)"),
+    (50, "fpsp_vec50", "dz     -- divide by zero (68060 only)"),
     (51, "fpsp_vec51", "unfl   -- underflow"),
     (52, "fpsp_vec52", "operr  -- operand error"),
     (53, "fpsp_vec53", "ovfl   -- overflow"),
@@ -108,15 +114,13 @@ def main():
               % (vec, off, OLD_TARGET, target, what))
         done += 1
 
-    # 49/50 must be left alone -- assert we did not disturb them
-    for vec in (49, 50):
-        hit = at.get(base + vec*4)
-        if hit is None:
-            raise SystemExit("ABORT: no .rela.text reloc at M68Kvec[%d]" % vec)
-        if symname(u32(b, hit + 4) >> 8) != OLD_TARGET:
-            raise SystemExit("ABORT: M68Kvec[%d] unexpectedly not %s" % (vec, OLD_TARGET))
-    print("  [ok]   M68Kvec[49] inexact / M68Kvec[50] div-by-zero left on %s (by design)"
-          % OLD_TARGET)
+    # Until M4 (2026-08-10) this asserted that 49 and 50 were still nullvect "by design".
+    # They are now retargeted, so that assertion is gone rather than left printing a sentence
+    # that is no longer true.  The policy it recorded still exists -- retarget a vector only
+    # if the package for that CPU exports an entry -- it simply lands on different vectors for
+    # each package, and every vector it covers is in VECTORS above and verified there.
+    print("  [ok]   policy: a vector is retargeted only where the package exports an entry")
+    print("         68040: 48 + 51-55.   68060: 49-55 and 60.   bsun has no 060 entry.")
 
     open(KERNEL, "wb").write(b)
     print("FPSP arithmetic vectors installed (%d retargeted) -> %s" % (done, KERNEL))

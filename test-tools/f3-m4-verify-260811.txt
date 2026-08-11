@@ -1,0 +1,149 @@
+F3 M4 -- IEEE vectors 49-54 wired to the 68060 FPSP: verification, 2026-08-11
+=============================================================================
+
+Kernel: 68040/68060-260810-03, one image, both emulator CPUs and real silicon.
+Reloc validation: TOTAL complaints: 0.  textsize 0xf27b4.
+
+HEADLINE: Motorola's `ftest060 main` now passes ALL FOUR of its sub-tests on real silicon.
+Together with `unimp` (passing since M5) that is both of the vendor groups that CAN pass on a
+Unix system -- see section 3 for why `enabled` cannot, in Motorola's own words.
+
+THE MAP IS A PERMUTATION, AND THAT WAS THE WHOLE RISK
+------------------------------------------------------
+The package's entry slots run in Motorola's order; the CPU's vectors do not:
+
+  entry +0x00 snan  -> vector 54      entry +0x18 unfl  -> vector 51
+  entry +0x08 operr -> vector 52      entry +0x20 dz    -> vector 50
+  entry +0x10 ovfl  -> vector 53      entry +0x28 inex  -> vector 49
+
+A slid-by-one mistake routes an overflow into the underflow handler: it does not crash, it
+returns a plausible wrong number.  So the map was established three ways before any run:
+
+* the call-out table in fpsp060_head.s runs bsun, snan, operr, ovfl, unfl, dz, inex -- the
+  same order minus bsun, which corroborates the entry order;
+* all nine entry slots were re-decoded from the linked .text and each holds a real bra.l to a
+  distinct target, so none is a reserved stub;
+* every trampoline's jmp was read back out of its RELOCATION in the built object and compared
+  against the intended offset.  9 of 9 correct, checked mechanically rather than by eye.
+
+VECTOR POLICY: THE SAME RULE, LANDING DIFFERENTLY ON EACH CPU
+--------------------------------------------------------------
+The rule has always been: retarget a vector only where that CPU's package exports an entry.
+
+  68040:  48 hooked,  49 50 NOT,  51-55 hooked
+  68060:  48 NOT,     49 50 yes,  51-55 hooked,  60 hooked
+
+The 68060 package exports dz and inex entries (the 040's does not) and exports NO bsun entry
+(the 040's does).  So the two maps differ in three slots and neither was copied from the
+other.  Vector 48 keeps a call-out on the 060 -- Lco_bsun implements _060_real_bsun, which the
+package can raise while emulating -- it simply has no entry to dispatch INTO.
+
+THE METER WAS FIXED BEFORE THE WIRING, AND IT EARNED ITS KEEP IMMEDIATELY
+--------------------------------------------------------------------------
+Before M4 all six arithmetic exits incremented one counter, f60_arith_n.  A vector wired to
+the WRONG entry would have moved it just the same and looked correct.  M4 therefore adds two
+counters per class, and they are not redundant:
+
+  f60_vec49_n .. f60_vec54_n   this VECTOR reached the package
+  f60_snan_n  .. f60_inex_n    the package SIGNALLED this class
+
+They legitimately differ, and section 2 is exactly that case.
+
+1. Emulated 68060 -- M4 is UNEXERCISED here, not passed
+--------------------------------------------------------
+`ftest060 enabled` ran all six sub-tests and exited 0, and **every one of the twelve new
+counters stayed 0**.  Nothing reached the package.
+
+That is unchanged from before M4: M2b recorded the same six "1 failed" lines and the same zero
+counters.  The emulated FPU does not raise enabled FP exceptions at all, so the wiring has
+nothing to catch.  Without the per-class counters this run would have looked like a win --
+test completes, exit 0, regressions green -- which is the precise scenario the meter was fixed
+to prevent, realised on the first run.
+
+The emulator therefore contributes three things to M4 and no more: the kernel boots, the
+regressions still pass (fp060probe bad=0, isp61ea bad=0, ftest060 main died=0 with
+f60_effadd_n moving), and the 040 path stays inert.
+
+2. HARDWARE -- ftest060 main passes completely
+-----------------------------------------------
+	Unimplemented <ea>...passed
+	Unimplemented data type/format...passed
+	Non-maskable overflow...passed
+	Non-maskable underflow...passed
+  child exited 0
+
+Three days, one group:
+  2026-08-09 (pre-M3)   died at sub-test 1, signal 9
+  2026-08-10 (M3)       two passed, died at sub-test 3, signal 8
+  2026-08-11 (M4)       all four passed
+
+Counters across one main run (deltas):
+
+  f60_entry_n   +14 = 3 unsupp + 9 effadd + 1 vec51 + 1 vec53
+  f60_done_n    +14   every entry completed
+  f60_real_n     +0   no exception exit at all
+  f60_unsupp_n   +3   vector 55
+  f60_effadd_n   +9   vector 60
+  f60_vec51_n    +1   vector 51 -- underflow
+  f60_vec53_n    +1   vector 53 -- overflow
+  f60_unfl_n / f60_ovfl_n   +0
+
+**Read those last three lines together.**  Vectors 51 and 53 entered the package and left
+through _060_fpsp_done: the package REPAIRED the non-maskable overflow and underflow and
+returned, rather than signalling.  That is why the two sub-tests now pass.  With only the
+class exit counters, "Non-maskable overflow...passed" would have shown no counter movement at
+all and been indistinguishable from "that vector never fired".  This is the case the
+per-vector entry counters exist for, and it occurred on the first hardware run.
+
+3. HARDWARE -- `enabled`, and why it can never pass here
+---------------------------------------------------------
+	Enabled SNAN...  DIED by signal 8
+
+  f60_vec54_n  0 -> 1     vector 54 reached the package
+  f60_snan_n   0 -> 1     and left through _060_real_snan -- the SAME class
+  f60_entry_n / real_n / arith_n  1 / 1 / 1,  last_co 1 = snan,  done_n 0
+
+So the wiring and the map are proven end to end for this class on silicon: vector 54 ->
+entry +0x00 -> _060_real_snan.
+
+The death is correct.  Motorola's own test.doc, quoted in ftest060.c since M2b:
+
+    "the test expects _real_XXXX() to do nothing except clear the exception and rte.  If a
+     system's _real_XXXX() handler creates an alternate result, the test will print 'failed'
+     but this is acceptable."
+
+A Unix delivers a signal instead of returning, so this group can never pass on AMIX by
+construction.  `ftest060 enabled` is therefore not a pass/fail instrument for us at all -- it
+is an EXCITATION source, useful because it raises the exceptions our counters then attribute.
+
+4. Still unmeasured, and stated plainly
+-----------------------------------------
+Five of the six enabled classes -- operr, ovfl, unfl, dz, inex -- have NOT been exercised.
+The six sub-tests share one child, and the first SIGFPE kills it before the rest run.  Only
+SNAN was measured.
+
+Closing that needs a small dedicated instrument in the shape this project keeps re-deriving
+(fp060probe, ftunimp0, isp61ea): one child per class, each raising exactly one enabled
+exception, with the counters read around each.  Motorola's suite structurally cannot do it
+here, for the reason in section 3.
+
+Recorded as open rather than glossed: M4's wiring is proven for one of six classes on
+hardware, and the remaining five rest on the map having been verified statically.
+
+5. Emulated 68040 -- the control
+----------------------------------
+Same image, same binaries: ftest060 enabled died=0, fp060probe bad=0, isp61ea bad=0, and
+EVERY f60_* counter still 0 -- only the magic is non-zero.  The 68040 enters neither the 060
+package nor the ISP.
+
+This control matters more for M4 than for M3: vectors 49 and 50 now pass through a new stub on
+the 68040 as well (cmpl #60,cputype -> nullvect) instead of going straight to nullvect.  The
+outcome is identical and the counters confirm the 060 branch is never taken.
+
+6. Files
+---------
+prototypes/fpsp060_glue.s        F60VEC macro + six trampolines; twelve new counters
+prototypes/fpsp_glue040.s        FPSP_VEC3 / FPSP_VEC060; vectors 49-54 re-shaped
+prototypes/patch_fpsp_vectors.py vectors 49 and 50 added; the stale "left on nullvect by
+                                 design" message removed rather than left printing a sentence
+                                 that had become false

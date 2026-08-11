@@ -85,11 +85,62 @@ name:					;\
 	jmp	target			;\
 9:	jmp	nullvect
 
-	FPSP_VEC(fpsp_vec48, fpsp_bsun)		| FP branch/set on unordered
-	FPSP_VEC(fpsp_vec51, fpsp_unfl)		| FP underflow
-	FPSP_VEC(fpsp_vec52, fpsp_operr)	| FP operand error
-	FPSP_VEC(fpsp_vec53, fpsp_ovfl)		| FP overflow
-	FPSP_VEC(fpsp_vec54, fpsp_snan)		| FP signaling NaN
+| ============================================================================
+| F3 M4 (2026-08-10): the same five arithmetic vectors now need a 68060 branch, and two
+| vectors the 68040 deliberately leaves alone need a 68060-only stub.
+|
+| The 68040 rule was: retarget a vector only if Motorola's package exports an entry for it.
+| That is why 49 (inexact) and 50 (divide-by-zero) stayed on nullvect -- the 040 completes both
+| in hardware.  The SAME rule applied to the 68060 package lands differently, because that
+| package DOES export dz and inex entries and does NOT export a bsun entry:
+|
+|     68040:  48 hooked,  49 50 not,  51-55 hooked
+|     68060:  48 NOT,     49 50 yes,  51-55 hooked
+|
+| So vector 48 keeps the two-way macro (040 only, 060 falls through to nullvect as before) and
+| 49/50 get a 060-only stub.  Neither map was copied from the other.
+| ============================================================================
+#ifdef HAVE_FPSP060
+#define FPSP_VEC3(name, target, t060)	\
+	.globl	name			;\
+name:					;\
+	cmpl	#40,cputype		;\
+	bne	8f			;\
+	movel	%d0,%sp@-		;\
+	movel	sup_cacr,%d0		;\
+	.word	0x4e7b,0x0002		;\
+	movel	%sp@+,%d0		;\
+	jmp	target			;\
+8:	cmpl	#60,cputype		;\
+	bne	9f			;\
+	jmp	t060			;\
+9:	jmp	nullvect
+
+#define FPSP_VEC060(name, t060)		\
+	.globl	name			;\
+name:					;\
+	cmpl	#60,cputype		;\
+	bne	9f			;\
+	jmp	t060			;\
+9:	jmp	nullvect
+#else
+| No 060 package linked: every 060 branch must not exist, or it is a jmp to a symbol that is
+| not there.  Same reasoning as vector 11's guard, and the reloc validator enforces it.
+#define FPSP_VEC3(name, target, t060)	FPSP_VEC(name, target)
+#define FPSP_VEC060(name, t060)		\
+	.globl	name			;\
+name:					;\
+	jmp	nullvect
+#endif
+
+	FPSP_VEC(fpsp_vec48, fpsp_bsun)			| 48 bsun: 040 only -- the 060 package
+							|    exports a call-out but no entry
+	FPSP_VEC060(fpsp_vec49, fpsp060_vec49)		| 49 inexact:        060 only
+	FPSP_VEC060(fpsp_vec50, fpsp060_vec50)		| 50 divide-by-zero: 060 only
+	FPSP_VEC3(fpsp_vec51, fpsp_unfl,  fpsp060_vec51)	| 51 underflow
+	FPSP_VEC3(fpsp_vec52, fpsp_operr, fpsp060_vec52)	| 52 operand error
+	FPSP_VEC3(fpsp_vec53, fpsp_ovfl,  fpsp060_vec53)	| 53 overflow
+	FPSP_VEC3(fpsp_vec54, fpsp_snan,  fpsp060_vec54)	| 54 signaling NaN
 
 | ============================================================================
 | F3 M3 (2026-08-10): vectors 55 and 60 need a THREE-way stub, so they leave the macro.
