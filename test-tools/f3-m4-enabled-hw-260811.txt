@@ -95,3 +95,70 @@ STATUS
   implementations, and now consistent with five bit-exact classes.
 * OPERR, OVFL, UNFL, INEX, SNAN: closed.
 * **DZ: open.**  Kernel wiring correct, user-visible post-state is the FPU reset state.
+
+===============================================================================
+DZ SOLVED: it is a STOCK assumption that the 68060 FPSP invalidates
+===============================================================================
+Added 2026-08-11 after two measurement rounds on hardware.
+
+ROUND 1 -- the frame.  `Lco_fparith` was instrumented to record the first word of its own
+fsave frame.  One run named it:
+
+    OPERR 0x7fff        INEX 0x4000        DZ 0x0000
+
+DZ's frame is NULL, because `_fpsp_dz` has already done `frestore FP_SRC(%a6)` before branching
+to the call-out (fpsp.s:3810) and leaves nothing pending.  The frame SIZE was measured too, not
+assumed -- sp either side of the fsave, 12 bytes for both the null and the non-null case, which
+`Lco_bsun`'s own `addl #0xc,%sp` independently agrees with.
+
+ROUND 2 -- the fix that did NOT work, and what that proved.  `Lco_fparith` now skips the
+clear-and-restore when the frame is null (`tstw %sp@` / `lea %sp@(12),%sp`), because
+`frestore` of a null frame is the documented way to RESET the FPU, and because
+`movew #0x6000,2(sp)` was writing into a frame that is not there.
+
+  f60_nullfr_n  0 -> 1     the branch ran, exactly once, on DZ
+  DZ still returned FP0 = all-ones NaN, FPSR = 0, FPIAR = 0
+
+**So our exit was not what reset the FPU.**  Stated plainly because the hypothesis was written
+down before the run: it was wrong.
+
+THE ACTUAL MECHANISM, found by disassembling the kernel's own FP context code:
+
+```
+fpu_save   0x132:  fsave  %a0@(112)          the kernel's OWN fsave
+           0x144:  tstb   %a0@(112)          test the frame's first byte
+           0x148:  beqs   no_fpu1            ZERO -> do NOT save fp0-7/fpcr/fpsr/fpiar
+           0x14a:  fmovemx %fp0-%fp7,%a0@(4)
+
+fpu_restore 0x15e: tstb   %a0@(112)
+            0x162: beqs   null_state         ZERO -> frestore the null frame = RESET the FPU,
+                                             and restore no registers
+```
+
+Called from `savecontext` / `restorecontext` (0x58f8a / 0x58ea4), which is the path `sendsig`
+uses.  So the full chain is:
+
+1. `_fpsp_dz` restores FP_SRC and leaves nothing pending;
+2. our exit reaches `nullvect` -> u_trap -> savecontext -> `fpu_save`;
+3. `fpu_save`'s own fsave yields a NULL frame, so **fp0-7 are never saved**;
+4. the handler returns -> restorecontext -> `fpu_restore` -> `null_state` -> `frestore` of a
+   null frame **resets the FPU** and restores nothing;
+5. the snapshot sees the reset state.
+
+**This is stock AMIX logic and it is not our bug.**  Using a null fsave frame as "this process
+has no live FP state" is a sound optimisation on an 030 or an 040: there, a null frame really
+does mean the FPU was not in use.  The 68060 support package breaks that equivalence -- it
+consumes the internal state before handing control to the OS, so a null frame no longer implies
+dead FP registers.  Same species as ISSUE-41: a stock assumption that this port's new
+circumstances invalidate.
+
+WHY THE NULL-FRAME GUARD STAYS ANYWAY.  It fixes nothing observable today, because `fpu_save`
+discards the registers regardless -- but without it our exit resets the FPU *before*
+`fpu_save` runs, so a corrected `fpu_save` would faithfully save reset registers.  The guard is
+a precondition for the real fix, not an alternative to it.  It also removes the second bug in
+that sequence, the status-word write into a frame that does not exist.
+
+STILL OPEN: `fpu_save` / `fpu_restore` must not use frame-null as a proxy for
+"no live FP state" on the 68060.  That is a change to a path every signal and every context
+switch takes, on both CPUs, so it wants the usual treatment: cputype-gated, counted, and
+measured on both emulator CPUs before hardware.  Not started.

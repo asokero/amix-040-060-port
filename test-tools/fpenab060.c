@@ -36,6 +36,7 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <string.h>
 
 extern void fpe_operr();
 extern void fpe_ovfl();
@@ -169,8 +170,14 @@ char **argv;
 
 	printf("fpenab060: one ENABLED IEEE exception per child, Motorola's own fixture values.\n");
 	printf("  the post-state is compared as bit patterns; the parent runs no FP at all.\n\n");
-	for (t = cases; t->name; t++)
+	/* An optional class name runs exactly one case.  Kernel diagnostics like f60_last_fsave
+	   keep only the LAST value, so attributing one to a class means running that class alone
+	   -- the same reason there is one child per class in the first place. */
+	for (t = cases; t->name; t++) {
+		if (argc > 1 && strncmp(t->name, argv[1], strlen(argv[1])) != 0)
+			continue;
 		bad += runone(t);
+	}
 	printf("\nFPENAB060 bad=%d\n", bad);
 	printf("FPENAB060-DONE\n");
 	return bad ? 1 : 0;
