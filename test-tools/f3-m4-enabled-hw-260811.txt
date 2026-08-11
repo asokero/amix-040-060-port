@@ -162,3 +162,54 @@ STILL OPEN: `fpu_save` / `fpu_restore` must not use frame-null as a proxy for
 "no live FP state" on the 68060.  That is a change to a path every signal and every context
 switch takes, on both CPUs, so it wants the usual treatment: cputype-gated, counted, and
 measured on both emulator CPUs before hardware.  Not started.
+
+===============================================================================
+ROUND 3: a fix that made it WORSE, reverted, and what it taught
+===============================================================================
+
+Attempted: override `fpu_save` so that on cputype == 60 a NULL fsave frame still saves fp0-7
+and the control registers, and SET bit 0 of `fpu_ptr@(3)` so that `fpu_restore`'s existing
+`null_state` path would bring them back.  The reasoning was that the stock code already
+contains the "null frame but restore the registers" mechanism, so the fix should reuse it
+rather than add a parallel one.
+
+Built clean (reloc 0), all five callers verified to resolve to the override and none to
+`fpu_save_orig`, instruction encodings byte-identical to stock where they should be.  On
+hardware, kernel 68060-260811-04:
+
+```
+  before the change:  5 of 6 bit-exact, DZ alone wrong
+  after  the change:  FPENAB060 bad=6  -- ALL SIX return the FPU reset state
+```
+
+**The change was reverted immediately.**  The tree and `build/unix-040` are back to stock
+`fpu_save` at 0x132 (68040-260811-05); nothing of this attempt is committed except this record.
+
+WHY IT WAS WRONG.  Bit 0 of `fpu_ptr@(3)` was read backwards.  In stock `fpu_save` the test is
+
+    btst &0,%a0@(3) ; bne -> skip saving entirely
+
+so the bit does not mean "a restore is pending"; it means **"the FPU registers are NOT live,
+the pcb copy is authoritative"** -- a lazy-restore flag whose owner is elsewhere in the kernel.
+Setting it whenever the frame is null told the rest of the kernel the exact opposite of the
+truth, on a path taken constantly: `f60_nullsave_n` reached **7100 during boot alone**, so the
+flag was being set thousands of times per minute while the registers were live.
+
+WHAT THIS COSTS AND WHAT IT BUYS.  It cost one hardware boot and it bought two things.
+
+First, the counter that made the blast radius obvious: 7100 null-frame saves in a boot means
+this is the COMMON case, not an exceptional one -- most processes have no live FP state, and
+"always save on the 060" would be a permanent cost on every context switch, not a rare one.
+That reframes the fix: unconditional saving is not obviously the right answer even if it were
+correct.
+
+Second, and more useful: the flag has an owner and a contract, and neither is understood here.
+Before touching this path again someone has to establish, from the sources, **who sets bit 0 of
+`fpu_ptr`, what invariant it carries, and what the lazy-FP contract between fpu_save,
+fpu_restore, savecontext, restorecontext and setuctxt actually is.**  That is a static-analysis
+question of exactly the shape Codex has answered well twice this week, and it should be asked
+before another instruction is written.
+
+STATUS UNCHANGED FROM ROUND 2: five of six enabled classes are bit-exact on silicon; DZ returns
+the FPU reset state because stock `fpu_save` reads a null frame as "no live FP state", which the
+68060 FPSP invalidates.  The cause is known exactly.  The fix is not.
