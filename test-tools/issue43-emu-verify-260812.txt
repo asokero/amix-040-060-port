@@ -1,0 +1,85 @@
+ISSUE-43 -- the 68060 FP context path, emulator verification on both CPUs, 2026-08-12
+=====================================================================================
+
+Kernel: 68040/68060-260812-01, one image, sha256
+249a54e35374bc677628a7908e9f0483ff125ea7f3f4a432b128a84941ca1fcd, textsize 0xf2910.
+Unit: prototypes/fpu060.s -- cputype-gated fpu_save / fpu_restore / fpu_setup that test the
+68060 frame discriminator at fp+0x72 instead of byte zero.  Specification:
+amix-kernel-analysis/vm-map/FPU-LAZY-CONTRACT-AUDIT.md section D (Codex, 64b55cf).
+
+Counters, 13 contiguous longs at 0x0810AF94, magic first.  Read before anything was believed.
+
+WHAT THIS RUN CAN AND CANNOT DECIDE
+------------------------------------
+It CANNOT decide ISSUE-43.  The emulator raises no enabled IEEE FP exceptions, so the six
+classes fpenab060 exists to measure are UNEXERCISED there -- which looks exactly like failing.
+Registered before the run, and confirmed by two independent readings below.
+
+It CAN decide three things that hardware should not be spent on:
+  1. does the new 060 code run at all, and on which paths;
+  2. is the 040 path untouched;
+  3. does anything regress in ordinary FP or in the boot/context-switch path.
+
+68060 (Amiberry a3000ux060.uae)
+--------------------------------
+```
+  fpc_magic       46504321 "FPC!"      <- read first; without this the rest is noise
+  fpc_save_n         10080             the 060 fpu_save body ran
+  fpc_rest_n          9386             the 060 fpu_restore body ran
+  fpc_setup_n          470             the 060 fpu_setup body ran (boot + exec + signal)
+  fpc_save_wrt_n         0             UFPRWRT early return -- unexercised, see below
+  fpc_rest_wrt_n         0             same
+  fpc_null_n          9229   0x00 null
+  fpc_idle_n           855   0x60 idle
+  fpc_excp_n             0   0xe0 exception  <- zero BECAUSE no enabled exception occurs here
+  fpc_odd_n              0             no frame had any other format byte
+```
+Consistency: null+idle+excp = 10084 vs save_n 10080, and rest_live+rest_null = 9390 vs
+rest_n 9386.  The four-count drift is the counters being read one kpeek at a time on a live
+system, not a discrepancy.
+
+THE NUMBER WORTH KEEPING: 9229 of 10080 saves -- 92 % -- are genuinely null frames.  This is the
+honest remeasurement of the "7100 null saves per boot" figure that ROUND 3 collected through the
+wrong byte-zero predicate and that KNOWN-ISSUES then retracted.  The conclusion it was used for
+survives: on the 060 the null case is the common case, so "always save" would be a permanent
+per-context-switch cost.  The 8 % idle-frame remainder is the traffic this fix preserves and
+stock dropped whenever the operand exponent happened to be zero.
+
+Regressions, same boot:
+```
+  fp060probe       bad=0, 7/7 bit-exact, 0 ulp (fadd fsqrt fintrz fsin fetox flogn fmovecr)
+  fputest060 fork  CHILD 129746 (expect 129746)   PARENT 6871 (expect 6871)
+  f60 block        entry 6  mem 6  done 6  real 0  arith 0  fpudis 0  superdone 0
+  fpenab060        bad=6, "SIGFPE count 0, want 1" on all six -- UNEXERCISED, not failed
+```
+
+68040 (Amiberry a3000ux.uae, SAME image)
+-----------------------------------------
+```
+  fpc_magic       46504321
+  every other fpc_* counter   0        <- audit acceptance gate 1
+  fp060probe      bad=0, 7/7 through the 040 package
+  uname -m        Amiga (Unlimited) 68040-260812-01
+```
+And on the file itself, independent of any counter: the stock bodies at 0x132 (fpu_save +
+fpu_restore, 104 bytes) and 0x19b50 (fpu_setup, 76 bytes) are byte-identical to
+vanilla/stand/unix in the built image.  Two different kinds of evidence for the same claim,
+because "the 040 is untouched" is the claim with the widest blast radius if it is wrong.
+
+BINDING, CHECKED AT LINK TIME
+------------------------------
+relink-040.sh now asserts the three stock entry-byte patterns BEFORE weakening (a hard-coded
+*_orig address is only safe if the body at it is the one the override was written against), and
+after the link asserts both directions.  Relocation census on the linked image:
+
+    fpu_save 5   fpu_restore 3   fpu_setup 3      <- every stock caller, to the override
+    *_orig   1 each                               <- our own 040 tail jumps, and nothing else
+
+This matters because relink does NOT abort on an assembler error: it links the stock body and
+still prints [OK] built.
+
+STILL OWED
+-----------
+* fpenab060 on silicon -- the actual ISSUE-43 verdict.  REALHW-RUNLIST-ISSUE43-260812.md.
+* Audit gate 6: old-ptrace FP-register writes, the only thing that sets UFPRWRT.  No instrument
+  exists; two branches of the new code are unexercised on both CPUs because of it.

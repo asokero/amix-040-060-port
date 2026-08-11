@@ -3907,13 +3907,38 @@ also settles two things this port had wrong or unknown:
    own code. Motorola's original three-instruction prelude (FSAVE, `0x6000` at offset **two**,
    FRESTORE) is restored for all six exits.
 
-### The corrective unit, specified and NOT started
+### The corrective unit — WRITTEN AND EMULATOR-ACCEPTED, hardware verdict owed
 
-1. ✅ Motorola's prelude for all six IEEE exits — done, `c13d3b8`.
-2. 68060 `fpu_save` / `fpu_restore` test **`fp+0x72`**, keeping `UFPRWRT` semantics and the
-   inherited branch ordering.
-3. A complete 12-byte 68060 reset frame in the 68060 `fpu_setup` path.
-4. **The 68040 path stays byte-identical** — this is on every context switch and every signal.
+1. ✅ Motorola's prelude for all six IEEE exits — `c13d3b8`.
+2. ✅ 68060 `fpu_save` / `fpu_restore` test **`fp+0x72`**, `UFPRWRT` semantics and the inherited
+   branch ordering unchanged — `prototypes/fpu060.s`, `8f4e43a`.
+3. ✅ A complete 12-byte 68060 reset frame in the 68060 `fpu_setup` path — same unit.
+4. ✅ **The 68040 path is byte-identical**: `0x132`/`0x158`/`0x19b50` compare equal to vanilla in
+   the built image, and every `fpc_*` counter reads 0 on an emulator 040 boot.
+
+Emulator acceptance, one image `68040/68060-260812-01`, both CPUs (2026-08-12):
+
+```
+  060  fpc_save_n 10080  fpc_rest_n 9386  fpc_setup_n 470   <- the new path really runs
+       fpc_odd_n 0       every post-FSAVE format byte was 0x00, 0x60 or 0xe0
+       fpc_null_n 9229   fpc_idle_n 855   fpc_excp_n 0
+       fp060probe bad=0 (7/7, 0 ulp);  fputest060 fork correct in child and parent
+       f60_fpudis_n 0;  f60 entry/mem/done 6/6/6, real 0
+  040  every fpc_* counter 0;  fp060probe bad=0 through the 040 package
+```
+
+`fpc_null_n`/`fpc_idle_n` is the honest replacement for the retracted "7100 null saves": 92 % of
+060 saves really are null frames, but now measured by byte two instead of by an operand exponent.
+
+**The verdict on DZ itself is owed to hardware and is NOT claimed.** The emulator raises no
+enabled IEEE exceptions at all — `fpenab060` there reports `bad=6` with `SIGFPE count 0` on every
+class, i.e. six unexercised cases, and `fpc_excp_n` stayed 0 for the same reason. Run-list with
+pre-registered expectations and counter addresses: `REALHW-RUNLIST-ISSUE43-260812.md`.
+
+Two branches of the new code are unexercised on both CPUs by construction: `fpu_save`'s `UFPRWRT`
+early return and `fpu_restore`'s null-frame + `UFPRWRT` republish. Their only originating setter
+is old ptrace, and no instrument in this repo writes FP registers through it (audit gate 6). The
+instructions are the inherited ones, so this is a coverage gap, not a suspected defect.
 
 Separate latent gap found by the same audit, not part of this issue: the `/proc` path
 `prsetfpregs` does not set `UFPRWRT` where `procxmt` does.
