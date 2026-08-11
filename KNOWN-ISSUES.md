@@ -3855,3 +3855,65 @@ emulator never sets WB1S valid, so an emulator artifact is a live hypothesis. Th
 where the permission is actually lost (PTE vs segment protection) and whether the replay's
 `DFC = WBxS & 7` buys it a privilege it should not have — either would move the fix out of
 `wb040.s` entirely.
+
+## ⏳ ISSUE-43 (2026-08-11): on the 68060, an enabled FP exception with a ZERO SOURCE OPERAND loses fp0-7 across a signal
+
+**Measured, real hardware, `68060-260810-03` and reproduced on `-05`.** Instrument:
+`test-tools/fpenab060`, one child per IEEE class, Motorola's own fixture values from
+`dist/ftest.s`. Five of the six enabled classes return Motorola's exact post-state bit for bit.
+Divide-by-zero does not:
+
+```
+  DZ v50   FP0   got 7fff0000:ffffffff:ffffffff   want 40000000:80000000:00000000
+           FPSR  got 00000000                     want 02000410
+           FPIAR got 00000000                     want 80000752
+```
+
+i.e. the FPU **reset** state. The kernel counters rule out the M4 wiring immediately:
+`f60_vec50_n` +1 and `f60_dz_n` +1, correctly paired, exactly like the five that pass.
+
+### Root cause — a byte offset, in stock code
+
+On a 68060 the fsave frame's discriminator is at **`frame + 2`**. Word zero belongs to the
+extended **source operand** and carries its exponent. Stock `fpu_save` (`0x144`) and
+`fpu_restore` (`0x15e`) test **byte zero**:
+
+```
+fpu_save    0x144: tstb %a0@(112) ; beq -> do NOT save fp0-7 / fpcr / fpsr / fpiar
+fpu_restore 0x15e: tstb %a0@(112) ; beq -> null_state -> frestore = RESET, restore nothing
+```
+
+So an FP exception whose **source operand is zero** — which is precisely divide-by-zero — reads
+as "this process has no live FP state", and the registers are dropped across the signal. The
+five passing classes pass only because their operand's exponent happens to be non-zero. Nothing
+about DZ is special except its operand.
+
+Confirmed by Codex, `amix-kernel-analysis/vm-map/FPU-LAZY-CONTRACT-AUDIT.md` (`64b55cf`), which
+also settles two things this port had wrong or unknown:
+
+* bit 0 of `u.u_fpu.ustate` is **`UFPRWRT`** — "programmatically modified register image", not a
+  lazy-FPU ownership flag. Only confirmed setter: `procxmt` / old ptrace at `0x47fac`.
+* all 22 `_fpsp_done` exits were walked; **no genuine null-frame-with-live-registers state exists
+  statically**, so this is not reachable from ordinary FP code — it needs an *enabled* exception.
+  That bounds the severity: no silent data loss in normal programs.
+
+### Two fix attempts that FAILED — do not repeat either
+
+1. **`fpu_save` + `UFPRWRT`** (`296e490`): saved the registers on a null frame and set bit 0 so
+   `fpu_restore`'s `null_state` would restore them. Turned 5-of-6 into **0-of-6** on hardware.
+   The bit was read backwards: in `fpu_save` "set" means *skip saving*.
+2. **A word-zero null guard in the FPSP glue** (`c13d3b8`, removed): `tstw %sp@` classifies a
+   zero source operand as a null frame and discards the state — the same offset error, in our
+   own code. Motorola's original three-instruction prelude (FSAVE, `0x6000` at offset **two**,
+   FRESTORE) is restored for all six exits.
+
+### The corrective unit, specified and NOT started
+
+1. ✅ Motorola's prelude for all six IEEE exits — done, `c13d3b8`.
+2. 68060 `fpu_save` / `fpu_restore` test **`fp+0x72`**, keeping `UFPRWRT` semantics and the
+   inherited branch ordering.
+3. A complete 12-byte 68060 reset frame in the 68060 `fpu_setup` path.
+4. **The 68040 path stays byte-identical** — this is on every context switch and every signal.
+
+Separate latent gap found by the same audit, not part of this issue: the `/proc` path
+`prsetfpregs` does not set `UFPRWRT` where `procxmt` does.
