@@ -97,6 +97,15 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/lmul060.s"    -o "$HERE/build/lm
 #                zero elsewhere in libc/ld.so/as/ld.  Everything else declines, counted, to
 #                nullvect.  cputype-gated, so the 040 never enters it.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/isp61_060.s"  -o "$HERE/build/isp61_060.o"
+#   fpu060     = ISSUE-43 (2026-08-12): fpu_save / fpu_restore / fpu_setup for the 68060.
+#                The inherited bodies decide "does this process have live FP state?" from
+#                BYTE ZERO of the FSAVE frame.  That is the format byte on a 68881/040 and
+#                the SOURCE OPERAND's exponent on a 68060, whose discriminator is at frame+2
+#                -- so an enabled FP exception with a zero operand (i.e. divide-by-zero) read
+#                as "no FP state" and lost fp0-7 across the signal, measured on silicon.
+#                cputype-gated: the 040 tail-jumps to the untouched stock bodies, and every
+#                fpc_* counter below must read 0 on an 040 boot.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/fpu060.s"     -o "$HERE/build/fpu060.o"
 #   kvecprobe040 = F3 M0 (2026-08-07): wrap nullvect and count the vector of every exception
 #                that reaches it.  The kernel names a vector only for SIGKILL kills, so a
 #                SIGSYS ("bad system call") cannot currently be attributed -- which is what
@@ -244,6 +253,26 @@ m68k-linux-gnu-objcopy \
 	--globalize-symbol segvn_faultpage \
 	--globalize-symbol krnxmemflt \
 	"$HERE/build/unix-stage1"
+
+# HARD CHECK (2026-08-12, ISSUE-43): fpu060.o replaces the three FP-context routines and keeps
+# the stock bodies reachable as *_orig at FIXED addresses.  A hard-coded address is only safe
+# if the body at it is the one the override was written against, so assert the entry bytes and
+# the symbol addresses BEFORE weakening anything.  Twelve bytes is past the first branch in all
+# three, which is enough to identify the body.  .text file offset in this ET_REL image is 0x34.
+echo "[*] ISSUE-43: asserting the stock FP-context bodies before weakening them"
+for fpe in fpu_save:0x132:207900000000082800000003 \
+           fpu_restore:0x158:2079000000004a2800706718 \
+           fpu_setup:0x19b50:4e56000048e7003048780008; do
+	fpn=$(echo "$fpe" | cut -d: -f1)
+	fpa=$(echo "$fpe" | cut -d: -f2)
+	fpw=$(echo "$fpe" | cut -d: -f3)
+	fpg=$(od -An -tx1 -j $((0x34 + fpa)) -N 12 "$HERE/build/unix-stage1" | tr -d ' \n')
+	[ "$fpg" = "$fpw" ] || { echo "[FAIL] $fpn at $fpa: stock bytes $fpg, expected $fpw"; exit 1; }
+	fps=$(m68k-linux-gnu-nm "$HERE/build/unix-stage1" | awk -v n="$fpn" '$3==n && $2=="T" {print $1}')
+	[ "$fps" = "$(printf %08x $fpa)" ] || { echo "[FAIL] $fpn is not a global T at $fpa (nm: '$fps')"; exit 1; }
+	echo "      $fpn @ $fpa: entry bytes and symbol match the pinned image"
+done
+
 m68k-linux-gnu-objcopy \
 	--weaken-symbol pstart \
 	--weaken-symbol sysseginit \
@@ -310,6 +339,12 @@ m68k-linux-gnu-objcopy \
 	--add-symbol copyout_orig=.text:0x576,function,global \
 	--weaken-symbol mprotect \
 	--add-symbol mprotect_orig=.text:0x58550,function,global \
+	--weaken-symbol fpu_save \
+	--add-symbol fpu_save_orig=.text:0x132,function,global \
+	--weaken-symbol fpu_restore \
+	--add-symbol fpu_restore_orig=.text:0x158,function,global \
+	--weaken-symbol fpu_setup \
+	--add-symbol fpu_setup_orig=.text:0x19b50,function,global \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -323,6 +358,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o" \
 	"$HERE/build/inituname040.o" \
 	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" "$HERE/build/isp61_060.o" \
+	"$HERE/build/fpu060.o" \
 	"$HERE/build/kvecprobe040.o" \
 	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
 	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
@@ -340,7 +376,10 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          kvp_last_vec kvp_last_pc kvp_vec \
          fpsp060_top fpsp060_image fpsp060_vec11 f60_magic f60_entry_n f60_mem_n f60_real_n \
          f60_access_n f60_done_n f60_reserved_n f60_last_co f60_memfail_n f60_arith_n \
-         f60_bsun_n f60_fline_n f60_trap_n f60_trace_n f60_fpudis_n f60_superdone_n; do
+         f60_bsun_n f60_fline_n f60_trap_n f60_trace_n f60_fpudis_n f60_superdone_n \
+         fpu_save fpu_save_orig fpu_restore fpu_restore_orig fpu_setup fpu_setup_orig \
+         fpc_magic fpc_save_n fpc_save_wrt_n fpc_null_n fpc_idle_n fpc_excp_n fpc_odd_n \
+         fpc_last_frame fpc_rest_n fpc_rest_live_n fpc_rest_null_n fpc_rest_wrt_n fpc_setup_n; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"
@@ -405,6 +444,32 @@ if [ "$COADDR" = "00000576" ] || [ -z "$COADDR" ]; then
 	echo "[FAIL] strong copyout is stock/missing (addr='$COADDR') -> icode never published to RAM (ISSUE-38)"; exit 1
 fi
 echo "[OK] cb_icode040 copyout wrapper @0x$COADDR is the strong def (stock body kept as copyout_orig)."
+
+# HARD CHECK (2026-08-12, ISSUE-43): the FP context path.  Two ways this unit can be present
+# in the tree and absent from the kernel, both of which have happened to other units here:
+# an assembler error (relink does NOT abort on one -- it links the stock body instead), and a
+# missing weaken (ld -r keeps the stock strong def and our object's def is dropped).  Either
+# would produce a kernel that looks built and still reads byte zero of a 68060 frame.  So
+# assert BOTH directions: the strong symbol moved off the stock address, and the stock body is
+# still reachable at it as *_orig -- the 040 path is a tail jump to exactly that address.
+for fpe in fpu_save:00000132 fpu_restore:00000158 fpu_setup:00019b50; do
+	fpn=$(echo "$fpe" | cut -d: -f1)
+	fpo=$(echo "$fpe" | cut -d: -f2)
+	fpnew=$(m68k-linux-gnu-nm "$OUT" | awk -v n="$fpn" '$3==n && $2=="T" {print $1}')
+	fporig=$(m68k-linux-gnu-nm "$OUT" | awk -v n="${fpn}_orig" '$3==n {print $1}')
+	if [ -z "$fpnew" ] || [ "$fpnew" = "$fpo" ]; then
+		echo "[FAIL] strong $fpn is stock/missing (addr='$fpnew') -> the 68060 still tests byte zero (ISSUE-43)"; exit 1
+	fi
+	if [ "$fporig" != "$fpo" ]; then
+		echo "[FAIL] ${fpn}_orig is '$fporig', expected $fpo -> the 68040 tail jump has no target"; exit 1
+	fi
+	if [ "$(m68k-linux-gnu-nm "$OUT" | grep -cE " T $fpn\$")" != "1" ]; then
+		echo "[FAIL] $fpn does not have exactly one strong definition"; exit 1
+	fi
+done
+FPCMAG=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="fpc_magic" {print $1}')
+[ -n "$FPCMAG" ] || { echo "[FAIL] fpc_magic missing -> fpu060.o is not in the link"; exit 1; }
+echo "[OK] ISSUE-43 FP context override bound on all three routines; stock bodies kept as *_orig."
 
 # HARD CHECK (2026-08-01, USER-CODE-PUBLISH): the strong `mprotect` must be the
 # codepub040 wrapper, not the stock body at 0x58550.  A kernel whose mprotect is
