@@ -49,6 +49,16 @@ a named test on a named platform is.
 CPU-specific path is gated on it. The build id says `68040-` because it is stamped at build
 time; the banner and `uname -m` say `68060-` when a 68060 is running it.
 
+**The current baseline is tagged and archived** (2026-08-12), because an accepted binary has
+already been lost once here — `-06` is gone from the build host and cannot be rebuilt, the base
+having moved underneath it.
+
+| | |
+|---|---|
+| git tag | `hw-68060-260812-02` (annotated, on `99627b1`) |
+| archive | NAS `amix/baseline-68060-260812-02/` — binary, `SHA256SUMS.txt`, `status-facts.txt`, the acceptance document and this file |
+| reproducibility | **verified, not assumed**: rebuilding from the tag yields an image differing in exactly **one byte** — offset `0x10AF83`, the last digit of the build-id stamp, which is a per-build counter |
+
 ⚠ **The current image has never run on 68040 hardware.** The machine has carried the 68060
 since 2026-08-05; re-verifying the 040 needs a physical A3640 card swap. The 040 hardware column
 below therefore reads as of `68040-260802-01`, and the pending run-list is
@@ -219,18 +229,20 @@ Nothing on the 68060 side is currently blocking.
 
 ## 6. Recommended order
 
-1. **Tag and archive `68060-260812-02` now** — binary, sha256 and the acceptance document
-   together. This project has already lost one accepted binary (`-06`) that cannot be rebuilt
-   because the base moved under it.
-2. **ISSUE-42**, bundled into one 68040 hardware session with `NEXT-040-SESSION-RUNLIST.md`,
+0. ~~Tag and archive `68060-260812-02`~~ — **done 2026-08-12**, see §1.
+1. **ISSUE-42**, bundled into one 68040 hardware session with `NEXT-040-SESSION-RUNLIST.md`,
    since both need the card swap.
-3. **Re-verify the current image on 040 hardware** in that same session, closing the empty
+2. **Re-verify the current image on 040 hardware** in that same session, closing the empty
    column in §2.
-4. ISSUE-10 / ISSUE-9 attribution — slower work, needs repeat boots rather than cleverness.
-5. **Decide the 68LC060 question as a product decision**, not a technical debt: "requires a full
+3. ISSUE-10 / ISSUE-9 attribution — slower work, needs repeat boots rather than cleverness.
+4. **Decide the 68LC060 question as a product decision**, not a technical debt: "requires a full
    68060" is a legitimate answer, provided the kernel says so clearly at boot instead of failing
    strangely.
-6. RAM > 32 MB, then Zorro III, as feature work with their own acceptance.
+5. RAM > 32 MB, then Zorro III, as feature work with their own acceptance.
+
+Two coverage gaps are worth closing whenever their area is next opened, neither being a
+suspected defect: ISSUE-40's `ptd_wake_n` (`pt_waiting` branch never executed) and ISSUE-43's
+two `UFPRWRT` branches (nothing in this repo writes FP registers through old `ptrace`).
 
 ---
 
