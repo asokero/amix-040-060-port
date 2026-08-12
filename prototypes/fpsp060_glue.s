@@ -299,6 +299,17 @@ Lco_fparith:
 	movew	%sp@,f60_last_fsave+2	| diagnostic only: word zero = the source exponent
 	movew	#0x6000,%sp@(0x2)	| idle status at offset TWO -- the real discriminator
 	frestore %sp@+			| balanced: sp is the raw frame again
+| *** THIS JMP IS LOAD-BEARING AND IT WAS MISSING FOR ONE DAY ***  (2026-08-12)
+| c13d3b8 removed the null-frame guard from this body -- correctly -- but the guard block
+| ended in this jmp, so removing it left the arithmetic exit FALLING THROUGH into Lco_bsun.
+| Measured on hardware the first time that build ran: per enabled exception, f60_arith_n +1
+| AND f60_bsun_n +1, f60_real_n +2 against f60_entry_n +1, i.e. the unit's own
+| "entry == done + real_* exits" invariant broken by exactly the amount of the fall-through.
+| The user-visible damage was Lco_bsun's `andib #0xfe` clearing the FPSR NaN CONDITION bit on
+| every arithmetic exit: OPERR came back 0x00002080 where Motorola's fixture says 0x01002080.
+| Nothing crashed, because the BSUN prelude's stack arithmetic happens to balance -- which is
+| exactly why an invariant counter found this and a passing test did not.
+	jmp	nullvect		| vector 48-54 -> u_trap -> stock SIGFPE policy
 
 | ---- BSUN (vector 48 via an FP conditional on an unordered compare) ----------------------
 | Its prelude differs: clear the NaN condition in the FPSR and DISCARD the saved state rather
