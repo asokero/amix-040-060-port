@@ -38,7 +38,8 @@ a named test on a named platform is.
 
 | Build id | sha256 (prefix) | Platform accepted on | What it established | Evidence |
 |---|---|---|---|---|
-| **`68060-260812-02`** | `bb906e2a` | **68060 hardware, 2026-08-12** | **Current FP baseline.** All six enabled IEEE classes bit-exact; ISSUE-43 + ISSUE-44 closed | `REALHW-ISSUE43-ACCEPTANCE-260812.md` |
+| **`68060-260812-06`** | `955a5be7` | **68060 hardware, 2026-08-12** | **Current baseline.** ISSUE-43 re-confirmed 6/6; ISSUE-42 unit proven INERT on 060 silicon (every `wbf_*` counter 0); `ftest060` main+unimp, `fp060probe`, `isp61ea` all pass. 68040 acceptance owed | `REALHW-260812-06-ACCEPTANCE.md` |
+| `68060-260812-02` | `bb906e2a` | 68060 hardware, 2026-08-12 | ISSUE-43 + ISSUE-44 closed; six enabled IEEE classes bit-exact | `REALHW-ISSUE43-ACCEPTANCE-260812.md` |
 | `68060-260807-11` | `4962361b` | 68060 hardware, 2026-08-09 | 68060 FPSP (F3 M5) on silicon; `ftest060 unimp` passes; xv/wolf3d SIGSYS attributed | `REALHW-260807-11-ACCEPTANCE.md` |
 | `68060-260806-06` | — | 68060 hardware, 2026-08-07 | ISSUE-41 closed; XPAGE + protfault + power-cut | `REALHW-260806-06-ACCEPTANCE.md` |
 | `68040-260802-01` | `3727e5b4` | **68040 hardware, 2026-08-02** | **Last 68040 hardware run.** ISSUE-40 closed | `REALHW-ISSUE40-ACCEPTANCE-260802.md` |
@@ -88,7 +89,7 @@ Legend: **HW** = measured on that silicon · **EMU** = measured under Amiberry o
 | NFS (read + write + mmap tail) | HW | HW | HW | HW | ISSUE-35 / ISSUE-36, `REALHW-ISSUE36-260728.md` |
 | exec (ELF + COFF path) | HW | HW | HW | HW | ISSUE-32, ISSUE-38 |
 | XPAGE / `mprotect` per-page | HW | HW | HW | HW | ISSUE-41, `XPAGE-FPROT-FINDING-260806.md` |
-| Denied write-back propagation | **EMU** | **OWED** | — | — | **ISSUE-42 — implemented 2026-08-12, still a release blocker until 040 silicon**; `test-tools/issue42-emu-verify-260812.txt` |
+| Denied write-back propagation | **EMU** | **OWED** | — | **HW: inert, proven** | **ISSUE-42 — implemented 2026-08-12, still a release blocker until 040 silicon**; `test-tools/issue42-emu-verify-260812.txt` |
 | ISP: vector 61 integer emulation | EMU | ? | EMU | HW | `ISP-VECTOR61-LANDED-260806.md`, `isp61ea` 7/7 |
 | FPU: 68040 FPSP | HW | HW | — | — | `fputest` Test A on hardware 2026-07-27 |
 | FPU: 68060 FPSP, unimplemented | — | — | EMU | HW | `ftest060 unimp` passed |
