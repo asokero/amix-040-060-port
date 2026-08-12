@@ -3856,7 +3856,7 @@ where the permission is actually lost (PTE vs segment protection) and whether th
 `DFC = WBxS & 7` buys it a privilege it should not have — either would move the fix out of
 `wb040.s` entirely.
 
-## ⏳ ISSUE-43 (2026-08-11): on the 68060, an enabled FP exception with a ZERO SOURCE OPERAND loses fp0-7 across a signal
+## ✅ ISSUE-43 (2026-08-11, CLOSED ON HARDWARE 2026-08-12): on the 68060, an enabled FP exception with a ZERO SOURCE OPERAND loses fp0-7 across a signal
 
 **Measured, real hardware, `68060-260810-03` and reproduced on `-05`.** Instrument:
 `test-tools/fpenab060`, one child per IEEE class, Motorola's own fixture values from
@@ -3930,10 +3930,36 @@ Emulator acceptance, one image `68040/68060-260812-01`, both CPUs (2026-08-12):
 `fpc_null_n`/`fpc_idle_n` is the honest replacement for the retracted "7100 null saves": 92 % of
 060 saves really are null frames, but now measured by byte two instead of by an operand exponent.
 
-**The verdict on DZ itself is owed to hardware and is NOT claimed.** The emulator raises no
-enabled IEEE exceptions at all — `fpenab060` there reports `bad=6` with `SIGFPE count 0` on every
-class, i.e. six unexercised cases, and `fpc_excp_n` stayed 0 for the same reason. Run-list with
-pre-registered expectations and counter addresses: `REALHW-RUNLIST-ISSUE43-260812.md`.
+### ✅ CLOSED ON HARDWARE 2026-08-12 — `68060-260812-02`, six of six bit-exact
+
+```
+  OPERR v52  OK  fp0 ffff0000:00000000:00000000  fpsr 01002080  fpiar 80000628  sigs 1
+  OVFL  v53  OK  fp0 7fff0000:00000000:00000000  fpsr 02001048  fpiar 8000068c  sigs 1
+  UNFL  v51  OK  fp0 00000000:40000000:00000000  fpsr 00000800  fpiar 800006f0  sigs 1
+  DZ    v50  OK  fp0 40000000:80000000:00000000  fpsr 02000410  fpiar 80000752  sigs 1
+  INEX  v49  OK  fp0 50000000:80000000:00000000  fpsr 00000208  fpiar 800007b4  sigs 1
+  SNAN  v54  OK  fp0 7fff0000:80000000:00000001  fpsr 01004080  fpiar 80000816  sigs 1
+                                                              FPENAB060 bad=0
+```
+
+Regressions on the same boot: `fp060probe bad=0`, `ftest060 unimp` passed / `died=0`,
+`ftest060 main` four sub-tests passed, `fputest060 fork` correct, `isp61ea bad=0`,
+`f60_fpudis_n` 0. Counters: `f60_entry_n 6 = f60_real_n 6 = f60_arith_n 6`, `f60_bsun_n 0`;
+`fpc_save_n` 8059, `fpc_setup_n` 256, `fpc_odd_n` 0, `fpc_save_wrt_n`/`fpc_rest_wrt_n` 0.
+Full record: `REALHW-ISSUE43-ACCEPTANCE-260812.md`.
+
+**The first hardware build, `-01`, found a second defect one day old — see ISSUE-44 below.**
+DZ passed on `-01` too, so the ISSUE-43 unit was proven before that defect was fixed.
+
+⚠ **A pre-registered prediction that was wrong, recorded as wrong:** the run-list expected
+`fpc_excp_n` non-zero on hardware. It stayed 0, because our own `Lco_fparith` writes the idle
+status `0x6000` at offset two and FRESTOREs it before jumping to `nullvect` — so the OS can only
+ever see an idle or null frame, never `0xe0`. The verdict did not depend on it; the mechanism
+behind the prediction was still mine and still wrong.
+
+⚠ Silicon's null/idle split is far sharper than the emulator's: 8048 null vs 17 idle on hardware
+against 9229 vs 855 under Amiberry. The conclusion holds either way, but the emulator is not a
+proxy for the rate.
 
 Two branches of the new code are unexercised on both CPUs by construction: `fpu_save`'s `UFPRWRT`
 early return and `fpu_restore`'s null-frame + `UFPRWRT` republish. Their only originating setter
@@ -3942,3 +3968,44 @@ instructions are the inherited ones, so this is a coverage gap, not a suspected 
 
 Separate latent gap found by the same audit, not part of this issue: the `/proc` path
 `prsetfpregs` does not set `UFPRWRT` where `procxmt` does.
+
+## ✅ ISSUE-44 (2026-08-12, FIXED THE SAME DAY): the FPSP arithmetic exit fell through into the BSUN body
+
+**Found on silicon by an invariant counter, on the first boot of the build that contained it.**
+
+`c13d3b8` removed the null-frame guard from `Lco_fparith` in `prototypes/fpsp060_glue.s`. That
+removal was correct — the guard was itself a defect, built on the same byte-offset mistake as
+ISSUE-43. But the guard block **ended in the exit's own `jmp nullvect`**, and removing the block
+took the jump with it. Every arithmetic call-out then fell through into `Lco_bsun`.
+
+Measured on `68060-260812-01`, per enabled exception:
+
+```
+  f60_entry_n +1     one package entry
+  f60_arith_n +1     the class call-out ran
+  f60_bsun_n  +1     ... and then the BSUN body ran too
+  f60_real_n  +2     against entry +1 -- "entry == done + real_* exits" broken by exactly
+                     the size of the fall-through
+  kvp_vec[51] +1     only ONE arrival at nullvect, and it was the fall-through's
+```
+
+**User-visible damage:** `Lco_bsun` does `andib #0xfe,%sp@` on the saved FPSR, clearing the FPCC
+NaN condition bit. Correct for a real BSUN, wrong for every other class. OPERR returned
+`fpsr 00002080` where Motorola's fixture says `01002080`.
+
+**Why nothing crashed and four classes still passed:** the BSUN prelude's stack arithmetic
+happens to balance (FSAVE 12, push 4, pop 4, `addl #0xc`), and only NaN-valued results carry the
+bit it clears.
+
+**Why no test caught it before:** the emulator raises no enabled IEEE FP exceptions, so
+`Lco_fparith` never executes there at all (`f60_arith_n` = 0 on both emulator CPUs). The body has
+exactly one instrument in existence — `fpenab060` on hardware — and the previous hardware run
+(2026-08-11) predates `c13d3b8`. The build's first boot anywhere was its first execution.
+
+Fixed by restoring the one instruction (`7cbbc67`); `68060-260812-02` measures `f60_bsun_n` 0 and
+`entry == real == arith`.
+
+**The lesson worth keeping is about instruments, not about assembly.** A passing test would not
+have found this: four of six classes were green. What found it was an invariant that spans two
+counters — one package entry must produce exactly one call-out exit — and the counter that made
+the fall-through visible was the one nobody expected to move.
