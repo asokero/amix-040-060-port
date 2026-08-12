@@ -61,7 +61,7 @@ The mechanism is not defeated by zeroing elsewhere. Verified from the binary:
 Consequence, and the reason for this brief: the post-fix "CLEAN" result proves nothing,
 because both kernels behave identically on the probe. ISSUE-27 has been re-recorded as
 a **proven-by-construction correctness defect of unknown live reachability**, not as an
-observed leak. That correction has been made in `KNOWN-ISSUES.md` and `RESUME-HERE.md`.
+observed leak. That correction has been made in `KNOWN-ISSUES.md` and `RESUME-HERE-260727.md`.
 
 ---
 

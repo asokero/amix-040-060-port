@@ -31,7 +31,7 @@ clean `haltsys`).
   kept as a permanent guard. Verified: repeated cold Amiberry boots, zero warm-up. The real-A3000
   "1st boot → guru" pattern is very likely the same bug.
 
-**Next-session frontier (see RESUME-HERE.md + RESUME-HERE-040-HARDWARE.md):** (1) **real-HW retest**
+**Next-session frontier (see RESUME-HERE-260727.md + RESUME-HERE-040-HARDWARE.md):** (1) **real-HW retest**
 on the Mercury-040 with the fixed kernel AND the fixed loader (expected: past the p0init panic and
 no first-boot guru; untested on silicon). Deferred: **ISSUE-9** idle-time Bus Error loop.
 
@@ -82,8 +82,8 @@ union) write-guard. Full detail: KNOWN-ISSUES.md ISSUE-7.
 **Assessment:** audit-driven HAT work has largely hit diminishing returns for *urgent* fixes.
 Next real bugs are more likely found by DRIVING WORKLOADS (the project's proven method) than
 more static auditing. Immediate next step: run the `hat_dup_cow` acceptance test (deferred —
-see the network blocker note in RESUME-HERE.md), then heavier workloads.
-Canonical blow-by-blow: RESUME-HERE.md; bug detail: KNOWN-ISSUES.md; memory
+see the network blocker note in RESUME-HERE-260727.md), then heavier workloads.
+Canonical blow-by-blow: RESUME-HERE-260727.md; bug detail: KNOWN-ISSUES.md; memory
 `amix-codex-hat-audit-findings`.
 
 ## (2026-07-06, HISTORICAL SNAPSHOT — superseded by the ★ block above; kept for the fix chain)
@@ -121,8 +121,8 @@ passes an old-format table pointer that the guard can't distinguish from a real 
 bug; full detail in `amix-kernel-analysis/vm-map/HAT-PTFREE-AUDIT.md`).  Also
 pending: migrate the dbg-only genuine fixes (resume040 etc.) into the base + strip diagnostics so
 `unix-040` boots standalone (a "quiet" serial-capable variant — `unix-040-quiet` — is BUILT and
-boot-confirmed for real-HW testing, see RESUME-HERE.md).
-**Canonical detail: RESUME-HERE.md** (milestone + fix chain + BATCH PLAN) and KNOWN-ISSUES.md.
+boot-confirmed for real-HW testing, see RESUME-HERE-260727.md).
+**Canonical detail: RESUME-HERE-260727.md** (milestone + fix chain + BATCH PLAN) and KNOWN-ISSUES.md.
 Source map in memory kernel-source-vs-binary.md.  Real-HW line: a USB-serial adapter is incoming,
 so real-HW testing is becoming feasible again (see RESUME-HERE-040-HARDWARE.md + SERIAL-DEBUG.md).
 A parallel Codex analysis project (now a SEPARATE sibling repo `../amix-kernel-analysis/`, moved

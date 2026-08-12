@@ -246,12 +246,12 @@ hypothesis, but nothing new should be built on any of it.
 | DZ proved a null frame | ISSUE-43 round 1 | It proved its own operand was zero |
 | "7100 null saves per boot" | ISSUE-43 round 3 | Collected through the wrong predicate. Remeasured: 8048 null / 17 idle per boot on hardware |
 | Bit 0 of the u-area FP flags is a lazy-FPU owner bit | reverted attempt, `296e490` | It is `UFPRWRT`, "software wrote the programmer model". Setting it turned 5-of-6 into 0-of-6 |
-| ISSUE-10 was retired in July | `RESUME-HERE.md` | It is back on probeless kernels and reproduces in the emulator; the "retirement" was a dbg-instrument artifact |
+| ISSUE-10 was retired in July | `RESUME-HERE-260727.md` | It is back on probeless kernels and reproduces in the emulator; the "retirement" was a dbg-instrument artifact |
 | `cc1`'s SIGSYS was something other than the missing FPSP | ISSUE-34b | It was the FPSP (F3 M5 §8) |
 | `fpc_excp_n` would be non-zero on hardware | `REALHW-RUNLIST-ISSUE43-260812.md` | Our own call-out converts the frame to idle before the OS sees it, so `0xe0` never reaches `fpu_save` |
 | The ExecBase → `expansion.library` route can enumerate Zorro cards | early `lszorro` notes | AMIX overwrites the AmigaOS library list nodes |
 
-`RESUME-HERE.md` is a snapshot of 2026-07-27 and has not been maintained since. Read it as
+`RESUME-HERE-260727.md` is a snapshot of 2026-07-27 and has not been maintained since. Read it as
 history; read this file for status.
 
 ---

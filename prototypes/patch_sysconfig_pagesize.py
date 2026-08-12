@@ -15,7 +15,7 @@
 # So this fix REDUCES exposure to those four rather than being part of the same decision.
 # Its risk profile is the opposite of theirs: they turn currently-succeeding calls into
 # EINVAL, which is a genuine compatibility break; this one only stops a wrong answer.
-# Therefore it lands ALONE and FIRST.  Recorded in RESUME-HERE.md and, from the hardware
+# Therefore it lands ALONE and FIRST.  Recorded in RESUME-HERE-260727.md and, from the hardware
 # session, in test-tools/realhw-verify-260727.txt.
 #
 # SOURCE CONTRACT

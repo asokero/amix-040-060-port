@@ -103,7 +103,7 @@
 
 > ## ✅ 2026-07-12 — ISSUE-13 FIXED + VERIFIED ON REAL HW; COW ACCEPTANCE PASSES ON REAL HW
 > **Build 260712-03 (unix-040 + unix-040-dbg) is the current real-HW line.** Two real-HW
-> validations landed this session (full detail: RESUME-HERE.md top banner + KNOWN-ISSUES
+> validations landed this session (full detail: RESUME-HERE-260727.md top banner + KNOWN-ISSUES
 > ISSUE-13):
 > 1. **ISSUE-13 capture 1 (NFS→local copy panic) fixed by `prototypes/bp_map040.s`**
 >    (commit `4099f4e`): stock 030 `bp_map`/`bp_mapout` walked the retired `st_top1` tree
@@ -117,7 +117,7 @@
 > Real-HW session practicals: `telnet 10.0.10.10` works but the Linux telnet client is
 > flaky mid-negotiation — the scratchpad raw-socket runner (`real.py`) is the reliable
 > driver. `nohup` does NOT survive session exit on the real machine. File transfer:
-> slirp-safe TFTP recipe in RESUME-HERE.md. Still NO serial cable on the real machine.
+> slirp-safe TFTP recipe in RESUME-HERE-260727.md. Still NO serial cable on the real machine.
 > **[HISTORICAL — as of 2026-07-12. A serial-to-USB cable IS in use now; see the top block.]**
 >
 > ## ★★★ 2026-07-11 — MILESTONE: AMIX BOOTS TO LOGIN ON REAL HARDWARE ★★★
@@ -181,7 +181,7 @@
 > silicon cache-coherency effect the emulator doesn't model; try the `cpusha`-after-segkmem-PTE-
 > writes fix. The emulator line has since reached full login + `ls -alR` + reboot cycles (ISSUE-7
 > also fixed, commit `51cdbc7`), so the emulator is a solid regression baseline before each HW try.
-> **Current source of truth: `KNOWN-ISSUES.md` ISSUE-8 + the MILESTONE banner atop `RESUME-HERE.md`.**
+> **Current source of truth: `KNOWN-ISSUES.md` ISSUE-8 + the MILESTONE banner atop `RESUME-HERE-260727.md`.**
 > The STORE A/B markers + `cpusha` test at the bottom of THIS file remain the right HW-debug moves
 > if p0init still faults.
 >

@@ -14,13 +14,13 @@ mounts root, prints the banner, runs init, reaches swapconf.
 - `sysseginit`, `vatosde`, `vatopte`, `svirtophys` — 040 walkers (kvm040.s + patches).
 - pstart040 sets kas@0x14 = kroot040 (kernel hat root = the live 040 root).
 
-## SUPERSEDED (2026-06-22 night) — see RESUME-HERE.md "SOURCE MAP + BATCH PLAN" (canonical)
+## SUPERSEDED (2026-06-22 night) — see RESUME-HERE-260727.md "SOURCE MAP + BATCH PLAN" (canonical)
 This section's premises are now resolved/disproven — current state:
 - `hat_alloc` (0xb4188): **DONE** (hat040.s: 040 root + as->hat_root).  swtch `pmove crp →
   movec urp`: **DONE** (mainmarks.s resume override + patch).
 - "newproc fork failed" / "swapconf namei ENOENT": **SOLVED** (gen_strategy PFN<<11→<<12).
 - **040 CONTEXT SWITCH = DONE (2026-06-23)** — resume040 dual-path remap; init now runs in USER
-  mode + execs.  get_fault 040 format-7 frame = DONE (getfault040.s).  See RESUME-HERE.md top +
+  mode + execs.  get_fault 040 format-7 frame = DONE (getfault040.s).  See RESUME-HERE-260727.md top +
   memory [[amix-040-ctx-switch-working]].
 - **CURRENT BLOCKER = user-VM hat family still 030 (8-byte descriptors).** init's exec teardown
   `hat_free@0xb41e0` walks the tree with `asll #3` (8-byte stride) over our 4-byte 040 tables →

@@ -5,6 +5,10 @@
 
 ## ISSUE-1: our rebuilt `unix_boot` causes a 68030 MMU Configuration Error at the kernel's `pstart` (clib2/bebbo build)
 
+> **Ledger: DEFERRED** — unix_boot040 is the supported loader. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **Status:** DEFERRED (2026-06-17). Does NOT block the 68040 line — see "Why deferred".
 We continue 040 work using the toolchain split in "Workaround" below.
 
@@ -83,6 +87,10 @@ path, which the 040 work replaces with `movec` (Draft 2). So:
 ---
 
 ## ISSUE-2: temporary debug markers / serial spam in the dbg build (cleanup TODO)
+
+> **Ledger: OPEN** — cosmetic, dbg build only. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 **Status:** OPEN (updated 2026-07-04), low priority — cleanup gated on hat_dup (see below).
 The instrumented kernel `build/unix-040-dbg` (relink-040-dbg.sh) prints a lot of debug output;
 all of it is HARMLESS but noisy.  Notable at the interactive-login stage:
@@ -102,6 +110,10 @@ make a "quiet-dbg" overlay that keeps only the serial `conputc` hook.  ALWAYS re
 with `grep -a` — it contains NUL bytes and plain grep silently matches nothing.
 
 ## ISSUE-4: BASE unix-040 still has stock-030 hat_dup (fork not yet safe in the base build)
+
+> **Ledger: FIXED** — 68040 + 68060 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 **Status:** MERGED into master 2026-07-07, AWAITING BOOT TEST (was OPEN since 2026-07-04).
 `hat_dup040.s` (branch `040-hat-dup-port`, already boot-verified there including the
 fork-without-exec COW subshell test — see memory `amix-040-hat-dup-port`) is now merged into
@@ -135,7 +147,7 @@ hat_chgprot ×6 caller sites (the routine itself is confirmed structurally corre
 hat_exec (exec stack move — still fully unported, and per `HAT-PTFREE-AUDIT.md` its
 `hat_ptfree` call passes an old-format table pointer that `hat_ptfree`'s guard cannot
 distinguish from a real 040 table), uvirtophys/uvatosde (user SW page-table walkers).
-Full batch list: RESUME-HERE.md.
+Full batch list: RESUME-HERE-260727.md.
 
 **Also flagged but NOT fixed this session** (deferred, needs more RE + can't be verified
 without a boot): `hat_ptfree` frees the physical table page but never retires its `ptdat`
@@ -172,6 +184,10 @@ delegate the coding to Fable** (Codex has a design sketch in `REFMOD-PAGEOUT-CON
 step "Practical next step"). Low urgency until D-cache work begins.
 
 ## ISSUE-5: `haltsys` (reboot/halt path) ran unguarded 030 `pmove` — KERNEL PANIC on `reboot`
+
+> **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 **Status: RESOLVED (2026-07-05, fix v3, boot-confirmed).** Final fix = `haltsys040.s`
 makes the reboot/halt MMU-disable UNCONDITIONALLY use the 040 `movec`+`pflusha` path
 (commit ded2e58), after v1 (guarded `haltsys`) and v2 (`rtnfirm` override, commit 23a3532)
@@ -280,6 +296,10 @@ predates and is unrelated to the hat_dup work). Implementation delegated to a Fa
 this project's Sonnet-plans/Fable-executes workflow.
 
 ## ISSUE-3: hat_unload reverse-map findmap is a bounded skip (verify later)
+
+> **Ledger: DEFERRED** — defensive; correct for the known callers. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 **Status:** OPEN (2026-06-22), defensive — works, but confirm correctness under memory
 pressure.  hat_unload's `Lhl_findmap` walks pages[pfn]'s reverse-map list (head @(32),
 next @ pte+256) to unlink the pte; the 040 port BOUNDS it (256 iters) and SKIPS the
@@ -291,6 +311,10 @@ the reverse-map, and only kicks in under memory pressure — not yet exercised a
 If page-reclaim bugs appear later, re-audit hat_pteload's reverse-map insert + this skip.
 
 ## ISSUE-6: `fsck` on a dirty UFS panicked `segvn_softunlock` (raw-device physio softlock)
+
+> **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 **Status: RESOLVED (2026-07-05, two commits).** Booting a corrupt/dirty filesystem ran
 boot-`fsck` (`/sbin/fsck -F ufs -y /dev/rdsk/…`), which raw-reads the device into an anon
 buffer; the kernel F_SOFTLOCKs the buffer pages for the physio transfer and `segvn_softunlock`
@@ -324,6 +348,10 @@ Diagnostic wrappers (`segvn_softunlock_dbg`, `kmem_validate`, `ktrap_latch`) rem
 into `relink-040-dbg.sh` only (base build unaffected); useful for ISSUE-7.
 
 ## ISSUE-7: u-area corruption at login-after-reboot — `u_procp=0` → wild jump / bus-error (✅ RESOLVED 2026-07-09)
+
+> **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 **Status: RESOLVED (2026-07-09), commit `51cdbc7`. Verified: fs-uae boots to login, runs
 `ls -alR`, survives 7 reboot cycles with ZERO panics and ZERO recursion signatures
 (`kstack`/`KSTKCHAIN`/`PREEMPT1 uprocp=0` all absent), clean `haltsys`.**
@@ -524,6 +552,10 @@ usable from a pristine disk image in the meantime.
 
 ## ISSUE-8: REAL-HW (Mercury 040) boot panics in p0init — kvm_init leaf-table `ctob`/`btoc` left at 2 KB in Model-B (✅ RESOLVED 2026-07-09)
 
+> **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 > **✅ RESOLVED (2026-07-09), commit `998737f`.** The `click<<11` intuition was RIGHT after all —
 > the 2026-07-07 "DISPROVEN" verdict was itself wrong, for two reasons: (1) fs-uae SILENTLY MASKS
 > the halved read (so "`<<11` boots" proved nothing — the 2026-07-08 Amiberry.log compare later
@@ -646,6 +678,10 @@ inert-store consumers.
 
 ## ISSUE-9: idle-time infinite Bus Error loop — ✅ **CAPTURED 2026-07-28** (still open)
 
+> **Ledger: OPEN** — captured on 68040 hardware, not attributed. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **The capture ISSUE-9 has been waiting for since 2026-07-09 arrived on its own**, on real
 hardware, kernel `68040-260728-12`, with serial running. Evidence:
 `test-tools/issue9-capture-260728.txt`. It appeared during an ISSUE-36 acceptance session and the
@@ -722,6 +758,10 @@ guidance, this is recorded and deferred — not the immediate frontier (real-HW 
 flakiness come first).
 
 ## ISSUE-10: `/bin/sh` heap contains a kvsegu-range pointer → SIGBUS fault-retry flood (amixadm repro)
+
+> **Ledger: OPEN** — 68040 hardware + emulator; INTERMITTENT, so a single-boot bisect is invalid. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **Status: OPEN (2026-07-10). Deterministic repro on the 68040** (reproduced at least twice;
 first seen right after the 060 merge but confirmed on 040 → NOT an 060 regression).
@@ -1010,6 +1050,10 @@ the flood (which page got mapped where). Also worth one control: does plain inte
 
 ## ISSUE-11: wb040.s WB1 replay uses wrong data alignment — REAL-HW landmine (latent, emulator never triggers it)
 
+> **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **Status: OPEN (2026-07-10), latent — fix before the next real-HW visit.**
 Found while investigating ISSUE-10 against reference implementations:
 - **NetBSD** (`m68k_trap.c m68040_writeback`): WB1D is **memory/bus-lane aligned** —
@@ -1133,6 +1177,10 @@ first real-040 boot is the actual test.
 
 ## ISSUE-12: A2065 ethernet dead on real-HW 040 AMIX (ifconfig -a empty, no ping)
 
+> **Ledger: FIXED** — 68040 hardware -- it works; the interface is aen0. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **Status: RESOLVED — FALSE ALARM (2026-07-11). A2065 networking WORKS on real-HW
 040 AMIX (build 260711-02): remote telnet login to the real machine succeeded,
 `ifconfig aen0` shows UP with the correct address, and interactive sessions work
@@ -1171,6 +1219,10 @@ split remains a layout artifact, not a CPU mechanism. The resume recipe (write-w
 + pfntokv census) is unchanged and can now also be validated against real HW.
 
 ## ISSUE-13: kvseg fault robustness — NFS-copy panic + /dev/kmem fault recursion (real HW, 2026-07-12)
+
+> **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **Status (2026-07-12): CAPTURE 1 = FIXED + VERIFIED ON REAL HW (bp_map040, commit
 4099f4e — see the "CAPTURE-1 FIXED" block at the end of this section). CAPTURE 2 =
@@ -1325,7 +1377,7 @@ supervisor-FC (breaks the working user COW path) — a separate kernel probe is
 needed. Full port spec + acceptance table: Codex `040-FAULT-RESOLVER-AUDIT.md`
 ("Required structural boundary" + "Port and test order"). Bonus finding fixed in
 passing 2026-07-13: the base kernel previously lacked the crossing-page `hardbus`
-(runtime040.s promotion, see RESUME-HERE.md).
+(runtime040.s promotion, see RESUME-HERE-260727.md).
 
 **CAPTURE-2 FIXED — VERIFIED ON EMULATOR 040+060 (2026-07-13, commit cfa5e49):**
 `prototypes/krnxmemflt040.s` implements the native resolver core per the spec above
@@ -1344,6 +1396,10 @@ visit; (b) the F_PROT branch (write to a write-protected resident kernel page)
 is untestable from userland and remains exercised-by-inspection only.
 
 ## ISSUE-14: emulator root-fs s5 inconsistency — shutdown PANIC "free: freeing free frag" (datapoint 2026-07-13)
+
+> **Ledger: DEFERRED** — emulator environment, not the port. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **OPEN — evidence datapoint, cause unattributed.** During a normal `shutdown` on the
 emulator (dbg build 260712-03 line, after a long probe/load session), the final
@@ -1413,6 +1469,10 @@ there.
 
 ## ISSUE-15: KMA pool builders double-map their backing — ✅ FIXED (2026-07-25, emu-040+060)
 
+> **Ledger: FIXED** — emulator, both CPUs. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **RATKAISTU `prototypes/patch_kmapools.py` (26 sitea), buildit 260725-01/-02.**
 `SMALLCLICKS = btoc(4096)` ja `BIGCLICKS = btoc(16384)` ovat compile-time-vakioita
 (`svr4-src-3b2/.../os/kma.c:67-70`) → 030:llä 2/8, Model-B:ssä **1/4**. Muunnetut:
@@ -1438,6 +1498,10 @@ symmetria on todistettu vain staattisesti. Evidenssi
 
 ## ISSUE-16: RFS client cache 2 KiB page geometry — OPEN, ja se on 72 sitea, EI 5
 
+> **Ledger: DEFERRED** — 72 sites; RFS is broken upstream anyway. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **OPEN — aidot Model-B-bugit, dormantteja koska RFS:ää ei käytetä.**
 Codexin `BIO-PFN-PHYS-KVA-CENSUS.md` listaa **5 PFN-konversiota** (`rfesb_fbread`
 0x8f56c, `rfc_readend` 0xa102c, `rfc_plmove` 0xa11ba, `rfc_writefill` 0xa1322,
@@ -1456,6 +1520,10 @@ muuntaminen olisi latentin bugin istuttamista ilman havaitsemiskeinoa.
 **STATUS: RFS-testaus 040/060-portilla on EPÄTURVALLISTA.** Lykätty, ei korjattu.
 
 ## ISSUE-17: procfs prfastmapin/prfastmapout — ✅ FIXED (2026-07-25); oli KERNEL-PANIKKI
+
+> **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **RATKAISTU. Ja se oli PALJON pahempi kuin kirjattu "väärä page_t".**
 Aiempi tiivistelmä sanoi "can hold/release/abort the wrong page_t". Todellisuudessa
@@ -1490,6 +1558,10 @@ Evidenssi `test-tools/modelb-tail-emu-verify-260725.txt`.
 
 ## ISSUE-18: vtop user-VA walker — ✅ (a) FIXED, (b) hardened + mitattu no-op (2026-07-25)
 
+> **Ledger: FIXED** — emulator, both CPUs. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **(a) RATKAISTU.** `vtop_orig` 0xb7568:n proc-haara (stock 2 KiB indeksit/maskit,
 `PFN<<11`, 0x7ff) ohitetaan nyt kokonaan käyttäjä-VA:lle: `vtop040.s` reitittää sen
 uuteen `uvatopte040`-kävelijään. Tämä on `prmapin`in (0x63462 = `vtop(addr, p)`) polku
@@ -1511,6 +1583,10 @@ Yhä dormantit väärät apurit (ei sisääntulevia kutsuja, ÄLÄ käytä): `pp
 (`PFN<<11`), `phystopp` 0xb1532 (`>>11`), `uvirtophys` 0xb7860 (odottaa &SDE + 2 KiB).
 
 ## ISSUE-19: context-switch residual edges (szombflag overwrite; resume path-U partial p_ubptbl)
+
+> **Ledger: OPEN** — statically possible, never reproduced. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **OPEN — statically possible, never reproduced (Codex `PROCESS-MMU-CONTEXT-SWITCH-CONTRACT.md`).**
 (a) `szombflag` is a SINGLE pointer and `swtch` is the only `segu_release` caller: if
@@ -1615,6 +1691,10 @@ vec-tavua + EINVAL 2K-kohdistuksesta). Buildit 260719-04…-15; joka ryhmällä 
 
 ## ISSUE-20: stock hat_swapout = MIINA jos prosessi-swapout koskaan palautetaan
 
+> **Ledger: DEFERRED** — process swapout is disabled. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **DEFERRED BY POLICY — do NOT fix, do NOT re-enable (Codex UM-BIT-LIFECYCLE-CENSUS.md +
 HAT-SWAPOUT-AUDIT.md).** The linked `hat_swapout` 0xb4360 is the stock 030 body: 030 PTE bit
 ops, >>11 leaf indices, 0x800 strides, 0x20000 table hops against the retired ptdat machinery,
@@ -1627,6 +1707,10 @@ re-enabling: a native hat_swapout040 (or an explicit no-op policy) + segu/u-area
 validation. Until then sched STAYS overridden.
 
 ## ISSUE-21: satunnainen boot-musta-ruutu real-HW:llä (~1/4 booteista) — RATKAISTU (config-wrapper, IC-handoff)
+
+> **Ledger: FIXED** — 68040 hardware, 9/9. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **✅ RATKAISTU 2026-07-22 (config040.s cache-handoff-wrapper — self-contained, HW-verified 9/9):**
 Juurisyy = 68040:n INSTRUCTION CACHE peritään AmigaOS/68040.library:ltä PÄÄLLÄ kernel-entryssä, ja
@@ -1797,6 +1881,10 @@ acceptance — ISSUE-38 is precisely the lesson that instrumentation changes beh
 
 ## ISSUE-38 — ✅ CLOSED 2026-07-30: the boot icode was invisible to the 040 ifetch under copyback
 
+> **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 Full record: `ISSUE38-ICODE-CACHE-FINDING-260730.md`. Short form: `main+0x1e8`'s
 `copyout(icode, 0x80800000, szicode)` leaves proc 1's bootstrap text in dirty copyback data-cache
 lines; the 68040 instruction fetch does not snoop the data cache; proc 1 executes the still-zero RAM
@@ -1815,6 +1903,8 @@ copyback default flip is unblocked. The 2026-07-29 bisect record below stands as
 interpretation ("names the exec path") is superseded.
 
 ## ISSUE-38 — BISECTED 2026-07-29: `assegat_dbg` is what masks it, and that names the path
+
+> **Ledger: FIXED** — earlier record of ISSUE-38; the first ISSUE-38 section above carries the current one.
 
 Five hardware boots, deterministic verdict each time (reaches login, or spins in the scheduler with
 no runnable process — `mainmarks` makes the latter visible as a repeating `W` proc-table dump):
@@ -1868,6 +1958,8 @@ wrappers.
 
 ## ISSUE-38 — (CLOSED 2026-07-30, see above) it blocked the copyback flip: copyback hangs at init's exec WITHOUT the debug probes
 
+> **Ledger: FIXED** — earlier record of ISSUE-38; the first ISSUE-38 section above carries the current one.
+
 Found 2026-07-29 by booting the image that would actually ship — which, it turns out, no probe-less
 kernel ever had been.
 
@@ -1919,6 +2011,10 @@ it — which would put a number on how narrow the window is.
 
 ## ISSUE-22 — ✅ ACCEPTED 2026-07-29: 16 bursts clean with 13 corruptions repaired under way
 
+> **Ledger: FIXED** — 68040 hardware, 16/16. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 `68040-260729-06` (copyback + the DFC/SFC contract), fresh boot, `b2repro-copy.sh 16`, 72.6 min,
 serial bracketed at both ends:
 
@@ -1960,6 +2056,8 @@ slowdown — a few candidates worth one cheap check later: root-fs free space an
 
 ## ISSUE-22 — the causal chain, closed 2026-07-29 by fault injection
 
+> **Ledger: FIXED** — earlier record of ISSUE-22; the first ISSUE-22 section above carries the current one.
+
 Root cause: **`wb040.s` leaked DFC into the interrupted copy** (section below for how it was found).
 The natural event is far too rare to A/B — a 12-burst control run produced 25 DFC corruptions and
 zero EFAULTs — so the corruption was injected instead, in the same place a leaking replay leaves it
@@ -1992,6 +2090,8 @@ same way from `ptest040.s:52` but has no victim path today and is deliberately l
 change.
 
 ## ISSUE-22 — how it was named on hardware, 2026-07-28: the fault is MISROUTED to the kernel resolver
+
+> **Ledger: FIXED** — earlier record of ISSUE-22; the first ISSUE-22 section above carries the current one.
 
 Full evidence: `test-tools/issue22-misroute-260728.txt` (+ the raw run and serial logs beside it).
 Kernel `68040-260728-36`, copyback, six-way copy load, hit at burst 15 of 16:
@@ -2028,6 +2128,8 @@ fault address ≥ `0x80000000` always ends in `as_segat(&kas, userVA) = NULL`, s
 exactly the set that fails today.
 
 ## ISSUE-22 — (SUPERSEDED 2026-07-29; kept as the record of what was true on 07-28) ⏳ was OPEN, and that day's clean runs were NOT attributable to the xpage fix
+
+> **Ledger: FIXED** — earlier record of ISSUE-22; the first ISSUE-22 section above carries the current one.
 
 > **Superseded.** ISSUE-22 was closed on 2026-07-29 by fault injection — the root cause was
 > `wb040.s` not restoring DFC across the interrupted copy. See "ISSUE-22 — the causal chain, closed
@@ -2127,6 +2229,10 @@ jos toistuu, lisää minimaalinen EFAULT-latch (u_error==EFAULT && syscall==read
 latchaa faultannut VA+PC) baseen. Kirjattu test-tools/issue10-realhw-verify-260719.txt.
 
 ## ISSUE-23: serdbg serial-merkkikato 9600:lla — FIKSATTU + REAL-HW-VERIFIED
+
+> **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 **FIXED-HW-VERIFIED (2026-07-19 myöhäisilta): 123 KB aitoa 9600-kaappausta
 (boot+churn+pressure, dbg -16) → 74 interleave-tapahtumaa joissa keskeytys-token
 laskeutui prosessirivin sisään KAIKKI ehjinä, 0 katkennutta tokenia, 0 silputtua
@@ -2152,6 +2258,10 @@ kapenee, mutta EI yksin poista racea. HUOM: unix_boot040:n loader-diagit jääv�
 nosteta molempia; vastaanottopää samaan nopeuteen. Verifiointi vain real-HW:lla.
 
 ## ISSUE-24: init 6 jää runlevel-6-limboon real-HW:lla — rc6-userland, EI kernel-bugi
+
+> **Ledger: NOT A KERNEL BUG** — 68040 hardware -- rc6 userland. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 **OPEN (kirjattu 2026-07-19 ilta, real-HW base 260719-13; sama havaittu ISSUE-22-jahdon
 sykleissä).** `init 6` (telnetistä tai konsolilta) vie koneen runlevel 6:een (`who -r` = 6),
 rc6 tappaa suurimman osan palveluista — mutta viimeinen uadmin-askel EI koskaan toteudu:
@@ -2165,6 +2275,10 @@ boot unix-040:lle konfiguroitu 2026-07-19). Selvitys: aja rc6 kädestä (`sh -x 
 ja katso mihin uadmin-haara kuolee.
 
 ## ISSUE-25: natiivi boot-osiopolku (boot1/boot2) on 030-only — 040-portti buutataan unix_boot040:llä
+
+> **Ledger: DEFERRED** — documented: boot via unix_boot040. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 **DOCUMENTED-DEFERRED (koe 2026-07-20 yö, emu-040).** Kokeiltiin stock-asennuspolku:
 /stand/Makefile newboot-target dd:llä (boot1.boot + makeiblk + boot2.boot + makeiblk +
 kernel → /dev/dsk/c6d0s3; RDB: UNIX_Boot-osio bootable pri=2, boot1 = validi DOS\0-
@@ -2180,6 +2294,10 @@ kernel-offsetista 0x260a). TULOKSET Amiberryssä (vain AMIX-hdf, KS 3.2.2):
 (Alkup. sivulöydös shutdown -i0:sta eriytetty omaksi ISSUE-26:ksi alle — eristetty samana yönä.)
 
 ## ISSUE-26: shutdown -i0 (halt) → shutdown-prosessin deterministinen 4AFC0003-bus-error-silmukka
+
+> **Ledger: OPEN** — good emulator repro; halt path only. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 **OPEN, HYVÄ REPRO (eristetty 2026-07-20 yö, emu-040 dbg -16).** `shutdown -y -i0 -g0`
 EI koskaan pääse halt-tilaan: shutdown-PROSESSI kaatuu silmukkaan `User BUS ERROR at
 4AFC0003, PC:800023FC FAULT:6` (tuhansia toistoja kunnes prosessi kuolee; järjestelmä
@@ -2194,6 +2312,10 @@ mitään nykyistä (halttia ei käytetä työnkuluissa). Serial-evidenssi:
 durable-tools/shutdown-i0-crash-serial.log (kopio myös scratchpadissa).
 
 ## ISSUE-27: segmap_pagecreate-perheen häntänollaus — ✅✅ TODISTETTU JA KORJATTU (2026-07-25, emu-040+060)
+
+> **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **VIKA TOISTETTU DETERMINISTISESTI JA KORJAUS TODISTETTU.**
 | kerneli | mode E | tulos |
@@ -2277,6 +2399,10 @@ UFS:n oma `rwip` ja `as_iolock`in rooli `pagecreate`-lipun TUOTTAJANA puuttuivat
 
 ## ISSUE-28: memcntl / mem_unlock mlock-bittikartan geometria — ✅ FIXED (2026-07-25, emu-040+060)
 
+> **Ledger: FIXED** — emulator, both CPUs. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **RATKAISTU `prototypes/patch_memcntl.py` (17 sitea + 5 kanariaa), buildit 260725-05/-06.**
 **Sama tuottaja/kuluttaja-epäsymmetria kuin ISSUE-27:ssä:** `as_ctl` (0xaeafe) ja
 `segvn_lockop` (0xad2f0) on JO muunnettu 4 KiB:iin (patch_modelb.py:333-337 ja
@@ -2307,6 +2433,10 @@ MOLEMMILLA kerneleillä eli 16/17 siten runtime-näyttö on "ei regressiota", ei
 "todistettu oikeaksi". Evidenssi `test-tools/memcntl-issue28-emu-verify-260725.txt`.
 
 ## ISSUE-29: kertaluontoinen KMA 128-tavuluokan vapaalista-hälytys (attribuutio TODISTAMATTA)
+
+> **Ledger: OPEN** — single occurrence, attribution unproven. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **OPEN — OSUI RAUDALLA 27.7. (havainto #5) ja ei ole enää kohinaa.**
 `DBG KMEMCORRUPT bin=80ED9F0 blk=40259300 next=8 prev=6 caller=8042334 size=1`, yksi osuma
@@ -2349,6 +2479,10 @@ arvaamisen sijaan. Evidenssi `test-tools/modelb-tail-emu-verify-260725.txt`.
 
 ## ISSUE-30: pvn_vptrunc katkaisun häntänollaus oli 2 KiB — 🔶 MUUNNETTU, saavutettavuus TODISTAMATTA
 
+> **Ledger: CONVERTED** — reachability unproven. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **MUUNNETTU 2026-07-25 (`patch_pvntrunc.py`, 2 sitettä + 2 kanariaa, buildit
 260725-11/-12), mutta vikaa EI saatu toistettua UFS:llä.** Codexin
 `PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md` luokitteli tämän P1:ksi.
@@ -2378,6 +2512,10 @@ s5-kutsujat (`s5alloc.c:481`) eivät ole mountattuina eikä negatiivinen tulos k
 PRESERVED). Serialit puhtaat.
 
 ## ISSUE-31: ufs_bmap sivugeometria — ✅ MUUNNETTU (2026-07-25, emu-040+060)
+
+> **Ledger: FIXED** — emulator, both CPUs. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **11 sitettä + 3 kanariaa (`patch_ufsbmap.py`), buildit 260725-13/-14.**
 Tämä on ISSUE-27:n rajapinnan **UFS-provider-puolisko**: `rwip` syöttää `ufs_bmap`ille
@@ -2410,6 +2548,10 @@ levytotuus `sum 8320 5763` `reboot`+`fsck`:n yli — **emu-040 ja emu-060**. Ser
 Ei rautaa.
 
 ## ISSUE-32: ELF-execin mäppäysrajapinta — ✅ MUUNNETTU (2026-07-25, emu-040+060)
+
+> **Ledger: FIXED** — emulator, both CPUs. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **21 sitettä kolmessa atomisessa ryhmässä + 5 kanariaa (`patch_execboundary.py`),
 buildit 260725-15/-16.** Codexin `EXEC-BOUNDARY-CENSUS.md` luokitteli tämän P1:ksi
@@ -2454,6 +2596,10 @@ segmenttikohdistukseen). Ei dynaamisesti linkitettyä `PT_INTERP`-polkua. Ei rau
 
 ## ISSUE-33: /dev/mem-mmapin PFN oli 2 KiB — ✅ TODISTETTU JA KORJATTU (2026-07-25, emu-040+060)
 
+> **Ledger: FIXED** — emulator, both CPUs. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **7 sitettä kahdessa ryhmässä + 7 kanariaa (`patch_devmmap2.py`), buildit 260725-17/-18.**
 Kaventaa censuksen "P2: device mmap and PFN boundary" -kohdan niihin kahteen ylitykseen
 jotka ovat oikeasti saavutettavissa. Lähdekontrakti `svr4-src-3b2/.../vm/seg_dev.c`.
@@ -2493,6 +2639,10 @@ kampanjassa.
 Serialit puhtaat. ⚠️ Ei rautaa; VA2000/Piccolo-kortteja ei testattu tällä.
 
 ## ISSUE-34: JAKAUTUU KAHTEEN — 34a (todistettu) 68060 tappaa vakiojaon; 34b (auki) cc1:n SIGSYS ei ole tämä
+
+> **Ledger: 34a FIXED / 34b SUPERSEDED** — 68060 hardware -- 34b was the missing FPSP after all. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 > **⚠⚠ KORJAUS 5.8.2026, RAUDALLA MITATTU — alla oleva "ketju on puhdas" ei pidä paikkaansa
 > sillä koneella jolla ajamme.** Ks. `060-F0-MEASUREMENT-260805.md`.
@@ -2659,6 +2809,10 @@ Evidenssi: `test-tools/issue34-060-unimpl-integer-260727.txt`.
 
 ## ISSUE-35: NFS-kirjoitus menetti PUOLET JOKAISESTA SIVUSTA — ✅ KORJATTU JA TODISTETTU 27.7.
 
+> **Ledger: FIXED** — 68040 hardware, byte-verified from the server. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **✅ SULJETTU 2026-07-27 illalla.** Korjaus `prototypes/patch_nfs_putpage.py` (2 atomista
 sitea), buildit 68040-260727-07/-08. **Ennen/jälkeen todistettu oikealla raudalla
 palvelimen puolelta.** Evidenssi `test-tools/issue35-nfs-putpage-fix-260727.txt`.
@@ -2759,6 +2913,10 @@ Evidenssi `test-tools/realhw-verify-260727.txt` §5; testitiedostot NAS:issa
 `amix/hwtest-260727/`.
 
 ## ISSUE-36: NFS-tiedoston mmap SIGBUSaa viimeisellä OSITTAISELLA sivulla
+
+> **Ledger: FIXED** — 68040 hardware, A/B. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **OPEN, TODISTETTU RAUDALLA 2026-07-27**, kerneli 68040-260727-08 (ISSUE-35:n korjaus jo
 paikallaan). Löytyi ajamalla Codexin määrittelemä lukupuolen testi — **mutta tämä ei ole se
@@ -3095,6 +3253,8 @@ mittaisi serialisointia eikä väylää.
 
 ## ISSUE-36 — ✅ CLOSED: A/B CONFIRMED ON REAL HARDWARE 2026-07-28
 
+> **Ledger: FIXED** — earlier record of ISSUE-36; the first ISSUE-36 section above carries the current one.
+
 Both halves are now run, on two kernels that differ in **exactly five bytes** (the four immediates
 plus one build-id byte), so the difference is attributable to nothing else.
 
@@ -3202,6 +3362,10 @@ only change (a debug threshold constant), but the cause is unknown and it is rec
 explained away.
 
 ## ISSUE-37 — ✅✅ FIXED AND CONFIRMED; xpage v2 re-verified on hardware 2026-07-28
+
+> **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **v2 acceptance (`68040-260728-26`, the audit-driven rewrite: format-7 gate, SSW MA tier with error
 propagation, v1's window kept as a second tier with its result discarded).** wolf3d was run from a
@@ -3331,6 +3495,8 @@ this sits on every kernel fault path, so a functional check mattered more than u
 its menu, ISSUE-37 is closed. Until then: a root cause with a matching fix, not a proven repair.
 
 ## (original entry) ISSUE-37: wolf3d wedges the machine in an infinite as_fault loop
+
+> **Ledger: FIXED** — earlier record of ISSUE-37; the first ISSUE-37 section above carries the current one.
 
 Found 2026-07-28 on real hardware, VA2000 in Zorro II mode, kernel `68040-260727-02` (RTG dbg).
 Wolf3D was ported to AMIX/030 by us earlier and worked there, so this is a **candidate Model-B
@@ -3649,6 +3815,8 @@ noise, not damage, and it does not block anything.
 
 ## ⚠ ISSUE-10 / amixadm is INTERMITTENT — and that invalidates single-boot bisects (2026-07-31)
 
+> **Ledger: OPEN** — earlier record of ISSUE-10; the first ISSUE-10 section above carries the current one.
+
 Recorded so the next session does not repeat the afternoon: `amixadm` crashed at startup on
 `unix-040-rtg-260731-05`, and on a **second boot of the same image** it started cleanly. The trigger
 is therefore probabilistic per boot, not a property of a kernel that a single boot can decide.
@@ -3690,6 +3858,10 @@ time buys nothing until there is a rate ([[feedback-pause-elusive-bug-hunting]] 
 
 ## ⚠ ISSUE-39 (2026-07-31): `hat_sdtalloc` runs out of contiguous memory during the burst suite
 
+> **Ledger: OPEN** — 68040 hardware; fragmentation, not pressure. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 Seen on the console during the 16-burst acceptance run on `68040-260731-10`, by a human watching the
 screen. It is a kernel `cmn_err` warning, not a panic:
 
@@ -3726,6 +3898,10 @@ its own — they ride along with the next boot.
 ---
 
 ## ✅ ISSUE-41 (2026-08-06): `segvn_faultpage` had no per-page permission check — partial `mprotect` + a denied write PANICKED the kernel
+
+> **Ledger: FIXED** — 68040 + 68060 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **Status: FIXED** in `prototypes/segvn_prot040.s`, kernel `260806-05` and later (commits
 8f4a704 finding, ee16389 fix, 8bde13a + 46c8424 regression). Record:
@@ -3780,6 +3956,10 @@ was fatal.
 ---
 
 ## ⏳ ISSUE-42 (2026-08-06): on the 68040, a denied write-back replay is swallowed — missing fault propagation, silent lost store
+
+> **Ledger: OPEN -- RELEASE BLOCKER** — 68040; contract solved, implementation not written. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 > **Retitled 2026-08-07.** This was filed as "completes a write into a protected page — protection
 > bypass". That was an over-claim, and both the Codex audit and a direct measurement refute it:
@@ -3860,6 +4040,10 @@ where the permission is actually lost (PTE vs segment protection) and whether th
 `wb040.s` entirely.
 
 ## ✅ ISSUE-43 (2026-08-11, CLOSED ON HARDWARE 2026-08-12): on the 68060, an enabled FP exception with a ZERO SOURCE OPERAND loses fp0-7 across a signal
+
+> **Ledger: FIXED** — 68060 hardware, 6/6 bit-exact. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
 
 **Measured, real hardware, `68060-260810-03` and reproduced on `-05`.** Instrument:
 `test-tools/fpenab060`, one child per IEEE class, Motorola's own fixture values from
@@ -3974,6 +4158,10 @@ Separate latent gap found by the same audit, not part of this issue: the `/proc`
 
 ## ✅ ISSUE-44 (2026-08-12, FIXED THE SAME DAY): the FPSP arithmetic exit fell through into the BSUN body
 
+> **Ledger: FIXED** — 68060 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> The text below is the working record and may contain hypotheses later refuted;
+> STATUS.md §7 lists which.
+
 **Found on silicon by an invariant counter, on the first boot of the build that contained it.**
 
 `c13d3b8` removed the null-frame guard from `Lco_fparith` in `prototypes/fpsp060_glue.s`. That
@@ -4012,3 +4200,26 @@ Fixed by restoring the one instruction (`7cbbc67`); `68060-260812-02` measures `
 have found this: four of six classes were green. What found it was an invariant that spans two
 counters — one package entry must produce exactly one call-out exit — and the counter that made
 the fall-through visible was the one nobody expected to move.
+
+## ✅ ISSUE-40 (2026-08-01, CLOSED ON HARDWARE 2026-08-02): `availrmem` declined monotonically — page-table pages were never returned
+
+> **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
+> ⚠ `ptd_wake_n` = 0: the `pt_waiting` branch of the fix has never been exercised.
+
+This issue was worked entirely in its own documents and never had a section here, which made it
+invisible to anyone reading the numbering. The record, in order:
+
+| Document | What it holds |
+|---|---|
+| `ISSUE40-AVAILRMEM-DECLINE-260801.md` | the measurement and the mechanism |
+| `ISSUE40-AVAILRMEM-TASK.md`, `ISSUE40-PTDAT-CODEX-QUESTIONS.md`, `ISSUE40-CODEX-FOLLOWUP-QUESTIONS.md` | the static contract questions and their answers |
+| `ISSUE40-LEGACY-SDT-LANDED-260801.md` | the legacy-SDT teardown edge |
+| `REALHW-ISSUE40-PART1-260801.md`, `REALHW-ISSUE40-ACCEPTANCE-260802.md`, `REALHW-ISSUE40-CLOSED-260802.md` | hardware acceptance on `68040-260802-01` |
+
+Kernel side: `prototypes/legacysdt040.s` and `prototypes/ptdatfree040.s`, with the `i40_*` and
+`ptd_*` counter blocks (`tools/status-facts.sh` prints their current runtime addresses).
+
+**The one thing left open** is the counter that says a branch never ran: `ptd_wake_n` is 0, so
+the `pt_waiting` wake path in the teardown edge has never executed on either CPU. That is a
+coverage gap, not a suspected defect — the same shape as ISSUE-43's two unexercised `UFPRWRT`
+branches.
