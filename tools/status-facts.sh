@@ -13,8 +13,21 @@
 # .data, so "what the counter block must read at runtime" always comes from the thing that will
 # actually be booted.
 #
-# usage:  sh tools/status-facts.sh [kernel-image]        (default: build/unix-040)
-#         sh tools/status-facts.sh build/unix-040-rtg
+# usage:  sh tools/status-facts.sh [kernel-image] [load-base]
+#           sh tools/status-facts.sh                        build/unix-040 at 0x08000000
+#           sh tools/status-facts.sh build/unix-040-rtg
+#           sh tools/status-facts.sh build/unix-040 0x07000000
+#
+# THE LOAD BASE IS NOT ALWAYS 0x08000000.  Counter addresses are `load_base + textsize +
+# nm(.data)`, and the loader binds the kernel into the LARGEST non-chip memory region it finds
+# (unix_boot/src/bind.c).  Every machine this project has used so far had an accelerator with its
+# own RAM at 0x08000000, so that base has been constant -- but an A3640 has no local memory and
+# runs from the A3000 motherboard RAM at 0x07000000.  On such a machine every address this script
+# prints would be wrong by 16 MiB unless the base is passed.
+#
+# Take the base from the loader's own boot output rather than from an assumption:
+#     kernel: entry=08000000 tvaddr=08000000 tsize=000f2910 ...
+#                            ^^^^^^^^ this is the load base
 #
 # Requires the cross binutils on PATH:
 #         export PATH=/home/asokero/opt/amix-cross/bin:$PATH
@@ -22,6 +35,7 @@ set -e
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 IMG="${1:-$HERE/build/unix-040}"
+BASE="${2:-0x08000000}"
 NM=m68k-linux-gnu-nm
 SIZE=m68k-linux-gnu-size
 
@@ -67,17 +81,18 @@ printf "build id  %s   (the banner shows 68060- on a 060: that is the CPU, not t
 printf "sha256    %s\n" "$SHA"
 printf "text      %s (0x%x)   data %s   bss %s\n" "$TEXT" "$TEXT" "$DATA" "$BSS"
 printf "loader    unix_boot040 is MANDATORY (PC-rel reloc fix f0ed373)\n"
+printf "load base %s   <- addresses below assume this; read tvaddr from the boot output\n" "$BASE"
 echo '```'
 echo
 
 # ------------------------------------------------- magics, counters, bindings
 # The ELF work is one python block: it needs the symbol table, the section headers and the
 # .data bytes at once, and doing that in sh with readelf+od is where transcription errors live.
-python3 - "$IMG" "$TEXT" <<'PY'
+python3 - "$IMG" "$TEXT" "$BASE" <<'PY'
 import struct, subprocess, sys
 
 img, textsize = sys.argv[1], int(sys.argv[2])
-BASE = 0x08000000                        # the kernel is loaded here and identity-mapped
+BASE = int(sys.argv[3], 0)               # load base: where the loader bound the kernel
 
 f = open(img, 'rb').read()
 def u16(o): return struct.unpack('>H', f[o:o+2])[0]
@@ -108,7 +123,7 @@ def one(name, kinds=None):
     return None, None
 
 # ---- runtime counter blocks, keyed by their magic word -------------------------------------
-print("## Counter blocks (runtime addresses = 0x08000000 + textsize + nm .data offset)")
+print("## Counter blocks (runtime addresses = load base 0x%08X + textsize + nm .data offset)" % BASE)
 print()
 print("Read the magic FIRST. If it does not match, every other reading from that block is noise")
 print("-- a stale address returns a plausible number instead of failing.")
