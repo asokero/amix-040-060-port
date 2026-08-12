@@ -3957,7 +3957,9 @@ was fatal.
 
 ## ⏳ ISSUE-42 (2026-08-06): on the 68040, a denied write-back replay is swallowed — missing fault propagation, silent lost store
 
-> **Ledger: OPEN -- RELEASE BLOCKER** — 68040; contract solved, implementation not written. Canonical: [`STATUS.md`](STATUS.md) §4.
+> **Ledger: IMPLEMENTED, HARDWARE ACCEPTANCE OWED — still a RELEASE BLOCKER** — the fix is in
+> `prototypes/wb040.s` and verified on the emulated 68040; no 68040 silicon has seen it.
+> Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
 > STATUS.md §7 lists which.
 
@@ -4039,6 +4041,47 @@ where the permission is actually lost (PTE vs segment protection) and whether th
 `DFC = WBxS & 7` buys it a privilege it should not have — either would move the fix out of
 `wb040.s` entirely.
 
+
+### ✅ IMPLEMENTED 2026-08-12 — the denial is propagated, and the replay stops at it
+
+`prototypes/wb040.s`, per the contract's ten behavioural items. What changed:
+
+* `Lwb_fail` no longer skips the failed write-back and continues. It classifies by the write-back's
+  **own function code** — a user-FC denial is a user protection fault whichever wrapper is on the
+  stack, a supervisor-FC one must never enter the user signal ABI (item 9) — then drops
+  `Lwb_do`'s return address and returns straight to the wrapper. That is what stops the ordered
+  replay mechanically: k_trap rte's into the landing pad with the trap-time stack, so `addql #4,%sp`
+  leaves the remaining write-backs unprocessed (items 5 and 7).
+* `usrxmemflt` turns that into complete `k_siginfo_t` state — `si_addr` is the **failing write-back
+  byte**, not the near FA the CPU reported (item 6). `krnxmemflt` stops and counts without touching
+  the signal ABI.
+* The class is not guessed: the nested resolution that failed records its own verdict, and the
+  address comes from the CPU's fault address in the format-7 frame.
+
+```
+  emulated 68040   case c FAIL (torn store)  ->  case c PASS (SIGSEGV), PROTFAULT fails=0
+  same boot, A/B   wbf_prop_on 1 -> PASS, 0 -> FAIL with the old wording, 1 -> PASS
+  attribution      wbf_user_n 1, wbf_signal_n 1, wbf_nosig_n 0, wbf_afb_n 0
+                   si_signo 11 (SIGSEGV), si_code 2 (SEGV_ACCERR), si_addr = the page's first byte
+  boot traffic     wbf_fail_n = 0 after a full boot: ordinary replays are never denied, so the
+                   new signalling does not kill processes that used to survive
+  emulated 68060   every wbf_* counter 0 -- the format-7 gate is this unit's CPU gate
+```
+
+Record: `test-tools/issue42-emu-verify-260812.txt`, including **two pre-registered predictions that
+were wrong** and the defect each one exposed in the first build — an `si_addr` that was one byte
+past the denial (the replay loop's post-increment), and a diagnostic block that cleared itself
+before anyone could read it.
+
+**WHY THIS IS STILL A BLOCKER.** No 68040 silicon has run it. `wb040.s`'s own verified comment
+says the emulators never set WB1S valid, so everything measured is WB2/WB3 and the WB1 path with
+its ISSUE-11 realignment is unexercised. Hardware acceptance needs the A3640 card swap and is
+bundled into `NEXT-040-SESSION-RUNLIST.md`.
+
+**Two things deliberately not done**, both stated in the source rather than hidden: write-back
+state is not retained across a signal handler that repairs the mapping and returns (contract item
+8 — no measured victim, and it needs somewhere to keep per-process WB state), and the
+supervisor-FC branch is unexercised (`wbf_sup_n` = 0 in every run so far).
 ## ✅ ISSUE-43 (2026-08-11, CLOSED ON HARDWARE 2026-08-12): on the 68060, an enabled FP exception with a ZERO SOURCE OPERAND loses fp0-7 across a signal
 
 > **Ledger: FIXED** — 68060 hardware, 6/6 bit-exact. Canonical: [`STATUS.md`](STATUS.md) §4.

@@ -85,6 +85,8 @@ usrxmemflt:
 	bnew	Lu_done
 	moveal	%fp@(8),%a2		| a2 = frame
 	bsrw	wb040_replay
+	tstl	%d0			| ISSUE-42: 0 = every valid WB completed;
+	bnew	Lu_wbdenied		| nonzero = one was permanently DENIED
 	moveal	u+0x730,%a0		| 060-B: fmt-4 page-crossing completion
 	moveal	%a0@(124),%a1		| a1 = as = curproc->p_as
 	bsrw	wb060_xpage
@@ -92,7 +94,31 @@ usrxmemflt:
 	beqw	Lu_done			| caller instead of being masked by the near page's
 	bsrw	Lu_siginfo		| success -- otherwise the restart loops forever
 	movel	%d0,%d4			| F4: d4 = si_signo, per the stock return contract
+	braw	Lu_done
+| ISSUE-42 (2026-08-12): a write-back was permanently denied and the ordered replay stopped
+| there.  d0 = 1 the denied WB carried a USER function code -> the process must be told;
+| d0 = 2 it carried a supervisor code -> the replay still stops, but the user signal ABI is not
+| the place to report that.  Lwb_fail classifies by the WB's OWN FC rather than by which
+| wrapper is running, because that is what the architecture makes authoritative.
+Lu_wbdenied:
+	cmpil	&1,%d0
+	bnew	Lu_done			| supervisor-FC WB: stopped and counted, no signal
+	bsrw	Lu_wbsiginfo		| k_siginfo_t built from the DENIED BYTE's own address
+	movel	%d0,%d4			| d4 = si_signo, the same contract as the F4 path above
 Lu_done:
+	tstl	%d4			| ISSUE-42: remember the verdict of a FAILED user
+	beqs	Lu_norec		| resolution.  When this call is the NESTED one taken by
+	movel	%d4,wbf_signo		| a replay byte, k_trap gives up immediately after it and
+	moveal	%fp@(12),%a0		| lands on Lwb_fail -- which then attributes the denial
+	movel	%a0@(4),wbf_code	| from these instead of guessing a class.
+	moveal	%fp@(8),%a0		| ...and from the CPU's own fault address, because the
+	moveq	&0,%d0			| replay loop's a3 has already POST-INCREMENTED past the
+	moveb	%a0@(70),%d0		| failing byte by the time the trap is taken -- measured
+	lsrb	&4,%d0			| 2026-08-12: a3 read page_base+1 for a denial at
+	cmpiw	&7,%d0			| page_base+0.  Format 7 only: that is the only frame
+	bnes	Lu_norec		| carrying an FA at +84, and the only CPU that makes one.
+	movel	%a0@(84),wbf_fa
+Lu_norec:
 	bsrw	Lwb_dfcinject		| ISSUE-22 fault injection (see Lwb_dfcinject)
 	bsrw	Lwb_dfccheck		| count DFC corruption whether or not the fix is on
 	tstl	wb_dfc_on		| ISSUE-22: give the interrupted code its DFC back
@@ -128,6 +154,10 @@ krnxmemflt:
 	bnew	Lk_done
 	moveal	%fp@(8),%a2		| a2 = frame
 	bsrw	wb040_replay
+	tstl	%d0			| ISSUE-42 item 9: the kernel path stops the replay for
+	beqs	Lk_wbok			| the same reason the user path does -- a later WB must
+	addql	&1,wbf_krn_n		| not run as though a failed earlier one completed --
+Lk_wbok:				| but it has no infop and must NOT enter the signal ABI.
 	lea	kas,%a1			| 060-B: fmt-4 page-crossing completion, as = &kas
 	bsrw	wb060_xpage
 	tstl	%d0			| item 4: propagate a permanent far-page failure
@@ -314,6 +344,40 @@ Lus_store:
 	clrl	%a0@(8)			| si_errno
 	movel	x60_far_addr,%a0@(12)	| si_addr = the denied far address
 	addql	&1,x60_siginfo_n
+	rts
+
+| Lu_wbsiginfo (ISSUE-42, 2026-08-12) -- the same translation for a permanently DENIED write-back.
+| Separate from Lu_siginfo on purpose: that one starts from a faultcode_t this wrapper produced,
+| while here the verdict was reached by the NESTED resolution of the failing replay byte and is
+| already a signal number plus an si_code.  Inventing a faultcode to feed the other helper would
+| be a round trip through a lossy mapping, for no gain.
+|
+| si_addr is the failing write-back BYTE (contract item 6: "attribute the signal to the first
+| failing WB byte, not the already-resolved near FA").  Reporting the frame's FA would name the
+| page that was fine -- the near page whose resolution is precisely what made this replay run.
+| in:  fp@(12) = infop; wbf_addr / wbf_signo / wbf_code recorded by Lwb_fail and Lu_done
+| out: d0 = si_signo.  Clobbers d0/a0, both scratch here.
+Lu_wbsiginfo:
+	moveal	%fp@(12),%a0		| infop, the same slot the stock resolver writes
+	movel	wbf_signo,%d0
+	bnes	Lwbs_have
+	moveq	&10,%d0			| nothing recorded -- SIGBUS/BUS_ADRERR rather than a
+	movel	&2,wbf_code		| guessed SIGSEGV, and counted so the guess is visible
+	addql	&1,wbf_nosig_n
+Lwbs_have:
+	movel	%d0,%a0@		| si_signo
+	movel	wbf_code,%a0@(4)	| si_code -- the nested resolver's own verdict
+	clrl	%a0@(8)			| si_errno
+	movel	wbf_fa,%d1		| si_addr: the CPU's own fault address for the denied
+	bnes	Lwbs_addr		| byte.  a3 is one PAST it (post-increment), so it is
+	movel	wbf_addr,%d1		| only the fallback -- and a counted one, because using
+	addql	&1,wbf_afb_n		| an address that is off by one would be a quiet lie.
+Lwbs_addr:
+	movel	%d1,%a0@(12)
+	movel	%d0,wbf_last_signo	| what was ACTUALLY reported, kept for the next reader:
+	movel	wbf_code,wbf_last_code	| the three inputs above are cleared by the next replay,
+	movel	%d1,wbf_last_addr	| which on a running system is milliseconds away
+	addql	&1,wbf_signal_n
 	rts
 
 | wb060_xpage (060-B, 2026-07-10): the 060 fmt-4 counterpart of wb040_replay's byte-wise
@@ -517,12 +581,24 @@ Lwx_ret:
 | wb040_replay: a2 = trap frame.  If it is an 040 format-7 access-error frame, re-issue every
 | valid write-back (WB1, then WB2, then WB3).  Clobbers d0-d3/a3; preserves d4 (the orig return)
 | and a2 (the frame) for the calling wrapper.  No stack frame (leaf-ish; only bsr to Lwb_do).
+|
+| ISSUE-42 (2026-08-12) -- RETURN VALUE.  d0 = 0 means every valid write-back completed.  Nonzero
+| means one was permanently denied, the ordered replay STOPPED at it, and the wrapper must not
+| report the near page's success as the outcome of the whole access.  1 = the denied WB carried a
+| user function code, 2 = a supervisor one.  The abort does not come back through here: Lwb_fail
+| is entered by k_trap's rte with the trap-time stack, so it drops Lwb_do's return address and
+| returns straight to the wrapper.  That is what "stop the replay" means mechanically.
 wb040_replay:
 	moveq	&0,%d0
 	moveb	%a2@(70),%d0		| format/vector high byte
 	lsrb	&4,%d0
 	cmpiw	&7,%d0			| 040 access-error (format 7) frame?
 	bnew	Lwr_ret
+	clrl	wbf_signo		| ISSUE-42: any verdict still recorded here is from an
+	clrl	wbf_code		| EARLIER fault; only what this replay's own nested
+	clrl	wbf_fa			| resolution records may attribute its denial.  These
+					| three are INPUTS with a one-replay lifetime -- read
+					| wbf_last_* for what was actually reported.
 	clrl	%d3
 	movew	%a2@(82),%d3		| WB1S
 	btst	&7,%d3
@@ -582,7 +658,8 @@ Lwr_3:
 	movel	%a2@(92),%d2		| WB3D
 	bsrw	Lwb_do
 Lwr_ret:
-	rts
+	clrl	%d0			| ISSUE-42: reached only when nothing was denied.  The
+	rts				| denied path never comes through here (see Lwb_fail).
 
 | Lwb_do: d3 = WBxS, a3 = target address, d2 = data.  Set DFC = WBxS&7, then replay the store
 | BYTE-WISE (most-significant byte first), NOT with one wide moves.  A single wide moves on an
@@ -658,11 +735,52 @@ Lwb_loop:
 | u_nofault, log it (capped), SKIP the rest of this write-back and continue with the
 | next one -- a lost user store beats a kernel panic; the process re-faults on its own
 | if the address matters.
+|
+| ISSUE-42 (2026-08-12): IT NO LONGER SKIPS AND CONTINUES.  The paragraph above was the whole
+| defect.  "A lost user store beats a kernel panic" is true, but the third option -- tell the
+| process -- was never on the table, and skipping silently made the kernel report success for an
+| access half of which never happened.  Measured on the emulated 040 (protfault case c): the
+| unprotected half of a crossing store landed, the protected half was denied, the denial was
+| discarded here, and the process resumed holding half a store it believed complete.  A silently
+| torn store, which is worse than a lost one.
+|
+| The contract is Codex's vm-map/ISSUE42-WBREPLAY-PROTECTION-CONTRACT.md (8fd31fd), which read
+| Motorola, NetBSD and Linux/m68k against this code: every valid write-back is an access that
+| must either complete or report its OWN fault, in WB1/WB2/WB3 order, and a denial stops the
+| replay rather than being dropped.  Item 6 of its behavioural contract is the part that lands
+| here -- convert the failure into complete k_siginfo_t state using the FAILING write-back's
+| address, not the near resolver's zero.
+|
+| WHY THE WB'S OWN FC DECIDES, and not which wrapper is running: a user write-back can be pending
+| when a supervisor access faults and vice versa (that is exactly the ISSUE-22 shape).  The
+| architecture makes each write-back's function code the authority on which address space it
+| belongs to, so a user-FC denial is a user protection fault whichever wrapper is on the stack --
+| and a supervisor-FC one must never enter the user signal ABI (contract item 9).
+|
+| HOW THE REPLAY ACTUALLY STOPS.  k_trap rte's here with the TRAP-TIME stack, so sp points at the
+| return address `bsrw Lwb_do` pushed and sp@(4) at the one the wrapper pushed for wb040_replay.
+| Dropping four bytes and returning therefore leaves the remaining write-backs unprocessed and
+| hands d0 to the wrapper -- which is the mechanical meaning of "stop the ordered replay".
+|
+| wbf_prop_on = 0 restores the old swallow-and-continue behaviour in one .data long, for an A/B
+| inside a single boot.  This is the hottest path in the kernel that this project touches --
+| wb_replay_n reaches five figures per boot -- so it gets the same escape hatch ISSUE-22 has.
+|
+| KNOWN LIMIT, stated rather than hidden.  Contract item 8 also asks that pending write-back state
+| be RETAINED across a signal whose handler repairs the mapping and returns.  This does not do
+| that: the denied write-back and any after it are dropped once the fatal outcome is committed.
+| For a process that dies -- the case ISSUE-42 is about -- that is exactly item 5.  For a handler
+| that repairs and returns, those stores stay lost, as they were before this change, except that
+| now the process was told.  Retaining them needs somewhere to keep per-process WB state, which is
+| a bigger unit than this one and has no measured victim yet.
 Lwb_fail:
 	movel	%d2,u+0x374		| restore the outer u_nofault value FIRST
+	addql	&1,wbf_fail_n
+	movel	%a3,wbf_addr		| the DENIED BYTE's own address: exact, because the
+	movel	%d3,wbf_wbs		| replay loop goes byte by byte (the ISSUE-7 shape)
 	movel	Lwbf_n,%d0
 	cmpil	&8,%d0
-	bccw	Lwbf_q			| capped -> skip silently
+	bccw	Lwbf_q			| print cap -- it caps the MESSAGE, not the propagation
 	addql	&1,%d0
 	movel	%d0,Lwbf_n
 	movel	%d3,%sp@-		| WBxS (identifies which WB + its FC/size)
@@ -672,6 +790,25 @@ Lwb_fail:
 	jsr	cmn_err
 	lea	%sp@(16),%sp
 Lwbf_q:
+	tstl	wbf_prop_on
+	beqw	Lwbf_swallow		| A/B control: 0 = the pre-2026-08-12 behaviour
+	moveq	&7,%d0
+	andl	%d3,%d0			| the write-back's OWN function code
+	movel	%d0,wbf_fc
+	cmpil	&3,%d0			| FC 1/2 = user data/program, 4-7 = supervisor/CPU space
+	bccw	Lwbf_sup
+	addql	&1,wbf_user_n
+	moveq	&1,%d0			| user: the wrapper turns this into a signal
+	braw	Lwbf_stop
+Lwbf_sup:
+	addql	&1,wbf_sup_n
+	moveq	&2,%d0			| supervisor: stop and count, no user signal
+Lwbf_stop:
+	addql	&4,%sp			| drop Lwb_do's return address -- the replay ENDS here
+	rts				| and returns to the wrapper with d0 set
+Lwbf_swallow:
+	addql	&1,wbf_swallow_n	| the old behaviour, kept only as the A/B control
+	moveq	&0,%d0
 	rts
 	nop				| pad .text to a multiple of 4 to keep text/data contiguous
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
@@ -683,6 +820,79 @@ Lwbf_msg:
 Lwbf_n:
 	.long	0
 	.balign 4
+| --- ISSUE-42 (2026-08-12): write-back denial propagation.  Read wbf_magic FIRST; if it is not
+|     "WBF!" every address below is stale and every value here means nothing.
+|     On a 68060 all of these must stay 0: the replay runs only on a format-7 frame, which only a
+|     68040 produces.  That frame check IS this unit's CPU gate -- there is no cputype test. ---
+	.globl	wbf_magic
+wbf_magic:
+	.long	0x57424621		| "WBF!"
+	.globl	wbf_prop_on
+wbf_prop_on:
+	.long	1			| 1 = propagate a denied write-back (the fix)
+					| 0 = the pre-2026-08-12 swallow-and-continue, for an A/B
+	.globl	wbf_fail_n
+wbf_fail_n:
+	.long	0			| write-backs that could not be completed at all
+	.globl	wbf_user_n
+wbf_user_n:
+	.long	0			| ... of which carried a USER function code -> signalled
+	.globl	wbf_sup_n
+wbf_sup_n:
+	.long	0			| ... a supervisor one -> replay stopped, no signal
+	.globl	wbf_signal_n
+wbf_signal_n:
+	.long	0			| k_siginfo_t records built for a denied write-back
+	.globl	wbf_nosig_n
+wbf_nosig_n:
+	.long	0			| ... of which had NO recorded class and fell back to
+					| SIGBUS.  Non-zero means the attribution chain broke:
+					| the denial did not come through our nested resolver.
+	.globl	wbf_krn_n
+wbf_krn_n:
+	.long	0			| denials seen by the KERNEL wrapper (no signal ABI there)
+	.globl	wbf_swallow_n
+wbf_swallow_n:
+	.long	0			| denials dropped because wbf_prop_on was 0.  In a shipping
+					| boot this must be 0, or the fix is switched off.
+	.globl	wbf_afb_n
+wbf_afb_n:
+	.long	0			| si_addr taken from the replay pointer because the CPU's
+					| own fault address was not recorded.  That address is one
+					| byte PAST the denial, so non-zero here means si_addr was
+					| approximate and the attribution chain has a hole.
+| --- sticky: written when a denial happens, never cleared ---
+	.globl	wbf_addr
+wbf_addr:
+	.long	0			| replay pointer at the denial (= failing byte + 1)
+	.globl	wbf_wbs
+wbf_wbs:
+	.long	0			| last denied WBxS (which write-back, its FC and size)
+	.globl	wbf_fc
+wbf_fc:
+	.long	0			| last denied write-back's function code
+	.globl	wbf_last_signo
+wbf_last_signo:
+	.long	0			| what was actually reported to the process, and
+	.globl	wbf_last_code
+wbf_last_code:
+	.long	0			| ... its si_code, and
+	.globl	wbf_last_addr
+wbf_last_addr:
+	.long	0			| ... its si_addr.  These three survive; the three below
+					| do not, which cost one wrong prediction to learn.
+| --- transient: inputs with a ONE-REPLAY lifetime, cleared at every wb040_replay entry ---
+	.globl	wbf_signo
+wbf_signo:
+	.long	0			| signal number the nested resolution decided on
+	.globl	wbf_code
+wbf_code:
+	.long	0			| its si_code
+	.globl	wbf_fa
+wbf_fa:
+	.long	0			| the CPU's fault address for the denied byte (frame+84)
+	.balign	4
+
 | --- ISSUE-22 (2026-07-28): DFC restore, and the one .data long that turns it off ---
 	.globl	wb_dfc_on
 wb_dfc_on:

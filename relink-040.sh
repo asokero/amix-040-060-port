@@ -379,7 +379,10 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          f60_bsun_n f60_fline_n f60_trap_n f60_trace_n f60_fpudis_n f60_superdone_n \
          fpu_save fpu_save_orig fpu_restore fpu_restore_orig fpu_setup fpu_setup_orig \
          fpc_magic fpc_save_n fpc_save_wrt_n fpc_null_n fpc_idle_n fpc_excp_n fpc_odd_n \
-         fpc_last_frame fpc_rest_n fpc_rest_live_n fpc_rest_null_n fpc_rest_wrt_n fpc_setup_n; do
+         fpc_last_frame fpc_rest_n fpc_rest_live_n fpc_rest_null_n fpc_rest_wrt_n fpc_setup_n \
+         wbf_magic wbf_prop_on wbf_fail_n wbf_user_n wbf_sup_n wbf_signal_n wbf_nosig_n \
+         wbf_krn_n wbf_swallow_n wbf_afb_n wbf_addr wbf_wbs wbf_fc \
+         wbf_last_signo wbf_last_code wbf_last_addr wbf_signo wbf_code wbf_fa; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " $s\$" | sed "s/^/      $s: /"
 done
 echo "[*] stray UND refs (should be NONE for our globals):"

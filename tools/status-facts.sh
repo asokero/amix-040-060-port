@@ -126,19 +126,23 @@ for name in sorted(n for n in syms if n.endswith('_magic')):
     print("| `%s` | `%08X` | `%08x` | `%s` |" % (name, addr, magic, asc))
 print()
 
-# ---- the whole fpc/f60 blocks, in order, so a reader can kpeek them in one call -------------
-for block, first in (("fpc", "fpc_magic"), ("f60", "f60_magic")):
+# ---- every counter block, in order, so a reader can kpeek each in one call ------------------
+# Driven by the *_magic symbols rather than a hand-kept list: a block that gains a counter, or
+# a new block entirely, appears here without anyone remembering to add it.
+for block in sorted(n[:-6] for n in syms if n.endswith('_magic')):
     members = []
     for n, entries in syms.items():
         for v, t in entries:
             if t in 'DdBb' and n.startswith(block + '_'):
                 members.append((v, n))
-    if not members:
+    if len(members) < 2:
         continue
     members.sort()
     base = members[0][0]
-    print("**`%s` block** — `kpeek %08X %d` reads it in one call, in this order:" %
-          (block, BASE + textsize + base, len(members)))
+    contiguous = all(members[i+1][0] - members[i][0] == 4 for i in range(len(members)-1))
+    print("**`%s` block** — %s:" % (block,
+          "`kpeek %08X %d` reads it in one call, in this order" % (BASE + textsize + base, len(members))
+          if contiguous else "NOT contiguous, so read the addresses individually"))
     print()
     print('```')
     for i, (v, n) in enumerate(members):

@@ -1,0 +1,86 @@
+ISSUE-42 -- write-back denial propagation, emulator verification on both CPUs, 2026-08-12
+=========================================================================================
+
+Kernel: 68040/68060-260812-05, one image.  Unit: prototypes/wb040.s.
+Contract: amix-kernel-analysis/vm-map/ISSUE42-WBREPLAY-PROTECTION-CONTRACT.md (Codex, 8fd31fd).
+Counters: wbf block, 19 contiguous longs at 0x0810AFA4, magic "WBF!" first.
+
+THE RESULT
+-----------
+```
+  emulated 68040, before:  case c FAIL -- no signal, protected bytes INTACT (the torn store)
+  emulated 68040, after:   case c PASS -- child terminated by SIGSEGV
+                           case a PASS   case b PASS   PROTFAULT fails=0
+```
+
+Attribution, in the same boot, one .data long apart -- this is what says the new code and not
+something else in this build changed the verdict:
+
+```
+  wbf_prop_on = 1   case c PASS   wbf_signal_n +1
+  wbf_prop_on = 0   case c FAIL   wbf_swallow_n +1     (the exact old wording returns:
+                                                        "the store was denied and the denial
+                                                         was discarded -- ISSUE-42")
+  wbf_prop_on = 1   case c PASS   wbf_signal_n +1
+```
+
+WHAT THE COUNTERS SAY ABOUT THE ONE DENIAL
+-------------------------------------------
+```
+  wbf_fail_n      1     one write-back could not be completed
+  wbf_user_n      1     it carried a USER function code -> the process must be told
+  wbf_sup_n       0     no supervisor-FC denial was involved
+  wbf_signal_n    1     a k_siginfo_t was built for it
+  wbf_nosig_n     0     the class came from the nested resolver, not from a fallback
+  wbf_swallow_n   0     the fix was on
+  wbf_afb_n       0     si_addr came from the CPU's own fault address, not the approximation
+  wbf_wbs      0x81     WB valid, FC = 1 (user data), SIZE = long
+  wbf_last_signo 11     SIGSEGV
+  wbf_last_code   2     SEGV_ACCERR -- invalid permissions, not SEGV_MAPERR
+  wbf_last_addr  c1034000   PAGE-ALIGNED: the first byte of the protected page, which is
+                            exactly the first byte the crossing store could not have
+```
+
+TWO PRE-REGISTERED PREDICTIONS WERE WRONG, AND BOTH FOUND A REAL DEFECT IN THE FIRST BUILD
+-------------------------------------------------------------------------------------------
+The expectations were written before the first boot (scratch: expect-issue42.txt).
+
+1. "wbf_addr will be page-aligned."  It read c1034001, one byte PAST the page boundary.
+   Cause: the replay loop is `moves.b %d1,%a3@+`, and a3 has already post-incremented when the
+   trap is taken, so the landing pad's a3 is not the failing address.  si_addr would have been
+   off by one -- on the right page, so no test would ever have caught it, and every future
+   reader would have trusted it.  Fixed by recording the CPU's own fault address (format-7
+   frame + 84) in the NESTED resolver, with the a3 value kept only as a counted fallback
+   (wbf_afb_n).
+
+2. "wbf_signo will read 11 afterwards."  It read 0 -- because wb040_replay clears the input
+   fields at every entry, and on a running system the next replay is milliseconds away.  The
+   diagnostic was structurally unreadable after the fact.  Fixed by splitting the block into
+   transient inputs and sticky wbf_last_* outputs.
+
+Neither error changed the verdict.  Both were only visible because the numbers were written
+down first.
+
+REGRESSION
+-----------
+```
+  emulated 68040   boot to multiuser clean; wb_replay_n 3433 replays through the new code
+                   wbf_fail_n after boot, before any test: 0
+                   -- ordinary boot traffic contains NO permanently denied write-backs, so
+                      the new signalling cannot be killing processes that used to survive
+  emulated 68060   every wbf_* counter 0 (the replay runs only on a format-7 frame, which
+                   only a 68040 produces -- that check is this unit's CPU gate)
+                   fp060probe bad=0;  protfault 3/3 PASS through the F4 path as before
+```
+
+STILL OWED
+-----------
+* REAL 68040 SILICON.  wb040.s's own verified comment says the emulators never set WB1S valid,
+  so everything above is WB2/WB3; the WB1 path and its ISSUE-11 realignment cannot be exercised
+  under Amiberry at all.  ISSUE-42 stays a release blocker until the A3640 card swap
+  (NEXT-040-SESSION-RUNLIST.md).
+* Contract item 8: write-back state is NOT retained across a signal handler that repairs the
+  mapping and returns.  Stated in the source as a known limit rather than hidden.
+* A supervisor-FC denial now stops the replay too (counted, no signal).  wbf_sup_n has been 0
+  in every run, so that branch is unexercised -- a coverage gap of the same shape as ISSUE-40's
+  ptd_wake_n and ISSUE-43's UFPRWRT branches.
