@@ -1,5 +1,8 @@
 # Project Plan — 68040 (then 68060) support for Amiga Unix
 
+> **Canonical status: [`STATUS.md`](STATUS.md).** Where this file and STATUS.md disagree,
+> STATUS.md is right and this file is history.
+
 ## ★ CURRENT STATUS (2026-07-09) — ISSUE-7 AND ISSUE-8 RESOLVED; 040 boots to login, survives workload + reboots
 **Milestone (2026-07-09):** the 040 kernel now **boots to login on fs-uae, runs `ls -alR`, and
 survives 7 reboot cycles with ZERO panics** — the weeks-long ISSUE-7 is fixed. Verified from

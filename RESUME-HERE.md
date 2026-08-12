@@ -1,5 +1,8 @@
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-27, RAUTAHYVÄKSYTTY)
 
+> **⚠ SNAPSHOT OF 2026-07-27, NOT MAINTAINED SINCE.** Canonical status: [`STATUS.md`](STATUS.md).
+> Some conclusions below have been refuted — STATUS.md §7 lists which.
+
 > ## 🎉🎉 2026-07-27 ILTA — RAUTAHYVÄKSYNTÄ: KOKO 25.–27.7. DELTA LÄPI OIKEALLA PIILLÄ + VIRTAKATKAISU 8/8
 > A3000 + Mercury 68040, kerneli **68040-260727-01**, loader `unix_boot040`.
 > Evidenssi **`test-tools/realhw-verify-260727.txt`**. Serial 332 kB, **0 × PANIC /

@@ -1,5 +1,8 @@
 # Known issues — deferred, with enough context to resume
 
+> **Canonical status: [`STATUS.md`](STATUS.md).** Where this file and STATUS.md disagree,
+> STATUS.md is right and this file is history.
+
 ## ISSUE-1: our rebuilt `unix_boot` causes a 68030 MMU Configuration Error at the kernel's `pstart` (clib2/bebbo build)
 
 **Status:** DEFERRED (2026-06-17). Does NOT block the 68040 line — see "Why deferred".
