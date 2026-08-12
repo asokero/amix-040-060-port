@@ -635,6 +635,7 @@ Lw1_byt:
 	beqw	Lw1_ok
 	lsrl	%d0,%d2
 Lw1_ok:
+	movel	&1,wbf_slot		| which write-back, for the fail-fast diagnostics
 	bsrw	Lwb_do
 Lwr_2:
 	clrl	%d3
@@ -648,6 +649,7 @@ Lwr_2:
 	beqw	Lwr_3
 	moveal	%a2@(96),%a3		| WB2A
 	movel	%a2@(100),%d2		| WB2D
+	movel	&2,wbf_slot
 	bsrw	Lwb_do
 Lwr_3:
 	clrl	%d3
@@ -656,6 +658,7 @@ Lwr_3:
 	beqw	Lwr_ret
 	moveal	%a2@(88),%a3		| WB3A
 	movel	%a2@(92),%d2		| WB3D
+	movel	&3,wbf_slot
 	bsrw	Lwb_do
 Lwr_ret:
 	clrl	%d0			| ISSUE-42: reached only when nothing was denied.  The
@@ -704,6 +707,20 @@ Lwb_fcok:
 |     rte's to Lwb_fail (frame PC := the armed value) with the trap-time registers.
 |     d2 is free here (its data is already copied to d1); it survives the nested trap.
 	movel	u+0x374,%d2		| save the outer u_nofault value
+| ISSUE-42 Q3 (2026-08-12, Codex vm-map/ISSUE42-WBREPLAY-FOLLOWUP-AUDIT.md): u_nofault is ONE
+| scalar in the u-area and k_trap only tests it for non-zero.  It does not check the faulting PC,
+| the SP, or any notion of who armed the pad.  Interrupts are not masked here, so an unrelated
+| kernel fault taken while this is armed lands on Lwb_fail too -- with a foreign stack and a
+| foreign d2.  The old code would then write that d2 into u_nofault and rts through someone
+| else's stack; this unit's abort would additionally drop a long from it.  Fail-open corruption
+| either way, and the audit's finding is that the static code never established otherwise.
+| So: record WHO armed it and at WHICH stack, and let the pad refuse anything else.  a0/a1 carry
+| the OUTER owner across the loop -- they are trap-time registers at the pad, which is how both
+| the normal disarm and the abort restore a nested arm's parent.
+	moveal	wbf_own_cookie,%a0
+	moveal	wbf_own_sp,%a1
+	movel	&0x57424f21,wbf_own_cookie	| "WBO!"
+	movel	%sp,wbf_own_sp		| set BEFORE arming: never armed without an owner
 	movel	&Lwb_fail,u+0x374	| arm: unresolved nested fault lands at Lwb_fail
 	movel	%d3,%d0
 	lsrl	&5,%d0
@@ -727,6 +744,8 @@ Lwb_loop:
 	subql	&1,%d0
 	bnew	Lwb_loop
 	movel	%d2,u+0x374		| disarm: restore the outer u_nofault value
+	movel	%a0,wbf_own_cookie	| ...and the landing pad's outer owner, so a nested
+	movel	%a1,wbf_own_sp		| replay hands the parent's arm back intact
 	rts
 | Lwb_fail: u_nofault landing pad -- k_trap could NOT resolve a fault taken by the moves
 | loop above (as_fault failed for the WB target: e.g. a WB aimed at a range a racing
@@ -774,7 +793,15 @@ Lwb_loop:
 | now the process was told.  Retaining them needs somewhere to keep per-process WB state, which is
 | a bigger unit than this one and has no measured victim yet.
 Lwb_fail:
+| --- Q3: is this landing OURS?  Checked before a single byte of state is touched. ---
+	movel	%sp,%d0
+	cmpil	&0x57424f21,wbf_own_cookie
+	bnew	Lwbf_alien
+	cmpl	wbf_own_sp,%d0
+	bnew	Lwbf_alien
 	movel	%d2,u+0x374		| restore the outer u_nofault value FIRST
+	movel	%a0,wbf_own_cookie	| and the outer owner, BEFORE anything below can fault
+	movel	%a1,wbf_own_sp		| (audit item 5: clear ownership before logging)
 	addql	&1,wbf_fail_n
 	movel	%a3,wbf_addr		| the DENIED BYTE's own address: exact, because the
 	movel	%d3,wbf_wbs		| replay loop goes byte by byte (the ISSUE-7 shape)
@@ -792,17 +819,44 @@ Lwb_fail:
 Lwbf_q:
 	tstl	wbf_prop_on
 	beqw	Lwbf_swallow		| A/B control: 0 = the pre-2026-08-12 behaviour
+| --- classify the TRANSFER MODIFIER.  The follow-up audit corrected this: WBS & 7 is a TM, not
+|     universally a logical function code.  TM 1/2 are user data/code, 5/6 supervisor data/code,
+|     3/4 MMU TABLE SEARCH, 0 a data-cache PUSH and 7 reserved.  The first version of this code
+|     bucketed 0..2 as "user", which would have delivered SIGSEGV to a process for a failed cache
+|     push -- an event that is not its fault and not even its access. ---
 	moveq	&7,%d0
-	andl	%d3,%d0			| the write-back's OWN function code
+	andl	%d3,%d0
 	movel	%d0,wbf_fc
-	cmpil	&3,%d0			| FC 1/2 = user data/program, 4-7 = supervisor/CPU space
-	bccw	Lwbf_sup
+	cmpil	&1,%d0			| TM 1 = user data
+	beqw	Lwbf_user
+	cmpil	&2,%d0			| TM 2 = user code
+	beqw	Lwbf_user
+| --- everything else is kernel-critical state that cannot simply be dropped: a supervisor store,
+|     an MMU table-search write, a dirty-line push, or a reserved encoding nobody has seen.  The
+|     audit's verdict on the first version's "stop, count, return success" was REJECT, because
+|     stopping only meant "attempt no further slots" while the interrupted kernel operation still
+|     returned success.  The safe pilot policy is resolve-or-fail-fast, and this implements the
+|     fail-fast half: the resolve half needs an as_fault into the supervisor space from a landing
+|     pad running on the trap-time stack, which is its own unit.
+|     wbf_sup_fatal = 0 restores the old silent behaviour for one boot, for the same reason every
+|     other switch in this file exists -- so a machine that panics here can still be booted. ---
+	addql	&1,wbf_sup_n
+	tstl	wbf_sup_fatal
+	beqw	Lwbf_supquiet
+	movel	%d2,%sp@-		| the outer u_nofault owner, if any
+	movel	%a3,%sp@-		| replay pointer (the denied byte + 1)
+	movel	%d3,%sp@-		| WBxS: slot status, TM and size
+	movel	wbf_slot,%sp@-		| which write-back: 1, 2 or 3
+	pea	Lwbs_msg
+	pea	3			| CE_PANIC -- continuing would drop kernel state silently
+	jsr	cmn_err
+	lea	%sp@(24),%sp		| not reached; balanced in case CE_PANIC ever returns
+Lwbf_supquiet:
+	moveq	&2,%d0			| stop and count, no user signal
+	braw	Lwbf_stop
+Lwbf_user:
 	addql	&1,wbf_user_n
 	moveq	&1,%d0			| user: the wrapper turns this into a signal
-	braw	Lwbf_stop
-Lwbf_sup:
-	addql	&1,wbf_sup_n
-	moveq	&2,%d0			| supervisor: stop and count, no user signal
 Lwbf_stop:
 	addql	&4,%sp			| drop Lwb_do's return address -- the replay ENDS here
 	rts				| and returns to the wrapper with d0 set
@@ -810,12 +864,32 @@ Lwbf_swallow:
 	addql	&1,wbf_swallow_n	| the old behaviour, kept only as the A/B control
 	moveq	&0,%d0
 	rts
+| --- Q3: a landing this pad does not own.  The stack below us belongs to code we cannot name,
+|     so the one thing not to do is modify it: no u_nofault write from a foreign d2, no addql,
+|     no rts.  Fail fast and say what was seen.  No such landing has ever been observed -- the
+|     finding is that nothing in the static code excluded one. ---
+Lwbf_alien:
+	addql	&1,wbf_alien_n
+	movel	%d0,wbf_alien_sp	| the stack we were handed
+	movel	wbf_own_sp,%sp@-	| the stack the armed replay is actually on
+	movel	%d0,%sp@-
+	pea	Lwba_msg
+	pea	3			| CE_PANIC
+	jsr	cmn_err
+	lea	%sp@(16),%sp		| not reached; balanced in case CE_PANIC ever returns
+	rts
 	nop				| pad .text to a multiple of 4 to keep text/data contiguous
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
 Lwbf_msg:
-	.asciz	"DBG wb040 replay UNRESOLVED addr=%x wbs=%x (wb skipped)"
+	.asciz	"DBG wb040 replay UNRESOLVED addr=%x wbs=%x"
+	.balign	4
+Lwbs_msg:
+	.asciz	"wb040: KERNEL write-back WB%d unresolvable, wbs=%x addr=%x nofault=%x -- kernel state would be lost silently"
+	.balign	4
+Lwba_msg:
+	.asciz	"wb040: u_nofault landing pad entered with a FOREIGN stack sp=%x (armed replay sp=%x)"
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 Lwbf_n:
 	.long	0
@@ -831,6 +905,29 @@ wbf_magic:
 wbf_prop_on:
 	.long	1			| 1 = propagate a denied write-back (the fix)
 					| 0 = the pre-2026-08-12 swallow-and-continue, for an A/B
+	.globl	wbf_sup_fatal
+wbf_sup_fatal:
+	.long	1			| 1 = a denied KERNEL write-back panics with diagnostics
+					| 0 = the old silent skip.  The audit rejected returning
+					| success there; this is the escape hatch, not the policy.
+	.globl	wbf_own_cookie
+wbf_own_cookie:
+	.long	0			| "WBO!" while a replay owns the u_nofault landing pad
+	.globl	wbf_own_sp
+wbf_own_sp:
+	.long	0			| the stack that replay is on -- the pad's identity check
+	.globl	wbf_alien_n
+wbf_alien_n:
+	.long	0			| landings on the pad that did NOT belong to a replay.
+					| Must stay 0.  Non-zero means an unrelated kernel fault
+					| reached it, which is the hazard Q3 named and which no
+					| measurement has yet shown.
+	.globl	wbf_alien_sp
+wbf_alien_sp:
+	.long	0			| the foreign stack, for the panic message
+	.globl	wbf_slot
+wbf_slot:
+	.long	0			| write-back being replayed: 1, 2 or 3
 	.globl	wbf_fail_n
 wbf_fail_n:
 	.long	0			| write-backs that could not be completed at all

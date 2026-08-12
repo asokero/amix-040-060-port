@@ -84,3 +84,63 @@ STILL OWED
 * A supervisor-FC denial now stops the replay too (counted, no signal).  wbf_sup_n has been 0
   in every run, so that branch is unexercised -- a coverage gap of the same shape as ISSUE-40's
   ptd_wake_n and ISSUE-43's UFPRWRT branches.
+
+===============================================================================
+FOLLOW-UP AUDIT APPLIED -- 68040/68060-260812-06, same day
+===============================================================================
+Codex's vm-map/ISSUE42-WBREPLAY-FOLLOWUP-AUDIT.md answered the three questions asked after
+-05 landed, and two of its findings were defects in that build.  Both are now fixed.
+
+1. TM IS NOT A FUNCTION CODE.  `WBS & 7` is the transfer MODIFIER: 1/2 user data/code,
+   5/6 supervisor data/code, 3/4 MMU table search, 0 a data-cache push, 7 reserved.  The -05
+   classifier bucketed 0..2 as "user", so a failed CACHE PUSH would have delivered SIGSEGV to a
+   process for an access that was not even its own.  Now only TM 1 and 2 signal.
+
+2. "STOP AND RETURN SUCCESS" WAS REJECTED for everything else.  Stopping only meant "attempt no
+   further slots" while the interrupted kernel operation still returned success -- a supervisor
+   store, a table-search write or a dirty-line push would still be dropped silently.  The safe
+   pilot policy is resolve-or-fail-fast; this implements the fail-fast half, with the slot, WBxS,
+   address and outer u_nofault value in the panic.  wbf_sup_fatal = 0 restores the old silence.
+
+3. THE LANDING PAD HAD NO OWNER.  u_nofault is one scalar and k_trap only tests it for non-zero:
+   it checks neither the faulting PC nor the SP.  Interrupts are not masked while the pad is
+   armed, so an unrelated kernel fault could land there -- and -05 would have written a foreign
+   d2 into u_nofault and then done stack surgery on a stack it did not own.  Lwb_do now records a
+   cookie and the SP before arming; the pad refuses anything else and panics with both stacks.
+   The outer owner rides in a0/a1 so a nested replay hands its parent's arm back intact.
+
+MEASURED, emulated 68040, 68040-260812-06:
+```
+  boot            wbf_alien_n 0, wbf_own_cookie 0 at rest
+                  -- the ownership check survived a full boot's replay traffic without one
+                     false landing, and the disarm restores the outer owner correctly
+  protfault       case a PASS  case b PASS  case c PASS   fails=0
+  the denial      wbf_fail_n 1, wbf_user_n 1, wbf_sup_n 0, wbf_signal_n 1
+                  wbf_fc 1 (TM 1 = user data), wbf_afb_n 0, wbf_nosig_n 0
+                  si_signo 11, si_code 2, si_addr c1034000 (the protected page's first byte)
+```
+MEASURED, emulated 68060, same image: every wbf_* counter 0, fp060probe bad=0, protfault 3/3.
+
+A WORKING-PRACTICE TRAP THAT COST TWO MEASUREMENTS
+---------------------------------------------------
+The first -06 run reported `uname -m` without a build id and wbf_magic = 0.  Neither was a
+kernel defect: a previous Amiberry instance had survived `emu-reset-boot.sh`'s kill and was
+holding telnet 2323, so emu.py was talking to a different machine than the one that had just
+booted.  The screenshot of the actual window showed the -06 banner at a login prompt.
+
+What caught it was the magic word -- exactly the failure it exists for.  What would have hidden
+it is trusting `uname` alone.  When two instances can exist, verify the identity from the SERIAL
+banner (which belongs to the instance you started) before trusting anything read over telnet.
+
+STILL OWED, from the same audit
+--------------------------------
+* The RESOLVE half of resolve-or-fail-fast: retry a denied supervisor WB in the supervisor
+  address space before failing.  Needs an as_fault call from a landing pad running on the
+  trap-time stack -- its own unit.
+* Completed WB slots' valid bits are not cleared in the frame, so a returning signal handler
+  could see them again (audit Q2).
+* The sanitized sigreturn cleanup: AMIX already preserves the whole format-7 frame through
+  ucontext.mc_state -> u+0x1e4 -> stkrestore, so no new storage is needed -- what is missing is
+  a berr_040cleanup-shaped handler that sanitizes user-modified FC/TM before anything is
+  replayed from it.  NEVER replay supervisor authority supplied through user context.
+* Real 68040 silicon, for all of it.

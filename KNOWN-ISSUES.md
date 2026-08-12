@@ -4082,6 +4082,38 @@ bundled into `NEXT-040-SESSION-RUNLIST.md`.
 state is not retained across a signal handler that repairs the mapping and returns (contract item
 8 — no measured victim, and it needs somewhere to keep per-process WB state), and the
 supervisor-FC branch is unexercised (`wbf_sup_n` = 0 in every run so far).
+
+### Follow-up audit, same day: two of the above were defects, and both are fixed
+
+`vm-map/ISSUE42-WBREPLAY-FOLLOWUP-AUDIT.md` answered the three questions raised by the
+implementation. Two were defects in `-05`:
+
+* **`WBS & 7` is a transfer MODIFIER, not a function code.** TM 1/2 user data/code, 5/6
+  supervisor data/code, 3/4 MMU table search, **0 a data-cache push**, 7 reserved. The first
+  classifier bucketed 0..2 as "user", so a failed cache push would have delivered SIGSEGV to a
+  process for an access that was not even its own. Only TM 1 and 2 signal now.
+* **"Stop and return success" was rejected for everything else.** Stopping only meant "attempt no
+  further slots" while the interrupted kernel operation still returned success — a supervisor
+  store, a table-search write or a dirty-line push would still vanish silently. The audit's safe
+  pilot policy is *resolve or fail fast*; the fail-fast half is implemented, with the slot, WBxS,
+  address and outer `u_nofault` value in the panic. `wbf_sup_fatal = 0` restores the old silence.
+* **The landing pad had no owner.** `u_nofault` is one scalar that `k_trap` only tests for
+  non-zero — not the faulting PC, not the SP — and interrupts are not masked while it is armed.
+  An unrelated kernel fault landing there would have had a foreign `d2` written into `u_nofault`
+  and then stack surgery performed on a stack we do not own. `Lwb_do` now records a cookie and
+  the SP before arming; the pad refuses anything else and panics with both stacks. The outer
+  owner rides in `a0`/`a1`, so a nested replay hands its parent's arm back intact.
+
+Measured on `68040-260812-06`: `wbf_alien_n` 0 and `wbf_own_cookie` 0 at rest after a full boot
+(the ownership check survived the boot's replay traffic without one false landing), `protfault`
+3/3 with `wbf_fc` = 1, and every `wbf_*` counter 0 on the 68060.
+
+**Still owed from the same audit:** the *resolve* half (retry a denied supervisor write-back in
+the supervisor address space before failing), clearing completed WB valid bits in the frame, and
+a sanitized `sigreturn` cleanup — for which AMIX already preserves the whole format-7 frame
+through `ucontext.mc_state -> u+0x1e4 -> stkrestore`, so no new storage is needed, only a
+`berr_040cleanup`-shaped handler that never replays supervisor authority arriving from user
+context.
 ## ✅ ISSUE-43 (2026-08-11, CLOSED ON HARDWARE 2026-08-12): on the 68060, an enabled FP exception with a ZERO SOURCE OPERAND loses fp0-7 across a signal
 
 > **Ledger: FIXED** — 68060 hardware, 6/6 bit-exact. Canonical: [`STATUS.md`](STATUS.md) §4.
