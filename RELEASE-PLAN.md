@@ -98,7 +98,30 @@ before phase 6 needs the Amiga.
 | Credentials | where they live | a gitignored local file the tooling reads; never a tracked file |
 | Repo split | one repo vs kernel + loader | **two**: `amix-040-port` and `amix-unix-boot` |
 
-### Phase 1 — licence hygiene (blocking, no functional change)
+### Phase 1 — licence hygiene ✅ **DONE 2026-08-13**
+
+Result, with the verifications that were actually run:
+
+```
+  credentials     local/secrets.env (gitignored) + a tracked .example; five documents
+                  redacted; test-tools/hw.py committed for the first time, reading the
+                  env file -- it was previously un-committable BECAUSE it held the password
+  loader          unix_boot/ (18 files) and prototypes/copyit.s moved out to the new
+                  amix-unix-boot repository as FIVE PATCHES over unix_boot.lha
+  self-test       apply.sh + patches reproduce the working tree BYTE FOR BYTE
+  history         git filter-repo: password 0 occurrences in all 621 commits,
+                  unix_boot/ and copyit gone from every commit, 5 tags preserved
+  tag re-verified building from hw-68060-260812-02 in a clean worktree AFTER the rewrite
+                  still reproduces the hardware-accepted binary: 2 bytes differ, both
+                  inside the build-id stamp (date + per-day counter)
+  backups         pre-rewrite bundle in ~/kehitys/amix-backups and on the NAS
+```
+
+Two corrections were needed along the way and are recorded in the commit: the patch baseline
+is `unix_boot.lha`, **not** `vanilla/usr/sys/amiga/boot` (different lineage — patches against it
+would have been wrong), and `prototypes/copyit.s` was a stale duplicate that nothing built.
+
+### Phase 1 — as originally planned
 
 1. Move `unix_boot/` and `prototypes/copyit.s` out of this repository into the loader project, and
    convert them there into **patches against Commodore's originals** plus build scripts.
