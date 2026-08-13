@@ -242,10 +242,24 @@ survives as history but its conclusion has been replaced.
 2. **ISSUE-10 / ISSUE-9 attribution** — the last two release blockers. Slow work: repeat boots,
    not cleverness, and no single-boot bisect.
 3. **Decide the 68LC060 question as a product decision**, not technical debt.
-4. RAM > 32 MB — and note the corrected shape: coalescing the regions is not enough on its own,
-   the kernel must also be bound at the bottom of the merged span, or startup taught to accept
-   memory below the kernel. Then Zorro III.
+4. **Zorro III** — the one substantial piece of new development still considered worth doing.
+   Order, from the 2026-08-10 measurement: VA2000 driver address fix → test in Z2 mode →
+   `Lcm_sel` framebuffer class → firmware. The prize is real and measured: 3.09 MB/s through the
+   Z2 aperture against 28.66 MB/s local, with a width test showing the bus saturated rather than
+   serialised.
 5. The three unexercised paths in §5.2, whenever their area is next opened.
+
+### Two decisions taken 2026-08-13, recorded so they are not silently reopened
+
+* **RAM above 32 MB: declined.** The analysis stands (no technical ceiling; the missing 16 MB is
+  region representation plus a one-contiguous-span startup model), and the corrected fix is bigger
+  than it first looked — coalescing the regions is not enough on its own, the kernel must also be
+  bound at the bottom of the merged span, or startup taught to accept memory below the kernel.
+  The owner's judgement is that this is neither important nor clearly sensible for the machines
+  this port serves. It is not a blocker and not on the road map. `RAM-BEYOND-16MB-ANALYSIS.md` and
+  the loader finding remain valid if anyone reopens it.
+* **Publication is now the main track**, ahead of further feature work. See §10 and
+  `RELEASE-PLAN.md`.
 
 ---
 
@@ -301,6 +315,9 @@ are out of scope rather than pending.
 
 ## 10. Publishing readiness
 
+**As of 2026-08-13 this is the main track.** The full plan is `RELEASE-PLAN.md`; what follows is
+the summary that belongs in the canonical status.
+
 The goal of eventually publishing the port's own work on GitHub is realistic — the repository is
 already structured for it — but it is not one commit away.
 
@@ -312,7 +329,11 @@ Open before anything is pushed:
 
 1. **Credentials are in five tracked documents and in the git history** (`10.0.10.10`, the root
    password). Editing the files is not enough; this is a decision between rewriting history and
-   publishing a fresh repository whose history starts at the publication point.
+   publishing a fresh repository whose history starts at the publication point. The plan
+   recommends rewriting, because the commit-by-commit record is one of the more valuable things
+   here.
+1b. **59 hard-coded `/home/asokero` paths across 29 tracked files** — measured, not estimated.
+   Every one is a place someone else's build fails.
 2. **The README's first sentence has to say what this is**: an override and patch layer over a
    proprietary kernel binary, requiring the reader's own licensed AMIX installation. Without
    that, it reads as a bootable kernel, which it is not.
