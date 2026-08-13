@@ -3955,11 +3955,11 @@ was fatal.
 
 ---
 
-## ⏳ ISSUE-42 (2026-08-06): on the 68040, a denied write-back replay is swallowed — missing fault propagation, silent lost store
+## ✅ ISSUE-42 (2026-08-06, CLOSED ON HARDWARE 2026-08-13): on the 68040, a denied write-back replay is swallowed — missing fault propagation, silent lost store
 
-> **Ledger: IMPLEMENTED, HARDWARE ACCEPTANCE OWED — still a RELEASE BLOCKER** — the fix is in
-> `prototypes/wb040.s` and verified on the emulated 68040; no 68040 silicon has seen it.
-> Canonical: [`STATUS.md`](STATUS.md) §4.
+> **Ledger: FIXED — 68040 hardware (A3640), 2026-08-13.** `protfault` 3/3, and the defect itself
+> reproduced on the same boot with `wbf_prop_on = 0`, which killed the emulator-artifact
+> hypothesis. Record: `REALHW-A3640-260813-ACCEPTANCE.md`. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
 > STATUS.md §7 lists which.
 

@@ -38,7 +38,7 @@ a named test on a named platform is.
 
 | Build id | sha256 (prefix) | Platform accepted on | What it established | Evidence |
 |---|---|---|---|---|
-| **`68060-260812-06`** | `955a5be7` | **68060 hardware, 2026-08-12** | **Current baseline.** ISSUE-43 re-confirmed 6/6; ISSUE-42 unit proven INERT on 060 silicon (every `wbf_*` counter 0); `ftest060` main+unimp, `fp060probe`, `isp61ea` all pass. 68040 acceptance owed | `REALHW-260812-06-ACCEPTANCE.md` |
+| **`68060-260812-06`** | `955a5be7` | **68060 hardware, 2026-08-12** | **Current baseline.** ISSUE-43 re-confirmed 6/6; ISSUE-42 unit proven INERT on 060 silicon; `ftest060` main+unimp, `fp060probe`, `isp61ea` all pass. **Also accepted on a 68040 (A3640) 2026-08-13 — the first dual-silicon image in this project** | `REALHW-260812-06-ACCEPTANCE.md` |
 | `68060-260812-02` | `bb906e2a` | 68060 hardware, 2026-08-12 | ISSUE-43 + ISSUE-44 closed; six enabled IEEE classes bit-exact | `REALHW-ISSUE43-ACCEPTANCE-260812.md` |
 | `68060-260807-11` | `4962361b` | 68060 hardware, 2026-08-09 | 68060 FPSP (F3 M5) on silicon; `ftest060 unimp` passes; xv/wolf3d SIGSYS attributed | `REALHW-260807-11-ACCEPTANCE.md` |
 | `68060-260806-06` | — | 68060 hardware, 2026-08-07 | ISSUE-41 closed; XPAGE + protfault + power-cut | `REALHW-260806-06-ACCEPTANCE.md` |
@@ -89,7 +89,7 @@ Legend: **HW** = measured on that silicon · **EMU** = measured under Amiberry o
 | NFS (read + write + mmap tail) | HW | HW | HW | HW | ISSUE-35 / ISSUE-36, `REALHW-ISSUE36-260728.md` |
 | exec (ELF + COFF path) | HW | HW | HW | HW | ISSUE-32, ISSUE-38 |
 | XPAGE / `mprotect` per-page | HW | HW | HW | HW | ISSUE-41, `XPAGE-FPROT-FINDING-260806.md` |
-| Denied write-back propagation | **EMU** | **OWED** | — | **HW: inert, proven** | **ISSUE-42 — implemented 2026-08-12, still a release blocker until 040 silicon**; `test-tools/issue42-emu-verify-260812.txt` |
+| Denied write-back propagation | EMU | **HW** | — | **HW: inert, proven** | ISSUE-42 **closed on an A3640 2026-08-13**, and the defect itself reproduced on silicon; `REALHW-A3640-260813-ACCEPTANCE.md` |
 | ISP: vector 61 integer emulation | EMU | ? | EMU | HW | `ISP-VECTOR61-LANDED-260806.md`, `isp61ea` 7/7 |
 | FPU: 68040 FPSP | HW | HW | — | — | `fputest` Test A on hardware 2026-07-27 |
 | FPU: 68060 FPSP, unimplemented | — | — | EMU | HW | `ftest060 unimp` passed |
@@ -208,7 +208,7 @@ survives as history but its conclusion has been replaced.
 | 39 | `hat_sdtalloc` out of contiguous memory in bursts | OPEN | 040 HW | characterised: fragmentation, not pressure |
 | 40 | `availrmem` decline | FIXED | 040 HW | ⚠ `ptd_wake_n` = 0: the `pt_waiting` branch is unexercised |
 | 41 | `segvn_faultpage` had no per-page permission check | FIXED | 040+060 HW | partial `mprotect` + denied write panicked **stock** |
-| 42 | denied write-back replay is swallowed → silent lost store | **IMPLEMENTED, HW OWED — BLOCKER** | emulated 68040 | fix in `wb040.s`; `protfault` case c PASS, proved by an in-boot A/B. No 68040 silicon has run it |
+| 42 | denied write-back replay is swallowed → silent lost store | **FIXED** | **68040 hardware (A3640)** | `protfault` 3/3; the defect itself reproduced on silicon with the fix switched off, killing the emulator-artifact hypothesis. WB1 still unexercised on both platforms |
 | 43 | 68060 zero-source-operand FP exception lost fp0-7 | FIXED | **060 HW 6/6** | frame discriminator is at `frame+2` |
 | 44 | FPSP arithmetic exit fell through into the BSUN body | FIXED | **060 HW** | one day old; found by an invariant counter, not by a failing test |
 
@@ -216,10 +216,10 @@ survives as history but its conclusion has been replaced.
 
 ## 5. Release blockers
 
-1. **ISSUE-42** — implemented 2026-08-12 and verified on the emulated 68040 (`protfault` case c
-   now dies of SIGSEGV instead of silently tearing the store), but **no 68040 silicon has run
-   it**, and the emulator cannot exercise the WB1 path at all — it never sets WB1S valid. Stays a
-   blocker until the A3640 card swap. **Blocks calling the 040 port "done".**
+1. ~~**ISSUE-42**~~ — **closed on 68040 silicon 2026-08-13** (A3640). `protfault` 3/3, and the
+   original defect reproduced on the same boot with the fix switched off. What remains is coverage,
+   not correctness: the WB1 write-back path has never executed on either platform, and the battery
+   and burst suites have not been run on the A3640.
 2. **ISSUE-10 / ISSUE-9** — two intermittent 040 faults that are captured but not attributed.
    Neither blocks normal use; both block a confident release claim.
 3. **The current image has no 040 hardware run.** `68060-260812-02` is 060-accepted only.
