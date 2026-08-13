@@ -72,9 +72,9 @@ assert len(PATCH) == PATCH_LEN, len(PATCH)
 
 def main():
     src = sys.argv[1] if len(sys.argv) > 1 else \
-        "/home/asokero/kehitys/amix-playground/vanilla/stand/unix"
+        os.environ.get("AMIX_ROOT", "") + "/stand/unix"
     dst = sys.argv[2] if len(sys.argv) > 2 else \
-        "/home/asokero/kehitys/amix-playground/kernelsupport/build/unix-040"
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "build", "unix-040")
 
     import os
     os.makedirs(os.path.dirname(dst), exist_ok=True)

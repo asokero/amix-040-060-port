@@ -19,8 +19,8 @@
 # NOT the standard kernel.  usage: sh relink-040-z3660.sh [base-kernel] [output]
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-. "/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
-V=/home/asokero/kehitys/amix-playground/vanilla
+. "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+V=$AMIX_ROOT
 
 IN="${1:-$HERE/build/unix-040-dbg}"
 OUT="${2:-$HERE/build/unix-040-z3660}"

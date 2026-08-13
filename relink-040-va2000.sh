@@ -32,7 +32,7 @@
 #   sh relink-040-va2000.sh build/unix-040 build/unix-040-va2000   # non-debug
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-. "/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
+. "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
 
 # $1 = base kernel (default: standard DEBUG base). $2 = output path.
 IN="${1:-$HERE/build/unix-040-dbg.STD-backup}"

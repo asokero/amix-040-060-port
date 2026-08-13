@@ -1,0 +1,57 @@
+# config.sh.example -- copy to config.sh and edit.  config.sh is gitignored.
+#
+#   cp config.sh.example config.sh && $EDITOR config.sh && sh tools/check-env.sh
+#
+# Every script in this repository sources config.sh from the repository root.  Nothing here
+# has a default that points at one particular machine: if a path is wrong the build stops with
+# a message naming the variable, rather than failing somewhere deep in a linker.
+#
+# See BUILDING.md for what each dependency is and where to get it.
+
+# ---------------------------------------------------------------- MANDATORY, to build a kernel
+
+# 1. The AMIX cross toolchain: m68k-cbm-sysv4-gcc / -ld.
+#    This is the compiler that produces SVR4 m68k objects the AMIX linker accepts.  It is built
+#    from the gcc-cross-amix tree; env.sh below is what puts it on PATH with the right sysroot.
+AMIX_CROSS="$HOME/opt/amix-cross"
+GCC_CROSS_ENV="$HOME/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
+
+# 2. GNU m68k binutils: m68k-linux-gnu-{nm,objcopy,objdump,readelf,size,gcc}.
+#    Used for symbol surgery, relocation inspection and the ELF checks.  A distribution package
+#    (Debian/Ubuntu: binutils-m68k-linux-gnu, gcc-m68k-linux-gnu) is fine; only the directory
+#    needs to be on PATH.
+M68K_GNU_BIN="/usr/bin"
+
+# 3. Your own AMIX installation, mounted or unpacked read-only.
+#    The port is a patch layer over the kernel binary in it.  The one file that must be present:
+#        $AMIX_ROOT/stand/unix        sha256 7d26cb6f04991be5776d9e5361259b20b413d97e3da33bf88e6f312e7be2ec23
+#    (AMIX SVR4 2.1c.  A different build will NOT fail cleanly -- see BUILDING.md.)
+AMIX_ROOT="$HOME/kehitys/amix-playground/vanilla"
+
+# 4. NetBSD source tarball, for Motorola's 68040/68060 support packages.
+#    The FPSP and ISP are extracted from sys/arch/m68k/{fpsp,060sp} inside it; they are NOT
+#    vendored in this repository.  Any recent NetBSD syssrc.tgz works.
+NETBSD_SYSSRC="$HOME/kehitys/amix-playground/netbsd/syssrc.tgz"
+
+# ---------------------------------------------------------------- OPTIONAL: emulator testing
+
+# Amiberry, for booting the kernel without hardware.  A LOCAL BUILD is needed: the packaged
+# 8.2.2 cannot deliver host->guest network frames, which the test cycle relies on.
+AMIBERRY_BIN="$HOME/kehitys/amiberry/build/amiberry"
+AMIBERRY_CONF="$HOME/Amiberry/Configurations"
+AMIBERRY_HDF="$HOME/Asiakirjat/FS-UAE/Hard Drives"
+
+# ---------------------------------------------------------------- OPTIONAL: graphics kernels
+
+# Xsvga driver object (Klaus Burckert's Piccolo / Picasso II server-side blob), needed only by
+# relink-040-xsvga.sh and relink-040-rtg.sh.
+XSVGA_EXP="$HOME/kehitys/va2000-amixdev/svga-dev/svga/exp"
+
+# MNT VA2000 driver source, needed only by relink-040-va2000.sh and relink-040-rtg.sh.
+# Its own repository: va2000-amix.
+VA2000_SRC="$HOME/kehitys/va2000-amix/src/va2000.c"
+
+# ---------------------------------------------------------------- OPTIONAL: analysis
+
+# Ghidra, for the decompilation helper in tools/.  Not needed to build anything.
+GHIDRA_HOME="$HOME/kehitys/amix-playground/ghidra_12.1.2_PUBLIC"

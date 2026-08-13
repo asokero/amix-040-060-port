@@ -54,3 +54,6 @@ LOCAL-BUILD-NOTES.md
 unix_boot/
 unix_boot.lha
 prototypes/copyit.*
+
+# --- Local configuration: never published ---
+config.sh

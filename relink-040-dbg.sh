@@ -14,9 +14,8 @@
 set -e
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
 IN="$HERE/build/unix-040"
-ENV="/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
-. "$ENV"
 
 [ -f "$IN" ] || { echo "ERROR: $IN missing -- run sh relink-040.sh first"; exit 1; }
 

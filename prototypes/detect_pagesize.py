@@ -28,8 +28,9 @@
 #         MODELB_DETECT_ALL=1  also lists COVERED sites (default: NEW + excluded only)
 
 import re, sys, os, subprocess
+import os
 
-STOCK = "/home/asokero/kehitys/amix-playground/vanilla/stand/unix"
+STOCK = os.environ.get("AMIX_ROOT", "") + "/stand/unix"   # AMIX_ROOT comes from config.sh
 KERNEL = sys.argv[1] if len(sys.argv) > 1 else STOCK
 OBJDUMP = "m68k-linux-gnu-objdump"
 HERE = os.path.dirname(os.path.abspath(__file__))

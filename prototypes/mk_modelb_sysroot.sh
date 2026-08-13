@@ -23,8 +23,9 @@
 set -e
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-. /home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh
-REAL="${AMIX_REAL_SYSROOT:-/home/asokero/opt/amix-cross/m68k-cbm-sysv4/sysroot}"
+. "$(cd "$(dirname "$0")" && pwd)/../tools/config-load.sh"
+. $GCC_CROSS_ENV
+REAL="${AMIX_REAL_SYSROOT:-$AMIX_CROSS/m68k-cbm-sysv4/sysroot}"
 OUT="$HERE/build/sysroot-modelb"
 
 [ -d "$REAL/usr/include/sys" ] || { echo "ERROR: real sysroot not found: $REAL"; exit 1; }

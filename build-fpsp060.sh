@@ -31,7 +31,8 @@
 # both, not by reading module lists.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-TGZ="${1:-/home/asokero/kehitys/amix-playground/netbsd/syssrc.tgz}"
+. "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+TGZ="${1:-$NETBSD_SYSSRC}"
 WORK="$HERE/build/fpsp060-work"
 SUB="usr/src/sys/arch/m68k/060sp"
 
@@ -91,7 +92,7 @@ build_one() {
 	PY
 
 	# relink compatibility: the kernel's SysV4 ld must accept this object
-	( . /home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh 2>/dev/null
+	( . $GCC_CROSS_ENV 2>/dev/null
 	  m68k-cbm-sysv4-ld -r -o "$WORK/$_src-cbmcheck.o" "$_out" ) \
 		&& echo "      m68k-cbm-sysv4-ld -r accepts $(basename "$_out")" \
 		|| { echo "[FAIL] m68k-cbm-sysv4-ld rejects $(basename "$_out")"; exit 1; }

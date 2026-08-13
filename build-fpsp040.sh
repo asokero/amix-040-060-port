@@ -23,7 +23,8 @@
 # Output: build/fpsp040.o  (.text 0x9952 = 39250 bytes)
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-TGZ="${1:-/home/asokero/kehitys/amix-playground/netbsd/syssrc.tgz}"
+. "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+TGZ="${1:-$NETBSD_SYSSRC}"
 WORK="$HERE/build/fpsp-work"
 OUT="$HERE/build/fpsp040.o"
 FPSP_SUB="usr/src/sys/arch/m68k/fpsp"
@@ -74,7 +75,7 @@ m68k-linux-gnu-nm "$OUT" | grep ' U ' | sed 's/^/      /'
 [ "$UND" = "12" ] || { echo "[FAIL] expected 12 unresolved, got $UND"; exit 1; }
 
 # relink compatibility: the kernel's SysV4 ld must accept this object
-( . /home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh 2>/dev/null
+( . $GCC_CROSS_ENV 2>/dev/null
   m68k-cbm-sysv4-ld -r -o "$HERE/build/fpsp-cbmcheck.o" "$OUT" ) \
 	&& echo "[OK] m68k-cbm-sysv4-ld -r accepts fpsp040.o (kernel-relink compatible)" \
 	|| { echo "[FAIL] m68k-cbm-sysv4-ld rejects fpsp040.o"; exit 1; }

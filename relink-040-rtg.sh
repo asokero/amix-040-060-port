@@ -27,7 +27,7 @@
 # NOT the standard kernel.  Usage: sh relink-040-rtg.sh [base-kernel] [output]
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-. "/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
+. "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
 . "$HERE/prototypes/xsvga-provenance.sh"
 
 IN="${1:-$HERE/build/unix-040-dbg}"

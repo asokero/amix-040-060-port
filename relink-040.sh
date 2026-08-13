@@ -16,9 +16,8 @@
 set -e
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-STOCK="${STOCK:-/home/asokero/kehitys/amix-playground/vanilla/stand/unix}"
-ENV="/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
-. "$ENV"
+. "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+STOCK="${STOCK:-$AMIX_ROOT/stand/unix}"
 mkdir -p "$HERE/build"
 
 echo "[*] assembling pstart040.s + kvm040.s + hat040.s + hat_chgprot040.s"

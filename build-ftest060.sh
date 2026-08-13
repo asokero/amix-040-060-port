@@ -24,7 +24,8 @@
 # Output: build/ftest060  (push to the guest and run: `ftest060 all`)
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-TGZ="${1:-/home/asokero/kehitys/amix-playground/netbsd/syssrc.tgz}"
+. "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+TGZ="${1:-$NETBSD_SYSSRC}"
 WORK="$HERE/build/ftest060-work"
 SUB="usr/src/sys/arch/m68k/060sp"
 
@@ -75,7 +76,7 @@ python3 - "$WORK/pkg.bin" <<-'PY'
 	PY
 
 echo "[*] compile main and link as an AMIX SVR4 executable"
-. /home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh 2>/dev/null
+. $GCC_CROSS_ENV 2>/dev/null
 m68k-cbm-sysv4-gcc -m68020 -m68881 -o "$HERE/build/ftest060" \
 	"$HERE/test-tools/ftest060.c" "$HERE/build/ftest060_pkg.o"
 

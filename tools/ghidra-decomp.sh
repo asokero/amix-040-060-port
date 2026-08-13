@@ -6,8 +6,9 @@
 # Output: decompiled C per named function (calls show as func_0x0 -- ET_REL relocs are not yet
 # resolved; map them with `m68k-linux-gnu-objdump -d -r` when a call target matters).
 set -e
-GH="${GHIDRA:-/home/asokero/kehitys/amix-playground/ghidra_12.1.2_PUBLIC}"
-TARGET="${TARGET:-/home/asokero/kehitys/amix-playground/vanilla/stand/unix}"
+. "$(cd "$(dirname "$0")" && pwd)/config-load.sh"
+GH="${GHIDRA:-$GHIDRA_HOME}"
+TARGET="${TARGET:-$AMIX_ROOT/stand/unix}"
 PROJ=/tmp/ghproj-amix
 NAME=amixk
 SCRIPTS="$(cd "$(dirname "$0")" && pwd)/ghidra-scripts"

@@ -36,6 +36,7 @@ CPU="${1:-040}"
 LOG="${2:-/tmp/amix-emu-serial-$CPU.log}"
 IMG="${3:-}"
 HERE0=$(cd "$(dirname "$0")" && pwd)
+. "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
 SLOT="$HERE0/build/unix-040-dbg"
 MARK="$HERE0/build/.emu-image"
 
@@ -66,14 +67,14 @@ if [ -n "$IMG" ]; then
 	BID=$(strings -a "$IMG" 2>/dev/null | grep -m1 "68040-2607" || echo "?")
 	echo "[*] staged $(basename "$IMG") -> $(basename "$SLOT")   build id: $BID"
 fi
-HD="/home/asokero/Asiakirjat/FS-UAE/Hard Drives"
+HD="$AMIBERRY_HDF"
 GOLDEN="$HD/amix_hardfileX11R5-net.hdf"
 DISK="$HD/amix_hardfileX11R5.hdf"
-AMIBERRY=/home/asokero/kehitys/amiberry/build/amiberry
+AMIBERRY=$AMIBERRY_BIN
 
 case "$CPU" in
-  040) CONF=/home/asokero/Amiberry/Configurations/a3000ux.uae ;;
-  060) CONF=/home/asokero/Amiberry/Configurations/a3000ux060.uae ;;
+  040) CONF=$AMIBERRY_CONF/a3000ux.uae ;;
+  060) CONF=$AMIBERRY_CONF/a3000ux060.uae ;;
   # a3640 (2026-07-31): an 040 CPU card with NO RAM of its own.  Same machine as
   # 040 except mbresmem_size=0, so there is no fast RAM at 0x08000000 and the
   # kernel must load into A3000 motherboard fast RAM at 0x07000000 instead.  The
@@ -81,7 +82,7 @@ case "$CPU" in
   # 0x08000000 in the base objects are comments, a debug-only RAM scan, wb040's
   # FSLW MA bit mask and a diagnostic print gate), so this config exists to test
   # that claim rather than to fix anything.
-  a3640) CONF=/home/asokero/Amiberry/Configurations/a3000ux-a3640.uae ;;
+  a3640) CONF=$AMIBERRY_CONF/a3000ux-a3640.uae ;;
   *) echo "usage: $0 [040|060|a3640] [serial-logfile]"; exit 1 ;;
 esac
 

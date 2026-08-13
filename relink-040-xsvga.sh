@@ -24,7 +24,7 @@
 # Usage: sh relink-040-xsvga.sh [base-kernel] [exp-object]
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
-. "/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
+. "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
 
 . "$HERE/prototypes/xsvga-provenance.sh"
 

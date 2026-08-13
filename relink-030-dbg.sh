@@ -13,9 +13,8 @@
 set -e
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-IN="/home/asokero/kehitys/amix-playground/vanilla/stand/unix"
-ENV="/home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh"
-. "$ENV"
+. "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+IN="$AMIX_ROOT/stand/unix"
 
 [ -f "$IN" ] || { echo "ERROR: stock kernel $IN missing"; exit 1; }
 

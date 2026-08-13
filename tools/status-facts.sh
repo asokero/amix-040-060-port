@@ -30,17 +30,18 @@
 #                            ^^^^^^^^ this is the load base
 #
 # Requires the cross binutils on PATH:
-#         export PATH=/home/asokero/opt/amix-cross/bin:$PATH
+#         export PATH=$AMIX_CROSS/bin:$PATH
 set -e
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+. "$(cd "$(dirname "$0")" && pwd)/config-load.sh"
 IMG="${1:-$HERE/build/unix-040}"
 BASE="${2:-0x08000000}"
 NM=m68k-linux-gnu-nm
 SIZE=m68k-linux-gnu-size
 
 command -v $NM >/dev/null 2>&1 || {
-	echo "ERROR: $NM not on PATH -- export PATH=/home/asokero/opt/amix-cross/bin:\$PATH"; exit 1; }
+	echo "ERROR: $NM not on PATH -- export PATH=$AMIX_CROSS/bin:\$PATH"; exit 1; }
 [ -f "$IMG" ] || { echo "ERROR: kernel image not found: $IMG"; exit 1; }
 
 cd "$HERE"

@@ -17,7 +17,7 @@
 # redistribute (same treatment as the AT&T headers in .gitignore).  Supply your own
 # copy from the original Xsvga distribution (install.svga) and point XSVGA_EXP at it.
 
-XSVGA_EXP="${XSVGA_EXP:-/home/asokero/kehitys/va2000-amixdev/svga-dev/svga/exp}"
+XSVGA_EXP="${XSVGA_EXP:?set XSVGA_EXP in config.sh}"
 
 # The build patch_xsvga.py was written against.  A different `exp` is not necessarily
 # wrong, but it MUST be re-verified: the patch would either fail its byte asserts (fine,
