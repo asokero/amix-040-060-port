@@ -158,3 +158,37 @@ every other machine.
 
 **Not run:** the burst suite, deliberately deferred — it is long, and it is the one test whose
 timing behaviour is most likely to differ on a card with no local RAM.
+
+---
+
+## 7. RTG kernel: X11 and wolf3d on the A3640 — same evening
+
+Kernel B: `build/unix-040-rtg`, build id **`68040-260813-01`**, built from the accepted base by
+explicit argument rather than from `relink-040-rtg.sh`'s default input, which is the emulator's
+staging slot. Identity confirmed three ways before anything was measured: `uname -m`, and the
+`wbf`/`fpc`/`isp61` magics reading correctly at addresses that are unique to *this* image's text
+size (`07114154`, `071142C8`, `0711428C`). A stale graphics kernel could not have produced them.
+
+```
+  /dev/svga   c 67 0        both nodes already present, no mknod needed
+  /dev/va2000 c 68 0
+  va2000probe   open(/dev/va2000) OK, fd=3     the board is present and the driver works
+                firmware version = 0           consistent with the VA2000 driver address fix
+                                               still pending in the va2000-amix repository
+  X11           Xrtg + startxrtg: works
+  wolf3d        works
+```
+
+X11 and wolf3d were exercised by the owner at the console; the counter baseline had been taken
+before they started, so the run is attributable after the fact:
+
+| Block | Delta across X11 + wolf3d | Reading |
+|---|---|---|
+| `isp61` | **none at all** | vector 61 never fired — exactly as a 68040 requires, since it executes `muls.l` in hardware. wolf3d's 68060 failure mode is not reachable on this CPU |
+| `segvn_prot` | `pp_n` 205 → 302, `segvn_prot_n` **0** | ISSUE-41's per-page permission check ran 97 more times and denied nothing: active and silent, which is the correct behaviour |
+| `wbf` | **none** | no write-back denial during graphics or the game — ISSUE-42's path is not one that ordinary work, even this, reaches |
+
+**Method note worth keeping.** The owner ran the two programs without taking readings, which would
+normally lose the measurement. It did not, because the counters are cumulative and the baseline
+had been written to files on the machine beforehand. Taking a baseline early costs one command and
+converts "we forgot to measure" into a subtraction.
