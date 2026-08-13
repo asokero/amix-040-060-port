@@ -251,7 +251,41 @@ Proposed:
 Nothing is deleted for looking untidy: the refuted conclusions and the working notes are part of the
 evidence.
 
-### Phase 6 — the real test
+### Phase 6a — clone test on this machine ✅ **DONE 2026-08-14**
+
+`git clone` into an empty directory, then `BUILDING.md` followed literally.
+
+**It found three things the working tree was hiding**, which is exactly what it was for:
+
+* `LOCAL-BUILD-NOTES.md` was **still tracked**. It went into `.gitignore` in phase 1, but an
+  ignore entry does not untrack a file already in the index — so the laptop-specific notes, 13
+  hard-coded paths and all, would have been published.
+* `muistiinpanot.txt` — a fragment of an assistant conversation, in Finnish, about a component
+  that has since moved to its own repository.
+* `z3660-upstream-patches/` had no `NOTICE` entry, being our diffs against someone else's project.
+
+After fixing those, a second clone:
+
+```
+  420 files, no local-only leftovers
+  check-env.sh          exit 0
+  relink-040.sh         exit 0, TOTAL complaints: 0, bindings failing: 0
+  resulting kernel      2 bytes from the reference -- the build-id date and counter
+```
+
+**What this proves and what it does not.** It proves nothing the build needs is untracked, no
+relative path is wrong, and the documented steps work in order from a clean checkout. It does
+**not** prove that `BUILDING.md`'s dependency instructions are sufficient: `config.sh` was copied
+rather than filled in from scratch, and the toolchains already existed on this machine. That is
+what phase 6b is for, and it cannot be faked here.
+
+### Phase 6b — the real test, on another machine
+
+Clone to a different machine, run `check-env.sh`, follow `BUILDING.md` **only**, build the
+toolchain from its own upstream, supply a vanilla kernel, build. **Every step the notes fail to
+mention is a bug in the notes.** Then boot the clone-built kernel on the Amiga.
+
+### Phase 6 — as originally planned
 
 Clone to another machine, run `check-env.sh`, follow `BUILDING.md` only, supply a vanilla kernel,
 build. **Every step the notes fail to mention is a bug in the notes.** Then boot the result on the
