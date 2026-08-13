@@ -315,7 +315,18 @@ hard-coded paths are in it).
 That split is also the honest test of every other document: if it only makes sense on one laptop,
 it is a local note; if it would help a stranger, it is documentation.
 
-## 5. The method piece
+## 5. The method piece ✅ **WRITTEN 2026-08-14** — `docs/METHOD.md`
+
+Nine practices, each with the incident that produced it; four cases with the actual numbers
+(ISSUE-43's byte offset and two reverted fixes, ISSUE-44's invariant against four green tests,
+ISSUE-42's wrong pre-registration and the off-by-one it exposed, the clock correction that deleted
+one finding and improved another); an explicit account of who did what, including the two
+conclusions a second model overturned; and a transferable checklist.
+
+The AI framing is stated so a reader can check it against the commit log rather than take it on
+trust.
+
+## 5b. The method piece — as originally planned
 
 One document, written once. Not a victory lap — the material that earns attention is specific:
 

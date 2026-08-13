@@ -98,6 +98,9 @@ Full instructions, including the toolchains and how the override mechanism works
 * **[`BUILDING.md`](BUILDING.md)** — dependencies, build, verification, and how the port works.
 * **[`KNOWN-ISSUES.md`](KNOWN-ISSUES.md)** — every defect found, including the ones that turned out
   not to be defects, and the reasoning that was wrong.
+* **[`docs/METHOD.md`](docs/METHOD.md)** — how the work was done: instruments before fixes,
+  pre-registered expectations, the invariants that caught what passing tests could not, and an
+  honest account of what the AI assistance did and did not do.
 
 The record deliberately keeps the failures: pre-registered expectations that did not happen, fixes
 reverted within the hour, a clock figure that was wrong for months and deleted one finding while
