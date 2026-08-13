@@ -143,7 +143,30 @@ third-party copyright except quoted console banners.
 **Acceptance:** byte-exact rebuild with `config.sh` pointing at the same paths; `check-env.sh`
 passes on this machine and fails informatively when a tool is hidden.
 
-### Phase 3 — input validation
+### Phase 3 — input validation ✅ **DONE 2026-08-13**
+
+```
+  tools/verify-stock.sh   sourced by relink-040.sh, relink-030-dbg.sh, relink-hat.sh and
+                          relink-pstart.sh -- every script that patches the stock kernel
+  positive                correct kernel: "[*] stock kernel verified", build byte-exact
+  negative                one byte changed in the input: refused, exit 1, both hashes and
+                          the reason printed
+  override                AMIX_ALLOW_UNKNOWN_STOCK=1 proceeds with a loud banner, for the
+                          case where someone's 2.1c genuinely differs and wants to try
+```
+
+The NetBSD side needed nothing: `build-fpsp060.sh` already validates the **content that
+reaches the kernel** rather than the container — the assembled Motorola image's `.text` size
+against an expected constant, and zero unresolved symbols. That is a better check than a
+tarball hash, because it accepts any NetBSD release carrying the same Motorola drop and
+rejects a different one.
+
+⚠ Recorded because it happened: the override test built a kernel from the corrupted input
+**into the normal output path**, so `build/unix-040` briefly held an untrustworthy artifact.
+It was rebuilt and re-verified immediately. The banner says "do not trust any measurement
+from it"; it does not stop the file from looking like every other build.
+
+### Phase 3 — as originally planned
 
 1. Hard sha256 check of the vanilla kernel in `relink-040.sh`, with the expected hash and a request
    to report mismatches.

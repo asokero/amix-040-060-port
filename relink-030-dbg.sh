@@ -15,6 +15,8 @@ set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
 IN="$AMIX_ROOT/stand/unix"
+. "$(cd "$(dirname "$0")" && pwd)/tools/verify-stock.sh"
+verify_stock "$IN"
 
 [ -f "$IN" ] || { echo "ERROR: stock kernel $IN missing"; exit 1; }
 

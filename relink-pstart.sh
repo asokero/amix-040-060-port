@@ -24,6 +24,8 @@ set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
 STOCK="${STOCK:-$AMIX_ROOT/stand/unix}"
+. "$(cd "$(dirname "$0")" && pwd)/tools/verify-stock.sh"
+verify_stock "$STOCK"
 
 mkdir -p "$HERE/build"
 REPL="$1"
