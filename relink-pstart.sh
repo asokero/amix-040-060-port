@@ -36,7 +36,7 @@ REPL="$1"
 if [ -z "$REPL" ]; then
     echo "[*] no replacement given -> building validation trampoline (jmp pstart_030)"
     REPL="$HERE/build/pstart_repl.o"
-    m68k-cbm-sysv4-gcc -c "$HERE/prototypes/pstart_trampoline.s" -o "$REPL"
+    m68k-cbm-sysv4-gcc -c "$HERE/src/pstart_trampoline.s" -o "$REPL"
     OUT="$HERE/build/unix-040-relinktest"
     MODE="trampoline (should boot IDENTICALLY to stock unix)"
 else

@@ -1,7 +1,7 @@
 # issue40e.sh -- ISSUE-40 ACCEPTANCE on real hardware, both halves in (2026-08-02).
 #
-# Part 1 (legacy SDT, prototypes/legacysdt040.s) is hardware-proven to fire and to
-# return zero pages.  Part 2 (prototypes/ptdatfree040.s, contract
+# Part 1 (legacy SDT, src/legacysdt040.s) is hardware-proven to fire and to
+# return zero pages.  Part 2 (src/ptdatfree040.s, contract
 # vm-map/ISSUE40-PTDAT-TEARDOWN-CONTRACT.md) retires the ptdat metadata that pinned
 # the backing page.  On the emulator, 419 teardowns per phase, one boot, one
 # variable:

@@ -1,5 +1,5 @@
 #!/bin/sh
-# relink-040-dbg.sh -- layer the instrumented ddopen (prototypes/ddopen_dbg.s) on top
+# relink-040-dbg.sh -- layer the instrumented ddopen (src/ddopen_dbg.s) on top
 # of the fully-patched build/unix-040, producing build/unix-040-dbg.
 #
 # Purpose: localize "s5mountroot VOP_OPEN error 6".  The debug ddopen prints (CE_WARN)
@@ -27,24 +27,24 @@ echo "    NOTE: forkdbg.s (hat_dup stub) DROPPED 2026-07-07 -- the real hat_dup0
 echo "    lives in the BASE build (relink-040.sh), same as hat_chgprot040 -- it is a genuine"
 echo "    fix, not a diagnostic.  hat_dup is already a finalized strong override in \$IN;"
 echo "    this script does NOT re-weaken or re-link it."
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ddopen_dbg.s"   -o "$HERE/build/ddopen_dbg.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/blkatoff_dbg.s" -o "$HERE/build/blkatoff_dbg.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/mainmarks.s"    -o "$HERE/build/mainmarks.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/serdbg.s"       -o "$HERE/build/serdbg.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/assegat_dbg.s"  -o "$HERE/build/assegat_dbg.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/execmark.s"     -o "$HERE/build/execmark.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hatalloc_dbg.s" -o "$HERE/build/hatalloc_dbg.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/sigkill_dbg.s"  -o "$HERE/build/sigkill_dbg.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ktrap_latch.s"  -o "$HERE/build/ktrap_latch.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/kmem_validate.s" -o "$HERE/build/kmem_validate.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/pvn_probe.s"    -o "$HERE/build/pvn_probe.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segvn_softunlock_dbg.s" -o "$HERE/build/segvn_softunlock_dbg.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/preempt_dbg.s" -o "$HERE/build/preempt_dbg.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segu_swap_dbg.s" -o "$HERE/build/segu_swap_dbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/ddopen_dbg.s"   -o "$HERE/build/ddopen_dbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/blkatoff_dbg.s" -o "$HERE/build/blkatoff_dbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/mainmarks.s"    -o "$HERE/build/mainmarks.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/serdbg.s"       -o "$HERE/build/serdbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/assegat_dbg.s"  -o "$HERE/build/assegat_dbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/execmark.s"     -o "$HERE/build/execmark.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/hatalloc_dbg.s" -o "$HERE/build/hatalloc_dbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/sigkill_dbg.s"  -o "$HERE/build/sigkill_dbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/ktrap_latch.s"  -o "$HERE/build/ktrap_latch.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/kmem_validate.s" -o "$HERE/build/kmem_validate.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/pvn_probe.s"    -o "$HERE/build/pvn_probe.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segvn_softunlock_dbg.s" -o "$HERE/build/segvn_softunlock_dbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/preempt_dbg.s" -o "$HERE/build/preempt_dbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segu_swap_dbg.s" -o "$HERE/build/segu_swap_dbg.o"
 # setuctxt_dbg = ISSUE-7 "Codex timing hypothesis #1" probe (2026-07-07): does u_procp
 # survive setuctxt's OWN internal kmem_alloc(KM_SLEEP) loop?  Landed after the hat_unload
 # cpusha fix (KNOWN-ISSUES.md #8) was boot-tested and did NOT clear ISSUE-7.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/setuctxt_dbg.s" -o "$HERE/build/setuctxt_dbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/setuctxt_dbg.s" -o "$HERE/build/setuctxt_dbg.o"
 # NOTE: getfault040 / userspace040 / vtop040 / wb040 are GENUINE 040 runtime fixes and now
 # live in the BASE build (relink-040.sh); they are inherited via $IN (build/unix-040).  Only
 # diagnostics (markers / wrappers) are layered here.
@@ -156,14 +156,14 @@ echo "    into relinked code Line-F-crashes on this 040; jsr-override entry work
 
 echo
 echo "[*] B2 page-release hooks: re-verify/re-fix the page_free bsr.l displacement for this link"
-python3 "$HERE/prototypes/patch_cb_release.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_cb_release.py" "$OUT" | tail -3
 
 echo
 echo "[*] enabling early-boot serial phase trace (btrace_on=1; base/quiet stay silent)"
-python3 "$HERE/prototypes/patch_btrace_on.py" "$OUT"
+python3 "$HERE/src/patch_btrace_on.py" "$OUT"
 
 echo
 echo "[*] stamping build id -> utsname.machine tag (inherits inituname040 from unix-040)"
-python3 "$HERE/prototypes/stamp_buildid.py" "$OUT"
+python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
 echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-dbg"

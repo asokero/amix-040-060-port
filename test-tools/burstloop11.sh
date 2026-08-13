@@ -2,7 +2,7 @@
 #
 # WHY A NEW ONE.  burstloop.sh's anomaly line is INERT on AMIX: it uses `\|` alternation,
 # which this grep does not support, so it has been silently matching nothing since it was
-# written.  REALHW-260807-11-ACCEPTANCE.md recorded that and re-checked by hand; this
+# written.  docs/REALHW-260807-11-ACCEPTANCE.md recorded that and re-checked by hand; this
 # driver does it one pattern per call so the run reports for itself.
 #
 # Prerequisites on the machine:

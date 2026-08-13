@@ -1,5 +1,5 @@
 MODEL-B-JAANNOSRYHMIEN REAL-HW-VERIFY (2026-07-19 ilta, A3000 + Mercury 68040)
-Paketti: REALHW-VERIFY-260719B.md; kernel unix-040-dbg = 68040-260719-14
+Paketti: docs/REALHW-VERIFY-260719B.md; kernel unix-040-dbg = 68040-260719-14
 (kaikki 4 ryhmaa: 1475e16 swapgeom / 7f8ac6e execstk / 7f36144 pageoutdefs /
 9c4139c mincore). Kanava: telnet 10.0.10.10 (real.py); siirrot NFS /mnt/nasu
 (nasu:Public) -- ei tftp-netascii-riskia; summat verifioitu silti.

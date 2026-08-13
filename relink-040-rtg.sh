@@ -28,7 +28,7 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
-. "$HERE/prototypes/xsvga-provenance.sh"
+. "$HERE/src/xsvga-provenance.sh"
 
 IN="${1:-$HERE/build/unix-040-dbg}"
 OUT="${2:-$HERE/build/unix-040-rtg-dbg}"
@@ -72,21 +72,21 @@ cp "$XSVGA_EXP" "$HERE/build/xsvga_exp.o"
 # Model-B header set (2026-08-01) -- see relink-040-va2000.sh for why a plain
 # -I cannot do this job (the toolchain wrapper's sysroot -I always wins).
 echo "[*] Model-B header set (mirror sysroot + geometry probe)"
-sh "$HERE/prototypes/mk_modelb_sysroot.sh" | sed 's/^/      /'
+sh "$HERE/src/mk_modelb_sysroot.sh" | sed 's/^/      /'
 AMIX_SYSROOT="$HERE/build/sysroot-modelb"
 export AMIX_SYSROOT
 
 echo "[*] VA2000: Model-B source copy (>>11 -> >>12, exactly one site)"
-python3 "$HERE/prototypes/va2000_modelb.py"
+python3 "$HERE/src/va2000_modelb.py"
 
 echo "[*] VA2000: cross-compile build/va2000_040.c"
 VA2000_CFLAGS=$(echo "$AMIX_KERNEL_CFLAGS" | sed 's/-m68020/-m68040/')
 m68k-cbm-sysv4-gcc $VA2000_CFLAGS -I"$HERE/build" \
 	-c "$HERE/build/va2000_040.c" -o "$HERE/build/va2000_040.o"
-sh "$HERE/prototypes/check_page_geometry.sh" "$HERE/build/va2000_040.o" | sed 's/^/      /'
+sh "$HERE/src/check_page_geometry.sh" "$HERE/build/va2000_040.o" | sed 's/^/      /'
 
 echo "[*] VA2000: assemble the parinit wrapper"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/parinit_va2000.s" -o "$HERE/build/parinit_va2000.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/parinit_va2000.s" -o "$HERE/build/parinit_va2000.o"
 
 echo "[*] checking va2000_040.o has no surprise unresolved refs:"
 LEAK0=$(m68k-linux-gnu-nm "$HERE/build/va2000_040.o" | grep ' U ' | grep -vE '^\s*U (autocon|printf|uiomove|copyin|copyout)$' || true)
@@ -132,20 +132,20 @@ PCOUNT=$(m68k-linux-gnu-nm "$OUT" | grep -cE " T parinit$")
 # a fixed order and let each assert its own preconditions.
 # ---------------------------------------------------------------------------
 echo "[*] register 1/2: cdevsw[67] -> svga* + svgammap Model-B geometry"
-python3 "$HERE/prototypes/patch_xsvga.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_xsvga.py" "$OUT" | tail -3
 
 echo "[*] register 2/2: cdevsw[68] -> va2000* (major 68 = /dev/va2000)"
-python3 "$HERE/prototypes/patch_va2000_cdevsw.py" "$OUT" | tail -8
+python3 "$HERE/src/patch_va2000_cdevsw.py" "$OUT" | tail -8
 
 echo
 echo "[*] reloc validation:"
-( cd "$HERE" && python3 prototypes/check_relink_relocs.py "$OUT" 2>/dev/null | tail -1 ) || true
+( cd "$HERE" && python3 src/check_relink_relocs.py "$OUT" 2>/dev/null | tail -1 ) || true
 DSZ=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print strtonum("0x"$6)}')
 [ $((DSZ % 4)) -eq 0 ] && echo "[OK] .data 4-aligned ($DSZ)" || { echo "[FAIL] .data misaligned ($DSZ)"; exit 1; }
 echo "[*] PC-relative relocs present (loader MUST have the f0ed373 fix):"
 m68k-linux-gnu-readelf -rW "$OUT" 2>/dev/null | awk '$3 ~ /^R_68K_PC/{n++} END{print "      "n" PC-relative records"}'
 
-python3 "$HERE/prototypes/stamp_buildid.py" "$OUT" || true
+python3 "$HERE/src/stamp_buildid.py" "$OUT" || true
 rm -f "$STAGE"
 echo "[OK] built $OUT"
 echo "     boot: unix_boot040 $(basename "$OUT")   <- unix_boot040 is MANDATORY"

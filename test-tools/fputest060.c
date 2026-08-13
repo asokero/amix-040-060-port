@@ -10,7 +10,7 @@
  * Still cross-compiled, like the original: the guest's own compilers cannot
  * build this file at all.  gcc's cpp dies of vector 61 itself, and the AT&T
  * /usr/ccs/bin/cc chain dies with SIGSYS (vector 11, 060 FPU) on the nsqrt
- * shape -- see 060-F0-MEASUREMENT-260805.md.
+ * shape -- see docs/060-F0-MEASUREMENT-260805.md.
  *
  * Original header follows.
  *

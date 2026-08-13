@@ -3,7 +3,7 @@ ISSUE-43 -- the 68060 FP context path, emulator verification on both CPUs, 2026-
 
 Kernel: 68040/68060-260812-01, one image, sha256
 249a54e35374bc677628a7908e9f0483ff125ea7f3f4a432b128a84941ca1fcd, textsize 0xf2910.
-Unit: prototypes/fpu060.s -- cputype-gated fpu_save / fpu_restore / fpu_setup that test the
+Unit: src/fpu060.s -- cputype-gated fpu_save / fpu_restore / fpu_setup that test the
 68060 frame discriminator at fp+0x72 instead of byte zero.  Specification:
 amix-kernel-analysis/vm-map/FPU-LAZY-CONTRACT-AUDIT.md section D (Codex, 64b55cf).
 
@@ -80,6 +80,6 @@ still prints [OK] built.
 
 STILL OWED
 -----------
-* fpenab060 on silicon -- the actual ISSUE-43 verdict.  REALHW-RUNLIST-ISSUE43-260812.md.
+* fpenab060 on silicon -- the actual ISSUE-43 verdict.  docs/REALHW-RUNLIST-ISSUE43-260812.md.
 * Audit gate 6: old-ptrace FP-register writes, the only thing that sets UFPRWRT.  No instrument
   exists; two branches of the new code are unexercised on both CPUs because of it.

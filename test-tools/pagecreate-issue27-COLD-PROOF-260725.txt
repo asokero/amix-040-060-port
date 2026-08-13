@@ -108,7 +108,7 @@ STATUS CHANGE
 ISSUE-27 was recorded earlier today as "a proven-by-construction correctness defect of
 unknown live reachability". That is now obsolete. It is a live, deterministic,
 data-destroying bug on the UFS root filesystem, and the 28-site conversion
-(prototypes/patch_pagecreate.py) is a verified fix for it on both 68040 and 68060.
+(src/patch_pagecreate.py) is a verified fix for it on both 68040 and 68060.
 
 Still true and unchanged:
   * No real hardware.  Amiberry emulation only.

@@ -3,7 +3,7 @@ FPU Tier-2 M4 (FP arithmetic vectors) + M5 Xsvga bring-up -- EMU FINDINGS
 Date: 2026-07-24
 Kernel: build/unix-040-fpsp-xsvga-dbg  (buildid 68040-260724-09)
         = standard dbg 260724-04
-        + build/fpsp040.o (M1) + prototypes/fpsp_glue040.o (M2+M4)
+        + build/fpsp040.o (M1) + src/fpsp_glue040.o (M2+M4)
         + xsvga_exp.o (Klaus Burkert binary-only Piccolo/Picasso II driver)
         M68Kvec[11] -> fpsp_vec11; M68Kvec[48/51/52/53/54/55] -> fpsp_vec*
         cdevsw[67] -> svga*; svgammap phystopfn >>11 -> >>12 (Model-B).
@@ -16,7 +16,7 @@ Amiberry Piccolo-RTG-emulation limitation, to be settled on the physical board.
 
 M4 -- FP ARITHMETIC EXCEPTION VECTORS 48-55
 -------------------------------------------
-prototypes/fpsp_glue040.s gained the FPSP_VEC() macro and six dispatch entries
+src/fpsp_glue040.s gained the FPSP_VEC() macro and six dispatch entries
 fpsp_vec48/51/52/53/54/55, each: cputype==40 gate (a 68060 boot of this dual-CPU
 binary must never enter the 040 package) -> kernel supervisor CACR from sup_cacr
 -> jmp <package entry> with the raw 68040 exception frame untouched on (sp):
@@ -29,7 +29,7 @@ binary must never enter the 040 package) -> kernel supervisor CACR from sup_cacr
 Vectors 49 (inexact) and 50 (divide-by-zero) are deliberately NOT retargeted:
 the 68040 completes both in hardware and the Motorola package exports no entry,
 so they stay on the stock nullvect -> u_trap -> SIGFPE path (asserted).
-Installed by prototypes/patch_fpsp_vectors.py (relocation-retarget in .rela.text,
+Installed by src/patch_fpsp_vectors.py (relocation-retarget in .rela.text,
 offsets derived from the M68Kvec symbol; idempotent; fails closed).  Wired into
 BOTH relink-040-fpsp.sh and relink-040-fpsp-xsvga.sh.  Reloc validation 0.
 

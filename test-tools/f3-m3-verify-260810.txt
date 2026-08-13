@@ -21,7 +21,7 @@ WHAT NEEDED IT
 Motorola's own suite named vector 60 on hardware in M5: `ftest060 main` died at its FIRST
 sub-test with `Unimplemented <ea>`, console `vector 0xF0, pc=0x80000CAC` (the kernel prints the
 vector OFFSET, 60 x 4).  Disassembled, that PC is `fmulx #-2.0,%fp0` -- a 64-bit multiply of an
-extended-precision IMMEDIATE.  REALHW-260807-11-ACCEPTANCE.md section 4b.
+extended-precision IMMEDIATE.  docs/REALHW-260807-11-ACCEPTANCE.md section 4b.
 
 Vector 55 had a 68040 branch since 2026-07-24 (the Xsvga X server was seen dying of SIGILL on a
 denormal); the 68060 fell through to nullvect until now.
@@ -114,8 +114,8 @@ independent check on the 060 emulation: two entirely different execution paths, 
 
 5. Files
 ---------
-prototypes/fpsp060_glue.s      fpsp060_vec55 / fpsp060_vec60 + f60_unsupp_n / f60_effadd_n
-prototypes/fpsp_glue040.s      fpsp_vec55 made three-way; fpsp_vec60 added (68060-only)
-prototypes/patch_fpsp_vectors.py   vector 60 added to the retarget table
-prototypes/patch_isp_vec61.py      landmark widened to a set (see above)
+src/fpsp060_glue.s      fpsp060_vec55 / fpsp060_vec60 + f60_unsupp_n / f60_effadd_n
+src/fpsp_glue040.s      fpsp_vec55 made three-way; fpsp_vec60 added (68060-only)
+src/patch_fpsp_vectors.py   vector 60 added to the retarget table
+src/patch_isp_vec61.py      landmark widened to a set (see above)
 test-tools/batteryrun9.sh      re-addressed for textsize 0xf264c; f60 block read as 18 longs

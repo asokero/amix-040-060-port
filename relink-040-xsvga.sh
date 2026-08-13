@@ -12,7 +12,7 @@
 #   3. validate relocs + stamp a build id.
 #
 # The driver blob lives OUTSIDE the repo (third-party, not ours to redistribute).
-# Its durable path and expected SHA-256 are in prototypes/xsvga-provenance.sh --
+# Its durable path and expected SHA-256 are in src/xsvga-provenance.sh --
 # override with XSVGA_EXP=/your/path.  Until 2026-07-26 the default pointed into a
 # session scratchpad under /tmp, which made rebuilds non-reproducible.
 #
@@ -26,7 +26,7 @@ set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
 
-. "$HERE/prototypes/xsvga-provenance.sh"
+. "$HERE/src/xsvga-provenance.sh"
 
 IN="${1:-$HERE/build/unix-040-dbg}"
 EXP="${2:-$XSVGA_EXP}"
@@ -55,13 +55,13 @@ echo "[*] stray new UND refs from exp (should be none):"
 m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'svga|screengroups|activescreen' | sed 's/^/      LEAK: /' || true
 
 echo "[*] register cdevsw[67] + fix svgammap geometry:"
-python3 "$HERE/prototypes/patch_xsvga.py" "$OUT" | tail -8
+python3 "$HERE/src/patch_xsvga.py" "$OUT" | tail -8
 
 echo "[*] reloc validation:"
-( cd "$HERE" && python3 prototypes/check_relink_relocs.py "$OUT" 2>/dev/null | tail -1 ) || \
-( cd "$HERE" && python3 prototypes/check_relink_relocs.py | tail -1 ) || true
+( cd "$HERE" && python3 src/check_relink_relocs.py "$OUT" 2>/dev/null | tail -1 ) || \
+( cd "$HERE" && python3 src/check_relink_relocs.py | tail -1 ) || true
 
 echo "[*] stamping build id:"
-python3 "$HERE/prototypes/stamp_buildid.py" "$OUT" || true
+python3 "$HERE/src/stamp_buildid.py" "$OUT" || true
 
 echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-xsvga-dbg"

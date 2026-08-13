@@ -5,7 +5,7 @@ Emulator verification, 2026-07-25
 
 WHAT WAS BUILT
 
-  prototypes/patch_memcntl.py   NEW  17 sites + 5 canaries
+  src/patch_memcntl.py   NEW  17 sites + 5 canaries
   relink-040.sh                 MOD  wiring after patch_procio.py
   test-tools/mlocktest.c        NEW  acceptance test (memcntl + plock)
 
@@ -142,7 +142,7 @@ byte-identical to its backup).  Kernels kept:
   build/unix-040-dbg.FPSP-XSVGA-260724-09-backup
 
 NOTE FOR THE ISSUE-27 WORK: build/unix-040 has been rebuilt three times today, so the
-SHA-256 pinned in PAGECREATE-TAILZERO-TASK.md
+SHA-256 pinned in docs/archive/PAGECREATE-TAILZERO-TASK.md
 (5bd37386d9c5a0f89be451b187fa5dfe9e4f05bcf2f1c37accdc22177a225b38) is stale.
 Current build 68040-260725-05 is
   709263b200486ed3e426ead57eeaff5606e5327cb562898bcb29c5383bfbc104

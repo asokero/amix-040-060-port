@@ -1,6 +1,6 @@
 #!/bin/sh
 # build-fpsp060.sh -- F3 M1: reproduce Motorola's M68060 Floating-Point Software Package
-# as a relocatable object our kernel relink can consume.  Plan: 060-F3-FPSP-PLAN-260807.md.
+# as a relocatable object our kernel relink can consume.  Plan: docs/060-F3-FPSP-PLAN-260807.md.
 #
 # Source: the freely-redistributable M68060 Software Package as imported by NetBSD
 # (sys/arch/m68k/060sp) inside netbsd/syssrc.tgz -- the same tarball build-fpsp040.sh uses.
@@ -124,7 +124,7 @@ PKGOBJ="$HERE/build/fpsp060_pkg.o"
 
 echo
 echo "[*] M2a: concatenate head + $VARIANT image + glue -> $(basename "$PKGSRC")"
-cat "$HERE/prototypes/fpsp060_head.s" "$SP/$VARIANT.S" "$HERE/prototypes/fpsp060_glue.s" > "$PKGSRC"
+cat "$HERE/src/fpsp060_head.s" "$SP/$VARIANT.S" "$HERE/src/fpsp060_glue.s" > "$PKGSRC"
 m68k-linux-gnu-gcc -x assembler-with-cpp -m68060 -c "$PKGSRC" -o "$PKGOBJ"
 
 TOP=$(m68k-linux-gnu-nm "$PKGOBJ" | awk '$3=="fpsp060_top"{print $1}')

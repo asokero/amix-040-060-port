@@ -20,7 +20,7 @@
  * The test therefore requires the SIGSEGV -- catching it is the pass, not the failure.
  *
  * *** T3 CURRENTLY HANGS.  DO NOT RUN IT ON HARDWARE UNTIL wb040.s IS FIXED. ***
- * Measured on the emulated 060, 2026-08-06 (XPAGE-FPROT-FINDING-260806.md): T3 produced a
+ * Measured on the emulated 060, 2026-08-06 (docs/XPAGE-FPROT-FINDING-260806.md): T3 produced a
  * 397 213-iteration retry loop with x60_far_fail_n staying at ZERO, because Lwx_call resolves
  * the far page with a hardcoded type = F_INVAL.  For a page that is PRESENT but write-protected
  * that is the wrong question -- as_fault finds it mapped, returns 0 without checking protection,
@@ -219,7 +219,7 @@ char **argv;
 	printf("  on a 68040 every x60_* counter must stay unchanged\n");
 	if (runt3)
 		printf("  T3 ENABLED: it HANGS on the current kernel (F_INVAL far resolve,\n"
-		       "  XPAGE-FPROT-FINDING-260806.md).  Expect a live-lock, not a result.\n");
+		       "  docs/XPAGE-FPROT-FINDING-260806.md).  Expect a live-lock, not a result.\n");
 	else
 		printf("  T3 skipped (it hangs on the current kernel); pass `all` to force it\n");
 	printf("\n");

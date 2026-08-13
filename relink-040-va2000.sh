@@ -19,7 +19,7 @@
 #
 # io_init[] = { parinit, 0 } has no spare relocation to retarget to
 # va2000init, so va2000init is invoked from a `parinit` WRAPPER instead
-# (prototypes/parinit_va2000.s): weaken the base's strong `parinit`,
+# (src/parinit_va2000.s): weaken the base's strong `parinit`,
 # add-symbol parinit_orig at its known address, ld -r in a new strong
 # `parinit` that calls va2000init() then tail-jmps parinit_orig.
 #
@@ -63,7 +63,7 @@ echo "      parinit @0x$PARINIT_CUR OK (matches expected 0x$PARINIT_EXPECT)"
 # whose two geometry headers are Model B; the generator refuses to finish unless
 # its probe passes there and FAILS against the stock one.
 echo "[*] Model-B header set (mirror sysroot + geometry probe)"
-sh "$HERE/prototypes/mk_modelb_sysroot.sh" | sed 's/^/      /'
+sh "$HERE/src/mk_modelb_sysroot.sh" | sed 's/^/      /'
 AMIX_SYSROOT="$HERE/build/sysroot-modelb"
 export AMIX_SYSROOT
 
@@ -72,14 +72,14 @@ export AMIX_SYSROOT
 # division of labour -- headers cover macro users, this patcher covers the
 # literal, and check_page_geometry.sh below covers both in the compiled bytes.
 echo "[*] VA2000: Model-B source copy (>>11 -> >>12, exactly one site)"
-python3 "$HERE/prototypes/va2000_modelb.py"
+python3 "$HERE/src/va2000_modelb.py"
 echo "[*] VA2000: cross-compile build/va2000_040.c"
 VA2000_CFLAGS=$(echo "$AMIX_KERNEL_CFLAGS" | sed 's/-m68020/-m68040/')
 m68k-cbm-sysv4-gcc $VA2000_CFLAGS -I"$HERE/build" \
 	-c "$HERE/build/va2000_040.c" -o "$HERE/build/va2000_040.o"
-sh "$HERE/prototypes/check_page_geometry.sh" "$HERE/build/va2000_040.o" | sed 's/^/      /'
+sh "$HERE/src/check_page_geometry.sh" "$HERE/build/va2000_040.o" | sed 's/^/      /'
 echo "[*] VA2000: assemble the parinit wrapper"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/parinit_va2000.s" -o "$HERE/build/parinit_va2000.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/parinit_va2000.s" -o "$HERE/build/parinit_va2000.o"
 
 echo "[*] checking va2000_040.o has no surprise unresolved refs:"
 LEAK0=$(m68k-linux-gnu-nm "$HERE/build/va2000_040.o" | grep ' U ' | grep -vE '^\s*U (autocon|printf|uiomove|copyin|copyout)$' || true)
@@ -113,14 +113,14 @@ PCOUNT=$(m68k-linux-gnu-nm "$OUT" | grep -cE " T parinit\$")
 [ "$PCOUNT" -eq 1 ] || { echo "[FAIL] expected exactly 1 strong 'parinit' def, found $PCOUNT"; exit 1; }
 
 echo "[*] patch 3/3: cdevsw[68] -> va2000* (major 68 = /dev/va2000)"
-python3 "$HERE/prototypes/patch_va2000_cdevsw.py" "$OUT" | tail -8
+python3 "$HERE/src/patch_va2000_cdevsw.py" "$OUT" | tail -8
 
 echo "[*] reloc validation:"
-( cd "$HERE" && python3 prototypes/check_relink_relocs.py "$OUT" 2>/dev/null | tail -1 ) || true
+( cd "$HERE" && python3 src/check_relink_relocs.py "$OUT" 2>/dev/null | tail -1 ) || true
 DSZ=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print strtonum("0x"$6)}')
 [ $((DSZ % 4)) -eq 0 ] && echo "[OK] .data 4-aligned" || { echo "[FAIL] .data misaligned"; exit 1; }
 echo "[*] PC-relative relocs present (loader MUST have the f0ed373 fix):"
 m68k-linux-gnu-readelf -rW "$OUT" 2>/dev/null | awk '$3 ~ /^R_68K_PC/{n++} END{print "      "n" PC-relative records"}'
 
-python3 "$HERE/prototypes/stamp_buildid.py" "$OUT" || true
+python3 "$HERE/src/stamp_buildid.py" "$OUT" || true
 echo "[OK] built $OUT"

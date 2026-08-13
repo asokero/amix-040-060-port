@@ -87,7 +87,7 @@ verify)
 	# "up 2 days,  3:45" above a day.  The original guard understood only the first, so above
 	# an hour WROTE_MIN came out EMPTY and the -n test skipped the guard silently: it failed
 	# OPEN, the opposite of what its own comment promises.  Found and worked around by hand in
-	# REALHW-260806-06-ACCEPTANCE.md (defect 1); fixed here 2026-08-09.
+	# docs/REALHW-260806-06-ACCEPTANCE.md (defect 1); fixed here 2026-08-09.
 	#
 	# The leading clock ("  6:04pm") also contains H:MM, so the H:MM pattern is anchored after
 	# "up" -- matching the clock instead would compare wall times and call every run a reboot.

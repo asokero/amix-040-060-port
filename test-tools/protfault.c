@@ -2,7 +2,7 @@
  *
  * Spec: amix-kernel-analysis/vm-map/XPAGE-FPROT-CONTRACT.md Q5 (Codex, 0a3aab3).
  * Replaces xpagetest's T3, which conflated three different faults into one unsafe test
- * and could wedge or panic the machine (XPAGE-FPROT-FINDING-260806.md).
+ * and could wedge or panic the machine (docs/XPAGE-FPROT-FINDING-260806.md).
  *
  * WHAT IS BEING SEPARATED.  Codex's static reading of the linked kernel says the missing
  * permission check is in segvn_faultpage's PER-PAGE branch, while segvn_fault's

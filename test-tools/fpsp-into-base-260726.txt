@@ -65,7 +65,7 @@ emu-060 (68060-260726-02, SAME dual-CPU binary) -- PASS, with one pre-existing g
   A/B PROOF: the SAME failure reproduces on the PRE-FPSP kernel 68060-260725-18 booted on
   the same golden image.  So this is NOT a regression from FPSP-in-base.  It is the 060
   equivalent of the gap that FPSP closed on the 040 (M3 = "native cc works again"), and it
-  needs Motorola's 68060SP; prototypes/lmul060.s covers only part of the unimplemented set.
+  needs Motorola's 68060SP; src/lmul060.s covers only part of the unimplemented set.
   Consequence for method: 060 tests must be CROSS-COMPILED on the host --
       . gcc-cross-amix/build/env.sh
       m68k-cbm-sysv4-gcc -O -m68020 -o fputest.bin fputest.c
@@ -94,7 +94,7 @@ NOT VERIFIED
     patched address, but "should not matter" is not "was tested".
   * The graphics kernels (260725-19/-20) were NOT rebuilt.  They still carry their own
     FPSP layer from the old flow; rebuilding them on the new base is the next step and
-    REALHW-VERIFY-260725.md's kernel table is stale until then.
+    docs/REALHW-VERIFY-260725.md's kernel table is stale until then.
 
 
 ===============================================================================
@@ -108,7 +108,7 @@ session scratchpad.  Not a hygiene issue but a reproducibility one: the next reb
 might not find it, or might find a DIFFERENT exp at the same path and fail with a
 confusing byte-assert instead of a clear one.
 
-  new: prototypes/xsvga-provenance.sh
+  new: src/xsvga-provenance.sh
        XSVGA_EXP  = /home/asokero/kehitys/va2000-amixdev/svga-dev/svga/exp
        sha256     = 97a9a39d544aa73c733cd444a18663707c52a22802122f1e7312963481c72301
        size       = 60464

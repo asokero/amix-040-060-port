@@ -1,13 +1,13 @@
 #!/bin/sh
 # relink-hat.sh -- override the binary-only HAT page-table functions in the AMIX
-# kernel with their 68040 ports (prototypes/hat040.s -> build/hat040.o) and relink.
+# kernel with their 68040 ports (src/hat040.s -> build/hat040.o) and relink.
 #
 # Unlike pstart (a GLOBAL symbol), the HAT functions are file-LOCAL (`t`).  The
 # --weaken-symbol trick alone cannot override a local or redirect its callers, so
 # we first --globalize-symbol each one (local -> global), then --weaken-symbol the
 # ones we actually replace.  The strong defs in hat040.o then override the weak
 # kernel defs AND the kernel's internal callers re-resolve to them.  (Verified;
-# see prototypes/hat-040-port-worklist.md "KEY MECHANISM".)
+# see src/hat-040-port-worklist.md "KEY MECHANISM".)
 #
 # Output: build/unix-040-hat   (then run the same MMU-instruction patch scripts as
 # the pstart build: patch_pflusha_040.py / patch_pmmu_040.py, on THIS output).
@@ -30,7 +30,7 @@ WEAKEN="hat_pteload"
 
 # 1. Assemble the 040 HAT replacement object.
 echo "[*] assembling hat040.s -> build/hat040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat040.s" -o "$HERE/build/hat040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/hat040.s" -o "$HERE/build/hat040.o"
 
 # 2. Globalize all referenced/replaced locals, then weaken the replaced ones.
 echo "[*] globalize: $GLOBALIZE"

@@ -38,12 +38,12 @@ a named test on a named platform is.
 
 | Build id | sha256 (prefix) | Platform accepted on | What it established | Evidence |
 |---|---|---|---|---|
-| **`68060-260812-06`** | `955a5be7` | **68060 hardware, 2026-08-12** | **Current baseline.** ISSUE-43 re-confirmed 6/6; ISSUE-42 unit proven INERT on 060 silicon; `ftest060` main+unimp, `fp060probe`, `isp61ea` all pass. **Also accepted on a 68040 (A3640) 2026-08-13 — the first dual-silicon image in this project** | `REALHW-260812-06-ACCEPTANCE.md` |
-| `68060-260812-02` | `bb906e2a` | 68060 hardware, 2026-08-12 | ISSUE-43 + ISSUE-44 closed; six enabled IEEE classes bit-exact | `REALHW-ISSUE43-ACCEPTANCE-260812.md` |
-| `68060-260807-11` | `4962361b` | 68060 hardware, 2026-08-09 | 68060 FPSP (F3 M5) on silicon; `ftest060 unimp` passes; xv/wolf3d SIGSYS attributed | `REALHW-260807-11-ACCEPTANCE.md` |
-| `68060-260806-06` | — | 68060 hardware, 2026-08-07 | ISSUE-41 closed; XPAGE + protfault + power-cut | `REALHW-260806-06-ACCEPTANCE.md` |
-| `68040-260802-01` | `3727e5b4` | **68040 hardware, 2026-08-02** | **Last 68040 hardware run.** ISSUE-40 closed | `REALHW-ISSUE40-ACCEPTANCE-260802.md` |
-| `68040-260731-10` | on NAS | 68040 hardware, 2026-07-31 | Copyback default re-accepted; 9/9 + battery | `REALHW-ACCEPTANCE-260731.md` |
+| **`68060-260812-06`** | `955a5be7` | **68060 hardware, 2026-08-12** | **Current baseline.** ISSUE-43 re-confirmed 6/6; ISSUE-42 unit proven INERT on 060 silicon; `ftest060` main+unimp, `fp060probe`, `isp61ea` all pass. **Also accepted on a 68040 (A3640) 2026-08-13 — the first dual-silicon image in this project** | `docs/REALHW-260812-06-ACCEPTANCE.md` |
+| `68060-260812-02` | `bb906e2a` | 68060 hardware, 2026-08-12 | ISSUE-43 + ISSUE-44 closed; six enabled IEEE classes bit-exact | `docs/REALHW-ISSUE43-ACCEPTANCE-260812.md` |
+| `68060-260807-11` | `4962361b` | 68060 hardware, 2026-08-09 | 68060 FPSP (F3 M5) on silicon; `ftest060 unimp` passes; xv/wolf3d SIGSYS attributed | `docs/REALHW-260807-11-ACCEPTANCE.md` |
+| `68060-260806-06` | — | 68060 hardware, 2026-08-07 | ISSUE-41 closed; XPAGE + protfault + power-cut | `docs/REALHW-260806-06-ACCEPTANCE.md` |
+| `68040-260802-01` | `3727e5b4` | **68040 hardware, 2026-08-02** | **Last 68040 hardware run.** ISSUE-40 closed | `docs/REALHW-ISSUE40-ACCEPTANCE-260802.md` |
+| `68040-260731-10` | on NAS | 68040 hardware, 2026-07-31 | Copyback default re-accepted; 9/9 + battery | `docs/REALHW-ACCEPTANCE-260731.md` |
 | `68040-260727-01` | — | 68040 hardware, 2026-07-27 | First full delta acceptance + power-cut 8/8 | `test-tools/realhw-verify-260727.txt` |
 
 **One image boots both CPUs.** `cputype` is poked by `unix_boot040` from `AttnFlags`; every
@@ -63,7 +63,7 @@ having moved underneath it.
 ⚠ **The current image has never run on 68040 hardware.** The machine has carried the 68060
 since 2026-08-05; re-verifying the 040 needs a physical A3640 card swap. The 040 hardware column
 below therefore reads as of `68040-260802-01`, and the pending run-list is
-`NEXT-040-SESSION-RUNLIST.md`.
+`docs/archive/NEXT-040-SESSION-RUNLIST.md`.
 
 ---
 
@@ -77,29 +77,29 @@ Legend: **HW** = measured on that silicon · **EMU** = measured under Amiberry o
 
 | Capability | 040 emu | 040 HW | 060 emu | 060 HW | Evidence |
 |---|:--:|:--:|:--:|:--:|---|
-| Boot to multiuser, native userland | HW | HW | HW | HW | `REALHW-ACCEPTANCE-260731.md`, `REALHW-260806-06-ACCEPTANCE.md` |
+| Boot to multiuser, native userland | HW | HW | HW | HW | `docs/REALHW-ACCEPTANCE-260731.md`, `docs/REALHW-260806-06-ACCEPTANCE.md` |
 | MMU / HAT, page-table lifecycle | HW | HW | HW | HW | `amix-kernel-analysis/vm-map/`, battery |
 | fork / COW (`hat_dup`) | HW | HW | HW | HW | `hat_dup_cow` 1/32/256 PASS |
 | Context switch (native `resume`) | HW | HW | HW | HW | ISSUE-19 record, battery |
 | Instruction cache | HW | HW | HW | HW | `config040.s`, ISSUE-21 |
-| Data cache — copyback (default) | HW | HW | HW | HW | `REALHW-COPYBACK-ACCEPTANCE-260730.md`, power-cut 8/8 |
+| Data cache — copyback (default) | HW | HW | HW | HW | `docs/REALHW-COPYBACK-ACCEPTANCE-260730.md`, power-cut 8/8 |
 | DMA coherence (A3091 / SDMAC) | HW | HW | HW | HW | `dma_cache040.s`, disk-truth runs |
 | Swap / pageout | HW | HW | HW | HW | pressure suites, ISSUE-40 |
 | UFS | HW | HW | HW | HW | disk-truth, power-cut |
-| NFS (read + write + mmap tail) | HW | HW | HW | HW | ISSUE-35 / ISSUE-36, `REALHW-ISSUE36-260728.md` |
+| NFS (read + write + mmap tail) | HW | HW | HW | HW | ISSUE-35 / ISSUE-36, `docs/REALHW-ISSUE36-260728.md` |
 | exec (ELF + COFF path) | HW | HW | HW | HW | ISSUE-32, ISSUE-38 |
-| XPAGE / `mprotect` per-page | HW | HW | HW | HW | ISSUE-41, `XPAGE-FPROT-FINDING-260806.md` |
-| Denied write-back propagation | EMU | **HW** | — | **HW: inert, proven** | ISSUE-42 **closed on an A3640 2026-08-13**, and the defect itself reproduced on silicon; `REALHW-A3640-260813-ACCEPTANCE.md` |
-| ISP: vector 61 integer emulation | EMU | ? | EMU | HW | `ISP-VECTOR61-LANDED-260806.md`, `isp61ea` 7/7 |
+| XPAGE / `mprotect` per-page | HW | HW | HW | HW | ISSUE-41, `docs/XPAGE-FPROT-FINDING-260806.md` |
+| Denied write-back propagation | EMU | **HW** | — | **HW: inert, proven** | ISSUE-42 **closed on an A3640 2026-08-13**, and the defect itself reproduced on silicon; `docs/REALHW-A3640-260813-ACCEPTANCE.md` |
+| ISP: vector 61 integer emulation | EMU | ? | EMU | HW | `docs/ISP-VECTOR61-LANDED-260806.md`, `isp61ea` 7/7 |
 | FPU: 68040 FPSP | HW | HW | — | — | `fputest` Test A on hardware 2026-07-27 |
 | FPU: 68060 FPSP, unimplemented | — | — | EMU | HW | `ftest060 unimp` passed |
 | FPU: 68060 FPSP, `main` group | — | — | ✗ (see note) | HW | `ftest060 main` 4/4 passed |
-| FPU: 68060 enabled IEEE exceptions | — | — | ✗ (see note) | **HW 6/6** | `REALHW-ISSUE43-ACCEPTANCE-260812.md` |
+| FPU: 68060 enabled IEEE exceptions | — | — | ✗ (see note) | **HW 6/6** | `docs/REALHW-ISSUE43-ACCEPTANCE-260812.md` |
 | FPU: 68060 context save/restore | — | — | EMU | HW | ISSUE-43; `fpc_*` counters |
 | Graphics: Piccolo / Xsvga (Z2) | — | — | — | HW | `amix-xsvga-driver-feasibility` |
-| Graphics: VA2000 RTG | — | HW | — | HW | `REALHW-ACCEPTANCE-260801.md` |
+| Graphics: VA2000 RTG | — | HW | — | HW | `docs/REALHW-ACCEPTANCE-260801.md` |
 | RAM above 32 MB | — | — | — | **not implemented** | `vm-map/RAM-BEYOND-16MB-ANALYSIS.md` |
-| Zorro III device aperture | — | — | — | **documented limitation** | `Z3-BUSBENCH-Z2-MEASUREMENT-260810.md` |
+| Zorro III device aperture | — | — | — | **documented limitation** | `docs/Z3-BUSBENCH-Z2-MEASUREMENT-260810.md` |
 | 68LC060 / EC variants | — | — | — | **untested, unknown** | see §3 FPU |
 
 **Note on the ✗ cells.** Those are not failures. Amiberry raises no enabled IEEE FP exceptions
@@ -241,7 +241,7 @@ survives as history but its conclusion has been replaced.
 0. ~~Tag and archive~~ · ~~ISSUE-42~~ · ~~re-verify the image on 040 hardware~~ — all done
    2026-08-12/13. `68040/68060-260812-06` is accepted on both silicon.
 1. **Burst suite on the A3640**, then wolf3d/X11 on the RTG kernel `68040-260813-01`
-   (`NEXT-EVENING-RUNLIST-260813.md`).
+   (`docs/archive/NEXT-EVENING-RUNLIST-260813.md`).
 2. **ISSUE-10 / ISSUE-9 attribution** — the last two release blockers. Slow work: repeat boots,
    not cleverness, and no single-boot bisect.
 3. **Decide the 68LC060 question as a product decision**, not technical debt.
@@ -251,7 +251,7 @@ survives as history but its conclusion has been replaced.
    Z2 aperture against 28.66 MB/s local, with a width test showing the bus saturated rather than
    serialised.
 5. The unexercised paths in §5.2, whenever their area is next opened.
-6. **060-D, the two CACR knobs** (`060-D-CACHE-KNOBS-PLAN.md`) — store buffer and branch cache,
+6. **060-D, the two CACR knobs** (`docs/060-D-CACHE-KNOBS-PLAN.md`) — store buffer and branch cache,
    both still off. Motivated by the corrected clock: a superscalar 68060 is only 7.1 % faster per
    clock than the 68040, which is low. Needs the 060 back in the machine, so it is a batched
    session of its own, and the branch cache needs an instruction-cache-invalidation audit first.
@@ -282,15 +282,15 @@ hypothesis, but nothing new should be built on any of it.
 | DZ proved a null frame | ISSUE-43 round 1 | It proved its own operand was zero |
 | "7100 null saves per boot" | ISSUE-43 round 3 | Collected through the wrong predicate. Remeasured: 8048 null / 17 idle per boot on hardware |
 | Bit 0 of the u-area FP flags is a lazy-FPU owner bit | reverted attempt, `296e490` | It is `UFPRWRT`, "software wrote the programmer model". Setting it turned 5-of-6 into 0-of-6 |
-| ISSUE-10 was retired in July | `RESUME-HERE-260727.md` | It is back on probeless kernels and reproduces in the emulator; the "retirement" was a dbg-instrument artifact |
+| ISSUE-10 was retired in July | `docs/archive/RESUME-HERE-260727.md` | It is back on probeless kernels and reproduces in the emulator; the "retirement" was a dbg-instrument artifact |
 | `cc1`'s SIGSYS was something other than the missing FPSP | ISSUE-34b | It was the FPSP (F3 M5 §8) |
-| `fpc_excp_n` would be non-zero on hardware | `REALHW-RUNLIST-ISSUE43-260812.md` | Our own call-out converts the frame to idle before the OS sees it, so `0xe0` never reaches `fpu_save` |
+| `fpc_excp_n` would be non-zero on hardware | `docs/REALHW-RUNLIST-ISSUE43-260812.md` | Our own call-out converts the frame to idle before the OS sees it, so `0xe0` never reaches `fpu_save` |
 | The ExecBase → `expansion.library` route can enumerate Zorro cards | early `lszorro` notes | AMIX overwrites the AmigaOS library list nodes |
 | The Mercury 68040 runs at 33 MHz | every document before 2026-08-13 | **35 MHz** — 70 MHz oscillator at half clock. The 68060 runs at 66 MHz, full clock |
-| The 68060's Dhrystone is "almost exactly the clock ratio", so scalar dispatch explains it | `060-F0-MEASUREMENT-260805.md` §9 | The ratio is 1.886, the measurement 2.019 → **+7.1 % per clock**, measured with **ESS=1** (superscalar). A low surplus that points at the branch cache and store buffer, both off |
-| The A3640 costs 6.5 % on Dhrystone versus the Mercury | an earlier draft of `REALHW-A3640-260813-ACCEPTANCE.md` §9 | 0.8 %, i.e. nothing this benchmark can see. The 6.5 % was the 33 MHz artifact |
+| The 68060's Dhrystone is "almost exactly the clock ratio", so scalar dispatch explains it | `docs/060-F0-MEASUREMENT-260805.md` §9 | The ratio is 1.886, the measurement 2.019 → **+7.1 % per clock**, measured with **ESS=1** (superscalar). A low surplus that points at the branch cache and store buffer, both off |
+| The A3640 costs 6.5 % on Dhrystone versus the Mercury | an earlier draft of `docs/REALHW-A3640-260813-ACCEPTANCE.md` §9 | 0.8 %, i.e. nothing this benchmark can see. The 6.5 % was the 33 MHz artifact |
 
-`RESUME-HERE-260727.md` is a snapshot of 2026-07-27 and has not been maintained since. Read it as
+`docs/archive/RESUME-HERE-260727.md` is a snapshot of 2026-07-27 and has not been maintained since. Read it as
 history; read this file for status.
 
 ---
@@ -300,15 +300,15 @@ history; read this file for status.
 | Area | Document |
 |---|---|
 | Issue detail and history | `KNOWN-ISSUES.md` (44 issues, chronological, corrections in place) |
-| 060 FP acceptance | `REALHW-ISSUE43-ACCEPTANCE-260812.md`, `test-tools/issue43-emu-verify-260812.txt` |
-| 060 FPSP acceptance | `REALHW-260807-11-ACCEPTANCE.md` |
-| 060 baseline before FPSP | `REALHW-260806-06-ACCEPTANCE.md`, `REALHW-F2-ACCEPTANCE-260806.md` |
-| 040 acceptance | `REALHW-ACCEPTANCE-260731.md`, `REALHW-ACCEPTANCE-260801.md`, `test-tools/realhw-verify-260727.txt` |
-| Pending 040 hardware work | `NEXT-040-SESSION-RUNLIST.md` |
+| 060 FP acceptance | `docs/REALHW-ISSUE43-ACCEPTANCE-260812.md`, `test-tools/issue43-emu-verify-260812.txt` |
+| 060 FPSP acceptance | `docs/REALHW-260807-11-ACCEPTANCE.md` |
+| 060 baseline before FPSP | `docs/REALHW-260806-06-ACCEPTANCE.md`, `docs/REALHW-F2-ACCEPTANCE-260806.md` |
+| 040 acceptance | `docs/REALHW-ACCEPTANCE-260731.md`, `docs/REALHW-ACCEPTANCE-260801.md`, `test-tools/realhw-verify-260727.txt` |
+| Pending 040 hardware work | `docs/archive/NEXT-040-SESSION-RUNLIST.md` |
 | Static contracts and audits | `../amix-kernel-analysis/vm-map/` (132 documents) |
 | FP contract | `vm-map/FPU-LAZY-CONTRACT-AUDIT.md`, `vm-map/FPU-TIER1-ENABLE-SPEC.md` |
 | RAM expansion | `vm-map/RAM-BEYOND-16MB-ANALYSIS.md` |
-| Zorro III | `Z3-BUSBENCH-Z2-MEASUREMENT-260810.md` |
+| Zorro III | `docs/Z3-BUSBENCH-Z2-MEASUREMENT-260810.md` |
 | Build and toolchain | `LOCAL-BUILD-NOTES.md`, `relink-040.sh` |
 | Test tooling | `test-tools/README.md` |
 

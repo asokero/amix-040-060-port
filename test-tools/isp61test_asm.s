@@ -3,7 +3,7 @@
 | WHY A SEPARATE .s FILE.  gcc 2.7.2.3's inline assembler runs the template through its
 | MIT->Motorola opcode translator as soon as the asm block has operands, which silently
 | mangles mnemonics (`movel` -> `movl`, `moveq` -> `mov`) and then fails to assemble.  A
-| standalone .s file is assembled verbatim, exactly like every prototypes/*.s in this tree,
+| standalone .s file is assembled verbatim, exactly like every src/*.s in this tree,
 | so the encodings below are the encodings that execute.
 |
 | Every multiply is emitted as raw words so no toolchain decision can change the requested

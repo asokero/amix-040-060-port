@@ -1,7 +1,7 @@
 ISSUE-42 -- write-back denial propagation, emulator verification on both CPUs, 2026-08-12
 =========================================================================================
 
-Kernel: 68040/68060-260812-05, one image.  Unit: prototypes/wb040.s.
+Kernel: 68040/68060-260812-05, one image.  Unit: src/wb040.s.
 Contract: amix-kernel-analysis/vm-map/ISSUE42-WBREPLAY-PROTECTION-CONTRACT.md (Codex, 8fd31fd).
 Counters: wbf block, 19 contiguous longs at 0x0810AFA4, magic "WBF!" first.
 
@@ -78,7 +78,7 @@ STILL OWED
 * REAL 68040 SILICON.  wb040.s's own verified comment says the emulators never set WB1S valid,
   so everything above is WB2/WB3; the WB1 path and its ISSUE-11 realignment cannot be exercised
   under Amiberry at all.  ISSUE-42 stays a release blocker until the A3640 card swap
-  (NEXT-040-SESSION-RUNLIST.md).
+  (docs/archive/NEXT-040-SESSION-RUNLIST.md).
 * Contract item 8: write-back state is NOT retained across a signal handler that repairs the
   mapping and returns.  Stated in the source as a known limit rather than hidden.
 * A supervisor-FC denial now stops the replay too (counted, no signal).  wbf_sup_n has been 0

@@ -5,7 +5,7 @@
  * nfs_getpage's EOF allowance still added the 2 KiB PAGEOFFSET, so with r = file_size mod 4096
  * the OLD kernel refused the final page for r in 1..2048 -- EFAULT, which segvn turns into
  * FC_MAKE_ERR(14) = 0xE05, which the user sees as SIGBUS.  r == 0 and r >= 2049 were accepted.
- * The fix is four atomic sites (prototypes/patch_nfs_getpage.py).
+ * The fix is four atomic sites (src/patch_nfs_getpage.py).
  *
  * THIS TEST CHECKS THREE THINGS, AND THE SECOND IS THE ONE A NAIVE TEST MISSES
  *

@@ -7,7 +7,7 @@ landing in sh's data frame 0x9E19000 => suspicion that a kvseg leaf PTE holds th
 WRONG PFN (KMA/STREAMS buffer double-backing).  This tool answers "what does the
 kvseg chain for VA X say RIGHT NOW, and does the leaf pfn == sh's data frame?"
 
-Tables (prototypes/pstart040.s): kroot040/kptr040 are .data globals holding the
+Tables (src/pstart040.s): kroot040/kptr040 are .data globals holding the
 PHYS bases of the kernel root table and the contiguous pointer-table region for
 root entries 32..63 (kvseg).  Kernel phys base 0x08000000 (identity DTT0), so a
 .data symbol at nm-offset D reads at 0x08000000 + .text-size + D.

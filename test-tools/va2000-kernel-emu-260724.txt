@@ -17,7 +17,7 @@ build/unix-040-va2000       buildid " 68040-260724-14"   (non-debug base:
                             debugging is no longer needed)
 
 Both are: base kernel + Motorola 68040 FPSP package (build/fpsp040.o, M1) +
-AMIX FPSP glue (prototypes/fpsp_glue040.s, M2) with M68Kvec[11] and the FP
+AMIX FPSP glue (src/fpsp_glue040.s, M2) with M68Kvec[11] and the FP
 arithmetic vectors 48/51/52/53/54/55 retargeted to FPSP (M4, same as
 relink-040-fpsp-xsvga.sh) + the MNT VA2000 driver compiled from a Model-B
 (4 KiB page) adapted copy of va2000.c, registered at cdevsw major 68 (the
@@ -26,19 +26,19 @@ has no spare relocation, so a wrapper was used instead of a table edit).
 
 NEW FILES IN THIS REPO
 -----------------------
-prototypes/va2000_modelb.py      Copies va2000.c (READ-ONLY source, untouched)
+src/va2000_modelb.py      Copies va2000.c (READ-ONLY source, untouched)
                                   into build/va2000_040.c, converting the ONE
                                   page-size-dependent shift in va2000mmap()
                                   from >>11 (vanilla 2 KiB PNUMSHFT) to >>12
                                   (this kernel's 4 KiB Model-B PNUMSHFT).
                                   Asserts exactly 1 replacement; fails hard on
                                   any drift from the expected source line.
-prototypes/parinit_va2000.s       `parinit` override: jsr va2000init, then
+src/parinit_va2000.s       `parinit` override: jsr va2000init, then
                                   tail-jmp the original parinit (parinit_orig,
                                   exposed via objcopy --add-symbol at 0xfe6c).
                                   Every parallel-port init still runs exactly
                                   as before; va2000init just runs first.
-prototypes/patch_va2000_cdevsw.py Retargets cdevsw[68]'s six d_open..d_mmap
+src/patch_va2000_cdevsw.py Retargets cdevsw[68]'s six d_open..d_mmap
                                   R_68K_32 relocations from `nodev` to
                                   va2000open/close/read/write/ioctl/mmap.
                                   Offset is DERIVED from the cdevsw symbol

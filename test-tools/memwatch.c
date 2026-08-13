@@ -9,7 +9,7 @@
  * computed, which is why every earlier session could count hat_sdtalloc
  * failures but never say what memory looked like when they happened.
  *
- * prototypes/issue39_040.s fixes that with a pointer table: a .data long
+ * src/issue39_040.s fixes that with a pointer table: a .data long
  * initialised to each symbol, so the LOADER writes the runtime address into it.
  * This program reads that table through /dev/mem and then follows each pointer.
  *
@@ -55,7 +55,7 @@
 #define PGBYTES		4096
 
 /* Offsets in LONGS from i39_magic.  This table is the .data order of
- * prototypes/issue39_040.s and nothing else -- keep them in the same order and
+ * src/issue39_040.s and nothing else -- keep them in the same order and
  * count them together, because on 2026-08-01 the three latch indices below were
  * each one too high, so a 100-minute run reported i39_fail_freemem where it said
  * "hat_sdtalloc failures" and printed 0 while the real counter read 1.  Nothing

@@ -142,8 +142,8 @@ outcome is identical and the counters confirm the 060 branch is never taken.
 
 6. Files
 ---------
-prototypes/fpsp060_glue.s        F60VEC macro + six trampolines; twelve new counters
-prototypes/fpsp_glue040.s        FPSP_VEC3 / FPSP_VEC060; vectors 49-54 re-shaped
-prototypes/patch_fpsp_vectors.py vectors 49 and 50 added; the stale "left on nullvect by
+src/fpsp060_glue.s        F60VEC macro + six trampolines; twelve new counters
+src/fpsp_glue040.s        FPSP_VEC3 / FPSP_VEC060; vectors 49-54 re-shaped
+src/patch_fpsp_vectors.py vectors 49 and 50 added; the stale "left on nullvect by
                                  design" message removed rather than left printing a sentence
                                  that had become false

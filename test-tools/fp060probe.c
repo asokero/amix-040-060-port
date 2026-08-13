@@ -1,12 +1,12 @@
 /* fp060probe.c -- which FP instructions does THIS kernel emulate, and does it emulate them
  * CORRECTLY?  (2026-08-07; value checking added for F3 M2b, 2026-08-08)
  *
- * WHY.  On the 68060 every FPSP entry in prototypes/fpsp_glue040.s is gated on
+ * WHY.  On the 68060 every FPSP entry in src/fpsp_glue040.s is gated on
  * `cmpl #40,cputype` and, before F3, fell through to `nullvect`, so the 68040 FPSP was inert
  * and the 060 had no FP support package at all.  Any FP instruction the 060 does not retire
  * in hardware died with SIGSYS -- which the shell prints as "bad system call".
  *
- * Measured 2026-08-07 on real silicon (060-FPU-STATE-260807.md):
+ * Measured 2026-08-07 on real silicon (docs/060-FPU-STATE-260807.md):
  *     fadd fsqrt fintrz          survived
  *     fsin fetox flogn fmovecr   SIGSYS (12)
  *

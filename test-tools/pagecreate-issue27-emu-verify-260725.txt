@@ -10,7 +10,7 @@ test-tools/pagecreate-issue27-COLD-PROOF-260725.txt.
 
 WHAT WAS BUILT
 
-  prototypes/patch_pagecreate.py   NEW  28 sites in 3 groups + 4 producer canaries
+  src/patch_pagecreate.py   NEW  28 sites in 3 groups + 4 producer canaries
   relink-040.sh                    MOD  wiring after patch_memcntl.py
   test-tools/pgcreatetest.c        NEW  defect probe (spec's acceptance test)
 

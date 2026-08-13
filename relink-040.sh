@@ -23,27 +23,27 @@ verify_stock "$STOCK"
 mkdir -p "$HERE/build"
 
 echo "[*] assembling pstart040.s + kvm040.s + hat040.s + hat_chgprot040.s"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/pstart040.s"     -o "$HERE/build/pstart040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/kvm040.s"        -o "$HERE/build/kvm040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat040.s"        -o "$HERE/build/hat040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat_chgprot040.s" -o "$HERE/build/hat_chgprot040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/pstart040.s"     -o "$HERE/build/pstart040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/kvm040.s"        -o "$HERE/build/kvm040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/hat040.s"        -o "$HERE/build/hat040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/hat_chgprot040.s" -o "$HERE/build/hat_chgprot040.o"
 #     hat_pagesync040 = REAL 040 port of hat_pagesync (the pageout/pvn_done B_FREE reclaim
 #                    sampling gate).  Stock's U/M gather is correct but its flushmmu via the
 #                    retired 030 ptdat leaves the 040 ATC unflushed -> actively-used pages
 #                    read p_ref==0 and get reclaimed+reused (ISSUE-10).  This flushes the
 #                    ATC unconditionally after the walk.  A genuine fix, belongs in base.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat_pagesync040.s" -o "$HERE/build/hat_pagesync040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/hat_pagesync040.s" -o "$HERE/build/hat_pagesync040.o"
 #     hat_exec040  = NO-OP override of the stock exec stack-page-table MOVE optimization.
 #                    Stock passes flag 0 to hat_ptalloc (steal allowed) and its unpatched-030
 #                    steal path, hit under memory pressure, orphans live 040 PTEs of a stolen
 #                    table's pages (ISSUE-10 chain II).  as_exec moves the seg + faults rebuild
 #                    the stack via hat_pteload, so the move is a pure (unsafe-on-040) optimization.
 #                    Codex HAT-EXEC-POLICY.md-endorsed.  A genuine fix, belongs in base.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat_exec040.s"    -o "$HERE/build/hat_exec040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/hat_exec040.s"    -o "$HERE/build/hat_exec040.o"
 #     hat_dup040   = REAL 040 fork/COW port (ISSUE-4, boot-verified 2026-07-04 on branch
 #                    040-hat-dup-port incl. the fork-without-exec COW subshell test) --
 #                    replaces the old forkdbg.s no-op stub.  A genuine fix, belongs in base.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/hat_dup040.s"     -o "$HERE/build/hat_dup040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/hat_dup040.s"     -o "$HERE/build/hat_dup040.o"
 
 echo "[*] assembling genuine 68040 trap/fault runtime ports (moved out of the dbg overlay --"
 echo "    these are REAL fixes, not diagnostics, so they belong in the base kernel):"
@@ -52,52 +52,52 @@ echo "      userspace040 = classify user-vs-kernel fault from the 040 SSW (route
 echo "      vtop040      = DTT0 identity phys for disk DMA (va < 0x40000000)"
 echo "      wb040        = 040 access-error WRITE-BACK replay (the init copyout(icode) fix)"
 echo "      ptest040     = real 040 ptestr -> 030-form PSR (the GOT-relocation COW-fault fix)"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/getfault040.s"  -o "$HERE/build/getfault040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/userspace040.s" -o "$HERE/build/userspace040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/vtop040.s"      -o "$HERE/build/vtop040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/wb040.s"        -o "$HERE/build/wb040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segvn_prot040.s" -o "$HERE/build/segvn_prot040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ptest040.s"     -o "$HERE/build/ptest040.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/uvatosde040.s"  -o "$HERE/build/uvatosde040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/getfault040.s"  -o "$HERE/build/getfault040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/userspace040.s" -o "$HERE/build/userspace040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/vtop040.s"      -o "$HERE/build/vtop040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/wb040.s"        -o "$HERE/build/wb040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segvn_prot040.s" -o "$HERE/build/segvn_prot040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/ptest040.s"     -o "$HERE/build/ptest040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/uvatosde040.s"  -o "$HERE/build/uvatosde040.o"
 # prfastmap040 (ISSUE-17/18): replaces prfastmapin's dead 030 SDE walk with a real
 # 040 per-proc VA->PTE walker (uvatopte040), also consumed by vtop040.s for the
 # user-VA branch of ISSUE-18a.  prfastmapout/prusrio keep their stock structure
 # and are instead byte-patched (patch_procio.py, below) -- see prfastmap040.s's
 # header comment for why the split is structure-vs-constant, not arbitrary.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/prfastmap040.s" -o "$HERE/build/prfastmap040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/prfastmap040.s" -o "$HERE/build/prfastmap040.o"
 #     prumap040    = lazy kvsegu slot-0 (proc 0 u-area) alias into kptr040 -- p0init's
 #                    030 st_top1 writes are inert on 040; fixes the prgetpsinfo panic
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/prumap040.s"    -o "$HERE/build/prumap040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/prumap040.s"    -o "$HERE/build/prumap040.o"
 #     haltsys040   = AttnFlags-guarded MMU disable for the reboot/halt path (ISSUE-5) --
 #                    stock haltsys falls into unguarded 030 pmove tc/crp/srp, illegal on 040.
 #                    Overrides rtnfirm TOO: mdboot calls rtnfirm (not haltsys) for fcn>=1,
 #                    i.e. on every real reboot (ISSUE-5 fix v2)
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/haltsys040.s"   -o "$HERE/build/haltsys040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/haltsys040.s"   -o "$HERE/build/haltsys040.o"
 #     segu_lockfix = segu_get wrapper restoring SEGU_LOCKED in su_flags (ISSUE-7 root
 #                    fix) -- the Model-B loop-bound patch (patch_modelb_pager.py:226)
 #                    shared d5 as loop bound AND su_flags source, dropping the LOCKED
 #                    bit, so segu_release never passed HAT_UNLOCK|HAT_RELEPP and the
 #                    u-page keepcnt hold leaked -> page_abort freed live u-pages.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segu_lockfix.s" -o "$HERE/build/segu_lockfix.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segu_lockfix.s" -o "$HERE/build/segu_lockfix.o"
 #     segu_ubptbl040 = post-fix wrappers rebuilding p_ubptbl from the live kptr040
 #                    tree after stock segu_get/swapinub run (their inline st_top1
 #                    walks are inert on 040 -> p_ubptbl was ZEROS; PREEMPT5).
 #                    Chain: segu_get(ubptbl) -> segu_get_lockfix -> segu_get_orig
 #                    (stock); the lockfix def is RENAMED below so each build keeps
 #                    exactly one strong segu_get.  swapinub(ubptbl) -> swapinub_stock.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segu_ubptbl040.s" -o "$HERE/build/segu_ubptbl040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segu_ubptbl040.s" -o "$HERE/build/segu_ubptbl040.o"
 # inituname040 = wrapper appending " 68040-<buildid>" to utsname.machine (banner + uname -m)
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/inituname040.s" -o "$HERE/build/inituname040.o"
-# 060-B (2026-07-10): dual-CPU support objects (see 68060-prestudy.md).
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/inituname040.s" -o "$HERE/build/inituname040.o"
+# 060-B (2026-07-10): dual-CPU support objects (see docs/68060-prestudy.md).
 #   cputype060 = the `cputype` global (40 default; unix_boot pokes 60 from AttnFlags)
 #   lmul060    = portable lmul (stock's 64-bit muls.l forms trap on the 68060)
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/cputype060.s" -o "$HERE/build/cputype060.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/lmul060.s"    -o "$HERE/build/lmul060.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/cputype060.s" -o "$HERE/build/cputype060.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/lmul060.s"    -o "$HERE/build/lmul060.o"
 #   isp61_060  = vector 61 (unimplemented integer): emulates the ONE form the installed
 #                userland uses -- immediate-source 64-bit MULS.L/MULU.L, 103 measured sites,
 #                zero elsewhere in libc/ld.so/as/ld.  Everything else declines, counted, to
 #                nullvect.  cputype-gated, so the 040 never enters it.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/isp61_060.s"  -o "$HERE/build/isp61_060.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/isp61_060.s"  -o "$HERE/build/isp61_060.o"
 #   fpu060     = ISSUE-43 (2026-08-12): fpu_save / fpu_restore / fpu_setup for the 68060.
 #                The inherited bodies decide "does this process have live FP state?" from
 #                BYTE ZERO of the FSAVE frame.  That is the format byte on a 68881/040 and
@@ -106,18 +106,18 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/isp61_060.s"  -o "$HERE/build/is
 #                as "no FP state" and lost fp0-7 across the signal, measured on silicon.
 #                cputype-gated: the 040 tail-jumps to the untouched stock bodies, and every
 #                fpc_* counter below must read 0 on an 040 boot.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/fpu060.s"     -o "$HERE/build/fpu060.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/fpu060.s"     -o "$HERE/build/fpu060.o"
 #   kvecprobe040 = F3 M0 (2026-08-07): wrap nullvect and count the vector of every exception
 #                that reaches it.  The kernel names a vector only for SIGKILL kills, so a
 #                SIGSYS ("bad system call") cannot currently be attributed -- which is what
 #                blocks judging F3 and what leaves wolf3d/xv unexplained.  NOT cputype-gated:
 #                it measures both CPUs, and the 040 numbers are the control.  Data flag
 #                kvp_on = 0 takes it out of the path within one boot.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/kvecprobe040.s" -o "$HERE/build/kvecprobe040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/kvecprobe040.s" -o "$HERE/build/kvecprobe040.o"
 # ISSUE-13 (2026-07-12): bp_map/bp_mapout were left as stock 030 bodies (2 KiB, retired
 # st_top1 tree) -> corrupt the NFS page-I/O temp mapping.  bp_map040 rewrites both for
 # the live 040 kptr040 tree (4 KiB, phys|0x19).  Both GLOBAL T -> plain --weaken-symbol.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/bp_map040.s"  -o "$HERE/build/bp_map040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/bp_map040.s"  -o "$HERE/build/bp_map040.o"
 # runtime040 (2026-07-12): the formerly-overlay-only LOAD-BEARING overrides promoted
 # into the base link (Codex PROCESS-MMU-CONTEXT-SWITCH-CONTRACT.md packaging finding:
 # bare unix-040 retained stock resume -> fixed-u never remapped -> not bootable).
@@ -126,13 +126,13 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/bp_map040.s"  -o "$HERE/build/bp
 #   sched/idle = sched still a deliberate process-swap disable (u-area swap-out
 #                unvalidated); schedpaging override RETIRED 2026-07-15 -- writeback
 #                group converted (patch_writeback.py), stock pageout daemon runs
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/runtime040.s" -o "$HERE/build/runtime040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/runtime040.s" -o "$HERE/build/runtime040.o"
 # segkmem040 (2026-07-20, CM-campaign B1): flushmmu = cpusha dc + pflusha (descriptor
 # publication for every bare-flushmmu caller); segkmem_setprot Model-B port (2 KiB
 # index/step was a live-PTE-corruption latent + stock cursor-advance defect) +
 # publication; sptfree(flag=0) teardown publication.  Companion READER byte patches
 # (checkprot/getprot) in patch_segkmem.py below.  Spec: CM-PTE-WRITER-MATRIX.md.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segkmem040.s" -o "$HERE/build/segkmem040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segkmem040.s" -o "$HERE/build/segkmem040.o"
 # dma_cache040 (2026-07-20, caches Step B / B1 DMA-coherency gate): shared
 # FROM_DEVICE completion primitive (cinva dc) + A3091/SDMAC stopdma wrapper.
 # A3000-first: only the A3000-internal SCSI controller (the sole host-RAM DMA
@@ -140,14 +140,14 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/segkmem040.s" -o "$HERE/build/se
 # DMA-INITIATOR-CENSUS.md and DEFERRED (not in this HW).  Dormant no-op until
 # the real-HW Step-B CACR DC-enable.  Wired by relocation retarget (three
 # same-named local stopdma symbols block globalize+weaken) via patch_a3091_dma.py.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/dma_cache040.s" -o "$HERE/build/dma_cache040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/dma_cache040.s" -o "$HERE/build/dma_cache040.o"
 # cb_release040 (2026-07-23, caches Step B2): copyback page-lifecycle release
 # barrier -- cpushl-per-line page push+invalidate (cb_page_release) + the two
 # free-list choke-point islands (page_free @0xafb08 via bsr.l, free_vp_pages
 # @0xafd98 via jsr/reloc-retarget; patch_cb_release.py installs both).  Spec:
 # CB-PAGE-LIFECYCLE-CLOSURE.md.  In the WT baseline the loop only invalidates
 # clean lines (harmless) -> hooks are regression-testable before the CM flip.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/cb_release040.s" -o "$HERE/build/cb_release040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/cb_release040.s" -o "$HERE/build/cb_release040.o"
 # cb_icode040 (2026-07-30, ISSUE-38 fix): main()'s copyout(icode) writes proc 1's
 # bootstrap text with the CPU, and the 040 ifetch does not snoop the data cache --
 # under copyback the icode stayed in dirty lines, proc 1 executed the still-zero RAM
@@ -155,14 +155,14 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/cb_release040.s" -o "$HERE/build
 # exec.  Gated `cpusha bc` after the icode copyout only.  See the file header for
 # the full evidence chain (incl. why assegat_dbg masked it: its copyout wrapper
 # does the same push unconditionally).  A genuine fix, belongs in base.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/cb_icode040.s" -o "$HERE/build/cb_icode040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/cb_icode040.s" -o "$HERE/build/cb_icode040.o"
 # kdbg040 (2026-07-31): the base kernel is SILENT.  One flag (kdbg_on, ships 0)
 # gates the ~15 VM diagnostic cmn_err sites that fire on a HEALTHY boot inside the
 # genuine-fix objects; the ~11 that never fire on a healthy boot stay ungated,
 # because their silence is what makes them worth reading.  Two anomaly-shaped
 # sites that DID fire every boot behind an 8-print cap now also carry uncapped
 # counters (hat_pfnmiss_n, hat_badaslot_n) so their real rate becomes a number.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/kdbg040.s" -o "$HERE/build/kdbg040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/kdbg040.s" -o "$HERE/build/kdbg040.o"
 # dbgpublish040 (2026-07-31, DBG-TEXT-PUBLISH): the residual ISSUE-38 left open.
 # The kernel CPU writes into another process's TEXT on exactly two debugger paths
 # -- ptrace POKETEXT via suword, and /proc/<pid> writes via uiomove -- and under
@@ -170,7 +170,7 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/kdbg040.s" -o "$HERE/build/kdbg0
 # breakpoint or a patched instruction is invisible to the target.  Two wrappers
 # reached by relocation retargeting (patch_dbgpublish.py, below), publishing with
 # cpusha bc.  Spec: analyysirepo vm-map/DEBUGGER-TEXT-PUBLICATION-PATCH-SPEC.md.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/dbgpublish040.s" -o "$HERE/build/dbgpublish040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/dbgpublish040.s" -o "$HERE/build/dbgpublish040.o"
 # codepub040 (2026-08-01, USER-CODE-PUBLISH): the LAST ISSUE-38 residual -- user
 # space generating its own code (runtime linker text relocation, a JIT, or a
 # read(2) into a buffer that is then jumped to).  Defines the port ABI "a
@@ -180,14 +180,14 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/dbgpublish040.s" -o "$HERE/build
 # and a same-protection RWX call cannot publish at all, because segvn_setprot
 # returns success before HAT is reached.  Spec: analyysirepo
 # vm-map/USER-CODE-CACHE-ABI-SPEC.md.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/codepub040.s" -o "$HERE/build/codepub040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/codepub040.s" -o "$HERE/build/codepub040.o"
 # issue39_040 (2026-08-01): ISSUE-39 characterisation.  Two things no previous
 # session could do: (1) freemem/availrmem/deficit/physmem/... are COMMON symbols
 # placed in .bss by the LOADER, so they have no computable address -- a .data
 # long initialised to the symbol turns each into a loader-resolved pointer that
 # kpeek can follow; (2) hat_sdtfail_count now also latches the memory state at
 # the first and last failure, so the warning stops being just a count.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/issue39_040.s" -o "$HERE/build/issue39_040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/issue39_040.s" -o "$HERE/build/issue39_040.o"
 # legacysdt040 (2026-08-01, ISSUE-40 fix): hat_free040 tore down only the native
 # 040 A/B/C tree and never released the LEGACY SDT allocations that the retained
 # stock hat_map -> hat_growsdt -> hat_sdtalloc path still makes on every exec --
@@ -199,7 +199,7 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/issue39_040.s" -o "$HERE/build/i
 # Calls the RETAINED hat_growsdt body -- hence the globalize below, and hence
 # this must never be weakened.  Contract: analyysirepo
 # vm-map/ISSUE40-LEGACY-SDT-TEARDOWN-CONTRACT.md.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/legacysdt040.s" -o "$HERE/build/legacysdt040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/legacysdt040.s" -o "$HERE/build/legacysdt040.o"
 # ptdatfree040 (2026-08-02, ISSUE-40 part 2): the half that actually returns the
 # page.  Part 1 released the legacy SDT and got ZERO pages back on hardware
 # (i40_pgfreed_n = 0 over 3440 releases) because hat_sdtfree only credits when
@@ -210,26 +210,26 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/legacysdt040.s" -o "$HERE/build/
 # gate (p_keepcnt == 1, p_ptbits == 1, unlocked record, reciprocal links), called
 # from hat_ptfree.  It CALLS retained hat_sdtfree -- hence the globalize below.
 # Contract: analyysirepo vm-map/ISSUE40-PTDAT-TEARDOWN-CONTRACT.md.
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ptdatfree040.s" -o "$HERE/build/ptdatfree040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/ptdatfree040.s" -o "$HERE/build/ptdatfree040.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
 # btrace_on=1.  Diagnostic for the intermittent real-HW early-boot failure; kept
-# as a standing feature (see prototypes/btrace.s).
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/btrace.s" -o "$HERE/build/btrace.o"
+# as a standing feature (see src/btrace.s).
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/btrace.s" -o "$HERE/build/btrace.o"
 # config040 (2026-07-22, ISSUE-21 fix candidate): config() cache-handoff wrapper.
 # _start calls config() first (before pstart040); the intermittent early-boot fault
 # happens when the IC is on in that window (inherited from AmigaOS; the loader's
 # CACR=0 does not stick -- confirmed on emu too).  This kernel-side wrapper disables
 # the caches at config entry (cinva ic + CACR=0); pstart040 re-enables IC at 'D'
 # (Step A preserved).  Wired by retargeting _start's jsr-config reloc (patch below).
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/config040.s" -o "$HERE/build/config040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/config040.s" -o "$HERE/build/config040.o"
 # krnxmemflt040 (2026-07-13, ISSUE-13 capture 2): NATIVE kernel fault-resolver core.
 # Stock krnxmemflt_orig was a coupled 4-defect 030 remnant (user-FC ptest, frame+72
 # rw decode + prot gate, 030 leaf walk) + the k_trap landing-pad recursion window.
 # The wb040.s public wrapper is UNCHANGED: its krnxmemflt_orig call now binds to this
 # strong def (the stock body stays reachable as krnxmemflt_stock, reference only).
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/krnxmemflt040.s" -o "$HERE/build/krnxmemflt040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/krnxmemflt040.s" -o "$HERE/build/krnxmemflt040.o"
 m68k-linux-gnu-objcopy --redefine-sym segu_get=segu_get_lockfix "$HERE/build/segu_lockfix.o"
 
 echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
@@ -491,7 +491,7 @@ echo "[OK] codepub040 mprotect wrapper @0x$MPADDR is the strong def (stock body 
 # that ISSUE-38 is closed.  Printed, and asserted to be one of the two legal
 # values by the script itself; the write-through control is the derived image
 # (patch_b2_flip.py --wt).
-python3 "$HERE/prototypes/patch_b2_flip.py" "$OUT" --check | sed 's/^/      /'
+python3 "$HERE/src/patch_b2_flip.py" "$OUT" --check | sed 's/^/      /'
 echo
 m68k-linux-gnu-size "$OUT" | sed 's/^/      /'
 
@@ -519,68 +519,68 @@ echo "[OK] .data size 0x$(printf %x $DSZ) is 4-aligned (bss placement safe)."
 
 echo
 echo "[*] patching remaining 030 PMMU instructions (pflusha, ptest stubs)"
-python3 "$HERE/prototypes/patch_pflusha_040.py" "$OUT" | tail -2
-python3 "$HERE/prototypes/patch_pmmu_040.py" "$OUT" | tail -2
+python3 "$HERE/src/patch_pflusha_040.py" "$OUT" | tail -2
+python3 "$HERE/src/patch_pmmu_040.py" "$OUT" | tail -2
 
 echo "[*] Model B (4KB page frame) Tier-0 byte patches"
-python3 "$HERE/prototypes/patch_modelb.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_modelb.py" "$OUT" | tail -3
 
 echo "[*] Model B Tier-2 pager/fs page-I/O (dir-read chain) byte patches"
-python3 "$HERE/prototypes/patch_modelb_pager.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_modelb_pager.py" "$OUT" | tail -3
 
-echo "[*] Model B writeback/putpage conversion (WRITEBACK-TASK.md; WRITEBACK_GROUPS=spec,pvn,ufs,callers)"
-python3 "$HERE/prototypes/patch_writeback.py" "$OUT" | tail -3
+echo "[*] Model B writeback/putpage conversion (docs/archive/WRITEBACK-TASK.md; WRITEBACK_GROUPS=spec,pvn,ufs,callers)"
+python3 "$HERE/src/patch_writeback.py" "$OUT" | tail -3
 
 echo "[*] Model B block-swap page-IN conversion (ISSUE-10: klustsize 0x800 data init + residuals)"
-python3 "$HERE/prototypes/patch_swapin.py" "$OUT" | tail -6
+python3 "$HERE/src/patch_swapin.py" "$OUT" | tail -6
 
 echo "[*] Model B swap resource geometry (SWAPADD-MODEL-B-PATCH-SPEC.md: swapadd/swapdel/swapinfo_free/undelswap)"
-python3 "$HERE/prototypes/patch_swapgeom.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_swapgeom.py" "$OUT" | tail -3
 
 echo "[*] Model B exec initial-stack group (EXEC-INITIALSTK-PATCH-SPEC.md: extractarg + exec_initialstk data init)"
-python3 "$HERE/prototypes/patch_execstk.py" "$OUT" | tail -2
+python3 "$HERE/src/patch_execstk.py" "$OUT" | tail -2
 
 echo "[*] Model B pageout-policy defaults (SETUPCLOCK-VMETER-PATCH-SPEC.md: lotsfree/desfree/minfree + vmmeter UPIO fold)"
-python3 "$HERE/prototypes/patch_pageoutdefs.py" "$OUT" | tail -2
+python3 "$HERE/src/patch_pageoutdefs.py" "$OUT" | tail -2
 
 echo "[*] Model B mincore vector (MINCORE-VECTOR-PATCH-SPEC.md: btoc + alignment gate; 0x40000 chunk unchanged)"
-python3 "$HERE/prototypes/patch_mincore.py" "$OUT" | tail -2
+python3 "$HERE/src/patch_mincore.py" "$OUT" | tail -2
 
 echo "[*] Model B device-mmap PFN geometry (scrmmap/ammmap/timmap phystopfn >>11 -> >>12; fractal/julia + /dev/amiga + TIGA)"
-python3 "$HERE/prototypes/patch_devmmap_pfn.py" "$OUT" | tail -2
+python3 "$HERE/src/patch_devmmap_pfn.py" "$OUT" | tail -2
 
 echo "[*] CM-B1 segkmem reader geometry (CM-PTE-WRITER-MATRIX.md: checkprot/getprot 2K->4K + stock-body canaries)"
-python3 "$HERE/prototypes/patch_segkmem.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_segkmem.py" "$OUT" | tail -3
 
 echo "[*] B1 DMA hook: retarget A3091/SDMAC stopdma calls -> dma_a3091_stopdma (DMA-INITIATOR-CENSUS.md)"
-python3 "$HERE/prototypes/patch_a3091_dma.py" "$OUT" | tail -6
+python3 "$HERE/src/patch_a3091_dma.py" "$OUT" | tail -6
 
 echo "[*] ISSUE-21 fix: retarget _start jsr config -> config_cachefix (cache-off handoff)"
-python3 "$HERE/prototypes/patch_config_cachefix.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_config_cachefix.py" "$OUT" | tail -3
 
 echo "[*] ISSUE-39: count hat_sdtalloc out-of-contiguous-memory warnings"
-python3 "$HERE/prototypes/patch_sdtfail.py" "$OUT"
+python3 "$HERE/src/patch_sdtfail.py" "$OUT"
 
 echo "[*] per-process fault-depth gate: assert v.v_proc matches the table size"
-python3 "$HERE/prototypes/check_vproc.py" "$OUT"
+python3 "$HERE/src/check_vproc.py" "$OUT"
 
 echo "[*] DBG-TEXT-PUBLISH: publish debugger writes to user text (3 relocation retargets)"
-python3 "$HERE/prototypes/patch_dbgpublish.py" "$OUT" | tail -4
+python3 "$HERE/src/patch_dbgpublish.py" "$OUT" | tail -4
 
 echo "[*] B2 page-release barrier: page_free + free_vp_pages choke-point hooks (CB-PAGE-LIFECYCLE-CLOSURE.md)"
-python3 "$HERE/prototypes/patch_cb_release.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_cb_release.py" "$OUT" | tail -3
 
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
-python3 "$HERE/prototypes/patch_framesz060.py" "$OUT"
+python3 "$HERE/src/patch_framesz060.py" "$OUT"
 
 echo "[*] ISSUE-15: KMA pool page counts (SMALLCLICKS/BIGCLICKS 2K->4K clicks) + kmem_avail ptob"
-python3 "$HERE/prototypes/patch_kmapools.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_kmapools.py" "$OUT" | tail -3
 
 echo "[*] ISSUE-17/18: procfs user-memory I/O geometry (prfastmapout shift + prusrio page loop)"
-python3 "$HERE/prototypes/patch_procio.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_procio.py" "$OUT" | tail -3
 
 echo "[*] ISSUE-28: memcntl/mem_unlock mlock-bitmap geometry (as_ctl + segvn_lockop are ALREADY 4K)"
-python3 "$HERE/prototypes/patch_memcntl.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_memcntl.py" "$OUT" | tail -3
 
 # ISSUE-27 (PAGECREATE-TAILZERO-SPEC.md).  segmap_pagecreate is ALREADY a 4 KiB producer;
 # its consumers still rounded their zero-fill to 2 KiB, leaving
@@ -589,20 +589,20 @@ python3 "$HERE/prototypes/patch_memcntl.py" "$OUT" | tail -3
 # Groups: PAGECREATE_GROUPS=live,fbzero,spec (default all).  'live' (as_iolock+rwip+rwvp)
 # is ATOMIC.  S5 writei and ufs_bmap's own arithmetic are deliberately NOT in this patch.
 echo "[*] ISSUE-27: segmap_pagecreate consumer tail-zero + as_iolock geometry (PAGECREATE_GROUPS=live,fbzero,spec)"
-python3 "$HERE/prototypes/patch_pagecreate.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_pagecreate.py" "$OUT" | tail -3
 
 # pvn_vptrunc final-page tail zeroing (Codex P1, PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md).
 # MAX(zbytes, PAGESIZE - (vplen & PAGEOFFSET)) still used 2 KiB while clearing a 4 KiB
 # page.  The 8 KiB segmap-slot constants next to it are asserted as canaries.
 echo "[*] pvn_vptrunc: final-page tail zeroing PAGESIZE term (2 sites + 2 segmap-slot canaries)"
-python3 "$HERE/prototypes/patch_pvntrunc.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_pvntrunc.py" "$OUT" | tail -3
 
 # ISSUE-31: ufs_bmap VM-page geometry -- the UFS provider half of the ISSUE-27 boundary.
 # rwip now feeds it a 4 KiB-derived alloc_only; its own PAGESIZE arithmetic must match.
 # 11 sites; the three moveq #11 NDADDR-1 direct-block thresholds are asserted UNCHANGED,
 # and the patch refuses to run unless ISSUE-27 (as_iolock) is already 4 KiB.
 echo "[*] ISSUE-31: ufs_bmap page geometry (11 sites + 3 NDADDR canaries + ISSUE-27 precondition)"
-python3 "$HERE/prototypes/patch_ufsbmap.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_ufsbmap.py" "$OUT" | tail -3
 
 # ISSUE-32: live ELF exec mapping boundary (EXEC-BOUNDARY-CENSUS.md).  Three atomic
 # groups: exhd (header-cache ranges), execmap (VOP_MAP eligibility + mapping inputs),
@@ -610,14 +610,14 @@ python3 "$HERE/prototypes/patch_ufsbmap.py" "$OUT" | tail -3
 # producer in the LOCAL symbol mapelfexec was found while discharging its proof
 # obligation).  COFF core/exec and grow/brk stay deferred.
 echo "[*] ISSUE-32: ELF exec mapping boundary (EXECBOUNDARY_GROUPS=exhd,execmap,elfsz)"
-python3 "$HERE/prototypes/patch_execboundary.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_execboundary.py" "$OUT" | tail -3
 
 # ISSUE-33: remaining device-mmap crossings.  d_mmap must return a 4 KiB PFN because
 # hat_devload maps it as pfn<<12; mmmmap//dev/mem and resmmap still produced phys>>11.
 # Plus segdev_incore's vector stride, which crosses into the already-4-KiB mincore.
 # The rest of the segdev family stays 2 KiB on purpose and is asserted unchanged.
 echo "[*] ISSUE-33: device-mmap PFN + segdev_incore vector (DEVMMAP2_GROUPS=pfn,incore)"
-python3 "$HERE/prototypes/patch_devmmap2.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_devmmap2.py" "$OUT" | tail -3
 
 # sysconfig(_CONFIG_PAGESIZE) reported 2048 on a 4 KiB kernel -- the kernel misreporting
 # ITSELF to user space, which is also how a program computes an alignment that lands at
@@ -632,7 +632,7 @@ python3 "$HERE/prototypes/patch_devmmap2.py" "$OUT" | tail -3
 # TWO INSTRUCTIONS and a half-applied pair is worse than either endpoint; the script refuses.
 # The other four sites of the six-site group stay unconverted and are asserted as canaries.
 echo "[*] ISSUE-35: nfs_putpage io_len in 4 KiB pages (2 ATOMIC sites + 4 canaries)"
-python3 "$HERE/prototypes/patch_nfs_putpage.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_nfs_putpage.py" "$OUT" | tail -3
 
 # ISSUE-36 (NFS read side): the minimum SAFE repair is four sites, not the one that produces the
 # SIGBUS.  nfs_getpage's EOF allowance (0x8b6ba) is the direct producer -- it rejects the final
@@ -644,10 +644,10 @@ python3 "$HERE/prototypes/patch_nfs_putpage.py" "$OUT" | tail -3
 # The other nine sites of the thirteen stay unconverted and are asserted as canaries -- notably
 # 0x8b72c, which must never be converted without the countdown.
 echo "[*] ISSUE-36: nfs_getpage EOF + pl[] countdown + io_len (4 ATOMIC sites + 9 canaries)"
-python3 "$HERE/prototypes/patch_nfs_getpage.py" "$OUT" | tail -6
+python3 "$HERE/src/patch_nfs_getpage.py" "$OUT" | tail -6
 
 echo "[*] sysconfig: _CONFIG_PAGESIZE reports 4096, not 2048 (1 site + 2 canaries)"
-python3 "$HERE/prototypes/patch_sysconfig_pagesize.py" "$OUT" | tail -2
+python3 "$HERE/src/patch_sysconfig_pagesize.py" "$OUT" | tail -2
 
 # ---------------------------------------------------------------------------
 # Motorola 68040 FPSP (Floating-Point Support Package) + AMIX glue.
@@ -691,9 +691,9 @@ if [ "$FPSP" = "1" ]; then
 	FPSP060="${FPSP060:-1}"
 	[ "$FPSP060" = "1" ] && GLUE060="-DHAVE_FPSP060" || GLUE060=""
 
-	echo "[*] FPSP 2/4: assemble AMIX glue prototypes/fpsp_glue040.s${GLUE060:+ (with 060 branch)}"
+	echo "[*] FPSP 2/4: assemble AMIX glue src/fpsp_glue040.s${GLUE060:+ (with 060 branch)}"
 	m68k-linux-gnu-gcc -x assembler-with-cpp -m68040 -I"$FPWORK" $GLUE060 \
-		-c "$HERE/prototypes/fpsp_glue040.s" -o "$HERE/build/fpsp_glue040.o"
+		-c "$HERE/src/fpsp_glue040.s" -o "$HERE/build/fpsp_glue040.o"
 
 	# F3 (2026-08-07/08): Motorola's M68060 FPSP, packaged as ONE unit (128-byte call-out
 	# table + image + AMIX call-outs).  fpsp_vec11 sends cputype == 60 into it instead of
@@ -736,8 +736,8 @@ if [ "$FPSP" = "1" ]; then
 	echo "      all FPSP entry points defined, no unresolved FPSP refs"
 
 	echo "[*] FPSP 4/4: retarget M68Kvec[11] and FP arith vectors 48/51/52/53/54/55"
-	python3 "$HERE/prototypes/patch_fpsp_vec11.py"   "$OUT" | tail -2
-	python3 "$HERE/prototypes/patch_fpsp_vectors.py" "$OUT" | tail -3
+	python3 "$HERE/src/patch_fpsp_vec11.py"   "$OUT" | tail -2
+	python3 "$HERE/src/patch_fpsp_vectors.py" "$OUT" | tail -3
 else
 	echo
 	echo "[*] FPSP=0 -- building WITHOUT the Motorola FPSP (A/B / bisect build)"
@@ -748,15 +748,15 @@ fi
 # and FPSP=1 images get identical vector-61 behaviour.  No FPSP script touches slot 61.
 echo
 echo "[*] ISP: retarget M68Kvec[61] (unimplemented integer) -> isp61_vec"
-python3 "$HERE/prototypes/patch_isp_vec61.py" "$OUT" | tail -2
+python3 "$HERE/src/patch_isp_vec61.py" "$OUT" | tail -2
 
 echo
 echo "[*] reloc validation:"
-( cd "$HERE" && python3 prototypes/check_relink_relocs.py | tail -1 )
+( cd "$HERE" && python3 src/check_relink_relocs.py | tail -1 )
 
 echo
 echo "[*] stamping build id -> utsname.machine tag (banner + uname -m)"
-python3 "$HERE/prototypes/stamp_buildid.py" "$OUT"
+python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
 if [ "$FPSP" = "1" ]; then
 	echo "[OK] built $OUT (WITH FPSP) -- boot: unix_boot040 unix-040   <- unix_boot040 is MANDATORY"

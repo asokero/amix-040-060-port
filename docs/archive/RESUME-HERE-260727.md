@@ -1,0 +1,2158 @@
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-27, RAUTAHYVÄKSYTTY)
+
+> **⚠ SNAPSHOT OF 2026-07-27, NOT MAINTAINED SINCE.** Canonical status: [`STATUS.md`](STATUS.md).
+> Some conclusions below have been refuted — STATUS.md §7 lists which.
+
+> ## 🎉🎉 2026-07-27 ILTA — RAUTAHYVÄKSYNTÄ: KOKO 25.–27.7. DELTA LÄPI OIKEALLA PIILLÄ + VIRTAKATKAISU 8/8
+> A3000 + Mercury 68040, kerneli **68040-260727-01**, loader `unix_boot040`.
+> Evidenssi **`test-tools/realhw-verify-260727.txt`**. Serial 332 kB, **0 × PANIC /
+> BUS ERROR / 4AFC005F**.
+>
+> **Neljä pitkään avointa kohtaa sulkeutui:**
+> 1. **FPSP rautahyväksytty** — `fputest` Test A PASS **ja natiivi `cc` käänsi sen** = M3.
+>    Odotti 24.7. asti. Ilman FPSP:tä `cc1` kuolee SIGSYS:iin, joten kääntyminen on tulos.
+> 2. **ISSUE-17 raudalla** — `proctest` PASS. Sama ohjelma **panikoi kernelin** ilman korjausta.
+> 3. **ISSUE-27 oikealla levyllä** — `PGCOLD-E PRESERVED` 24/24. Oikealla levyllä on eri
+>    fragment-/writeback-ajoitus kuin emussa; se oli koko syy ajaa se uudelleen.
+> 4. **Loaderin marginaali MITATTU: 29,3 MiB** (`buffer: image=09e53d80 dest=…08100dc4`) vs.
+>    emussa laskettu 29,2. **Se riski jonka nostin kahdesti oli yliarvio** — nyt todistettavasti.
+>
+> **VIRTAKATKAISU-LEVYTOTUUS 8/8** — se testi jolla on eniten painoa, koska puhdas `reboot`
+> antaa kernelille tilaisuuden siivota jälkensä eikä virtakatkaisu anna. 3× `sync`, virta
+> poikki, `fsck -m` totesi likaiseksi → `fsck -y` korjasi → autoreboot → **kaikki 8 summaa
+> identtiset** (6× press + payload `1570 8192`, `/big.dat` `15621 5781`), ja `pgcold E`
+> uudelleen katkaisun jälkeen **yhä PRESERVED**. WT-datacachella tämä on samalla
+> DMA-koherenssitesti. B1 teki sen 7/7; nyt sen alla on koko delta.
+>
+> Muut: `exectest`/`bmaptest`/`mlocktest`/`trunctest`/`devmaptest`/`msynctst`/`bigargv` PASS,
+> `hat_dup_cow` 1/32/64 PASS, `pressure` 6/6, **`burst4` 24/24 tavuntarkkaa** summalla
+> `1570 8192` (sama luku kuin B1:ssä, samasta tiedostosta joka on yhä koneella).
+> **Sivutuote: ISSUE-10:n `p_mapping`-kontrakti pitää raudalla 3/3.**
+> **Ja: X11 TOIMII VA2000:lla raudalla, selvästi nopeampi kuin 030:lla** (käyttäjän ajo,
+> `unix-040-rtg` = 260727-03, ei-debug) → sulkee 24.7. asti avoimen tavoitteen.
+>
+> ### ⚠ KAKSI LÖYDÖSTÄ JOITA EI ETSITTY
+> - **[ISSUE-35] NFS menettää 2048 tavua** kun tiedoston pituus on **8192:n tarkka
+>   monikerta**. Deterministinen, 12 koolla karakterisoitu, **paikallinen kontrolli puhdas**,
+>   **palvelimelta varmistettu eri protokollalla** (tiedosto loppuu sivun offsetiin 2048/4096).
+>   = `nfs_putpage`, 6 muuntamatonta sitea, **Codexin ykköskohde** — hän ennusti tälle
+>   ryhmälle "palvelimelta tarkistettavan datanmenetystestin" ja ennuste osui, eikä se edes
+>   tarvitse `mmap`ia. **Attribuutio EI todistettu**: erotin on yksi boot 030-kerneliin.
+>   **Tämä validoi järjestyksen** — julkinen VM-ABI olisi ollut väärä ensimmäinen kohde.
+> - **ISSUE-29 osui raudalla (#5)** ja ei ole enää kohinaa: **caller = `kmem_zalloc + 0x18`**,
+>   muoto täsmää 25.7. emu-havaintoihin, ja `next=8 prev=6` ovat **pieniä kokonaislukuja
+>   pointterien paikalla**. Osui funktionaalisen patterin aikana, **ei paineen alla**.
+>   Seuraava askel selvä: `kmem_zalloc`-kutsujat koolla 1 tai 0x8C. Ei jahdattu.
+>
+> ### Jäljellä raudalta (ei kiirettä, ei vaadi käyttäjää paikalle)
+> pitkä soak (ISSUE-9/22/29), CACR-readback **`crash(1M)`:llä** (`dd bs=1 skip=<iso>` EI toimi
+> — lukee tavu kerrallaan), ei-debug-base 260726-01, grafiikkakerneli 260727-02
+> (VA2000 ajettiin 260727-03:lla), B2-copyback-hyväksyntä.
+
+> ## ⚠✅ 2026-07-27 — ISSUE-34 JUURISYY TODISTETTU (068060 tappaa vakiojaon); LOADER-RISKI KVANTIFIOITU; TÄYSI PATTERI LÄPI
+> Commit `7b25b8b`. Evidenssit `test-tools/issue34-060-unimpl-integer-260727.txt` ja
+> `fpsp-into-base-260726.txt` (jatko-osa). **Ei rautaa.**
+>
+> **1. ⚠ ISSUE-34 EI OLE "cc ei toimi 060:lla" VAAN: 68060 TAPPAA MINKÄ TAHANSA
+> KÄYTTÄJÄOHJELMAN JOKA JAKAA VAKIOLLA.** gcc emittoi `x / 100`:sta
+> `muls.l <ea>,Dh:Dl` = 64-bittisen tuloksen muodon. **040 toteuttaa sen raudassa, 060 ei**
+> → vektori 61 → **`M68Kvec[61] → nullvect`** (verifioitu binäärista) → `u_trap` ilman
+> tapausta → prosessi kuolee. Eristetty **yhden käskyn** repro `test-tools/mul64test.c`:
+> emu-040 `MUL64-RESULT PASS` exit 0, emu-060 `Killed` exit 137. **Korrelaatio 6/6** koko
+> testisuiteen yli. **→ 060-linja on näyttänyt terveeltä koska jokainen sillä ajettu testi
+> sattui olemaan ilman näitä käskyjä: ONNEA, EI KATTAVUUTTA.** Älä lue "emu-060 PASS"
+> väitteeksi 060:stä yleisesti; todellinen kattavuus on 4 testiä.
+> **Miksi jäi huomaamatta:** `lmul060.s`:n oma otsikko kertoo vektori-61-faktan ja 9.7.
+> censusin joka löysi "the ONLY such sites in **the whole kernel**" — census oli oikea,
+> korjaus oikea, mutta **rajattu kerneliin**, joten user space jäi ulos eikä vektoria 61
+> kytketty. Sama muoto kuin ISSUE-27/28/31/32.
+> **AUKI:** `cc1` antoi signaali 12, repro antaa 9 → `cc1` osuu ehkä eri vektoriin (60?).
+> Seuraava askel on **trap-probe joka kirjaa vektorin ja PC:n**, ei enempää päättelyä.
+> **Korjaus:** 68060SP **ISP** vektoriin 61 (tämä on paljon vahvempi syy hankkia se kuin
+> kääntäjä oli) tai kohdennettu vektori-61-käsittelijä — kertolaskun aritmetiikka on jo
+> puussa ja validoitu (`lmul060.s`), puuttuu trap-frame + dekooderi + writeback.
+>
+> **2. ✅ LOADER-RISKI: olin väärässä pitäessäni sitä avoimena vaarana.** Loader laskee ja
+> tulostaa verdiktin itse, ja emun muistigeometria on identtinen oikean Mercuryn kanssa →
+> luku siirtyy raudalle. Isoimmalla artefaktilla puskuri on **29,2 MiB irti kohteesta**;
+> päällekkäisyys vaatisi **~16 MiB** kernelin (nyt 1,82 MB) = ~9× marginaali. Kolme
+> vahtia verifioitu lähteestä (MEMF_REVERSE, copyitin suunta molempiin suuntiin, kohteen
+> checksum). Valkoinen/punainen välähdys jää ajolistaan diagnostiikkana, ei riskinä.
+>
+> **3. ✅ TÄYSI PATTERI 260726-02:lla** (26.7. kirjattu aukko kiinni): `bmaptest` PASS,
+> `mlocktest` PASS, `trunctest` ZEROED, `msynctst` MSYNC-OK, **`pgcold D/E` →
+> PRESERVED** (ISSUE-27:n todiste pitää FPSP basessa), levytotuus `8320 5763` rebootin yli
+> ja identtinen 260725-baselineen, serial puhdas. **`xinit` toimii 260726-03:lla + Xsvga**
+> (käyttäjän testaama) → 26.7. kirjattu päätelmä kuitattu testiksi.
+> **Rajoite:** `mlocktest`/`trunctest`/`devmaptest` **eivät linkity ristiin**
+> (`plock`/`ftruncate`/`mincore` puuttuvat cross-sysrootin libc:stä) → 040-only.
+
+> ## ✅ 2026-07-26 — FPSP BASE-LINKKIIN + YKSI GRAFIIKKAKERNELI MOLEMMILLA AJUREILLA; RAUTAAN VIEDÄÄN 3 ARTEFAKTIA
+> Commitit `973c8f7` (FPSP→base) ja `f13fedb` (Xsvga-polku + yhdistetty RTG-kerneli).
+> Evidenssi: `test-tools/fpsp-into-base-260726.txt`. **Ei rautaa mistään tästä.**
+>
+> **NYKYISET ARTEFAKTIT — vanhat 260724/260725-kernelit ovat historiaa, älä vie niitä:**
+>
+> | Artefakti | buildid | kokoa (B) | Sisältää |
+> |---|---|---|---|
+> | `build/unix-040` | 68040-260726-01 | 1716532 | base + FPSP |
+> | `build/unix-040-dbg` | 68040-260726-02 | 1753723 | + probet (testipatteri) |
+> | `build/unix-040-rtg-dbg` | 68040-260726-03 | 1817257 | + Xsvga (cdevsw 67) **ja** VA2000 (68) |
+> | `build/unix_boot040` | (loader) | 38896 | **pakollinen kaikelle** (FPSP = 330 PC-rel-recordia) |
+>
+> **1. FPSP EI OLE LISÄOMINAISUUS VAAN CPU-PORTIN TÄYDELLISYYS.** 68040 toteuttaa
+> FP-käskykannasta osajoukon ja trapaa loput; Motorola julkaisi FPSP:n koska
+> käskykannan täydentäminen on kernelin tehtävä. **Oma todiste siitä että tämän
+> pitäminen valinnaisena maksoi:** vektori 55 nullvectissa → X kuoli SIGILL:iin
+> (`DBG SIG sig=4 pid=208 psargs=/usr/X/bin/Xsvga`) ja sitä katsottiin aikansa
+> GRAFIIKKAongelmana. Näyttöajuritavoite sai FPU:n täydellisyysaukon näyttämään
+> ajuribugilta — menetelmällinen harha, ei sattuma.
+> **2. Sijoitus on kriittinen:** FPSP `ld -r`:ätään VIIMEISENÄ, kaikkien tavupatchien
+> jälkeen. `ld -r` laittaa basen `.text`:in ensimmäiseksi → patch-osoitteet säilyvät
+> **vain tässä järjestyksessä.** `FPSP=0 sh relink-040.sh` rakentaa vanhan
+> FPSP-vapaan kernelin — pidä se: se on tapa A/B-testata epäilty FPSP-regressio.
+> **3. 060-turvallisuus verifioitu, ei oletettu.** `fpsp_glue040.s` gataa joka entryn
+> `cmpl #40,cputype`. `fputest` **PASS emu-060:llä** FPSP:n ollessa binäärissä.
+> **4. ⚠ UUSI: ISSUE-34 — natiivi `cc` on rikki 060:llä** (`cc1 got fatal signal 12`
+> = SIGSYS). **A/B-TODISTETTU ESIINTYNEEKSI JO ENNEN** tätä muutosta (sama vika
+> pre-FPSP-kernelillä 260725-18, sama golden image) → EI regressio. Signaali 12 ei
+> istu puhtaaseen "tuntematon käsky" -selitykseen, joten syy on **avoin**: joko
+> trapin väärä signaalimäppäys tai syscall-polun ongelma. Diagnoosi ennen 68060SP:n
+> hankintaa — jos syy on syscallissa, SP ei korjaa sitä.
+> **5. 060-testien menetelmä muuttui:** guest-kääntäjää ei voi käyttää → **ristikäännä
+> hostilla**: `m68k-cbm-sysv4-gcc -O -m68020 -o X.bin X.c`, tftp `binary`, `chmod 755`.
+> Toimii, ja poistaa guest-kääntäjäriippuvuuden 060-testauksesta kokonaan.
+> **6. YKSI grafiikkakerneli (260726-03).** Törmäämättömyys tarkistettu: majorit 67 vs
+> 68; Xsvga weakenaa EI MITÄÄN (pelkkä 6 slotin `.rela.data`-retarget); VA2000 weakenaa
+> vain `parinit`in. Skripti assertoi `parinit` @0xfe6c joka buildissa. Emu-savu:
+> `va2000: no board found` siististi, `/dev/svga0` → **Piccolo CardID=3 tunnistuu**
+> molempien ajurien ollessa linkitettynä (= ne eivät häiritse toisiaan), `/dev/va2000`
+> → siisti ENXIO, `fputest`/`exectest`/`devmaptest` PASS, serial puhdas.
+> **7. Xsvga-objektin polku korjattu pysyväksi + SHA-256.** Se defaultasi
+> **session-scratchpadiin `/tmp`:ssä** — toistettavuusongelma, ei siisteysasia.
+> Nyt `src/xsvga-provenance.sh`: polku + `sha256 97a9a39d…c72301` (60464 B),
+> ja build kieltäytyy jos summa ei täsmää. Objekti pysyy repon ulkopuolella.
+> **8. Retiroitu:** `relink-040-fpsp.sh` ja `relink-040-fpsp-xsvga.sh` → stubit jotka
+> exit 1 + osoitin (FPSP basessa teki niistä duplikaatteja). Yhden ajurin relinkit
+> jäävät bisektointiin.
+>
+> **SOVITTU MUTTA TEKEMÄTTÄ (26.7.):**
+> - **`quiet`-variantti: RAKENNETAAN VASTA TARVITTAESSA (sovittu 27.7.).** Ei mukaan
+>   rautaan etukäteen: sitä ei ole käytännössä koskaan käytetty, ja `relink-040-quiet.sh`
+>   tuottaa sen **yhdellä komennolla noin minuutissa** basen päältä — ei siis mitään
+>   läpimenoaikaa säästettävänä. **Verifioitu 27.7.: se kääntyy 260727-linjalla puhtaasti
+>   (build 68040-260727-04, **1 716 847 B**, `serdbg_putc` linkattu ja `conputc` uudelleen
+>   osoitettu), joten build-on-demand ei ole oletus vaan
+>   testattu.** Laukaisin, jonka takia se kannattaa muistaa: **kun dbg-kernelin
+>   diagnostiikka hukuttaa etsityn rivin.** Juuri niin kävi 27.7. — `DBG SIG` -rivi piti
+>   kaivaa `C<pid>:<PC>:<SR>` -seinän läpi. Quiet = base + serdbg.o = pelkkä konsolivirta
+>   serialiin, ei probeja.
+>   (Aiempi tämänpäiväinen "pudotetaan"-suositus perustui väärään tietoon serial-kaapelista
+>   ja on peruttu; tämä korvaa senkin.)
+> - ~~**`quiet`-variantti: SUOSITUS PERUTTU 27.7. — se perustui väärään tietoon.**~~
+>   Perustelin pudottamista sillä ettei koneella ole serial-kaapelia. **Koneella ON
+>   serial-USB-kaapeli** (käyttäjän korjaus 27.7.; sitä on käytetty toistuvasti). Eli
+>   quietin käyttötapaus — **puhdas konsolivirta serialiin ilman probe-tulvaa** — on
+>   täysin voimassa, ja se on nykyään halpa: `base + serdbg.o`, yksi 60-rivinen overlay
+>   (kantavat overridet promotoitiin baseen 12.7.). Se on nimenomaan se mitä haluat kun
+>   dbg-kernelin diagnostiikka hukuttaa etsityn rivin. **Älä pudota; harkitse uudelleen
+>   rakentamista 260727-linjalle.**
+> - **VA2000 upstreamiin dual-target.** Ajurissa on TÄSMÄLLEEN YKSI sivukokoriippuvuus:
+>   `va2000mmap()`:n `phystopfn` kovakoodattu `>> 11`. Jos upstream käyttäisi
+>   `PNUMSHFT`-makroa, `va2000_modelb.py` katoaisi kokonaan ja ajuri kääntyisi sekä
+>   2 KiB- että 4 KiB-kernelille. **Tee VASTA rautatestin jälkeen** — älä muuta
+>   kernelipohjaa ja ajurilähdettä samaan rauta-ajoon.
+> - **Xsvga-patch-repo** (esim. `xsvga040-amix`): meidän patchit + resepti + `svgaprobe`,
+>   EI `exp`-objektia (kolmannen osapuolen binääri) — ja `exp`:n SHA-256 dokumentoituna,
+>   koska patch osuu kiinteisiin offseteihin.
+> - **68060SP**: yksi kerneli, ei erillistä 060-kerneliä. Mekanismi on jo olemassa
+>   (`cputype`-dispatch); vektorislotit pitää osoittaa shimiin koska kaksi pakettia ei
+>   voi omistaa samaa slottia staattisesti. Koko kasvaisi ~1,9 MB:iin → tekee loaderin
+>   kokorasitustestistä pakollisen.
+> - **JÄLJELLÄ OLEVAT MODEL-B-PERHEET — Codexin kartoitus 27.7. valmis, toteutus ei.**
+>   Pinni verifioitu tavuntarkasti (HEAD `e4daf26`, `unix-040` `767ea9a0…`, `.text` `9b49c77a…`).
+>   Kuusi perhettä: NFS 21/21 aitoa, UFS 12+1, segdev 21, COFF 13+1, S5 **35+28**, RFS **75+3**.
+>   Dokumentit `amix-kernel-analysis/vm-map/*-CLOSURE.md`.
+>   **Kolme löydöstä jotka eivät tulisi muuntamalla:** `ufs_allocmap` @0x7a6f8 on `+0x0fff`
+>   **eikä** `+0x1000` (lähde käyttää `PAGESIZE`, semantiikka `PAGEOFFSET`); S5:llä
+>   **rakenteellinen este** — `page_t`:n `p_dblist[4]` ja 4-alkioiset `S5MAXREQ` eivät riitä
+>   4 KiB -sivulle 512-tavuisella lohkolla, eli **vakiopatchit eivät voi tukea 512:ta koskaan**;
+>   ja **RFS ei ole muuntamaton vaan RIKKI** (`rfc_writefill` eroaa mountatusta `exp`:istä
+>   yhdellä tavulla koska `page_get` on jo 0x1000) → pysyy poissa, nyt vahvemmalla perusteella.
+>   **JÄRJESTYS SOVITTU 27.7.** — kolme todistusvelvollisuutta purettiin
+>   (`vm-map/RESIDUAL-FAMILIES-FOLLOWUP.md`, analyysirepo `0a8d838`) ja listat lähentyivät:
+>   1. **`sysconfig` yksin** (ks. seuraava kohta — tämä ei ole ABI-päätös vaan bugi)
+>   2. **NFS `nfs_putpage`** 6 sitea — elävä, deterministinen, rautatestattavissa: mmap-kirjoitus
+>      sivun YLEMPÄÄN 2 KiB -puolikkaaseen antaa palvelimelta tarkistettavan datanmenetystestin
+>   3. NFS `nfs_getapage`/`nfs_getpage` 13 sitea — vaatii sivulista-proben + kylmän kuvioluvun
+>   4. NFS `nfs_setattr` 2 sitea viimeisenä — NFS-välimuistin purge peittää vian normaalisti
+>   5. UFS `addmap`/`delmap` 4 sitea, sitten pienlohko `allocmap`/`freemap`
+>   6. **julkisen ABI:n loput 4 sitea** — vaatii yhteensopivuuspäätöksen JA testipäivityksen
+>   7. segdev 21 sitea — **LATENTTI**, ei kiireellinen
+>   8. COFF, S5 (lohkopolitiikalla), RFS (2-pisteen penkillä)
+>   `sum 11920 6060` **pysyy voimassa** NFS-regression odotettuna summana (sivukoko ei muuta
+>   tiedoston tavuja) — aja se joka NFS-yksikön jälkeen. Kolme NFS-ryhmää **voivat landata
+>   erikseen**, bisektoitavasti; kaikki 21 tarvitaan ennen kuin NFS on "muunnettu".
+>   **Segdev-ristiriita RATKAISTU: latentti.** Codex korjasi myös *evidenssini*, ei vain
+>   päätelmääni: `segdev_incore` askeltaa 4 KiB ja kirjoittaa tavun per rautasivu **muttei
+>   konsultoi ohjelmistollista `vpage`-taulukkoa** → `devmaptest` T2 todistaa `mincore`n
+>   askelvälin, EI parillisia segdev-suojausmerkintöjä. Testini ei kattanut sitä mitä oletin.
+> - **★★ `sysconfig` @0x44e7c PALAUTTAA 2048 — kerneli valehtelee omasta sivukoostaan.**
+>   Verifioitu: `movel #2048,%a0@`. **Tämä EI ole osa ABI-yhteensopivuuspäätöstä vaan oma
+>   bugi**, ja se on yhden immediaatin korjaus (`0x800`→`0x1000`). Codex niputtaa sen viiden
+>   siten "julkiseen ABI:in", mutta riskiprofiili on päinvastainen kuin muilla neljällä:
+>   ne muuttavat nyt onnistuvia kutsuja `EINVAL`iksi (aito yhteensopivuusrikko), kun
+>   `sysconfig`in korjaus vain **lopettaa väärän vastauksen antamisen** — ja **vähentää**
+>   altistumista niille neljälle, koska juuri väärästä sivukoosta laskeminen on se tapa jolla
+>   ohjelma päätyy osoitteeseen `page+0x800`. **Voi ja kannattaa landata yksin, ennen
+>   tiukennusta.** Testi: ohjelma joka tulostaa `sysconf(_SC_PAGESIZE)`.
+> - ⚠️ **`devmaptest` T1 koodaa NYKYISEN (pre-ABI) käyttäytymisen** — se odottaa että
+>   `base+0x800` aliasoi saman 4 KiB PFN:n. Jos julkinen ABI liikkuu, **T1 hajoaa ja näyttää
+>   kernelregressiolta.** Merkitty itse testitiedostoon, jotta seuraava sessio ei "korjaa"
+>   kerneliä vanhentuneen odotuksen mukaiseksi.
+>   **HUOM: 2 KiB -header-ansa EI koske näitä** — tavupatcheja binääriin, ei C-käännöstä.
+> - **★★★ MODEL-B-HEADER-OVERRIDE ristikäännökseen — TÄRKEIN, ja esiehto muulle.**
+>   Löydetty 27.7. ZZ9000-analyysissä. Käännämme kaiken kerneliin menevän C:n **vanillan
+>   headereita** vasten, ja ne ovat 2 KiB:
+>   `immu.h:60 PNUMSHFT 11`, `param.h:265-266 PAGESIZE 0x800 / PAGESHIFT 11`, ja
+>   `immu.h:353 #define phystopfn(paddr) ((u_int)(paddr) >> PNUMSHFT)`.
+>   **`AMIX_KERNEL_CFLAGS` ei ohita niitä** (vain `-Dinline -D_KERNEL -DSVR40 -DSVR4`).
+>   → mikä tahansa kerneliin käännetty C saa **hiljaa 2 KiB -sivugeometrian** ja
+>   sivukohtainen mmap mappautuu **2× fyysiseen osoitteeseen** = ISSUE-33:n luokka.
+>   **Pahempaa: `phystopfn` on MAKRO**, joten lähteessä ei ole literaalia `>>11`:tä jota
+>   voisi grepata tai assertoida. `va2000_modelb.py` toimii vain koska VA2000:n lähteessä
+>   sattuu olemaan literaali — **VA2000 oli onnekas tapaus.** ZZ9000 kutsuu makroa
+>   (`zz9000.c:1246`), eli se olisi kääntynyt puhtaasti, läpäissyt kaikki tarkistukset ja
+>   mapannut väärin ilman mitään tekstuaalista jälkeä.
+>   **Korjaus:** force-include-header tai `-DPNUMSHFT=12 -DPAGESHIFT=12 -DPAGESIZE=0x1000`
+>   kaikelle 040-kerneliin käännettävälle. **Poistaa `va2000_modelb.py`:n kokonaan.**
+>   Varo: `PAGESIZE`/`PAGESHIFT` esiintyvät myös ei-VM-merkityksessä joissain headereissa —
+>   tarkista mitä override rikkoo ennen kuin se on globaali.
+>   **⚠ Tämä on ESIEHTO lähdekoodin palautuksen ensimmäiselle askeleelle**, ei sen jälkeen
+>   tehtävä siivous: se mittaus tehtiin samoja 2 KiB -headereita vasten, joten
+>   rekonstruoitu koodi tulisi ulos 2 KiB:na.
+> - **`paths.sh`** — repossa on **26 absoluuttista `/home/asokero`-polkua 16 seuratussa
+>   tiedostossa**, viidessä juuressa. Yksi sourcettava `paths.sh` (~20 riviä) korjaa koko
+>   ongelman. Tämä on pienin liike joka lopettaa vuodon; tee ennen muuta rakenteellista.
+> - **`external_drivers/`-drop-in** muodossa **löydä → validoi → delegoi**. EI
+>   automaattista linkitystä: VA2000:n `parinit`-wrapper (weaken + `--add-symbol
+>   parinit_orig=.text:0xfe6c`) on ajurikohtainen RE-teko, ei manifestimetadataa, ja
+>   kolmas samaa hookia tarvitseva ajuri vaatii ketjun. Keskitetty validointi kattaisi
+>   major-törmäyksen, cdevsw-slotin varauksen, **symbolitörmäyksen ajurien välillä**
+>   (ei tänään katettu lainkaan), blobien summat ja base-symbolien osoitteet.
+>   **Raja: mikään tarkistus ei havaitse Model-B-virhettä** — drop-in-ajuri läpäisisi
+>   kaiken ja mappaisi silti 2× fyysiseen osoitteeseen (ISSUE-33:n luokka) → manifestiin
+>   `MODELB-REVIEWED: yes/no` ja build kieltäytyy `no`:lla. Hakemisto `.gitignore`en =
+>   liitospiste, ei sisältöä. Tavoite: avoimen lähdekoodin ajureita mukaan — se on
+>   HELPOMPI luokka kuin binääriblobi, koska sovitus on lähteessä ja arvioitavissa.
+>
+> **RAUTASESSIO on yhä suurin avoin kohde**, ajolista `docs/REALHW-VERIFY-260725.md`
+> (kernelitaulukko päivitetty tähän tilanteeseen). Loaderin copyit-polkua EI ole
+> rasitustestattu uudella koolla: base 1,53 → 1,72 MB, ja historiallinen
+> kylmäboot-korruptio oli puskurin päällekkäisyys ~0,96 MB:ssä. Kolme kylmäbootia tuli
+> puhtaasti läpi = heikko positiivinen, ei todiste. Jos raudalla välähtää
+> valkoinen/punainen handoffissa, se on TÄMÄ eikä FPSP.
+
+> ## ✅✅✅ 2026-07-25 — MODEL-B-JÄÄNNÖSTEN HÄNTÄ: ISSUE-15 + ISSUE-17/18 LANDATTU (emu-040+060); ISSUE-17 OLI KERNEL-PANIKKI; 3 UUTTA ISSUEA
+> Buildit **260725-01/-02** (ISSUE-15) ja **260725-03/-04** (+ ISSUE-17/18); relocs 0,
+> .data 4-aligned, patchit idempotentteja. Evidenssi
+> `test-tools/modelb-tail-emu-verify-260725.txt`.
+> **1. ISSUE-17 EI OLLUT "väärä page_t" VAAN KERNEL-PANIKKI.** Negatiivinen kontrolli
+> korjaamattomalla 260724-04:llä: `PANIC: KERNEL FAULT psw=0x2400, pc=0x8063504, fmt=0x7,
+> vector=0x2 (Bus Error)` — `pc` = teksti 0x63504 = **stock `prfastmapin`in sisällä**
+> (`btst #0,%a2@(3)` = PTE-dereferenssi kuolleen 030 SDE-kävelyn jälkeen), `psw=0x2400`
+> = sen oma `splhi`. Ennen panikkia /proc palautti hiljaa väärää dataa (4080/4096 tavua
+> väärin). Juurisyy: `hat_alloc` (hat040.s:1211) tallettaa **040-root-taulun VA:n**
+> kohtaan `as@(20)`, ja stock `prfastmapin` lukee sen 8-tavuisten 030-SDE:iden taulukkona
+> → villi pointteri. **Immediate-patchaus ei olisi auttanut** — rakenne on väärä.
+> **FIX:** `src/prfastmap040.s` = `uvatopte040` (040 per-proc root→ptr→leaf,
+> UDT/PDT tarkistetaan JOKA tasolla ennen seuraavaa dereferenssiä) + `prfastmapin`-
+> override (0x63484 → 0xd97f0) + kovennus (stock kirjoitti hallitsemattomalle PFN:lle
+> osoitteeseen 2; me kieltäydymme nopeasta polusta). `prfastmapout` = 11 shift-sitea ja
+> `prusrio` = 4 sitea KOKONAISENA joukkona (`patch_procio.py`) — `patch_modelb.py:583-591`
+> dokumentoi että vain pituuksien flippaus jumitti bootin 2026-07-03.
+> **2. ISSUE-18(a) korjattu samalla kävelijällä; (b) kovennettu ja MITATTU no-opiksi.**
+> Suunnittelun aikana löytyi ansa joka muutti dispatchin: **`mmmmap` (0x2067e) kutsuu
+> `vtop(addr, 0)`** /dev/memille ja Amigalla se osoite ulottuu laillisesti 0x80000000+
+> (Zorro III) → pelkkä osoiteperustainen "user"-luokittelu olisi rikkonut /dev/memin.
+> Lisäksi binääristä: **`startio` (0xc100) välittää `bp->b_proc`** ja **`dma_pageio`
+> (0x20c90) KOPIOI sen** bounce-puskuriin → proc-ENSIN-dispatch olisi rikkonut levy-DMA:n.
+> Siksi dispatch on **proc-VIIMEISENÄ**: jokainen `proc==0` -polku ennallaan. Capattu
+> `KERNVA-WITH-PROC`-diagnostiikka **ei laukennut kertaakaan** → muoto ei esiinny.
+> **3. Hyväksyntä: uusi `test-tools/proctest.c`** (K&R C, natiivi `cc`) — forkkaa lapsen ja
+> lukee+kirjoittaa sen muistia `/proc/<pid>`:n kautta KOLMESSA alueessa jotka osuvat eri
+> kernel-polkuihin (private-resident = nopea polku; COW = W-bitin kieltäytyminen →
+> `as_fault`; koskematon = ei-residentti → `prmapin`→`vtop`), + sivurajan ylittävä luku
+> joka nimenomaan ajaa `prusrio`n sivusilmukkaa. T1 on erotteleva: vanhemman oma vastaava
+> sivu on nollia, joten väärä osoiteavaruus näkyisi heti. **T1–T7 + molemmat lapsen
+> kirjoitustarkistukset PASS emu-040 JA emu-060.**
+> **4. ISSUE-15 landattu** (`patch_kmapools.py`, 26 sitea): `SMALLCLICKS`/`BIGCLICKS`
+> 2/8→1/4 kolmessa funktiossa + **`kmem_avail` @0x42d7a jota Codexin taulukossa EI ollut**
+> (raportoi puolet todellisista tavuista STREAMS `bufcall`ille). Todistettu lähteestä että
+> hallittu alue päättyy tasan mäppäyksen loppuun → tuplamäppäys poistuu ilman että
+> käytettävissä oleva KMA-muisti pienenee.
+> **5. ISSUE-16: EI muunnettu, ja tiivistelmä oli väärässä** — todellinen census on
+> **72 sitea 27 funktiossa** (ei 5), koko RFS/DUsys-alue. Luokittelematon; RFS-polkua ei
+> voi ajaa → sokkomuunnos olisi latentin bugin istuttamista. **RFS-testaus on epäturvallista.**
+> **6. KOLME UUTTA ISSUEA.** **ISSUE-27:** `as_iolock` (0xaee34) + koko
+> `segmap_pagecreate`-kutsujaperhe pyöristää häntänollauksen 2 KiB:iin vaikka
+> `segmap_pagecreate` on JO 4 KiB. (Kuvasin tämän aluksi "hiljaiseksi datavuodoksi";
+> myöhemmin samana päivänä se TODISTETTIIN ja osoittautui pahemmaksi — se **ylikirjoittaa
+> voimassa olevaa tiedostodataa**. Ks. lohko alempana.)
+> **ISSUE-28: ✅ KORJATTU SAMANA PÄIVÄNÄ** (`patch_memcntl.py`, 17 sitea + 5 kanariaa,
+> buildit 260725-05/-06) — ja se osoittautui **samaksi tuottaja/kuluttaja-epäsymmetriaksi
+> kuin ISSUE-27:** `as_ctl` + `segvn_lockop` täyttävät mlock-bittikartan jo 4 KiB
+> -indekseillä, mutta `memcntl` mitoitti ja `mem_unlock` käveli sitä 2 KiB:llä →
+> virhepolun rollback vapautti väärän alueen. Luokittelussa **4 valeosumaa 21:stä**
+> (`moveq #11/#12` = `return EAGAIN`/`ENOMEM`), jotka patch assertoi kanarioina.
+> Hyväksyntä `test-tools/mlocktest.c` T1–T5 PASS 040+060; erotteleva T1 FAIL
+> korjaamattomalla. ⚠️ virhepolkua ei ajettu suoraan — ks. evidenssitiedosto.
+> **ISSUE-29:** kertaluontoinen KMA 128-tavuluokan vapaalista-hälytys — **attribuutio
+> TODISTAMATTA**, ei toistunut 4 seuraavassa ajossa (2 samalla kernelillä); ks. tiedosto.
+> **✅✅ ISSUE-27 TODISTETTU JA KORJATTU SAMANA PÄIVÄNÄ.**
+> Codexin speksi valmistui 25.7. (`vm-map/PAGECREATE-TAILZERO-{SPEC,CENSUS}.md`) ja
+> toteutettiin sellaisenaan: `patch_pagecreate.py`, **28 sitettä** kolmessa ryhmässä
+> (`live` = `as_iolock` 12 + `rwip` 5 + `rwvp` 5 atomisena, `fbzero` 2, `spec_write` 4),
+> tuottaja assertoidaan kanarioina jo-4-KiB:ksi. Buildit **260725-07/-08** (live) ja
+> **260725-09/-10** (kaikki). **MUTTA:** speksin oma hyväksyntätesti
+> (`test-tools/pgcreatetest.c`) ajettiin KORJAAMATTOMALLA kernelillä → **0 osumaa
+> 64 kierroksella**, myös laajennetulla ikkunalla ja osuvammalla sivujen likauksella.
+> **Codexin jatkoanalyysi selitti miksi, ja kolmas koetinsukupolvi toisti vian
+> deterministisesti: 24/24, offset 14336, arvo 0xC5 = testin oma pool-markkeri.
+> Korjatulla 0/24 sekä 040:llä että 060:llä.** Ja vika on PAHEMPI kuin "vuoto": se
+> **ylikirjoittaa voimassa olevaa tiedostodataa**. Laukaisin: sivukohdistettu kirjoitus,
+> jonka pituus on 2048:n monikerta mutta ei 4096:n, kokonaan jo allokoidun tiedoston
+> sisällä jonka sivut ovat kylmiä. `as_iolock`in `n &= PAGEMASK` on juuri se suoja joka
+> estää OSITTAISEN pagecreaten, ja 2 KiB-maskilla se ei laukea → häntänollaus ei aja
+> lainkaan. Aiemmat kolme koetinta epäonnistuivat kukin eri syystä (residentti sivu /
+> UFS-reikä jonka getapage nollaa / lämmin cache) — ks.
+> `test-tools/pagecreate-issue27-COLD-PROOF-260725.txt`. Verifioitu on **ei-regressio**: `proctest` +
+> `mlocktest` PASS ja **levytotuus** `sum = 8320 5763` `sync`+`reboot`+`fsck`:n yli,
+> emu-040 JA emu-060, sekä pelkällä `live`-ryhmällä että kaikilla kolmella.
+> **Avoin riski + seuraava Codex-brief:** `rwip` välittää `pagecreate`in eteenpäin
+> `ufs_bmap`ille `alloc_only`-argumenttina → muutos koskee UFS:n allokointia, ei vain
+> nollausta, ja `ufs_bmap` (0x79d48) on itse yhä 2 KiB kahdeksassa kohdassa.
+> **SEURAAVAKSI:** (1) Codexin ISSUE-27-speksi → toteutus (paras jäljellä oleva
+> vakaus/vaiva-suhde, ja aidosti testattavissa). (2) Rautasessio: FPSP/Xsvga-hyväksyntä +
+> VA2000 fyysisellä kortilla + **`proctest` ja ISSUE-15 raudalla**. (3) 060 FPU Tier-1.
+> ⚠️ Rautatesti puuttuu KAIKESTA tästä — kaikki yllä on Amiberry-emulaatiota.
+
+> **7. NELJÄ LISÄÄ SAMASTA LUOKASTA (Codexin tuottaja/kuluttaja-census).** Census
+> `vm-map/PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md` osoitti että ISSUE-27 ja -28 eivät olleet
+> erillisiä: sama vika toistuu siellä missä kontraktin toinen puoli on muunnettu ja toinen ei.
+> **ISSUE-30** `pvn_vptrunc` (2 sitettä, 260725-11/-12) — 🔶 muunnettu, **saavutettavuus
+> todistamatta**: `truncate` vapauttaa juuri ne lohkot joita termi ei nollaa.
+> **ISSUE-31** `ufs_bmap` (11 sitettä + **3 NDADDR-1-kanariaa**, 260725-13/-14) — ISSUE-27:n
+> UFS-provider-puolisko; patch assertoi että ISSUE-27 on landattu ENSIN, koska muunnos saa
+> kernelin ohittamaan luvun jonka se nyt tekee. **Toimeksiantoni listasi ne kolme kanariaa
+> muunnettaviksi** — ne olisivat siirtäneet UFS:n suoralohkorajaa; Codex korjasi sen.
+> **ISSUE-32** ELF-exec (21 sitettä 3 ryhmässä + 5 kanariaa, 260725-15/-16) — ja **korjaus
+> censukseen**: se listasi vain kuluttajan (`elfexec`), mutta todistusvelvollisuuden
+> purkaminen paljasti että tuottaja (`mapelfexec`, LOKAALI symboli) on myös 2 KiB → pelkän
+> kuluttajan muuntaminen olisi tehnyt rajatarkistuksesta kaksi kertaa tiukemman.
+> **ISSUE-33** laitemmap (7 sitettä, 260725-17/-18) — **TODISTETTU:** `/dev/mem` osui
+> kaksinkertaiseen fyysiseen osoitteeseen; ikkuna kernelin latausosoitteessa **0/4096** →
+> **3186/4096** nollasta poikkeavaa tavua. Loput segdev-perheestä jätettiin 2 KiB:iin
+> tarkoituksella ja assertoidaan kanarioina (sisäisesti johdonmukainen; `hat_devload`in
+> tuplakutsut ovat idempotentteja).
+> **TODISTUSASTEET (tärkein rivi tässä lohkossa):** vika JA korjaus todistettu =
+> **ISSUE-17, 27, 28, 33**. Muunnettu + ei regressiota mutta vikaa EI näytetty =
+> **ISSUE-15, 18b, 30, 31, 32** ja 33:n `incore`-ryhmä. **Mikään tästä ei ole ajanut raudalla.**
+> **TESTIKALUSTO:** 8 uutta ohjelmaa `test-tools/`-hakemistossa (`proctest`, `mlocktest`,
+> `pgcold`, `pgcreatetest`, `trunctest`, `bmaptest`, `exectest`, `devmaptest`) — mitä kukin
+> todistaa ja niiden erotteleva signaali: `test-tools/README.md`.
+> **METODIOPPI:** viisi koetinta epäonnistui peräkkäin (residentti sivu / UFS-reikä jonka
+> `getapage` nollaa / lämmin cache / nolla-alue vertailukohtana / väärä sivunsisäinen
+> oletus). Toimiva kuvio: tee vikasignaaliksi **"alkuperäinen data hävisi"** — se on
+> provenienssiriippumaton. Ja raakahaku tuotti kampanjassa **neljä errno-valeosumaa**
+> (`moveq #11/#12` = `EAGAIN`/`ENOMEM`) → jokainen patch assertoi nyt kanariat.
+>
+> **SEURAAVAKSI — SUOSITUS: RAUTASESSIO, EI LISÄÄ MUUNNOKSIA.** Päivä muutti 127 sitettä
+> UFS-kirjoituspolulla, exec-polulla ja laitemmapissa, eikä mikään niistä ole ajanut
+> raudalla. **Ajolista on omana tiedostonaan: `docs/REALHW-VERIFY-260725.md`** (artefaktit +
+> tarkat komennot + odotettu tuloste per kohta + hyväksymistaulukko + burst4.sh);
+> taustat ja koneen fysiikka: `docs/archive/RESUME-HERE-040-HARDWARE.md` ylälohko.
+> Grafiikkakernelit rakennettiin 25.7. UUDELLEEN tämän päivän pohjalle (**260725-19**
+> FPSP+Xsvga, **260725-20** VA2000) — aiemmat olivat 260724-pohjalta eivätkä sisältäneet
+> yhtäkään päivän korjausta. Jäljellä olevat censuskohteet (RFS 72 sitettä, S5, COFF,
+> NFS-providerit, SHM, suojausvektorin perimetri) ovat kaikki joko ajokelvottomia tai
+> matalan saavutettavuuden — ne kasvattaisivat validoimatonta deltaa ilman vastaavaa hyötyä.
+
+> ## ✅✅✅ 2026-07-24 — FPU TIER-2 (FPSP) M1–M4 VALMIS + GRAAFINEN X11 TOIMII PICCOLOLLA + VA2000-KERNELI RAUTATESTIIN
+> **1. LOADER-FIX (f0ed373) — infrastruktuurivoitto.** FPSP-kerneli ei latautunut: Guru
+> `D245 4C41` EI ollut kaatuminen vaan **loaderin oma virhemakro** (rel.c:53
+> `COMPLAIN = Alert(0x52454C41|AT_DeadEnd)`, 0x52454C41 = ASCII "RELA"). `relocsection()`
+> osasi VAIN `R_68K_32`. Census: standardi 29154×R_68K_32 vs FPSP + **330 PC-suhteellista**
+> (223 PC16 + 106 PC32 + 1 PC8, kaikki fpsp040.o:sta — Motorolan paketti on pakko assembloida
+> GNU-toolchainilla). FIX: rel.c toteuttaa nyt R_68K_PC32/PC16/PC8 = **S + A − P**, range-
+> tarkistettuna. **Yleistyy: mikä tahansa GNU-assembloitu objekti linkittyy nyt kerneliin.**
+> `build/unix_boot040` = PAKOLLINEN näille kerneleille.
+> **2. FPSP M1–M4 (8d2a005 + 2b4c6ef + 2c223e4 + 92818e5).** M1 `build-fpsp040.sh` (Motorolan
+> 040-FPSP-runko 39250 t netbsd/syssrc.tgz:stä). M2 `src/fpsp_glue040.s` = 12 OS-symbolia
+> + `fpsp_vec11` (M68Kvec[11]-dispatch); herkin kohta = `fpsp_done`→`ureturn`-paluu-ABI (60-t
+> reg-blokki + USP-pseudoreg + u_ar0 @0x40000864 ILMAN u_trapia). M4 = `FPSP_VEC()`-makro +
+> vektorit **48/51/52/53/54/55** (49 inexact + 50 div0 JÄTETTY nullvectiin: 040 tekee raudassa,
+> paketti ei vie entryä), `patch_fpsp_vectors.py`. **VERIFIOITU:** `fputest` (fmovecr+fintrz,
+> kuoli ennen SIGSYS:iin) PASS, fork-FP-konteksti PASS, ja **natiivi `cc` toimii taas (M3)** —
+> cc1 kaatui aiemmin omaan FP:hensä. Kaikki FPSP-diagnostiikkalaskurit 0.
+> **3. 🎉 M5: GRAAFINEN X11 TOIMII (käyttäjän käsitesti).** Yhdistetty kerneli
+> `relink-040-fpsp-xsvga.sh` → **68040-260724-09**; `xinit` Amiberryn konsolista → **täysi
+> twm-työpöytä Piccolo RTG:llä 1152x900 8-bit** (kuva `test-tools/xsvga-xinit-working-260724.png`).
+> ⚠️ VIRHEDIAGNOOSI KORJATTU: aiempi "X-serveri kaatuu client-disconnectissa (SIGILL
+> pc=0x800C7030)" oli **ETÄTESTAUS-ARTEFAKTI** (etä-X emu.py-telnetistä + kertaluontoinen
+> client ILMAN window manageria) — EI normaalikäytön este eikä Amiberry-RTG-raja, ja
+> xdpyinfo "dimensions 0x0" samoin harmiton. Ajuripuoli erikseen todistettu: `svgafb.c`
+> (suora mmap, ei X:ää) kirjoitti+luki koko 2 MB aukon ja piirsi näkyvän 1152x900-kuvion;
+> `SetMonitorSwitch(SVGA)` BY VALUE (pointerilla EINVAL) vaihtaa näytön chipset→RTG.
+> **4. EI-DEBUG-VARIANTIT (d5a531c).** `relink-040-fpsp-xsvga.sh` sai `$2`=OUT-parametrin →
+> `unix-040-fpsp-xsvga` (**260724-11**, base `unix-040`) rinnalle `-dbg`:n (**260724-09**).
+> Emu-verifioitu: bootaa puhtaasti, FPUTEST Test A PASS.
+> **5. VA2000-KERNELI RAUTATESTIIN (2193ff2).** MNT VA2000 RTG -ajuri (`~/kehitys/va2000-amix`
+> `src/va2000.c`, K&R C **lähdekoodina** — helpompi kuin Xsvga:n binary-only exp) käännetty
+> sisään: `relink-040-va2000.sh` = base + FPSP + va2000_040.o + `parinit`-wrapper.
+> **Kolme oivallusta:** (a) `KERNEL_CHANGES.md`:n raskaat scrdev type=2 -muutokset ovat
+> VANHENTUNEITA — XRTG (`xrtg-ready-to-build/.../rtg/rtgInit.c`) ajaa korttia suoraan
+> `/dev/va2000`-mmapilla ja käyttää /dev/screen VAIN syötteeseen (`DefaultScrType`); ei yhtään
+> SIOCSETTYPE/type=2-viittausta koko puussa. Sama wolf3d (`id_vl_amix.c:132`). (b) **Model-B:**
+> `va2000mmap`in `>>11` → `>>12` (`va2000_modelb.py`, assertoi tasan 1 korvauksen; lähderepoa
+> EI muokata — se kohdistuu 030/2KB:hen). (c) `io_init[]` = `{parinit,0}` eikä nolla-
+> terminaattorissa ole vararelokaatiota → `va2000init` kutsutaan `parinit`-wrapperista.
+> cdevsw[68] @.data+0xABA4 (6 relokaatiota nodev→va2000*, `patch_va2000_cdevsw.py`).
+> Buildit **260724-13 (dbg)** + **260724-14 (ei-debug)**; relocs 0.
+> **EMU-SAVU (VA2000 ei ole emuloitavissa):** bootaa puhtaasti, `mknod /dev/va2000 c 68 0` +
+> `va2000probe` → open() **errno=6 (ENXIO)** siististi, ei jumia/panikkia; FPUTEST PASS.
+> Evidenssi `test-tools/va2000-kernel-emu-260724.txt`.
+> **SEURAAVAKSI (suositus, arvio 040 ~80 % / 060 ~55 %):** **(1) Model-B-jäännösten häntä
+> (ISSUE-15/16/17/18)** = paras vakaus/vaiva-suhde, Codex-speksit valmiina, sama luokka kuin
+> korruption aiheuttanut ISSUE-10. **(2) Pitkä rauta-soak** (ainoa tapa löytää ISSUE-22/ISSUE-9
+> -luokan tuntemattomat). **(3) 060 FPU Tier-1** (4 routinen override). Isommat myöhemmin:
+> natiivi boot-polku (ISSUE-25), B2-copyback-flip, DTT0-kavennus, Z3+iso-RAM, real-060.
+> **RAUTATESTIT ODOTTAVAT:** FPSP/Xsvga real-HW-hyväksyntä + **VA2000 fyysisellä kortilla**
+> (boot `unix_boot040 unix-040-va2000-dbg`, `mknod /dev/va2000 c 68 0`, aja `va2000probe`
+> ENSIN, sitten XRTG/wolf3d). Riski kirjattu: käyttäjätilan mmap-rekisterilukujen cache-moodi
+> (PTE-CM-polku puuttuu; kernelin puoli on DTT0:n kautta CI, siksi turvassa).
+
+> ## 🔶 2026-07-23 (myöhäisilta) — B2-CB-HOOKS LANDATTU + EMU-VERIFIOITU (0b84a65); RAUTA-AJO SEURAAVANA PÄIVÄNÄ
+> Codexin 3 B2-speksiä (analyysirepo 1823681) toteutettu: **(1)** `cb_release040.s`
+> copyback-release-barrier (cpushl×256/sivu; page_free @0xafb08 bsr.l + free_vp_pages
+> @0xafd98 reloc-retarget — molemmat ENNEN free-list-julkaisua, ehdottomasti), **(2)**
+> hat040.s `Lhl_dofree`-reorder (leaf-clear+cpusha dc+pflusha ennen page_freetä), **(3)**
+> dma_cache040.s A3091-ownership-protokolla (startdma-wrapperit 0xd0b2/0xd21a; prepare=
+> `cpusha dc` pilotti, FROM_DEVICE-complete=range-`cinvl`; kielletty completion-`cinva dc`
+> POISSA — censuksessa jäljellä vain turvallinen pstart-'D'-instanssi). `patch_b2_flip.py`
+> → KAKSI ARTEFAKTISETTIÄ: **WT+hookit 260723-06/-07/-08 (rautasession baseline)** +
+> **b2 -09/-10 (hat_cm_ram=0x20)**. Emu-040+060 molemmat: burst4 24/24, prepare/complete-
+> parit TASAN (49447/49447, 50135/50135), diagnostiikat 0, cb_rel_count 141-142k,
+> CM-census segu-NC/KMA-WT/hat_pteload-CB. Evidenssi test-tools/b2-cb-hooks-emu-verify-
+> 260723.txt; NAS va2000dev/b1dc/ (5 imagea).
+> **SEURAAVAKSI (rautasessio, kone verkossa seuraavana päivänä):** speksien runtime-
+> hyväksyntälistat = (a) boottaa WT-baseline -07 → savu+laskurit, (b) boottaa -b2-dbg -10
+> → kmem-readback hat_cm_ram=0x20, hat_dup_cow 1/32/256, burst4, laskuriparit+0-diagnostiikat,
+> reconn_arm kirjataan, (c) VIRTAKATKAISU-disk-truth dirty-writebackin jälkeen, (d) Dhrystone-
+> delta vs B1:n 18293/s, (e) soft-`reboot`. Epäonnistuminen → boottaa WT-baseline erottamaan
+> cache-altistus mappausregressiosta (speksin ohje).
+
+> ## ✅✅✅ 2026-07-23 — B1-DC-ENABLE LANDATTU + RAUTAHYVÄKSYTTY (5f745d5, tagit pre-dc-enable/b1-dc-enable): WRITETHROUGH-DATACACHE PÄÄLLÄ
+> **DC-tien lähtöcommit** — revert = `git tag pre-dc-enable` (e952553) tai minimirevert
+> pstart040.s CACR-immediate `0x80008000`→`0x00008000`. Codex-census (vm-map/
+> DTT0-PHYS-WINDOW-CENSUS.md + DTT0-NARROWING-SPEC.md) KUMOSI DTT0-oletuksen: TTR vertaa
+> LOOGISTA osoitetta → korkeat PTE-mappaukset saavat CM:n leafeista jo nyt; matala NC-alias
+> koherentti korkean WT:n kanssa (fyysiset tagit + NC-matching-line-sääntö); E=0 kaataisi
+> heti (SRP:llä ei low-identity-mappia). → **DTT0 SÄILYI `0x003fc060`**, muutos = pelkkä
+> pstart 'D': `cinva dc` + `cinva ic` + CACR `0x80008000` (+ globaalit + dbg-readback
+> 'D'+80008000 serialille) ja haltsys040 `cpusha dc` ennen TC/TTR-teardownia. Buildit
+> 260723-03/-04/-05; relocs 0.
+> **HYVÄKSYNTÄ (evidenssi test-tools/b1-dcwt-verify-260723.txt):** emu-040+060-regressio
+> vihreä (hat_dup_cow 1/32/64, burst4 24/24, CM-census NC/WT oikein). **RAUTA A3000+
+> Mercury040: Dhrystone 11538→18293/s (+59 %); kmem cacr=sup_cacr=0x80008000, hat_cm_ram=0,
+> dma_cmpl_count 6378→52257 burst4:n yli; hat_dup_cow PASS; burst4 24/24;
+> VIRTAKATKAISU-DISK-TRUTH 7/7 (press1..6+payload sum 1570 8192 levyltä kylmäbootin+fsck:n
+> yli); puhdas soft-`reboot` uuden haltsys-orderingin läpi.** NAS: va2000dev/b1dc/.
+> Havainto (ei blokkeri): /dev/kmem-luku kvseg-VA:sta 0x40326000 palauttaa dataa ENXIO:n
+> sijaan (kvseg fill-on-fault, deterministinen, ei myrskyä; ei DC:stä — emu-DC inertti).
+> **SEURAAVAKSI:** B2 = copyback (hat_cm_ram 0x00→0x20) VASTA oman suunnittelun jälkeen
+> (census-B2-vaateet: per-range-DMA-prepare, page-table-muistipolitiikka, partial-line-
+> faktat); real-060-DC oma erillinen hyväksyntä; DTT0-kavennus (N1/N2) oma physmap-milestone.
+
+# (edellinen tila: 2026-07-22)
+
+> ## ✅ 2026-07-22 — ISSUE-21 RATKAISTU (config-wrapper); VARHAISBOOT-CACHE-BLOKKERI POISSA → Step B voi edetä
+> Satunnainen real-HW boot-musta-ruutu (~1/4) johtui **68040:n INSTRUCTION CACHESTA**, joka
+> peritään AmigaOS/68040.library:ltä PÄÄLLÄ kernel-entryssä: `config()`:n memcpy
+> (ILLEGAL@0x080002E4) ja pstart040:n bzero (ADDRERR@0x0800033E) ajoivat likaisella IC:llä
+> ENNEN pstart040:n omaa 'D'-regiiminvaihtoa (cinva ic + IC-enable). **DC oli epäolennainen**
+> (kaikissa kaatumisissa yhteinen tekijä = IC päällä); ei rautavika (AmigaOS/Debian/OpenBSD/
+> RedHat ajavat samalla Mercuryllä DC päällä ongelmitta; 3 memtesteriä puhtaat; levy-checksum
+> vakio; emu ei toista — Amiberry ei mallinna 040-cache-koherenssia).
+> **FIX (self-contained, loader-riippumaton, commit 6c8a929+3d75a2e):** `src/config040.s`
+> `config_cachefix` + `patch_config_cachefix.py` — uudelleenkohdistaa `_start`:n ainoan
+> `jsr config`-relokaation (.rela.text r_offset 0x26) → wrapperiin, joka tekee `cinva ic` +
+> `movec #0,cacr` (kaikki cachet pois) ja tail-callaa oikean configin (`config_orig`=0x18f5c).
+> Varhaiskoodi ajaa IC-off; pstart040 'D' palauttaa IC:n → **Step A / 2× nopeus säilyy**.
+> Reloc-retarget koska `config` ei uniikki (myös bss-objekti 0x10460) — sama kuin patch_a3091_dma.py.
+> **HW-VERIFIOINTI (dbg -04, /tmp/amix-hw-cachetest4.log + reboot_loop.py 8):** 9/9 boottia
+> puhtaita — `K00000000` ×9 (wrapperin CACR-takaisinluku=0), `AC00000000` ×9 (pstart 'A' CACR=0
+> säilyi), `FLT v00007008` ×9 (0× ILLEGAL/ADDRERR). `cpu nocache`-workaround tarpeeton.
+> Evidenssi test-tools/issue21-configfix-reboot9-260722.txt.
+> **MERKITYS Step B:lle:** aiempi "copyback-DC/burst-herkkyys varhaisbootissa" -tulkinta oli
+> VÄÄRÄ — syy oli peritty IC, ja se on nyt hoidettu. Varhaisboot ei enää kaadu periytyneeseen
+> cache-tilaan → **DC-käyttöönotto (Step B) ei enää törmää tähän blokkeriin.** Ainoa avoin
+> Step-B-analyysi-gate on **DTT0-kavennus** (DTT0=`0x003fc060` maskaa koko data 0–1GB:n per-sivun
+> CM:n → DC ei näy edes WT:ssä): Codex-toimeksianto kirjoitettu → **`docs/archive/DTT0-NARROWING-TASK.md`**
+> (fyysisen-ikkunan census: ppcopy/pagezero/gen_strategy/HAT-kävelijät/bp_map/tablewalk +
+> kavennusspeksi + CACR-DC-ordering). Muu Step-B-koneisto (B1-luokittelija, A3091-DMA-hook,
+> segkmem-julkaisu) landattu dormanttina + emu-verifioitu → Fable voi toteuttaa DC-enablen tämän
+> censuksen valmistuttua; ratkaiseva hyväksyntä = rautasessio (burst4 + hat_dup_cow + virtakatkaisu-disk-truth).
+
+> ## ✅ 2026-07-20 (ilta) — B1-DMA-HOOK LANDATTU A3000-EDELLÄ (dormantti no-op, emu-hyväksytty)
+> DMA-census valmis+verifioitu (analyysirepo 58f1cda: `DMA-INITIATOR-CENSUS.md` +
+> `DMA-PREPARE-COMPLETE-CONTRACT.md`). Census sulkee CM-B1-matriisin kohdan 8. Kaikki 5
+> keskeistä väitettä tarkistettu binääristä (hash, 4 DMA-omistajaa, ei cache-oppeja
+> driver-textissä, old-byte-assertit, hat_cm_ram==0). Toteutus buildit **260720-05/-06/-07**.
+> **DMA-hookit ovat VÄLTTÄMÄTÖN esiehto DC:lle:** DC-on hetkellä FROM_DEVICE-DMA (laite→RAM)
+> jättää vanhentuneita valideja D-cache-rivejä → CPU lukisi cachea tuoreen datan sijaan →
+> hiljainen fs-korruptio. Invalidointi completessa = korjaus (TO_DEVICE turvallinen WT:ssä).
+> **A3000-EDELLÄ (sovittu 2026-07-20):** neljästä host-RAM-DMA-omistajasta A3000+Mercury040
+> käyttää levy-I/O:hon VAIN A3091/SDMAC-polkua (emun a3000ux ajaa juuri sen). Vain a3091
+> hookattu; A2090/A2091(+chip-bounce)/native-hd (Zorro-SCSI/ST-506, ei koneessa) LYKÄTTY —
+> ei suljettu pois: census dokumentoi niiden ankkurit+assertit, A2091:n lisäys myöhemmin =
+> yksi wrapper lisää samaan jaettuun primitiiviin.
+> Toteutus (`src/dma_cache040.s` + `patch_a3091_dma.py`): jaettu
+> `dma_cache_fromdev_complete` (koko-cache `cinva dc` 0xf458 + `dma_cmpl_count`-laskuri,
+> rekisteriläpinäkyvä); `dma_a3091_stopdma` (lukee dma_on → kutsuu oikean stopdma:n →
+> invalidoi jos armattu, ENNEN callbackia d1c0/d2f6). **Kytkentä relokaatioretargetilla**
+> EI globalize+weakenilla: startdma/stopdma ovat lokaaleja JA niitä on 3 samannimistä
+> (A2090/A2091/A3091), joten nimipohjainen override monitulkintainen; patch_a3091_dma.py
+> retargetoi VAIN a3091:n 4 `jsr stopdma`-relokaatiota (0xd170/d1c8/d2ce/d34a), oikea runko
+> jää `a3091_stopdma_orig`-aliakseen (0xd4cc). ld -r säilyttää retargetin dbg/quiet:iin.
+> Koko-cache-invalidointi B1:ssä TAHALLINEN (contractin siunaama pilotti-muoto): WT:ssä oikea
+> molempiin suuntiin. prepare-hook + range-metadata = B2 (copyback).
+> **EMU-040 HYVÄKSYNTÄ (dbg -06):** boot→login (retargetoitu stopdma jokaisella SCSI-
+> completella), **dma_cmpl_count 3863 pelkän bootin jälkeen → 8561 hat_dup_cow+lukujen jälkeen
+> → 27272 burst-kopioissa** = hook todistetusti elävällä completion-polulla; hat_dup_cow 1/64
+> PASS, payload sum 1570 8192, burst4 (ks. commit). cinva dc dormantti (DC off).
+> Dokumentti: docs/CACHES-ON-PLAYBOOK.md "Step B1-DMA". Evidenssi test-tools/cmb1dma-emu-verify-260720.txt.
+> **SEURAAVAKSI: rautasessio caches Step B (varsinainen enable):** contractin staattinen
+> hyväksyntälista (old-byte-ikkunat, hat_cm_ram==0, DTT0-käsittely) → CACR-DC-bitti →
+> hyväksyntä disk/swap/NFS/fork-COW + virtakatkaisu-disk-truth oikealla 040:llä (ja 060:llä).
+
+> ## ✅ 2026-07-20 — CM-KAMPANJA B1 LANDATTU DORMANTTINA NO-OP-PORTTINA (emu-hyväksytty)
+> Codex-täysmatriisin (analyysirepo f2b56cd: `vm-map/CM-PTE-WRITER-MATRIX.md` +
+> `STOCK030-SDE-CI-CENSUS.md`) koko 8-kohtainen B1-ryhmä toteutettu, buildit
+> **260720-01 (base) / -02 (dbg) / -03 (quiet)**. Ydin: (1) `Lcm_sel`-luokittelija
+> hat_pteloadin kaikkiin kolmeen leaf-konstruktoriin (segu→NC 0x60 / pp==NULL→NCS 0x40 /
+> RAM→`hat_cm_ram`-DATA-globaali = **yhden longin B2-vipu**, B1-arvo 0x00 WT);
+> (2) u-area-NC joka aliasissa (prumap CM-periytys pois + pakko-0x60, resume U/V
+> normalize |0x60 runtime040+mainmarks); (3) hat_alloc juuren julkaisu ennen
+> as@(20)-storea + hat_free teardown-järjestys (Bdesc-detach+cpusha dc per leaf,
+> root[A]-clear ennen ptrtable-freetä, root-retire ennen kmem_freetä); (4) hat_dup-
+> private-leaf + bp_map lukevat hat_cm_ram; (5) segkmem-suoraperhe yhtenä yksikkönä:
+> `segkmem040.s`-override (setprot 2K→4K **+ stock-kursoribugin fiksi** (prot!=0-silmukka
+> kirjoitti ikuisesti PTE[0]:aa) + julkaisu; sptfree(flag=0)-julkaisu; **flushmmu =
+> cpusha dc + pflusha** = julkaisu kaikille bare-flushmmu-kutsujille) + `patch_segkmem.py`
+> (checkprot/getprot 4 sitea + stock-kanariat); (6) sysseginit-julkaisu. Uusi sääntö:
+> uudet flushit = **cpusha dc** (ei koske IC:tä); vanhat käsin kirjoitetut bc-sitet ennallaan.
+> **DTT0 EI KOSKETTU** (kavennus oma milestone). Scope-cutit dokumentoitu playbookissa:
+> segkmem_alloc/mapin-konstruktorien B2-CB + mapin-MMIO-NCS = segdev/Z3-ryhmä; DMA-read-
+> invalidointi = HW-DC-gaten osa, odottaa Codex-DMA-censusta.
+> **EMU-040 HYVÄKSYNTÄ (dbg -02):** boot→login, hat_dup_cow 1/32/64 PASS, payload-sum
+> 1570 8192 kopion yli, fork-churn LOOPDONE-RC0, burst4 ALLBURSTS-DONE summat tavuntarkkoja;
+> **runtime-CM-census IPC:llä**: kvsegu-leafit 0x..61/69/79 (CM=11 NC = luokittelijan
+> positiivinen signaali), fixed-u 0x..0F9 (NC), kvseg-RAM 0x..019 (CM=00 WT -kontrolli).
+> Kaikki CM-vaikutukset dormantteja (CACR DC off + DTT0-blanket). Emu-060-savu: ks. alla.
+> **SEURAAVAKSI:** Codex-DMA-initiaattoricensus (prepare/complete-omistajuus) → rautasessio
+> caches Step B (WT-enable + hyväksyntä burst4 + hat_dup_cow + virtakatkaisu-disk-truth).
+
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-19 ilta)
+
+> ## ✅ 2026-07-19 ilta — MODEL-B-JÄÄNNÖSRYHMÄT: KAIKKI 4 CODEX-SPEKSIÄ LANDATTU (emu-hyväksytty per ryhmä)
+> Neljä erillistä committia, jokainen oma patch + oma emu-hyväksyntä (buildit 260719-04…-15):
+> **(1) swapadd-geometria** (1475e16, `patch_swapgeom.py` 12 sitea / 5 fn) — slottimäärä
+> todistettu uudella `test-tools/swapls.c`-probella (swapctl SC_LIST): **PAGES 25600** (ei
+> 51199-tuplausta); burst4 24/24 summaa, swapdiff 0→5 MB. **(2) exec_initialstk+extractarg**
+> (7f8ac6e, `patch_execstk.py`) — .data-init symtab-resolvoitu 0x800→0x1000 + jaettu shift
+> 11→12 (yksi moveq syöttää btoc/ctob/64-sivuryhmän); hyväksyntä `test-tools/bigargv.c`:
+> 4500 B argv execin yli tavuntarkasti ×3. **(3) pageout-oletukset** (7f36144,
+> `patch_pageoutdefs.py`) — lotsfree 128→64, desfree 50→25, minfree 16→8 (dokumentoidut
+> tavukynnykset 4K-sivuina), fastscan*PAGESIZE-shift, vmmeter UPIO-fold 2→1 (4× asll#1→nop);
+> **HEADLINE: burst4-thrash 8 min/bursti → 1,4 min/bursti** — freemem-129-jäätymä poissa,
+> täsmälleen ennustettu vaikutus. **(4) mincore** (9c4139c, `patch_mincore.py`) — btoc-vektori
+> + PAGEOFFSET-portti @0x585e2 (speksin avoin kysymys ratkaistu 3b2 grow.c:523:sta);
+> hyväksyntä `test-tools/mincoretst.c`: tasan 8 vec-tavua, sentinel-häntä ehjä, EINVAL 22
+> 2K-kohdistuksesta. Joka ryhmällä hat_dup_cow 64 PASS; koko illassa 0 bus-virhettä, 0
+> 4AFC005F:ää. EI koskettu (policy): tune-kentät, pages_pp_maximum, swap_maxcontig,
+> fastscan=200, segdev/SHM/memcntl.
+>
+> **✅ REAL-HW-AJETTU SAMANA ILTANA (A3000+Mercury040):** koko paketti B läpi — probet
+> (PAGES 25600 / bigargv ×3 / mincoretst), hat_dup_cow, pressure, burst4 24/24 ~10 min
+> ILMAN mykkiä thrash-vaiheita, ISSUE-22-jahti 5 puhdasta kylmäsykliä basella -13 (ei
+> toistunut → prioriteetti alas), virtakatkaisu-disk-truth 1570 8192 ×6 levyltä, kmem-
+> ENXIO, osm 0 bus. Evidenssi test-tools/modelb-groups-realhw-260719.txt. UUDET:
+> ISSUE-23 (serdbg TBE-race — FIKSATTU+HW-VERIFIED samana iltana, dbg -16/quiet -17, evidenssi issue23-serialfix-260719.txt) + ISSUE-24 (init-6-limbo, rc6-userland;
+> pehmoreboot = `reboot`). Automaattiboot unix-040:lle konfiguroitu. ISSUE-21 2/~9 boottia.
+> **SOVITTU SUUNTA (pohdintasessio 2026-07-19 ilta, IC-tuplauksen jälkeen — Dhrystone 11538/s):**
+> 1. ✅ **Emu-060-regressio TEHTY** (sama ilta, 68060-260719-16): probet + hat_dup_cow + burst4
+>    24/24 puhtaat, 0 bus / 0 4AFC, swapdiff 0→5 MB — molemmat CPU:t katettu emulla.
+> 2. ~~Yhtenäiskernel + dbg_flags~~ → **SIIRRETTY TULEVAISUUSIDEAKSI** (päätös 2026-07-19 myöhäisilta:
+>    automaattiboot + `reboot`-komento poistivat kernelinvaihtokitkan jo; resurssit cache-työhön.
+>    Idea talessa: dbg_flags-bittimaski .datassa, unix_boot pokettaa symbolin parametrista/näppäimestä,
+>    yksi binääri. Basen harhaprinttien siivous erillinen ~1h mikrotehtävä jos häiritsee.)
+>    **TILALLE: Codex-esityöpaketti CM-bittikampanjalle** — (a) stock-030:n CI-bittilogiikan census
+>    (= RAM/laite-luokittelun referenssitotuus), (b) PTE-kirjoittajien täyscensus + cpushl-matriisi,
+>    (c) ~~DTT-kavennus~~ (siirretty omaksi myöhemmäksi milestoneksi, ks. kohta 3),
+>    (d) DMA-polkucensus (SDMAC/bp_map040; WT- ja CB-vaiheet erikseen),
+>    (e) segdev/mmap Model-B + CM-auditti (= samalla Z3-esityö).
+> 3. **CM-bittipolku + segdev-auditti** (Codex-tarkennukset 2026-07-20 yö): speksi ensin, sitten
+>    **B1 = writethrough-pilotti** (RAM CM=00 WT, MMIO CM=noncache-serialized, u-area NC,
+>    **DTT0 ENNALLAAN** — kavennus on OMA MYÖHEMPI MMU-milestone: ppcopy/pagezero/gen_strategy/
+>    HAT-kävelijät käyttävät sitä fyysisenä RAM-ikkunana; DMA-read-poluille invalidointi) →
+>    **B2 = copyback** (RAM CM=01; täydet DMA prepare/complete -hookit + low-physical-alias-koherenssi).
+>    KORJAUS aiempaan: stock-030:n CI on SDE-tasolla (pstart: 0x80000000+ = SG|S|CI 0xd0, alaosa ei
+>    CI:tä; CI_bit 0x10), EI per-PTE → aluepohjainen referenssi OK, mutta Z3-userspace-mappauksille
+>    EI valmista perittävää politiikkaa (segdev ei stockissa saa CI:tä). SEURAAVA CODEX-TYÖ:
+>    PTE-kirjoittajien TÄYSMATRIISI (kirjoituspaikka/nykyinen CM/tavoite-CM/cache-op; mukaan myös
+>    krnxmemflt040, segkmem_setprot, sptfree(flag=0), descriptorikirjoittajat) + stock-030 SDE/CI-census.
+>    DMA-täyscensus laajennettava: native hd, floppy, tape, audio, bitplane/copper/blitter (aen = todistettu
+>    CPU/PIO). segdev-toteutusryhmään: spec_segmap, kaikki segdev-metodit, ajurien d_mmap,
+>    hat_devload(pp=NULL), segkmem_mapin-MMIO. Pohjat: CACHE-STEP-B-PRESTUDY.md,
+>    BIO-PFN-PHYS-KVA-CENSUS.md, Z3-USER-MMAP-PFN-AUDIT.md (analyysirepo vm-map/).
+> 4. **Seuraava rautasessio: caches Step B** valmiilla spekseillä + hyväksyntäpaketilla (burst4 +
+>    hat_dup_cow + virtakatkaisu-disk-truth = DMA-koherenssin tappajatesti).
+> 5. **Z3-bringup + >16 Mt RAM** CM-bittien päälle (iso-RAM omana juonteenaan); **real-060** kun
+>    rauta saatavilla.
+
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-19)
+
+> ## 🏆 2026-07-19 — ISSUE-10 SULJETTU EMU+REAL-HW; BARE BASE HYVÄKSYTTY ITSENÄISESTI
+> Vyöryn kaksi tuottajaa fiksattu ja hyväksytty molemmilla alustoilla: hat_pageunload040
+> M-harvest (5569ea1) + klustsize 0x800 -data-init & swap-in-setti + hat_pteload::Lreplace
+> U/M-harvest (3b7afdc, `src/patch_swapin.py`). Buildit 260719-01 (base) / -02 (dbg)
+> / -03 (quiet). EMU: burst4 ALLBURSTS-DONE, 0 uutta busia, EI 4AFC005F:ää. REAL-HW
+> (A3000+Mercury040, 9584647): dbg pressure+burst4 swap elävänä, virtakatkaisu-disk-truth
+> tavuntarkka, kmem-ENXIO (ISSUE-13-jäännös kiinni), UFS bsize 8192 HW-vahvistettu, caches
+> Step A ajossa koko session, **bare base burst4 24/24 summaa = itsenäisesti hyväksytty**.
+> Evidenssit: test-tools/issue10-swapin-fix-260719.txt + issue10-realhw-verify-260719.txt.
+> UUDET: ISSUE-21 (boot-musta-ruutu ~1/4, kstack-rekursioevidenssi), ISSUE-22 (1× siisti
+> EFAULT basella 1. paineessa bootista). Gotchat: AMIX tftp = NETASCII-oletus (aina
+> `binary`!), telnetd HUPpaa prosessiryhmät (→ `at now + 1 minute` -jono), serial pudottaa
+> merkkejä 9600:lla (telnet ensisijainen).
+>
+> **SEURAAVAKSI: Codex-patch-speksien toteutus** (analyysirepo cbbf40f, vm-map/):
+> SWAPADD-MODEL-B-PATCH-SPEC.md (valmis byte-speksi), exec_initialstk+extractarg ja
+> setupclock-pageout-oletukset (DATA-INITIALIZER-PAGESIZE-CENSUS.md action matrix),
+> mincore-vektori (MODEL-B-TEXT-RESIDUAL-CENSUS.md). Emu-testaus per ryhmä; kokoava
+> konversiojärjestys text-censuksen lopussa. Sitten: ISSUE-22-jahti, segdev+mmap-perimetri
+> (Z3-portti), caches Step B (CACHE-STEP-B-PRESTUDY.md).
+
+# RESUME HERE — AMIX 68040/68060 port status (2026-07-15)
+
+> ## ✅★ 2026-07-15 (night) — CACHES-ON STEP A: INSTRUCTION CACHE ENABLED (emu-040+060 verified)
+> **IC is now ON.** `pstart040.s`: after MMU-on, `cinva ic` + set CACR bit15 `0x8000`
+> (= IE on 040 / EIC on 060, same bit) via `movec`, AND write `0x8000` into the
+> `cacr`/`sup_cacr` DATA globals — the shared interrupt handlers (p1int..p6int, ttrap)
+> reload CACR from those globals every entry, so a bare `movec` alone is clobbered by the
+> first interrupt. `runtime040.s`: `cinva ic` at the `resume` `Lrt_rest` tail flushes the
+> physically-tagged IC on every context switch (reused code page must not run stale lines);
+> this whole-IC flush subsumes per-path exec/hat_memload invalidates. Build 260715-16,
+> commit b69a2c1. **Verified emu-040 AND emu-060:** boot→login clean, interactive login
+> (getty→login→sh through shared `libc.so.1`), `for i in 1..5; do ls -alR / done`
+> fork/exec+recursive-libc churn → `LOOPDONE-RC0`, no panic, no stale-IC crash.
+> **DC (data cache) STAYS OFF — Step B, HW-GATED:** Amiberry doesn't model 040 copyback DC,
+> so DC coherency is unvalidatable on emulator. Step B (real HW only) = `hat_pteload` CM-bit
+> path (copyback `0x20` RAM / noncachable `0x60` device) + narrow DTT0 (`0x003fc060` blanket-
+> inhibits data 0–1GB today) + DMA `cpusha`/`cinva` audit around SDMAC/a3091 + CACR DC-enable.
+> Full plan = `docs/CACHES-ON-PLAYBOOK.md`. **NEXT real-HW visit:** writeback real-HW verify +
+> caches Step B; ISSUE-10 free-time reverse-map invariant probe (see KNOWN-ISSUES, 1978f88).
+
+> ## ✅★ 2026-07-15 (evening) — SCHEDPAGING RETIRED: pageout daemon LIVE; starvation-wedge FIXED; ISSUE-10 got a FAST REPRO
+> **The `schedpaging` rts-override is GONE** (runtime040.s + mainmarks.s + the weakens in
+> relink-040.sh/relink-040-dbg.sh; quiet variants' lists cleaned). Newly-live daemon path
+> converted as `patch_writeback.py` group **`pageoutd`**: setupclock `0x51eee` handspread
+> ptob `<<11→<<12` (one moveq feeds two asll), pageout head `0x5204c/0x52052`
+> btop(handspread) → 4 KiB; stock schedpaging (0x51f88) audited = pure page-count
+> tunables, no patch needed. `sched` (process swapper) STAYS disabled (u-area swap
+> unvalidated). Build 260715-11/-12.
+> **Pressure re-test (emu-040): the 6×4 MiB copy burst that previously FROZE userspace
+> (page_get starvation → sac SIGKILLed → console+telnet dead, kernel alive) now runs
+> 6/6 to completion with every `sum` byte-perfect (1570 8192)** — reclaim works.
+> **BUT: with page reuse now fast, the paused ISSUE-10 stale-PTE corruption fires within
+> MINUTES under pressure** — victims escalate sh → in.telnetd/inetd (→ the old
+> "telnet/network stall under load" was at least partly these daemons dying!) → init
+> itself (sig=4 crash-loop, 0x4AFC ILLEGAL content). File data stays byte-perfect →
+> page-REUSE corruption, not putpage. Mechanism (already in hatalloc_dbg.s comments):
+> `page_abort` unloads only if `p_mapping!=0`; 040 PTEs loaded without p_mapping
+> registration survive the free. **Fast repro + resume recommendation recorded under
+> ISSUE-10 in KNOWN-ISSUES — the 040-HAT p_mapping registration fix is the next
+> frontier.** Normal (non-pressure) boots: pageout idle, zero behavior change —
+> boot→login→telnet re-verified on -12.
+
+> ## ✅ 2026-07-15 (later) — PAGEOUT/WRITEBACK MODEL-B GROUP CONVERTED + EMULATOR-VERIFIED 040+060
+> **`src/patch_writeback.py`** — all 20 sites from Codex's
+> `PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md`: `spec_putpage` (4) + `pvn_range_dirty` (6)
+> + `ufs_putpage` (5) + `mountfs` gate (reject `fs_bsize<2048`) + generic callers
+> `checkpage`/`fsflush`/`segvn_swapout`/`segvn_sync` (4× `pea 0x800→0x1000`). Wired into
+> `relink-040.sh` after `patch_modelb_pager.py`; bisect with
+> `WRITEBACK_GROUPS=spec,pvn,ufs,callers`. s5putpage/NFS/RFS NOT converted (policy —
+> s5 not mounted anywhere; S5MAXREQ 512 B stack hazard). Verified per-unit boot
+> bisection + exercises, full detail in `docs/archive/WRITEBACK-TASK.md`:
+> boot→login, hat_dup_cow PASS, **disk-truth 4 MiB `sum` 1570 8192 byte-perfect across
+> unclean-kill+fsck-y (040) AND clean shutdown-i6+reboot (060)**; clean 060 shutdown =
+> **no ISSUE-14 frag panic** (datapoint in KNOWN-ISSUES).
+> **NEXT: retire the `schedpaging` rts-override in `src/runtime040.s`** (its own
+> comment says to, now that this landed) — sustained pressure (6×4 MiB cp) currently
+> WEDGES userspace via page_get starvation (sac SIGKILLed, everything blocks; kernel
+> alive) because nothing reclaims pages. Then pressure re-test; `sched` swapper-loop
+> stays for now (u-area/process swapout = separate risk). Also remaining: real-HW
+> verify (disk geometry unmeasured) + an mmap/msync test binary for segvn_sync.
+> **Test-cycle lessons (durable):** the golden image's console keymap is GERMAN —
+> `test-tools/sendkeys.py` now translates (default `de` layout, `--us` to revert);
+> before the fix, console `/ - > y z` typed garbage and shutdown/sum "ran" as no-ops.
+> emu.py per-command sentinel timeout is 120 s → one 4 MiB `cp` per command, never
+> two. A dropped telnet session SIGHUPs its children mid-`cp`. During one read-flood
+> the console `-sh` died of an ISSUE-10-class SIGSEGV (SEGVDMP page full of
+> "/usr","/bin" path text; pid 568) — single hit, logged as an ISSUE-10 datapoint, not
+> chased (paused by user decision).
+
+> ## ★ 2026-07-15 — ROOT FS IS **UFS** (bsize 8192 / frag 1024): writeback Phase-0 is ANSWERED
+> Measured from the golden image's UFS superblock AND confirmed on the running guest
+> (`df -n` → `/ : ufs`). **s5 is not mounted anywhere.** Full block + consequences in
+> **KNOWN-ISSUES.md → "ROOT-FS GEOMETRY"**. Short version:
+> - `fs_bsize=8192`, `fs_fsize=1024`, `fs_frag=8`. 8192 ≥ 2048 → **Codex's recommended
+>   UFS policy holds with margin; NO provider rewrite needed**. `fs_bsize > PAGESIZE`
+>   means one VM page lies within a single fs block (easiest conversion case).
+>   `fs_bsize == MAXBSIZE == segmap slot 0x2000` = 2 × 4 KiB pages.
+> - The s5 `S5MAXREQ=4` / 512 B hazard is **not on any live path** → not a blocker.
+> - **ISSUE-10's "1 KiB granularity" corruption signature = the UFS FRAGMENT size**, not
+>   an s5 1 K block → refocus that hunt on the UFS read/write path.
+> - ISSUE-14's "freeing free frag" is UFS frag accounting (KNOWN-ISSUES corrected).
+> - NOT verified: the REAL A3000's disk (machine was off). Confirm `df -n` + superblock
+>   on the next HW visit before trusting the conversion there.
+> **→ The pageout/writeback Model-B conversion group is now UNBLOCKED.** Task brief:
+> `docs/archive/WRITEBACK-TASK.md` (repo root). Order: spec_putpage (4 sites, simplest) → pvn_range_dirty
+> (6) → ufs_putpage (6) + the `mountfs` gate → generic callers (4). Codex's
+> `PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md` is the authoritative site list + do-not-patch traps.
+
+> ## ✅ 2026-07-15 — unix_boot unattended-boot + serial mirror; deterministic emu test cycle
+> **Committed `dc58ec9` + `1d2b2a7`.** The loader (`build/unix_boot040`, rebuild via
+> LOCAL-BUILD-NOTES §3) no longer blocks an automated boot:
+> - the pre-handoff diagnostic pause now **auto-continues after 10 s** (was a blocking
+>   `read(0)` — nobody to press RETURN in an unattended cycle); RETURN still stops it,
+>   and **`-w`** restores wait-forever for real-HW photo sessions (`unix_boot040 -w unix-040-dbg`);
+> - **all loader diagnostics mirror to serial** (custom-chip SERDAT @9600, same channel
+>   as the kernel serdbg.s) → one capture holds loader+kernel. AttnFlags now prints
+>   correctly as `0x0000804f` (a multi-vararg `%04x`+7×`%d` line rendered GARBAGE on
+>   bebbo/clib2 — reduced to a single `%08lx`; the decisive movec-vs-pmove line is
+>   separate and was always correct).
+> **`emu-reset-boot.sh [040|060] [logfile]`** = the deterministic emulator cycle: stop
+> amiberry, restore the GOLDEN image (`amix_hardfileX11R5-net.hdf` → `…X11R5.hdf`; a
+> crashed run otherwise leaves a dirty fs → fsck>reboot loop that stalls the next cycle,
+> ISSUE-14), kill stale nc capture loops (only one client can hold TCP:1234), start the
+> local a2065-backport amiberry, capture serial via a setsid-detached nc loop. Guest
+> state is WIPED each run → push test binaries via `test-tools/tftp_onesock.py` (guest:
+> `tftp 10.0.2.2 1069`) every time; if inbound telnet 2323 stalls, the guest must send
+> one packet first (console `ping 10.0.2.2`, or bake into rc.inet). VERIFIED: golden
+> reset → cold boot → login with NO keypress, on 040.
+> **NEXT big item unchanged: pageout/writeback Model-B conversion group** (Codex matrix;
+> needs the Phase-0 root-fs block-size decision) — gate for true paging/swap + smart
+> precondition for caches-on.
+
+> ## ✅ 2026-07-13 (later) — ISSUE-13 CAPTURE 2 FIXED: native kernel fault resolver (krnxmemflt040)
+> **Committed `cfa5e49`: `src/krnxmemflt040.s`** — the coupled 4-defect stock
+> `krnxmemflt_orig` (URP-blind ptest, frame+72 rw decode + prot gate, 030 leaf walk)
+> replaced by a native core: validated software walk of the live kernel tree
+> (vatosde/vatopte + UDT/PDT + leaf-frame bounds), rw from the synthesized frame+76
+> SSW, stock-compatible F_INVAL degradation for every non-classifiable case, F_PROT
+> upgrade only for a genuine write to a write-protected resident kernel page, and a
+> depth-4 nested-fault fail-fast. wb040.s wrapper untouched (binds via
+> `krnxmemflt_orig`; stock body = `krnxmemflt_stock`). **Build line 260713-02/-03/-04.**
+> **VERIFIED emu-040 + emu-060:** boot→login, hat_dup_cow 1/32/256 ALL PASS both CPUs,
+> and the capture-2 mechanism (`dd if=/dev/kmem` @ unmapped kvseg 0x40326000) now
+> returns clean ENXIO with the machine alive — previously a ~25-deep nested-fault
+> storm → panic. REMAINING: real-HW crash(1M) re-run next HW visit; F_PROT branch
+> untestable from userland. NEXT big item: **pageout/writeback Model-B conversion
+> group** (Codex matrix; needs the Phase-0 root-fs block-size decision) — also the
+> gate for true paging/swap in base and the smart precondition for the caches-on track.
+
+> ## ✅ 2026-07-13 — PACKAGING FIX (bare unix-040 now bootable!), Codex round-2 digested, ISSUE-14..19 registered
+> **Committed `558c11f`: runtime040.s** — the quiet/dbg overlays' load-bearing overrides
+> (native resume fixed-u remap, hardbus crossing-page fix, sched/schedpaging/idle
+> disables) are PROMOTED into the base link. Bare `build/unix-040` was a non-bootable
+> intermediate (stock resume) despite its script's "ready to boot" claim — Codex
+> PROCESS-MMU-CONTEXT-SWITCH-CONTRACT.md finding. relink-040.sh now HARD-FAILS if the
+> strong resume/hardbus resolve to stock addresses. quiet040.s retired; quiet overlay =
+> serdbg only; dbg unchanged in behaviour (instrumented twins still win via weaken).
+> **VERIFIED on emulator: bare unix-040 260712-04 booted through login for the FIRST
+> TIME EVER** (telnet login, 5 concurrent forks, ps/ls/df); dbg 260712-06 regression
+> clean. Build line: base -04 / quiet -05 / dbg -06.
+> **Codex audit round 2 read** (6 docs, evening 2026-07-12): fault-resolver audit
+> upgrades ISSUE-13 capture 2 into a COUPLED 4-defect resolver-unit port (spec +
+> acceptance table in `040-FAULT-RESOLVER-AUDIT.md`; do NOT patch piecemeal, do NOT
+> make global ptest supervisor); STREAMS/segmap/BIO/segmap_fault audits all CLEAN and
+> retroactively support the bp_map040 root cause. **New KNOWN-ISSUES: ISSUE-14**
+> (emulator root-fs s5 free-frag shutdown panic — run a manual full fsck!), **-15**
+> (KMA pool double-backing), **-16** (RFS <<11 ×5), **-17** (procfs prfastmap 2 KiB),
+> **-18** (vtop_orig raw-I/O + vtop040 address-dispatch ambiguity), **-19** (szombflag
+> single-slot + resume path-U partial p_ubptbl). Emulator runner: `test-tools/emu.py`
+> now does minimal telnet negotiation (telnetd WAITS for an IAC answer before printing
+> login:) — raw connect alone hangs. Amiberry IPC gotcha: commands are TAB-separated
+> (`READ_MEM\t0x<addr>\t4`); buildid string readable at 0x08000000+text_size+0x18518.
+> NEXT: ISSUE-13 capture-2 resolver port (in progress), then writeback conversion group.
+
+> ## ✅ 2026-07-12 — ISSUE-13 FIXED (bp_map040), hat_dup_cow FULL MATRIX PASS, Codex VM-audit round
+> **Committed `4099f4e` (on master): `src/bp_map040.s` + relink-040.sh wiring + KNOWN-ISSUES.**
+> Build line is now **260712-03** (unix-040 + unix-040-dbg; both link bp_map040; dbg also
+> carries the sigkill_dbg v5 GOT-dump probe, UNCOMMITTED in src/sigkill_dbg.s).
+>
+> **ISSUE-13 capture 1 (real-HW NFS-copy panic) ROOT-CAUSED + FIXED + VERIFIED ON REAL HW.**
+> Root cause (via Codex census, sibling repo `amix-kernel-analysis/vm-map/`): `bp_map` and
+> `bp_mapout` were left as stock 030 bodies — 2 KiB counts, and they walk/write the RETIRED
+> `st_top1` tree (which the 040 port does NOT populate for syssegs → zero leaf base → stores
+> `pfn<<11|1` into LOW MEMORY, and the temp translation never appears in the live
+> root040→kptr040→kptbl tree the MMU walks). On the NFS/RFS page-I/O path
+> (nfs_getapage/nfs_writelbn) this is exactly the panic chain. bp_map040 rewrites both for
+> the live 040 tree (4 KiB, kptr040 walk = vatosde/vatopte geometry, leaf PTE `phys|0x19`,
+> ghost-mapping contract kept, cpusha bc + pflusha). VERIFIED: emu-040 + emu-060 hat_dup_cow
+> 1/32/256 all PASS (no regression); real A3000+040 = 5 consecutive 3 MB NFS→local copies,
+> every one byte-perfect (`sum` 11920 6060 identical NFS↔local), machine stable.
+>
+> **hat_dup_cow acceptance test (Codex, `runtime-tests/`) FULL MATRIX PASS** — 1/32/256 forks
+> on emu-040, emu-060, and real A3000+040. Closes the long-open "COW never runtime-validated".
+>
+> **NEXT (all lower priority, pick any — details in memory + KNOWN-ISSUES):**
+> 1. **ISSUE-13 capture 2** (crash(1M) /dev/kmem nested-fault storm): `krnxmemflt_orig`
+>    F_PWRITE branch `0x5b22a..4a` still does the 030 `*(vatosde+4)`+`>>11` walk against the
+>    040 vatosde; + the `k_trap` landing-pad-clear recursion window. Fix = port the F_PWRITE
+>    walk to `vatopte` + a bounded nested-fault fail-fast. Codex options in
+>    `SEGKMEM-KVSEG-MMREAD-FAULT-AUDIT.md`.
+> 2. **Pageout/writeback Model-B conversion group** (~20 sites, silent-data-loss class):
+>    Codex `PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md` is the ordering guide + do-not-patch traps.
+>    Needs a Phase-0 root-fs block-size policy decision first.
+> 3. **ISSUE-10 corruptor** (paused): Codex census found the local page-in path CLEAN, which
+>    narrows it; resume recipe = Amiberry write-watchpoint + pfntokv/shift census.
+> 4. **Z3 graphics track** (new): userspace mmap guard-clean, sptalloc(base≠0) ready; only
+>    blocker = no cache-inhibit CM-bit path in 040 hat_pteload.
+> 5. **Emulator aen/streams UDP-load stall** (found 2026-07-12 during ISSUE-13 repro; distinct
+>    from the corruptor) — isolate with tftp WITHOUT fork load.
+>
+> **DEBUG TIPS (new this session):**
+> - **Amiberry IPC `READ_MEM 0x<addr> <width>`** (1/2/4; 0x prefix required) = clean live-RAM
+>   window into a RUNNING emulated kernel (kernel phys base 0x08000000 = identity DTT0; a data
+>   symbol at nm-addr A reads at 0x08000000+A; but COMMON/bss nm values are SIZES not addrs —
+>   read the runtime addr from a relocated instruction operand). Far safer than crash(1M)/
+>   /dev/kmem on the guest (which fault-storms on unmapped kernel VAs). Do NOT read HALTED
+>   state via IPC (wedges).
+> - **Emulator `telnet` client closes during option negotiation** in the current state — use
+>   the repo raw-socket runner instead: `test-tools/emu.py` (emulator, root = NO password; does
+>   minimal telnet negotiation — telnetd WAITS for an IAC answer before printing login:). A
+>   `real.py` for the real machine (10.0.10.10, root/(see local/secrets.env)) is NOT in the repo — recreate it
+>   from emu.py + creds in ~/kehitys/CLAUDE.md when needed (NEVER commit creds). Sentinel gotcha:
+>   the echoed command line contains your sentinel — use a quote-split marker (`echo CMD''DONE`,
+>   match `CMDDONE`). Console keystrokes (login/priming) via `test-tools/sendkeys.py` (SEND_KEY IPC).
+> - **Real-HW telnet**: `telnet 10.0.10.10` root/(see local/secrets.env) (creds only in ~/kehitys/CLAUDE.md,
+>   NEVER in repo). nohup does NOT survive session exit on the real machine — keep the session
+>   alive and poll, or run synchronously.
+> - **File transfer to AMIX**: slirp-NAT-safe TFTP = `test-tools/tftp_onesock.py` (replies from
+>   the listening port 1069; the stock runtime-tests/tftp_server.py uses an ephemeral reply
+>   port that slirp drops). Emulator: `tftp 10.0.2.2 1069`; real HW: `tftp 10.0.10.182 1069`.
+> - **Serial capture**: emulator — Amiberry listens on `serial_port=TCP://0.0.0.0:1234` always;
+>   `nc localhost 1234 > log` or a reconnect-tolerant socat loop. **REAL HW: there IS a
+>   serial-to-USB cable on the Amiga and it is the normal way we capture boots** (corrected
+>   2026-07-27 — earlier notes in this file saying "no serial cable yet" are HISTORICAL, from
+>   the 2026-07-10..12 era, and must not be read as current).  Photo-based analysis is the
+>   fallback, not the method; symbol-resolve any photographed backtrace with nm on
+>   build/unix-040-dbg.
+> - **puavoOS = READ-ONLY image**: all apt packages are WIPED on every reboot. Re-check with
+>   `dpkg -s` and give one apt line. Amiberry build (`~/kehitys/amiberry`, branch a2065-backport
+>   = v8.2.2 + PR #2153 A2065-RX fix) needs SDL3 (not SDL2); build binary at
+>   `~/kehitys/amiberry/build/amiberry -D` — USE THIS for inbound networking, not the stock
+>   /usr/bin/amiberry 8.2.2.
+> - Emulator inbound telnet: `slirp_redir=tcp:2323:23:10.0.2.15` (guest-IP 4th field MANDATORY),
+>   guest aen0 = 10.0.2.15, and the guest must send one packet (ping 10.0.2.2) per Amiberry
+>   start to prime slirp's MAC learning.
+
+> ## ★★★ MILESTONE 2026-07-11 — REAL MERCURY-040 BOOTS TO LOGIN + NETWORK WORKS ★★★
+> **Amiga 3000 + Mercury 68040 @33 MHz, 32 MB, build 260711-02:** the current
+> 040 line boots on real hardware through fsck/login, accepts remote telnet over
+> the A2065 (`aen0`), and supports interactive sessions over the wire. The
+> earlier A2065 diagnosis was a false alarm: `ifconfig -a` is an unsupported
+> silent AMIX option; use `ifconfig aen0`.
+>
+> Real-HW fixes proven by this session: the loader overlap/copyit guard, the
+> kvm_init/segu_get ISSUE-8 p0init fix, the hat_free A-slot guard, the wb040
+> replay `u_nofault` guard, and the ISSUE-11 WB1/WB2 replay hardening (no visible
+> anomalies on real silicon). ISSUE-10 (`amixadm`/sh heap corruption) reproduces
+> on the real machine with the identical `4AFC0003` signature, so it is not an
+> emulator artifact; it remains paused with the existing write-watchpoint /
+> pfntokv-census recipe in KNOWN-ISSUES.md.
+>
+> **Immediate useful next work:** use the now-working network path to run the
+> `hat_dup_cow` acceptance test and then heavier workloads on either Amiberry
+> A2065 SLIRP or the real A3000. Keep capturing ISSUE-9 if the idle-time Bus
+> Error loop reappears, but it is not currently blocking login/network use.
+
+> ## ✅ MILESTONE 2026-07-10 — DUAL-CPU KERNEL: 68060 SUPPORT MERGED (branch `060-prestudy` → master, merge `60f17f4`)
+> **One kernel binary now boots to login on BOTH the 68040 and the 68060** — verified on
+> fs-uae AND Amiberry (NetHack runs, clean shutdown, 040 regression clean). `uname -m` /
+> the boot banner show which CPU+build is running (` 68040-YYMMDD-NN` / ` 68060-…`; the
+> loader pokes the new `cputype` kernel global from AttnFlags — REBUILD/REDEPLOY the
+> loader too: `build/unix_boot040`). Full story, census, and the phased plan in
+> **`docs/68060-prestudy.md`** (pre-study §1–6, implementation + three boot-test rounds §7).
+> Two genuine 060 deltas were found at runtime and fixed in `wb040.s` — both would have
+> hit real 060 hardware too:
+> - **wb060_sswsynth** (`c0f13bf`): fmt-4 FSLW marks locked RMW (TAS/CAS) as read+write;
+>   the stock memflt classifiers read frame+76 bit0 as "read" → a user TAS on a COW page
+>   looped in hardbus forever. Fix: synthesize an 040-style SSW in place before the
+>   classifiers run. (RE note: `u_trap` calls `usrxmemflt` DIRECTLY, bypassing
+>   `userspace()` — the wb040.s wrappers are the only choke point covering both routes.)
+> - **wb060_xpage** (`ed8e8be`): the 060 restart model reports FA = the access's START on
+>   an unaligned page-crossing (the ISSUE-7 class; no write-backs on the 060) → as_fault
+>   no-ops on the near page forever. Fix: after a successful memflt with FA in a page's
+>   last 8 bytes, also fault the next page (Linux/m68k: `if (fslw & MA) addr=(addr+7)&-8`).
+> Deferred 060 leftovers: `cpuinfo` userland tool, vector-61 emulator-leniency probe, and
+> the shared caches-on / FPU (040 FPSP + 060SP) / real-060-HW phases.
+
+> ## ⏸ ISSUE-10 PAUSED (2026-07-10) — amixadm/sh heap corruption, 040-only, deferred
+> Deterministic repro, 8 runs, 6 probes; full evidence chain + resume recipe in
+> **KNOWN-ISSUES.md (ISSUE-10 state dump)**. Short version: sh's legit anon heap page's
+> CONTENT matches a recently-read disk block (1KB granularity); the write evades the
+> page_get and vtop chokepoints; prime remaining suspects = inline pfntokv/pptonum
+> high-bank pfn math or segmap-window PTE staleness. Resume = Amiberry write-watchpoint
+> (recipe in KNOWN-ISSUES) or a kernel-wide divsll#60+shift census. Probes stay in dbg.
+> Normal workloads unaffected. Fixes landed during the hunt: s5getapage/spec_getapage
+> Model-B conversion (903210c, real file-tail bugs), ISSUE-11 registered (wb040 WB1
+> lane-alignment — REAL-HW landmine, fix before the next hardware visit).
+
+> ## ✅ MILESTONE 2026-07-09 — ISSUE-7 AND ISSUE-8 BOTH RESOLVED (committed); 040 boots to login and survives workload + reboots
+> The 040 kernel now **boots to login on fs-uae, runs `ls -alR`, and survives 7 reboot cycles
+> with ZERO panics** (verified from serial: no `PANIC`/`KERNEL FAULT`/`Bus Error`, no
+> `kstack`/`KSTKCHAIN`/`PREEMPT1 uprocp=0` recursion signature, clean `haltsys`). The weeks-long
+> ISSUE-7 is fixed.
+>
+> **The fix chain this session (all committed to master, all boot-tested):**
+> - **ISSUE-8** = `kvm_init`'s leaf-table `ctob`/`btoc` were left at 2 KB in the Model-B
+>   conversion, so `word2` (the leaf-table phys) was HALVED (0x714E-click → 0x038A7000, a real-HW
+>   hole; segu_get read it back at 0xaa6f8). 6-patch source-backed fix (3B2 `startup.c` proved
+>   `ptptr=ctob(nextfree)` / `ksegmappt=ctob` / `nextfree=btoc`), commit **998737f**. Emulators
+>   now behave identically instead of fs-uae masking the halved read.
+> - **ubptbl** = `segu_get`/`swapinub` read the inert 030 st_top1 leaf → `p_ubptbl`=0. Wrappers
+>   rebuild it from the live kptr040 tree, commit **df82ef8**. (A symptom of the same halved-leaf
+>   problem, fixed for robustness.)
+> - **ISSUE-7 ROOT** = `wb040`'s access-error write-back replay re-issued the captured store with
+>   one wide `moves`; an UNALIGNED PAGE-CROSSING supervisor store (measured via the KSTKWB probe:
+>   long "xres" @0x40736FFE crossing into the next page) had only its NEAR page resolved by
+>   as_fault → the wide `moves` re-crossed and re-faulted forever → the recursion ate the u-area
+>   kernel stack down over the u struct front → `u_procp=0`. Fix = replay BYTE-WISE (MSB-first
+>   `rol.l #8` + `moves.b (a3)+`, one independent per-byte access), commit **51cdbc7** (plus a 68k
+>   CC-clobber fix in the first cut). Diagnostic probes that cracked it: commit **24a54cf**
+>   (ktrap_latch KSTKCHAIN/KSTKWB, dbg-only). **This is why the three earlier HAT hypotheses all
+>   missed — the bug was in write-back replay, never in HAT.**
+>
+> ## ▶ 2026-07-09 NEXT SESSION NOTE — NOW SUPERSEDED BY THE 2026-07-11 REAL-HW MILESTONE
+> 1. ~~**Real-HW (Mercury-040) retest + prep.**~~ **DONE 2026-07-11.** The machine
+>    got past the old p0init panic, booted to login, survived fsck, and came up on
+>    A2065 networking. The STORE-A/stale-table hypothesis in the hardware doc is
+>    historical unless a future regression returns to the p0init address range.
+> 2. ~~**Cold-boot flakiness — eliminate the `ed`/`more` warm-up**~~ **✅ RESOLVED 2026-07-09 PM
+>    (same day). ROOT CAUSE: loader buffer/destination OVERLAP + copyit's inverted copy
+>    direction — NOT uninitialized memory.** `AllocMem(MEMF_FAST)` placed the ELF buffer
+>    ~0.94 MB above the fast-RAM base; the relocated ~0.96 MB text+data image overlapped the
+>    buffer head by ~25 KB (measured live: `image=080ef5b0 copysrc=080ef5e4..081e4c84
+>    dest=08000000..080f56a0`), and copyit's direction choice was INVERTED for overlapping
+>    ranges (dest<src copied descending), so the copy shifted data-section bytes over the first
+>    25 KB of kernel text **including `_start`** → instant wild execution at handoff (the
+>    `PC=07004a9a` Gary read was wild-execution fallout, not a real srvioc call; the earlier
+>    "uninitialized memory" hypothesis was wrong). The `ed`/`dir` warm-up only worked by pushing
+>    the buffer past the 25 KB overlap. **Proven with a copyit-side checksum verify** (loader
+>    sums the image pre-handoff, copyit re-sums the DEST post-copy, mismatch = white/red screen
+>    flash — it flashed on a cold boot). **Fixes (unix_boot/src, committed): (a) copyit.s
+>    overlap-safe memmove directions + size+1 off-by-one fixed (the stray byte at dest-1 is
+>    gone too); (b) unix_boot.c allocates the buffer MEMF_FAST|MEMF_REVERSE (top of RAM, no
+>    overlap at all); (c) the checksum verify stays as a permanent transit guard.**
+>    VERIFIED: multiple cold Amiberry boots through AMIX reboot cycles, zero warm-up, boots
+>    every time. **Real-HW note: the "1st boot → AmigaOS guru, 2nd boot → works" pattern on the
+>    real A3000 is very likely THIS SAME BUG (same loader, same alloc geometry) — retest on
+>    silicon with the fixed loader.**
+>
+> 3. **BONUS same evening: quiet root-mount ENXIO regression RESOLVED (commit `cd5b15a`,
+>    boot-verified quiet+dbg on Amiberry).** Root = kernel-wide **.bss misalignment**: the
+>    loader places .bss at data_end UNALIGNED, so any override .o with a non-mult-4 .data
+>    shifts the whole kernel .bss — harmless to the CPU, fatal to the SDMAC 32-bit DMA
+>    (sdpart.c `block` 2 bytes off → 'RDSK' scan fails → VOP_OPEN error 6). fs-uae masked it
+>    (no SDMAC on its virtual-disk path); the real A3000 would have failed identically.
+>    NEW DURABLE RULE: every section of every override .s ends with `.balign 4`; the relink
+>    scripts now HARD-FAIL if the final .data isn't 4-aligned. Also added the same evening:
+>    build-id in banner + uname (`inituname040.s` + `stamp_buildid.py`, e.g. "Amiga
+>    (Unlimited) 68040-260709-08") — verify the booted kernel with `uname -m`.
+>
+> **Also deferred: ISSUE-9 (idle-time Bus Error loop)** — a booted machine left idle a while came
+> back to an endless Bus Error loop (a periodic/idle path, NOT ISSUE-7's signature). Capture
+> serial next time it happens. See KNOWN-ISSUES.md ISSUE-9.
+> Full detail: KNOWN-ISSUES.md ISSUE-7/8/9; memory `amix-040-realhw-p0init-buserror`,
+> `amix-040-boot-flakiness`.
+
+> **ORIENTATION (2026-07-07): the Codex analysis project MOVED out of this repo.** It is now a
+> SEPARATE sibling git repo at `~/kehitys/amix-playground/amix-kernel-analysis/` (moved to keep
+> copyright-sensitive RE material in its own version control, out of the shareable kernelsupport
+> repo). Everywhere these docs say `amix-kernel-analysis/vm-map/...` or
+> `amix-kernel-analysis/runtime-tests/...`, that path is relative to `~/kehitys/amix-playground/`
+> (i.e. `../amix-kernel-analysis/...` from this repo root). The `hat_dup_cow` acceptance test and
+> all `*-AUDIT.md` / `HAT-*-DESIGN.md` memos live there now, NOT under a local `analysis/` dir.
+
+## ►►► UPDATE 2026-07-07 (REAL HW): first Mercury-040 boot attempt — panics in p0init; ROOT CAUSE FOUND = kvm_init `click<<11` SDE fill (ISSUE-8) ◄◄◄
+User booted `unix-040-dbg` (~07-05 build) on the REAL A3000 + Mercury 68040 (photo:
+`testimages/040-boot-a3000-mercury.jpg`). **Major positive: the port runs on real silicon** —
+pstart040 MMU enable, deep startup through kvm_init, console, clean trap handling, getfault040
+frame decode all work. Panic: `KERNEL FAULT pc=0x7049130 fmt=0x7 vector=0x2` = **p0init's
+inert-030-tree STORE B posted-writing to phys 0x038A7000**, which is `pfn 0x714E << 11` — a
+**Model-B-MISSED shift in kvm_init's st_top1 SDE fill (0x48ddc `moveq #11` → should be #12)**
+halving the leaf-table address. fs-uae silently swallows the write to unmapped space (why the
+emulator never showed it); the real bus errors. NOT memory-map dependent (A3640 would panic
+identically); kernel age irrelevant (all involved sites are stock text, unchanged today).
+segu_get has the IDENTICAL inline walk (0xaa6c4+) = the predicted next blocker → fix the ROOT.
+Full chain + fix plan (2 byte-patches + optional phase-4 "STORE B neuter"): KNOWN-ISSUES.md
+**ISSUE-8**. Coding → Fable when approved. Confirms phase-4's "posted write to garbage phys".
+
+## ►►► UPDATE 2026-07-07 (latest): hat_map fix BOOT-TESTED OK (no regression); hat_pagesync gap found but LATENT (D-cache off) ◄◄◄
+- **hat_map phantom-preload disable (commit 9b7f00c) — boot-tested, no regression.** User ran
+  3 boots: login/fsck/basic ops all fine. The demand-fault path (which now does 100% of the
+  file-backed mapping work) is exercised constantly, so this is well-covered. `p_mapping`
+  chains are now single-format (live 040 only) from every producer. Investigation +
+  why-Option-A: `src/hat-map-040-fix-plan.md`. ISSUE-7 unchanged (this was a correctness
+  cleanup, not an ISSUE-7 attempt — see below).
+- **hat_pagesync ref/mod gap (Codex `REFMOD-PAGEOUT-CONTRACT.md`) — real but LATENT, deferred.**
+  hat_pagesync (0xb4be8, the periodic ref/mod sampler for pageout/fsflush/pvn) copies+clears
+  PTE U/M bits but has no `cpusha bc` (confirmed via disasm). BUT the 040 **data cache is
+  currently OFF** (verified: live path = pstart040 @0xd71a8, which never enables CACR; the
+  nonzero-CACR block at 0x1038-0x1294 is the dead original pstart; matches the real-HW
+  CACR 0x800 observation). So this only bites once D-cache is enabled (future perf milestone),
+  is NOT an ISSUE-7 lead, and the mixed-format half is already resolved by the hat_map fix.
+  When implemented (`hat_pagesync040`: harvest+clear live U/M, end with cpusha bc; pflusha) —
+  **delegate the coding to Fable**. Full detail: KNOWN-ISSUES.md.
+- **ISSUE-7 unchanged** across the 3 boots: PREEMPT6 again `zerocount=1` (`scanned=A pid1=B2`
+  and `scanned=16 pid1=9F`) — a 3rd/4th confirmation the corruption is isolated to one proc.
+  Hunting stays paused per the earlier decision.
+
+**NEXT STEP UNBLOCKED (updated 2026-07-11):** the `hat_dup_cow` fork/COW acceptance
+test (`amix-kernel-analysis/runtime-tests/`, Codex-authored, built + verified ready) is the highest-value
+next action — it stress-validates the merged hat_dup040 (fork-without-exec COW, boundary
+crossing, stress loops) which login/fsck do NOT exercise. Networking/file transfer is no
+longer the blocker: real-HW A2065 works, and Amiberry A2065 SLIRP also configures `aen0`
+and reaches 10.0.2.2. When picked up: `python3 amix-kernel-analysis/runtime-tests/tftp_server.py` on the host, then in
+AMIX `tftp 10.0.2.2 1069` → `binary` → `get hat_dup_cow` → `chmod 755` → `./hat_dup_cow 1`
+then `32` then `256`; expect `RESULT PASS`. (Alternative transfer if SLIRP stays broken: mount
+the disk image on Linux and copy the binary in directly, or bake it into the image.) After
+that: heavier workloads (`ps -ef`, a compile, `ls -R /`, multi-process scripts) to surface the
+next real bug — audit-driven work has hit diminishing returns for urgent fixes.
+
+## ►►► UPDATE 2026-07-07: hat_sdtfree fix RULED OUT too — ISSUE-7 hunting PAUSED by user decision ◄◄◄
+User boot-tested the `hat_sdtfree` fix (below): **ISSUE-7 still reproduces.** Same
+PREEMPT1-5 signature, PREEMPT6 again confirms isolation to one proc (`scanned=C
+zerocount=1 pid1=B0` this run), a 4th distinct terminal panic signature this time
+(`PANIC: Unknown bootmethod 0x600FBFE/... → DOUBLE PANIC`). Three well-motivated hypotheses
+(hat_unload cpusha, setuctxt sleep window, hat_sdtfree pfn) all ruled out this week — each
+required real RE work, none was it. **User decision: pause active ISSUE-7 hunting for now**
+rather than continue one-hypothesis-at-a-time probing; see KNOWN-ISSUES.md ISSUE-7 "RESUME
+POINTS" for what's left to try when picked back up (a generic offset-32 write-guard is the
+most promising remaining idea, since that exact field has now caused 3 separate
+confirmed/plausible corruption classes across this project). System remains fully usable
+from a pristine disk image. The `hat_sdtfree` fix ITSELF stays — genuine, independently
+disassembly-verified bug, just not this one.
+
+## ►►► UPDATE 2026-07-07 (earlier): PREEMPT6 confirms ISSUE-7 isolated to 1 proc; hat_sdtfree Model-B fix landed ◄◄◄
+PREEMPT6 (commit 959194f) fired: `scanned=16 zerocount=1` — the corruption is confirmed
+isolated to exactly one proc, not systemic. Codex produced 3 more HAT audits
+(HAT-EXEC-AUDIT.md, HAT-MAP-AUDIT.md, HAT-GROWSDT-AUDIT.md) plus updates to
+HAT-LIFETIME-CONTRACT.md/HAT-SWAPOUT-AUDIT.md. The GROWSDT one surfaced a genuine, live,
+previously-undocumented bug — **independently verified via disassembly, not just trusted**:
+`hat_sdtalloc`'s 3 Model-B pfn-shift patches were never mirrored on the free side
+(`hat_sdtfree`, 2 sites), so freeing an SDT carve computes a pfn ~2x too large and can
+corrupt an unrelated live page's `p_sdtbits`/`p_mapping` (offset-32 alias) — the same failure
+class as the already-fixed ISSUE-5/6 and hat_ptfree bugs. Reachable from `hat_swapout`,
+`hat_map` (segment growth), and `hat_exec_orig` (table replace) — live paths, not dead code.
+Fixed in `patch_modelb.py` (commit `b8f9cd3`), all three kernels rebuilt clean — **since
+ruled out for ISSUE-7, see the update above, but the fix stays.** Full detail:
+KNOWN-ISSUES.md ISSUE-7 section, memory `amix-codex-hat-audit-findings`.
+hat_exec's port path also got clearer thanks to HAT-EXEC-AUDIT.md (see that memory entry) —
+relevant for after ISSUE-7 is resumed, not before.
+
+## ►►► UPDATE 2026-07-07: ISSUE-4 (hat_dup) MERGED to master + 2 hardening fixes — AWAITING BOOT TEST ◄◄◄
+`unix-040-quiet` boot-confirmed working since the last update (log much calmer than dbg, as
+designed) and **NetHack runs** on it — the first real fork/exec/terminal/timer-heavy workload
+tested, a stronger signal than the earlier ls/uname smoke tests.
+
+Codex's parallel `amix-kernel-analysis/vm-map/` project produced 10 new per-function "HAT contract" audits.
+Acted on the actionable ones this session (full detail: KNOWN-ISSUES.md ISSUE-4, memory
+`amix-codex-hat-audit-findings`):
+- **hat_dup040 merged (ISSUE-4 CLOSED pending boot test):** the real fork/COW port (already
+  boot-verified on branch `040-hat-dup-port`, incl. the fork-without-exec COW subshell test) is
+  now in `src/hat_dup040.s` on master, wired into `relink-040.sh` on top of every newer
+  fix (haltsys/fsck/hat_unload V2.3/segu_lockfix). `unix-040` and `unix-040-dbg` both link it at
+  the same address — confirmed single strong override, not a re-stub. The old `forkdbg.s` stub
+  is no longer linked anywhere (incl. `quiet040.s`, which also dropped its own hat_dup stub).
+- **HAT_CANWAIT→HAT_CANWAIT|HAT_NOSTEAL hardening** (3 sites: hat_pteload root+leaf in
+  `hat040.s`, hat_dup040 root): bare CANWAIT didn't disable `hat_ptalloc_orig`'s unported
+  030-format steal path on allocation failure. No effect on any currently-tested workload
+  (failure path never exercised yet); pure hardening.
+- **hat_unload cpusha fix — RULED OUT for ISSUE-7 (2026-07-07, user boot-tested):** identical
+  PREEMPT1-5 signature and terminal panic reproduce unchanged. The fix itself is harmless (a
+  real coherency correctness improvement, kept) but is confirmed NOT the ISSUE-7 root cause —
+  see KNOWN-ISSUES.md ruled-out item 8. `hat_dup040` and the CANWAIT/NOSTEAL hardening appear
+  unaffected (boot "didn't seem worse than before" per the user).
+- Also merged: a doc-only update to `amix-kernel-analysis/runtime-tests/README.md` noting the temporary
+  `unix-040-hatdup-test` acceptance-test kernel is now superseded by master's own builds.
+- **setuctxt probe — RULED OUT (2026-07-07, user boot-tested):** `"DBG setuctxt POST-RETURN"`
+  never appeared in the log. Confirms the corruption does NOT happen inside setuctxt's own
+  `kmem_alloc(KM_SLEEP)` execution window (ruled-out item 9). This run's panic terminated in a
+  *different* cascade tail (`Reset: Stack Pointer`, pc=0/vector=0) than the previous run's
+  (`rcopyout` Bus Error) — consistent with the already-documented "terminal PC/vector varies
+  per recursive kstack unwind", not a new mechanism.
+- **NEW probe added (commit 959194f, awaiting boot test): PREEMPT6 in `preempt_dbg.s`** —
+  when the existing divergence path already fires, additionally walk `practive` and check
+  `u_procp` via EVERY live proc's own `p_segu` window (not just the crashing one), reporting
+  how many procs are affected. Answers isolated-vs-systemic. Zero new hook points — purely
+  additive to a path that only runs after ISSUE-7 has already triggered, so no risk to
+  `resume`/`swtch`. Full detail + reasoning: KNOWN-ISSUES.md RESUME POINTS.
+
+**Boot-tested (2026-07-07):** `unix-040-dbg` with the ISSUE-4 merge (no regression), the
+setuctxt probe (ruled out, item 9), the PREEMPT6 scan (fired: isolated-to-1-proc), the
+hat_sdtfree fix (ruled out, item 10), and the hat_map preload-disable (no regression). ISSUE-7
+reproduces through all of them. See the topmost update block for the consolidated result.
+
+## ►►► UPDATE 2026-07-06: reboot + fsck FIXED; clean boot→login→ls -alR→reboot cycle works ◄◄◄
+Since the 07-04 login milestone, driving real workloads surfaced and fixed a chain of bugs
+(all on **master** now; patch_modelb.py = **235 sites**).  **Full detail: KNOWN-ISSUES.md.**
+- **ISSUE-5 (reboot) FIXED:** `reboot` ran an illegal 030 `pmove` (haltsys, reached via `rtnfirm`
+  for fcn>=1) → now an unconditional 040 `movec`/`pflusha` MMU-disable (this is an 040-only
+  binary; the AttnFlags guard misfired under the live Unix MMU).  v1/v2/v3 = commits 16fb98d/
+  23a3532/ded2e58.
+- **ISSUE-6 (fsck) FIXED:** `fsck` on a dirty UFS panicked `segvn_softunlock`; two Model-B misses —
+  `swap_xlate`/`swap_anon` still ×2048 (2KB) → non-4KB-aligned anon `p_offset`; and a MISLABELED
+  byte-patch at 0xabdae had made segvn_softunlock's inlined PAGE_HASHFUNC `>>12` while the other 7
+  hash sites stayed `>>11` (a hash needs only consistency).  Commits faa1ace + 61dd64e.
+- **Also fixed:** `hat_unload040` V2.3 (its table-frame guard rejected the kernel-image static
+  kptr040 tables → it was a SILENT NO-OP for ALL kernel VAs; lower bound now `_start>>12`,
+  commit 49c9c23); `segu_get` SEGU_LOCKED (the Model-B loop-bound patch `moveq #3→#1` also dropped
+  the flag stored from the same register → segu_release passed hat_unload flags=0, keepcnt never
+  released; `segu_lockfix` wrapper, commit 6efba29).
+
+**OPEN, HUNTING PAUSED BY USER 2026-07-07 — ISSUE-7 (KNOWN-ISSUES.md):** a SECOND boot from a
+kernel-contaminated disk panics at the login prompt; a process's u-area has **`u_procp=0`** (a
+fresh-zero page, via a NON-swap mechanism — 10 hypotheses ruled out by runtime probes: kmem
+free-list, interrupt tables, remap-read, u_procp-at-trap-entry, swap daemon, segu_softunload,
+segu slot double-alloc, (2026-07-07) hat_unload's missing post-clear cpusha, (2026-07-07)
+setuctxt's internal kmem_alloc sleep window, and (2026-07-07) hat_sdtfree's Model-B pfn bug).
+Root NOT yet found; PREEMPT6 has now confirmed across 2 separate crash instances that the
+corruption is isolated to exactly one proc, not systemic.
+Deterministic repro: contaminate image B (boot+reboot once), its next boot crashes; restore
+pristine image A → clean.  System stays USABLE for clean cycles. Rich dbg diagnostic infra in
+place (ktrap_latch / preempt_dbg+tourniquet [now incl. PREEMPT6 multi-proc scan] /
+kmem_validate / segvn_softunlock_dbg / segu_swap_dbg / hatalloc_dbg LIVEABORT / execmark
+UTRAP / setuctxt_dbg [ruled out, kept for regression visibility]).
+
+**NEXT options (pick per session):** (a) RESUME ISSUE-7 when ready — KNOWN-ISSUES.md's
+RESUME POINTS now favors a generic offset-32 (`p_mapping`/`p_sdtbits`/`p_ptdats` union)
+write-guard over another single-caller hypothesis, since that field has now caused 3
+separate confirmed/plausible corruption classes, and PREEMPT6 has already answered the
+isolated-vs-systemic question twice (isolated, both times); (b) ~~get
+BASE `unix-040` bootable standalone~~ — hat_dup040 (ISSUE-4) is now merged; the base still
+needs the dbg-only diagnostics stripped for a fully quiet standalone boot (see the QUIET
+variant below, which already does this for a serial line); (c) real-HW testing (USB-serial
+adapter incoming); (d) let the parallel Codex `../amix-kernel-analysis/` project continue mapping the
+kernel — its audits already paid off once this session (ISSUE-4 hardening, even though the
+ISSUE-7 leads it inspired were both ruled out); (e) run the `amix-kernel-analysis/runtime-tests/hat_dup_cow`
+fork/COW acceptance test (built, never actually run) against the freshly-merged `unix-040-dbg`.
+
+**QUIET variant BUILT (2026-07-06, BOOT-CONFIRMED 2026-07-07 — NetHack runs):** `sh
+relink-040-quiet.sh` → `build/unix-040-quiet` — the serial-capable quiet twin of the dbg build
+for real-HW testing. Overlay = `src/quiet040.s` (sched loop / schedpaging skip / idle /
+resume040 verbatim [byte-compared identical to the dbg build] / hardbus page-crossing fix — the
+dbg overlay's load-bearing parts with ALL probe output removed; hat_dup is no longer stubbed
+here either, it inherits the real port from the base build) + `serdbg.s` (conputc serial mirror:
+banner/cmn_err/panics still go to serial).  All pure diagnostics omitted — NOTE this
+includes the preempt_dbg ISSUE-7 tourniquet, so a contaminated-disk second boot panics raw
+here.  MAIN debug line stays `unix-040-dbg` on the emulator; keep quiet040.s in sync with
+mainmarks.s/forkdbg.s/sigkill_dbg.s when their genuine parts change (map in its header).
+
+---
+## (historical) MILESTONE 2026-07-04: INTERACTIVE 040 LOGIN WORKS — ls / ls -al / uname -a all run
+Boot (`unix_boot unix-040-dbg`) runs with **0 panics / 0 BUS errors** to a `root` login on the
+040 kernel; `ls`, `ls -al`, `uname -a` all work at the shell.  patch_modelb.py = **234 sites**.
+This is the first genuinely usable interactive 040 boot.
+
+**Fix chain that got here (all committed on branch 040-switch-trace, boot-verified):**
+- **date/hardbus infinite-loop hang** (commit 70344f0): a `jsr abs.L` whose extension word
+  straddles a 4KB page boundary; the 040 reports FA = the crossing access's START (mapped page),
+  the 030-semantic usrxmemflt tail misroutes to hardbus, which resolves the already-OK page and
+  retries forever.  Fix = hardbus wrapper (sigkill_dbg.s): for a user addr within 8 B of a page
+  end, as_fault BOTH pages; either resolving → return 0.  DBG-only crutch; the proper fix (port
+  usrxmemflt's tail to 040 SSW MA-bit semantics) is still open, low priority.
+- **"Killed" / rtld self-SIGKILL** (commit 44ebf05): anon_zero HALF-zeroed every ZFOD page
+  (`pagezero(pp,0,0x800)` — a `pea 0x800` invisible to detect_pagesize.py) → the exec arg-block's
+  envp NULL terminator (which relies on ZFOD zero) held garbage → rtld ate the auxv as environ →
+  no AT_BASE → silent `_kill(getpid(),9)`.  Fixed + a batch of pea-0x800 fault-len args.
+- **segu u-area /proc window** (commit 04edaed): 3 VOP page lens 0x800→0x1000 + prumap040.s
+  (proc-0 kvsegu slot-0 alias into kptr040; p0init wrote it into inert st_top1).  Cleared the
+  scrmenu/prgetpsinfo KERNEL FAULT (pid 43).
+- **sptmap arena free-side** (commit 0d85da7): the kvseg arena was 4KB on the ALLOC side only;
+  sptfree's `va>>11` freed the wrong slot → overlapping sptalloc → kmem heap corruption (ttymon
+  panic pc=0x704211C).  23 byte-patches completing the coupled set (kmem_alloc/free oversize,
+  sptfree, segkmem_mapout/segkmem_free walkers, kseg/unkseg).
+
+**NEXT — drive the system, don't audit blind.**  Every fix this session was found because a real
+command crashed, not by guessing which 2KB site to flip next.  Fastest path to the next real bug:
+run heavier workloads (`ps -ef`, a compile, `ls -R /`, multi-process scripts) and read the serial
+log.  Known-pending 040 ports that only trigger on specific paths (see the batch list below):
+**hat_dup** (fork — NOTE: BASE unix-040 still has STOCK-030 hat_dup, only the dbg build stubs it,
+so BASE is NOT yet boot-safe for fork-heavy loads), **hat_chgprot ×6** (fork COW), **hat_exec**
+(exec-time stack move, 030 garbage-write source, currently neutered-by-guards), **uvirtophys/
+uvatosde** user walkers, **vm_swap 2KB units** (real swap-out would corrupt).
+
+**Serial-log note:** the endless `C<pid>:<PC>:<SR>` and `W <pid>:...` lines are NOT a bug — they
+are leftover debug probes in src/sigkill_dbg.s (clock_sampler, cap 1024) and mainmarks.s
+(idle W-dump, cap 8).  `pid=0 PC=0x070D8EC2 SR=0x2000` = proc 0 idling in the kernel (healthy).
+A quiet-dbg variant (or a clean base boot once hat_dup lands) removes them.  The `XPAGE` lines
+are the hardbus page-crossing wrapper firing normally.  ALWAYS `grep -a` (log has NUL bytes).
+
+### ►► SUPERSEDED (2026-07-03): the "commands get Killed" frontier ◄◄
+Solved — see the "Killed / rtld self-SIGKILL" bullet above (anon_zero ZFOD half-zero, commit
+44ebf05).  The earlier execstk_addr / setregs-copyin-EFAULT theory was a mis-diagnosis; the real
+cause was the half-zeroed ZFOD page corrupting the exec arg block.  Banner "8 MB" was cosmetic
+(main printed physmem/freemem `<<11`, counters were always right) — fixed.
+
+## ►► PREVIOUS STATUS (2026-07-02) ◄◄
+**2026-07-02: THE CHILD CRASH IS SOLVED (root cause proven, fix built, AWAITING BOOT TEST).**
+The deterministic `User BUS ERROR FFFFFFFF PC:800024FE` in every fork+exec'd child was **NOT**
+kernel page corruption, NOT a lazy-PLT/GOT[2] bug, NOT free-while-mapped (all those framings are
+RETIRED): the fs-uae `AMIXE48` watch caught the write **`addr=80010e48 val=ffffffff s=0
+PC=80002494` = USER-MODE, sh ITSELF** storing sbrk()'s return value.  Chain (disasm-verified in
+/sbin/sh): malloc calls sbrk(0x600) -> kernel **brk() rounds nva/ova to 2KB** (`+2047 >>11 <<11`
+@0x58130/0x58136/0x58144 — an unpatched Model-B straggler) -> ova=0x80011800 lands INSIDE the
+4KB-rounded exec data/bss segment (ends 0x80012000) -> as_map overlap -> ENOMEM -> sbrk returns
+-1 -> malloc stores -1 in its arena head (0x80010e48) and writes through it (`movel %a0,%a1@`,
+a1=-1) -> BUS ERROR at FFFFFFFF, PC = next insn 0x800024FE.  init survives because its break
+rounds identically at 2KB and 4KB.  **FIX: 8 byte-patches in patch_modelb.py (brk 3 + grow 5,
+2KB->4KB roundups/shifts), built into unix-040 + unix-040-dbg.**  Also this session:
+hat_chgprot040 boot-tested (fires, kept — real fork-COW bug, but wasn't the crash);
+hat_exec probe added (clean brackets = hat_exec NOT the corruptor; still unported, flag=1 path);
+anon_decref dbg wrapper found DEAD (symbol is file-local `t` — weaken can't bind it).
+**BOOT-VERIFIED (2026-07-02 eve): 0 BUS ERRORs — children run past malloc, rc scripts exec real
+programs.  NEW FRONTIER hit next: `PANIC: swap_xlate`** (user fault -> segvn_fault ->
+segvn_faultpage -> anon_getpage got a garbage anon ptr) once fork/exec/unmap churn started.
+ROOT CAUSE: the seg_vn/as user-VM family was only PARTIALLY 4KB-converted (fault path 4KB, the
+create/dup/unmap/free/setprot/... family still 2KB) = the exact mixed-granularity hazard the old
+as_setprot post-mortem warned about (e.g. segvn_unmap's split path computes anon_index with 2KB
+math against 4KB-indexed anon arrays).  **FIX: +99 byte-patches (detect_pagesize.py-classified,
+gen_uservm_patches.py-verified) completing the whole coupled set** — segvn_create/extend_prev/
+extend_next/anonmap_alloc/dup/unmap/free/softunlock/non_anon/faulta/unload/setprot/checkprot/
+getprot/kluster/swapout/sync/incore/lockop/vpage/isanon + as_faulta/setprot/checkprot/unmap/map/
+incore/ctl + map_addr.  patch_modelb.py now 176 sites; both kernels rebuilt, relocs clean.
+DEFERRED (noted in patch_modelb.py): as_iolock, execstk_addr, phystopp, vm_swap internals.
+**BOOT-VERIFIED (2026-07-02 night): no swap_xlate panic, 0 BUS ERRORs — the system is ALIVE and
+responds to Enter on the console.  NEW FRONTIER: `ldterm/console_get_buffer: out of blocks` =
+allocb's kmem_alloc(KM_NOSLEEP) returns NULL = kernel heap genuinely exhausted after ~36 execs
+(~150-200KB lost per process; allocb has NO strthresh check on this path, so it IS memory).
+Suspects: exit teardown not returning pages (as_free/segvn_free/anon chain) vs processes never
+exiting vs (small, known) hat PT leaks.  MEASURE FIRST: the hat_exec dbg probe now logs
+freemem/availrmem/availsmem per exec (cap 64).  NEXT: boot unix-040-dbg, then
+`grep -a "hat_exec ENTER" /tmp/amix-boot.log` -> read the freemem trajectory: never recovers
+after exits = teardown leak; stable = STREAMS-pool-specific.
+(NOTE: the serial log contains NUL bytes — plain grep silently matches nothing, ALWAYS -a).**
+
+## ►► PREVIOUS STATUS (2026-06-26, superseded) ◄◄
+The 040 kernel now boots with **0 kernel panics** all the way to **/sbin/init running its rc scripts
+(/etc/sysinit, /etc/brc, /etc/rc2) and spawning the multi-user/login entries (/etc/getty,
+/usr/lib/saf/sac) from /etc/inittab** -- i.e. the THRESHOLD of a console login.  THREE bugs solved
+this session (branch 040-switch-trace, all committed, boot-verified): (1) **gen_strategy d3 #4->#8**
+(disk sectors-per-page; the multi-page B_PAGEIO 2KB straggler) -> the GOT/dynamic-linker bug is GONE
+(libc.so.1 relocates, 872 GOT writes, init's _start runs).  (2) **uvatosde040** (per-proc user
+page-table walker 040 port) + usrxmemflt inline-leaf patches -> COW/F_PROT faults resolve (init's
+write-protect faults work).  (3) **hat_free040 garbage-slot skip** -> no KERNEL FAULT on child-exit
+teardown.  **CURRENT FRONTIER (next task): every exec'd CHILD wild-jumps (`User BUS ERROR FFFFFFFF
+PC:800024FE`) -- a lazy-PLT/GOT[2] (=_rt_bind) base bug, CONFIRMED SYSTEMATIC on a clean FS.  See the
+section immediately below.**  Build: `sh relink-040.sh` (base) + `sh relink-040-dbg.sh` (dbg).
+
+## ★★★★★ 2026-06-26 CONFIRMED SYSTEMATIC (clean FS): children wild-jump via PLT[0] -> GOT[2] wrong
+Re-booted on a KNOWN-CLEAN (fsck'd) FS: the child fault `User BUS ERROR FFFFFFFF PC:800024FE` is
+DETERMINISTIC (18x, every exec'd child: getty/sac/autopush/rc2/sysinit) -- NOT FS corruption.  0
+kernel panics (hat_free040 robust).  MECHANISM (static, from autopush): the program's lazy PLT --
+`PLT[n]: jmp *JMP_SLOT` -> push index -> `PLT[0](0x5d0): push GOT[1]; jmp *GOT[2]`.  In the FILE
+autopush's GOT[1]=0 (link map) and **GOT[2]=0 (the lazy resolver _rt_bind)**; the rtld sets them at
+runtime.  The wild jump to 0x800024FE = program_base(0x80000000) + 0x24FE means **GOT[2] was set to
+0x800024FE** (program base + 0x24FE) instead of libc's _rt_bind (0xC10xxxxx) -> `jmp *GOT[2]` lands
+in autopush's unmapped TEXT-DATA GAP -> executes garbage -> derefs FFFFFFFF.  So _rt_setup computed
+the child's lazy resolver with the WRONG base.  KEY DIFFERENCE: init is exec'd by the KERNEL (works,
+GOT resolved -- rexit dump shows C101116E) but the children are exec'd by a USER process (the init
+shell) -> suspect the kernel's USER-initiated exec path (elfexec auxv AT_BASE for the interp, or how
+the interp/_rt_setup runs for a user-exec) sets up the child's interp base wrong.  Children's auxv
+AT_BASE was NOT yet captured (the rexit dump with AT_BASE=C1000000 was INIT's, not a child's).
+**NEXT: capture the CHILD's runtime GOT[2] + auxv AT_BASE -- via the instrumented fs-uae (trace the
+child's PLT[0]@0x800005d0 + the value read from GOT[2]@0x80003e40) OR a kernel probe in elfexec's
+auxv build.  Then fix the base used for the child interp/_rt_bind.**  Source refs: SVR4-3b2
+lib/rtld/m32/reloc.c + rtld.c (GOT[1]/GOT[2]/_rt_bind setup), the AMIX elfexec (0xb80f2) auxv build.
+
+## (DONE, VERIFIED) hat_free040 robust -> NO KERNEL PANIC, init runs rc + spawns getty/sac
+The hat_free040 garbage-slot skip (commit 689db7d) WORKS: boot shows **0 kernel panics**.  hat_free
+was bus-erroring on a pointer-table at region A=6 filled with the 030-invalid pattern 0xFFFFFFFF
+(Bdesc=FFFFFFFF, UDT=3 looked "valid"); now it validates leaf base in [pages_base,pages_end) and
+SKIPS bad slots (12 logged, A=6 B=0..11, bounded leak).  Source of the FFFFFFFF table = stock-030
+hat_growsdt/hat_dup region fill (not yet ported; skip is the robust fix).  **init now runs its rc
+scripts (/etc/sysinit, /etc/brc, /etc/rc2) and spawns the multi-user/login entries (/etc/getty,
+/usr/lib/saf/sac, /sbin/autopush) from /etc/inittab.**  We are at the threshold of a console login.
+**NEW BLOCKER: every exec'd CHILD takes `User BUS ERROR at FFFFFFFF PC:800024FE` and respawns in a
+loop.**  PC 800024FE is in autopush's TEXT-DATA GAP (text ends 0x8000139C, data starts 0x8000339C) =
+a WILD JUMP into unmapped space.  autopush's relocations are **R_68K_JMP_SLOT (LAZY PLT** for
+exit/open/printf/ioctl/getopt...): the program calls a libc fn via the PLT, and if the lazy resolver
+(GOT[2]=_rt_bind) / PLT stub isn't set up, the jump lands in garbage.  init (kernel-exec'd) + the
+init shell got far enough, but these children wild-jump.  **CAVEAT (user, 2026-06-26): the disk image
+FS corrupts intermittently from our boots -> some boots fsck, some don't, and a corrupted autopush
+file would ALSO produce a garbage GOT/PLT -> the SAME wild jump.  So CONFIRM this reproduces on a
+known-clean FS before investing in a lazy-PLT-resolver fix.**  NEXT: verify determinism (clean FS),
+then if systematic, investigate the lazy PLT/_rt_bind setup for child execs (cf. SVR4-3b2 rtld
+rtbind.c).  Also still open (deferred, robust skip in place): the region-A=6 FFFFFFFF table source
+(hat_growsdt 040 zero-fill).
+
+## (DONE, VERIFIED) uvatosde040 -> COW WORKS, init runs rc scripts
+The uvatosde 040 port (commit, uvatosde040.s + usrxmemflt inline-leaf patches) is BOOT-VERIFIED:
+the F_PROT/COW path now resolves -- serial shows `as_fault addr=C102F11C type=1 rw=2 ret=0` (a
+genuine F_PROT/COW write fault, ret=0) and `GOTmap C102F000 prot=F` (the GOT page COW'd to a
+writable private copy).  The 0x5B088 bus error is GONE.  **init now runs its rc scripts** -- it
+forks a shell and execs `/sbin/autopush -f /etc/amiga.ap` from /etc/inittab.  uvatosde040 does the
+full per-proc 040 walk (curproc->p_as@(124)->root040@(20) -> A=va>>25&7f / B=va>>18&7f / C=va>>12&3f)
+and returns &PTE; usrxmemflt's two inline 030 leaf walks (0x5b072 F_PROT, 0x5b0fc hardbus) are
+byte-patched to `moveal %a0,%a2` to consume it.
+**NEW BLOCKER: KERNEL bus error pc=0x5B088->now 0xD8064 (hat040.s `Lf_PTE`) during a CHILD's exit.**
+Backtrace: exit -> relvm -> as_free -> **hat_free** -> Lf_PTE `tstl %a3@` where a3 = leaf base
+(Bdesc & 0xffffff00) is INVALID.  The child (autopush) first took a `User BUS ERROR at FFFFFFFF
+PC:800024FE` (reason TBD -- maybe a real missing feature, maybe a bad page) -> exit -> teardown.
+ROOT (likely): **hat_dup (0xb502a, fork's page-table copy) is NOT 040-ported** -- STUBBED in the dbg
+build (forkdbg.s), STOCK 030 in the base build -> fork builds the child a malformed 040 tree (a
+pointer-table slot with UDT set but a garbage leaf base) -> hat_free040 walks it and bus-errors.
+**NEXT SUB-PROJECT = the user-VM fork/teardown HAT family: port hat_dup (+ likely hat_growsdt) to
+040 (copy the per-proc root040->ptr->leaf tree), and/or make hat_free040 robust to a stale slot.**
+Also open: WHY autopush user-faults at FFFFFFFF (investigate after the kernel teardown is clean).
+
+## (DONE, VERIFIED) usrxmemflt F_PROT/COW path -- uvatosde040 + inline-leaf patches
+The gen_strategy d3 #4->#8 fix (commit a3668a8) is BOOT-VERIFIED on the instrumented fs-uae:
+c100f348=204f, c100f364=61ff (correct _rt_boot), **c10127b4=4e56 (_rt_setup RUNS)**, reloc loop
+iterates, **872 GOT writes relocate the whole GOT**, then c100f370 `jmp %a0@` -> init's relocated
+_start.  The whole GOT/linker sub-project (C1012088 bus error) is SOLVED; init runs (serial: pid 5).
+**NEW BLOCKER (serial): KERNEL bus error pc=0x5B088 fmt=7 in usrxmemflt+0x1aa while pid 5 init runs.**
+Backtrace u_trap->k_trap->usrxmemflt.  It's the **F_PROT/COW path** (5b040: SSW bit 0x800) -- so
+**ptest040 (526b708) is now PAYING OFF** (init's write-protect fault is correctly classified F_PROT,
+not F_INVAL).  The handler crashes at 5b068-88: `jsr uvatosde` (per-proc SW page-table walker) then
+leaf PTE addr = SDE@(4) + `((VA>>11)&0x3f)*4` (0x5b078) -> `bfextu a2@(3)` @0x5b088 bus-errors (a2
+invalid).  TWO causes: (1) **uvatosde(0xb74f8)/uvatopte/uvirtophys(0xb7860) are STOCK 030 walkers,
+UNPORTED** (no override exists) -> walk the INERT 030 tree -> garbage SDE; need an 040 per-proc-root
+port (like kernel vatosde040 in kvm040.s).  (2) usrxmemflt leaf `(VA>>11)&0x3f` is a 2KB straggler at
+**0x5b078 + 0x5b102** (check siblings 0x5afa0/0x5b02e) -> >>12.  **NEXT SUB-PROJECT = uvatosde/
+uvatopte/uvirtophys 040 port + usrxmemflt leaf >>11->>>12 (+ likely hat_chgprot x6 COW).**  This is
+the user-VM SW-walker + COW frontier, now live because init runs COW faults.
+
+## (DONE, VERIFIED) gen_strategy disk SECTORS-PER-PAGE d3 #4->#8
+The 2KB straggler is `gen_strategy` **0x3d9e6 `moveq #4,%d3`** (disk sectors per page = 2048/512 = 4).
+Pinned by static analysis in source order (Amiga image -> root=ufs; SVR4 ufs_vnops.c; gen_strategy
+binary).  init's libc.so.1 text fault (off=0xF000) -> ufs_getapage; root fs_bsize=8KB (>4KB page) ->
+lbnoff=0xE000 -> pvn_kluster builds a **2-page cluster** (0xE000+0xF000, io_len=8KB).  gen_strategy's
+**multi-page breakup loop** (0x3da20, b_pages!=NULL, bcount>4096) deposits it: `b_blkno = base +
+d3*page_index` (0x3daa2).  The per-page DMA byte count d1 (0x3da40) was ALREADY patched to 4096, but
+**d3 stayed 4** -> page[1] reads 4096 bytes from disk base+4sec (=2KB=file 0xE800) not base+8sec
+(=file 0xF000) -> C100F000 = file[0xE800..] -> C100F348 = file[0xEB48], EXACTLY the observed bug.
+Single-page reads (the dir-read validation) never enter this loop -> never exercised.  FIX in
+`patch_modelb_pager.py` group genst: 0x3d9e6 `7604`->`7608`.  BUILT (relink-040.sh + -dbg.sh, 88
+pager patches, 0 complaints, byte-verified).  ALL the offset-arithmetic suspects (as_fault/segvn_
+fault/ufs_getpage/ufs_getapage/pvn_kluster) were proven 4KB-CORRECT in the live build -- the bug was
+the DISK-SECTOR STRIDE, not an offset.  (buf_breakup 0x3d21e `pea 0x800` = a separate latent 2KB site
+in the LINEAR-buffer path, NOT on init's path; convert later if it bites.)  **VERIFY: boot
+build/unix-040 on the instrumented fs-uae -> AMIXPC f348=204f, f364=61ff, C10127B4(_rt_setup) fetched
+-> GOT relocated -> init past C1012088.**
+
+## OVERALL STATUS (2026-06-26 -- ROOT CAUSE pinned by an INSTRUMENTED fs-uae; FIX above)
+68040 port boots to **/sbin/init running its DYNAMIC LINKER** (libc.so.1 interp @C1000000); the
+0x66000030 bus error is GONE.  **DEFINITIVE ROOT CAUSE (PC-accurate, via an instrumented fs-uae):
+the demand-paged TEXT page C100F000 is loaded from FILE offset 0xE800 instead of 0xF000 -- exactly
+0x800 (2KB) TOO LOW -- a Model B 2KB file-offset straggler in the text-segment demand-paging path.**
+Proof: a patched fs-uae `mmu_get_iword` logged the actual WORDS fetched while executing `_rt_boot`
+at C100F348+; every word was WRONG (got 0000/0016/0002/f9fe... = an Elf32_Rela table, r_info type
+0x16=R_68K_RELATIVE) where `_rt_boot` code (204f/2f3b...) was expected.  A file search placed the
+runtime bytes at C100F348 at file 0xEB48 = 0xF348 - 0x800.  So `_rt_boot`'s `bsrl _rt_setup`
+(file 0xf364, should be `0x61ff`, reads `0x0002`) is GARBAGE -> **`_rt_setup`(0x127b4) NEVER runs**
+(AMIXPC trace confirms C10127B4/C10128DE are never fetched) -> the GOT is never relocated -> init
+bus-errors (PC C1012088, /sbin/init).  This RETIRES all earlier symptom-theories (COW/ptest
+classification, aliasing, the -0x800 .rela DATA read, "loop runs but stores vanish") -- they were
+ALL downstream of running CORRUPTED libc code.  **NEXT (the fix):** find the getpage/kluster site
+that computes the text page's file-offset ONE 2KB-click too few (page C100F000 = seg-offset 0xF000
+= click 0x1E, loads from 0xE800 = click 0x1D); fix in `src/patch_modelb_pager.py`
+(ufs_getapage/pvn_getpages/pvn_kluster/segmap family).  Prime suspect: pvn_kluster read-behind
+start-offset, OR ufs_getapage file-offset->block.  Same family as the already-fixed
+gen_strategy/pvn_*/segmap stragglers -- this one just never ran before init exercised it.
+
+### TOOL: instrumented fs-uae (THE breakthrough enabler -- PC-accurate ground truth)
+Source `kernelsupport/fs-uae` (git, **checkout v3.2.35** = SDL2, matches the user's binary; master
+needs SDL3 -- GITIGNORED, do NOT commit).  Patches (AMIX-DBG comments): `src/include/cpummu.h`
+(mmu_get/put_long/word/byte + mmu_get_iword PC+word trace), `src/cpummu.cpp` (mmu_*_slow = the
+faulting/ATC-miss path), `src/rpc.cpp` (debuggable()->1).  Build: `cd kernelsupport/fs-uae &&
+make -j8` (deps: libtool libsdl2-dev libopenal-dev libmpeg2-4-dev libflac-dev).  User runs it by
+full path from `kernelsupport/fs-uae` with `flush_log = 1` in the config (else the log buffers at
+~57KB); log = `~/Asiakirjat/FS-UAE/Cache/Logs/fs-uae.log.txt`.  Use a CLEAN disk image (torn-file
+boots corrupt it).  Success criterion for the fix: AMIXPC shows the CORRECT `_rt_boot` words
+(f348=204f, f364=61ff) and C10127B4 (_rt_setup) IS fetched.
+
+## SOURCE-CONSULTATION ORDER (user rule -- ALWAYS follow before digging into binaries)
+When you need to understand a function or layout, check sources in THIS order:
+1. **Amiga Unix disk-image tree FIRST** -- `~/kehitys/amix-playground/vanilla/usr/sys/` and
+   `vanilla/usr/src/` (the image is ALWAYS mounted there) + extracted `kernelsupport/amix-src/sys/`.
+   129 C files exist, but `vm/` is binary-only (just `exp`+Makefile).  Always check here first for
+   headers/struct layouts and the fs/exec/os modules that DO ship C.
+2. **Related System V sources SECOND** (full C for VM/pager): `kernelsupport/usl-svr42/common/uts/
+   mem/{vm_pvn.c,seg_vn.c,seg_map.c}` (SVR4.2, closest), `kernelsupport/svr4-src-3b2/`,
+   `kernelsupport/svr4-v4/`.  Not Amiga, but the SVR4 logic is stable.  (gitignored -- copyright.)
+3. **Ghidra decompilation of the unix kernel THIRD** -- `sh tools/ghidra-decomp.sh func1,func2`
+   (headless, MC68030, decompiles named fns of `vanilla/stand/unix`; calls show as `func_0x0` --
+   resolve with `m68k-linux-gnu-objdump -d -r`).  GUI project at `ghindra-unix/amix.rep` (gitignored).
+   Use this for the binary-only core (vm/os/disp/ml `exp`) BEFORE hand-disassembling.
+4. **Raw binary disasm LAST** -- `m68k-linux-gnu-objdump -d -r --start-address/--stop-address`.
+
+## (SUPERSEDED 2026-06-25 -- refined by the 06-26 text-page finding above) SMOKING GUN
+68040 port boots to **/sbin/init running its DYNAMIC LINKER** (libc.so.1 interp @C1000000).  The
+0x66000030 bus error is GONE.  init jumps to the interp entry C100F348; the linker runs but
+**libc.so.1's GOT is never RELOCATED -> the linker reads its own _rt_warn/_rt_tracing through the
+raw GOT, gets garbage, and `_exit(0)`s cleanly before init's _start runs.**  THREE theories were
+chased and KILLED this session: (1) ptest/F_PROT misclassification; (2) RMW-write-drop (the GOT
+relocs are ALL R_68K_RELATIVE PLAIN stores -- via the SVR4-3b2 rtld source); (3) "fs-uae drops user
+stores to COW'd pages" (REFUTED by reading fs-uae cpummu.cpp -- user write-protect WRITES fault
+correctly).  The 3 fixes built for those (eager-COW segvn_cow040.s, pflusha, usrxmemflt-trace) were
+WRONG-MODEL and were **REVERTED (commit a429df1)**.  **CORRECTED ROOT (SMOKING GUN): the interp's
+`.rela.data` file page maps 0x800 (2KB) TOO LOW -- a Model B 2KB file-offset straggler in the
+demand-paging path.**  Proof: SVR4-3b2 `rtld/m32/rtsetup.c` shows `_rt_setup`(0x127b4) self-relocates
+ld.so via `*(ld_base + r_offset) = ld_base + r_addend` over DT_RELA..DT_RELA+DT_RELASZ.  At runtime
+AT_BASE=C1000000 and `.dynamic`(DT_RELA=0xd0f8, DT_RELASZ=0x2250) are BOTH correct, so reladdr=
+C100D0F8.  But a rexit probe reading C100D0F8 (should be .rela.data[0] = `0002E014 00000016
+00011080`) got the ASCII strings `_devzero_fd\0ungetc\0sigs` = FILE offset **0xc8f8** -> 0xd0f8 -
+0xc8f8 = **0x800**.  So _rt_setup reads .strtab strings where its relocations should be -> the GOT is
+never relocated (a RAM scan for the relocated _rtmalloc C101116E found it NOWHERE).  OPEN LINK
+(don't over-claim): if the loop read this -0x800 garbage during the NORMAL run the bad type byte
+0x72 != RELATIVE(22) would SIGKILL, but we see a clean _exit -- so first CONFIRM the -0x800 is a
+normal demand-fault bug (dump C100D0F8 via an EARLIER hook, not rexit) and not a teardown artifact.
+Then FIND+FIX the 2KB straggler in segvn_fault/ufs_getpage's page file-offset (= svd->offset +
+(page_va - seg_base); a remaining >>11/0x800 round) -- same family as gen_strategy/pvn_*/segmap.
+Diags live: assegat_dbg.s rexit probes 'L'(rela)/'D'(.dynamic)/'Z'(RAM scan)/'P'(phys PTE)/auxv
+stack dump.  REFERENCE SOURCES (gitignored, do NOT commit -- copyright): `svr4-src-3b2/` (SVR4 VM +
+rtld C source) and `fs-uae/` (68040 MMU emulation cpummu.cpp).  Real 040 HW (a3640/Mercury) =
+separate later track (no serial cable now).  See [[amix-040-init-userpage-pfn]] (newest section).
+
+## >>> ★ USER-PT FRONTIER (2026-06-24): hat_pt2ptdat invalid pte ptr -> port the user page-table builder <<<
+exec maps init's ELF segments (`execmap vaddr=80000034 filesz=66D4` / `vaddr=80008708 prot=F`),
+then demand-faults va=80009000: segvn_faultpage -> hat_memload -> hat_pteload(040, 0xd7604) ->
+hat_pt2ptdat -> PANIC "invalid pte ptr".  hat_pteload Lbhave reads the pointer-table slot
+(`slot=7D20200`), `Bdesc=0x003F0002` -> leaf base 0x3F0000 = an UNBACKED memory hole (RAM is at
+phys 0x07000000+, chip RAM ends at 2MB), so `*a4=0xFFFFFFFF` and hat_pt2ptdat(a4>>12) sees a bogus
+pfn -> panic.  **NARROWED to the exec VM teardown/rebuild (diagnostics, two boots):** hat_ptalloc
+is FINE -- the Lballoc print showed `Lballoc leaf va=8001F800 leafpt=7D3A400` (a valid RAM
+0x07D3A400), and hat_sdtalloc's PFN<<11 sites are already <<12.  The CRUCIAL log sequence: the
+first user faults (va=8001F800, same Bidx=0 -> same slot[0]) get a GOOD leaf 0x07D3A402; THEN exec
+runs `V`(relvm) -> `hat_free ENTER as=401AA400` (tears down the old AS) -> `execmap` (new binary)
+-> the va=80009000 fault reads slot[0] = 0x003F0002 (CHANGED).  So the bad descriptor appears ONLY
+AFTER teardown+rebuild.  ROOT: stock 030 `hat_free`/hat_dup/hat_growsdt walk the INERT 030 st_top
+tree, NOT the live 040 pointer tables hat_pteload built, so they free the underlying pages but
+leave a stale/garbage 040 pointer-table slot.  NEXT: trace ptr-table 7D20200 slot[0] across
+hat_free (what writes 0x3F0002 -- hat_free's leaf-free, or a fresh-but-unzeroed pointer table on
+rebuild); port hat_free + the user-VM HAT family to maintain the 040 tables.  Diagnostics in
+place: hat040.s Lpemsg1 (leaf/slot/Bdesc dump) + Lbamsg (Lballoc result).  Memory
+[[amix-040-init-userpage-pfn]].
+
+## >>> ★★ EXEC-HEADER FRONTIER SOLVED (2026-06-24, commits c8be89f/4b18053, boot-verified) <<<
+The coupled 4KB page-cache conversion (patch_modelb_pager.py, groups pgget+pvnk + pvn_done): (1)
+**pgget** page_get-internal `(size+2047)>>11 -> (size+4095)>>12` (0xaffb8 #2047->#4095; 0xaffbe
+moveq #11->#12 = shift count in d1, NOT the lsrl at 0xaffc0) -- the missing keystone (patch_modelb.py
+had already converted the variable-size callers segkmem_alloc/hat_sdtalloc/segu to expect size/4096
+frames, leaving page_get at 2x).  (2) **pvnk** pvn_kluster rounds the cluster to 4KB + steps the
+file offset 4KB/page (0xb19b2 #2048->#4096 + rounding consts) -- pvnk ALONE broke mount because
+page_get returned 2x the frames the 4KB loop expected; pgget fixes that.  (3) **pvn_done** page-walk
+step `addil #2048,d4 -> #4096` (0xb1d60): pvn_done loops `while d4 < b_bcount` pulling one page/iter
+off b_pages -> a 2KB step over 4KB pages overran the list -> `pp >= pages && pp < epages` PANIC
+(vm_page.c:1192).  VERIFIED: banner survives (mount dir-read OK), `segmap-map va=40448000 poff=0
+pfn=7D24` + `va=40449000 poff=1000 pfn=7D25` (4KB VA AND poff stride, no collision), exhd_getmap 'H'
+magic=7F454C46.  Diagnostics still in: hat040.s `DBG segmap-map` (gated 16) + execmark.s 'H' dump.
+
+
+## >>> ★★★ FIXED (2026-06-24 night): 68040 access-error WRITE-BACK replay -> init now reaches exec ELF-load <<<
+The init-bootstrap blocker is FIXED.  `src/wb040.s` (commit 32a105c) ports the 68040
+access-error WRITE-BACK replay as a `usrxmemflt` wrapper: after as_fault resolves the demand-fault
+(ret==0) on a format-7 frame, re-issue every valid write-back (WB1/2/3; valid = WBxS bit7) via
+`moves.<size> WBxD -> (WBxA)` under `DFC = WBxS & 7`.  This completes copyout(icode)'s lost first
+store.  **VERIFIED in the serial log:** icode page offset 0 = 0x4FFB0170 (was 0), saved usp =
+0x8080002A (was the stale 0x070DB958), copyinstr path = "/sbin/init" (2F736269), and init now runs
+lookuppn -> gexec -> elfexec(F) -> relvm(V) -> setregs(X) -- it LOADS the init ELF binary.
+Wiring: usrxmemflt is file-local -> `--globalize-symbol usrxmemflt --weaken-symbol usrxmemflt
+--add-symbol usrxmemflt_orig=.text:0x5aede` + link build/wb040.o (relink-040-dbg.sh).  Frame WB
+offsets confirmed empirically (get_fault040 'W' dump): WB3S@+78 WB3A@+88 WB3D@+92, WB2 @+80/+96/+100,
+WB1 @+82/+104/+108; WBxS bit7=valid, &7=FC, >>5&3=SIZE(0=long,1=byte,2=word).
+**NEW FRONTIER (not yet login):** exec's ELF loading loops/retries with `hat_pteload pfn mismatch
+va=40448800 *pte=7A50001 newpfn=7A51 (overwriting)` (kvseg leaf-PTE remap) + `blkatoff page_find ->
+NULL` -- the user-VM / file-mapping hat family (hat_dup/hat_chgprot/segvn page cache).
+**TODO:** (1) DONE (commit 0ffdac8) -- wb040 + getfault040/userspace040/vtop040 moved to the BASE
+build; (2) DONE (commit 88e4339) -- krnxmemflt wrapped; (3) the exec frontier = the 4KB page-cache
+conversion (see the EXEC FRONTIER section above).  Memory [[amix-040-init-userpage-pfn]].
+
+## >>> (superseded by FIXED above) TRUE ROOT CAUSE (2026-06-24 night): 68040 access-error WRITE-BACK not replayed <<<
+The init hang is the **68040 access-error WRITE-BACK** not being replayed.  main()'s
+`copyout(icode, 0x80800000, szicode)` -- the FIRST `movesl` to the ZFOD page demand-faults; the
+68040 access-error frame carries the pending store (WB1/2/3), but the bus-error handler demand-pages
+the page and NEVER re-issues the store, so **icode offset 0 stays 0** while offsets 4+ land.
+PROVEN with caches OFF (CACR=0, so lfuword = literal RAM): icode page =
+`0 / 00000028 / 700B4E40 / 60FE2F73` -- only the first long (the lea word 0x4FFB0170) missing.
+The zeroed first word decodes as `ori.b` and falls THROUGH to `moveq #11,d0; trap#0` (so E/exece
+still fires) but **the lea never runs -> USP stays stale 0x070DB958** -> systrap copies syscall args
+from kernel memory = garbage -> empty exec path -> lookuppn busy-loops -> init never starts.  So the
+wrong-usp + garbage-args + lookuppn-loop are ALL this one bug.
+**ALL earlier theories were WRONG (don't re-chase):** pfn factor-of-2 / phys-beyond-RAM (phys
+0x07A5D000 IS backed RAM, DEADBEEF write/readback OK); page-table cache coherency (CACR=0, caches
+OFF); the loader (copies the real memory list); FS/lookuppn (030 baseline boots fine).  8MB-vs-16MB
+is a separate Model-B accounting artifact.
+**FIX (next):** port 68040 access-error WRITE-BACK replay into the bus-error path (k_trap/u_trap /
+the nullvect/ktraps/utraps glue).  The 040 access-error frame (format 7) has WB1D/WB1S/WB1A (+WB2/3)
+status/addr/data for pending stores; after as_fault resolves the page, re-issue any write-back whose
+valid bit is set (check WBV/SIZE/TT/TM).  get_fault already reads FA at frame+84 from this frame, so
+some offsets are known.  Motorola 68040 UM: "Access Error Stack Frame" / "Returning from an Access
+Error".  Diagnostics: assegat_dbg.s copyout wrapper (icode-byte dump), execmark.s (usp/PC trace),
+relink-030-dbg.sh (030 golden ref -- boot UPSTREAM unix_boot, not unix_boot040).  Memory
+[[amix-040-init-userpage-pfn]].
+
+## >>> SUPERSEDED (2026-06-24 eve): "user-page PTE points to phys BEYOND RAM (Model B factor-of-2)" -- WRONG, see above <<<
+Branch `040-switch-trace`. The init-startup hang was traced END TO END with direct serial markers
+(execmark.s) on the 040 dbg build + a HEALTHY 030 baseline (relink-030-dbg.sh, golden reference).
+**The chain of symptoms (each proven, then superseded by the next):**
+- init never starts; boot hangs after `copyout(icode,0x80800000) ret=0` (markers `M`,`E`).
+- proc 1 DOES reach user mode + execs: `E`(exece) fires; the syscall path arg (the `/sbin/init`
+  path pointer) is GARBAGE on 040 (`copyinstr from=0x3C66..`) vs `0x8080000E` on 030.
+- The garbage arg comes from a WRONG saved usp: `u.u_ar0[0] = 0x070DB958` (a kernel addr) on 040
+  vs `0x8080002A` (icode's `lea L%stack,sp`) on 030.  Both trap from USER mode (SR=0, PC=8080000C)
+  -> icode ran -- but USP was never the value its `lea` set.
+- ROOT: the **icode page itself is incoherent**.  `lfuword(user 0x80800000)` = `0x00000000` on 040
+  (4FFB0170 on 030) -- EVEN right after copyout (`f` marker) and even after `cpusha`+`pflusha`.
+  The instruction FETCH runs the real icode (so it reaches a phys with icode); user-FC DATA reads
+  see zeros.  So the syscall arg copy (lfuword from the user stack) reads zeros/garbage.
+- URP walk (exece AND post-copyout, IDENTICAL): URP=07A6C000 (== copyout's, unchanged), leaf PTE
+  `0x07A5D019` -> phys **0x07A5D000**, which reads ZEROS.  copyout uses **DFC=1 (user data)** (movec
+  #1,%dfc; movesl) -- the SAME FC as lfuword -- so both resolve via URP to phys 0x07A5D000.  No
+  DTT/ITT split (ITT0=0-1GB only, ITT1 disabled, DTT1 supervisor-only).
+- **THE BUG: phys 0x07A5D000 is BEYOND the kernel's managed RAM.**  The 040 detects only 8MB
+  (`Total Unix memory = 8386560` = 0x7FF800; base 0x07000000 -> top ~0x077FF800) where the SAME
+  fs-uae config on 030 detects 16MB (16775168).  0x07A5D000 > 0x077FF800 by ~2.4MB.  The user-page
+  PTE points OUTSIDE RAM -> reads zeros.  This is a residual **Model B 2KB-click -> 4KB-page
+  factor-of-2 error in the USER-fault pfn/phys path** (a 2KB-click number used as a 4KB page-frame
+  number -> phys ~2x too big), which ALSO explains the 8MB-vs-16MB halving (same root).
+**NEXT (the fix): audit the user-fault pfn path** segvn_fault -> anon/page_get -> hat_memload ->
+hat_pteload(pfn) for a click(2KB)-vs-page(4KB) mismatch (`pfn<<12` in hat_pteload @Lwleaf expects a
+4KB page-frame number; if `page_get`/segvn hands it a 2KB click, the phys doubles).  Cross-check
+with the memory-sizing halving (maxclick/physmem).  Compare the GOOD kernel-region mappings (which
+work) vs the user ZFOD page.  Tools: the dbg markers are all in `src/execmark.s` (040 build)
++ `relink-030-dbg.sh` (030 golden baseline); commits ae5f942..46a78aa on `040-switch-trace`.
+NOTE: a `cpusha+pflusha` was added to hat_pteload's exit (src/hat040.s) as a coherency
+guard -- it did NOT fix this (the bug is the wrong phys, not cache), but it is correct for 040 and
+can stay (or be reverted if the per-fault cost matters).
+
+## >>> LATEST (2026-06-24): init/copyout blocker SOLVED; now blocked on SCSI-DMA root-mount <<<
+Branch `040-switch-trace`. See memory [[amix-040-ctx-switch-working]] (updated) + commits
+`ae5f942` (init/copyout fixes), `fc01890` (SCSI localization).
+
+**init/copyout blocker SOLVED (2 fixes).** The "icode page @0x80800000 is ZEROS → init SIGSEGV"
+blocker was NOT a write-back-replay issue (that earlier guess was wrong). Two real causes, fixed:
+1. **DTT1 user-leak** — `src/pstart040.s` DTT1 `0x807fc060 → 0x807fa060` (S=10 both →
+   S=01 supervisor-only). The old DTT1 transparently translated USER accesses to 0x80000000+ to
+   nonexistent phys, so copyout's user-FC `moves` to the icode VA wrote to the VOID (no fault,
+   readback 0). With S=supervisor-only, user VAs ≥0x80000000 (init lives at 0x80800000) fault +
+   demand-page via the URP page tables. (BASE build / relink-040.sh.)
+2. **userspace() 040 port** — `src/userspace040.s` (--weaken userspace @0x5b5f0). Stock
+   userspace() decides user-vs-kernel faults from the 030 SSW and knows only 030 formats 0xA/0xB;
+   a 040 format-7 access-error frame fell through to "non-bus error exception" → returned 0
+   (kernel) → k_trap routed copyout's fault to **krnxmemflt(&kas)** instead of
+   **usrxmemflt(curproc->p_as)** → as_segat(&kas, 0x80800000)=NULL → copyout EFAULT → PANIC
+   "main: copyout of icode failed". Fix: format 7 reads FC = (SSW & 7), 040 **SSW @ frame+76**.
+   EMPIRICAL 040 access-error frame (ktrap_dbg.s raw dump): SR@+64 PC@+66 fmt/vec@+70 (0x7008)
+   **SSW@+76** (0x0401 = ATC,write,TM=user) **FA@+84** (= get_fault). +4 shift from textbook.
+
+**SCSI root-mount FIXED (vtop040, commit 5b6f68b).** The r=6 was NOT cache — it was the disk
+DMA physical address. `alien/dd.c:240  dp->com.addr = vtop(b_un.b_addr, b_proc)`; sdpart read()
+leaves b_proc=0 → `vtop(&block,0)` → svirtophys(&block), which WALKS kptr040 page tables that may
+not cover the DTT0-transparent kernel region → wrong/0 phys for some `block` addresses (layout-
+sensitive) → disk DMA misses block. **A3000 uses a3091 (32-bit direct DMA, device@0xDD0000); NOT
+the a2091 24-bit+chip-bounce path.** FIX: `src/vtop040.s` (--weaken vtop + --add-symbol
+vtop_orig=0xb7568): for va<0x40000000 (DTT0 identity region, phys==va by construction) return va
+directly, else stock vtop. Benefits ALL disk DMA (dd/scsi/ram/hd/flop). **CONFIRMED** (serial,
+deterministic): the build that failed root-mount 4× now mounts (sdpartition r=0 ×3). NO source
+for vtop/svirtophys (binary-only). SCSI source: `alien/{sdpart,dd,scsi,a2090,a2091,a3091}.c`.
+
+**WHOLE CHAIN VERIFIED**: DTT1 + userspace040 + vtop040 → root mounts → banner → swapconf → sched
+→ proc-1 setup → **copyout(icode,0x80800000) ret=0** (was EFAULT). The copyout's own `moves`
+write demand-faults the icode page (ufault 80800000), resolves in proc1's p_as=401AA400 (was
+&kas), ptloads it, writes icode. NO SIGSEGV, NO "ufault 80801000", NO panic. healthy.
+
+**>>> NEW BLOCKER (2026-06-24): init startup HANGS after the icode copyout. <<<**
+After main's `copyout(icode) ret=0 caller=0x59994`, the boot HANGS deterministically (no crash,
+no login). main continues: `as_map(stack@0xC07FF800)` → branch `0x59c18` (return-to-user / launch
+proc 1 to run icode → trap#0 → exec /sbin/init). LAYOUT-SENSITIVE: one build reached a 2nd copyout
+(proc-1 exec running); the current build hangs earlier. NEXT: add a marker after main's icode
+copyout (disasm `0x59c18`+ = the proc-1 launch / return-to-user path) to localize the hang —
+likely the context-switch to proc 1 to RUN init, or exec of /sbin/init. Reaching exec needs more
+user-VM hat (hat_dup/fork, COW), uvirtophys/uvatosde, and 040 signal frames may follow.
+Addrs: main=0x597ac (icode copyout @0x5998e, ret addr 0x59994; stack as_map @0x599cc; branch
+@0x599d8 → 0x59c18). git checkpoints: `5b6f68b` (root+copyout work), `ae5f942` (pre-SCSI).
+
+---
+
+## >>> SUPERSEDED (2026-06-23): 040 ctx switch WORKS; init runs in USER MODE + EXECs <<<
+(The hat_free / write-back-replay theory below is SUPERSEDED by the 2026-06-24 section above —
+the real init blocker was DTT1 + userspace(), not write-back replay.)
+Verified in the SERIAL log (branch `040-switch-trace`, see memory [[amix-040-ctx-switch-working]]
++ [[amix-serial-debug-capture]]).  The whole chain now runs:
+- **040 context switch** (resume040 in `src/mainmarks.s`, --weaken resume/sched/idle):
+  swtch calls `resume(arg1=u+0x318 FIXED VA 0x40000318, arg2=childphys)`; the 040 remap writes
+  the new proc's 2 u-area leaf PTEs into `uarea_pt` (kptr040[0]&~0xFF), `cpusha bc`+`pflusha`,
+  then restores context from the FIXED VA.  **DUAL SOURCE**: path U = proc 0 / static u-area via
+  `p_ubptbl` (proc+80, 2KB-click→4KB PTE, keep live flags); path V = forked procs via a kptr040
+  walk of u_va (kvsegu, already 040 4KB PTEs).  Earlier bugs fixed: read context from FIXED VA
+  not kvsegu (kvsegu DATA bus-errors early); 2KB→4KB stride (uarea_pt[k]=p_ubptbl[2k]).
+- All 4 daemons + proc 1 run; banner, swapconf, sched (maxrunpri=0x4F) all pass.
+- **Last 030 `pmove %a1@,%crp` sites patched** → `movec %a0,%urp` (hat_map/hat_exec/hat_asload,
+  patch_pmmu_040.py).  A full kernel PMMU scan (`objdump|grep pmove/pflush/ptest`) = COMPLETE
+  for every reachable site (only the DEAD original-pstart tail remains).
+- **get_fault override** (`src/getfault040.s`, --weaken): decodes the 040 format-7
+  access-error frame (Fault Address at frame+84).  Stock only knew 030 formats 0xA/0xB → it
+  returned -1 → "User BUS ERROR" on init's first user fault.  With this, init runs in USER mode,
+  demand-pages its text (0x80800000), and **execs** the init binary.
+- **hat_pteload lazy pointer-table alloc** (`src/hat040.s`): a fresh user as has an EMPTY
+  040 root slot (measured Adesc4=0 AND desc8=0) because the 030 hat_growsdt writes the root with
+  the 030 VA split + 8-byte descs that our 040 walk never reads.  Worked around by allocating the
+  pointer table on the fault path (hat_sdtalloc count=8 = 512B = 128×4, root[Aidx]=ptable|UDT2).
+
+## >>> NEXT BLOCKER (2026-06-23): user-VM hat family is still 030 (8-byte descriptors) <<<
+init execs → teardown `relvm → as_free → hat_free → hat_ptfree` BUS-ERRORs: **hat_free walks the
+page-table tree with `asll #3` (030 8-byte stride)** over our 4-byte 040 tables → garbage ptdat
+list pointers → crash.  So the REMAINING CHUNK = the **user-VM hat family 040 port**: hat_growsdt
+(build, 0xb6058), **hat_free (0xb41e0) / hat_ptfree (0xb6cf4) / hat_sdtfree** (teardown),
+hat_chgprot ×6 (COW), hat_swapout/swapin.  All 030 8-byte-desc, NO source (triple-confirmed) →
+binary RE/override like hat_pteload.  **Recommended order: hat_free + hat_ptfree first** (the
+teardown that crashes now) → init's exec-teardown passes → see if init reaches a shell; then
+hat_growsdt (then the lazy hat_pteload hack can be removed).  Descriptor formats ARE source:
+`include/sys/immu.h` sde_t/pte_t, `include/vm/vm_hat.h` hat_t — read them for the port.
+~80% to single-user 040.
+
+**INSTRUMENTATION RULE (learned this session, see memory [[040-detour-jmp-crashes]]):** byte-
+patch jmp-DETOURS into relinked code Line-F-crash at the hook's first instruction on this 040
+(setbackdq/sys_forkret/sched detours all failed identically); use `--weaken-symbol` OVERRIDES
+(schedpaging/sched work).  Also use the C headers for struct offsets ([[kernel-source-vs-binary]]),
+don't reverse-engineer them (that caused the setrun mis-diagnosis).
+
+## >>> SOURCE MAP + BATCH PLAN (canonical; check source BEFORE reverse-engineering) <<<
+Full map in memory `kernel-source-vs-binary.md`.  Summary:
+- **HAS SOURCE (read/edit, don't RE):** trap/exception/vectors = `amix-src/sys/amiga/ml/
+  ttrap.s`+`vec.s`+`syms.s` (ttrap.s `stkrestore:` = the 68020/030 frame-format/`framesz`
+  handling = the 040 trap-frame edit point); all Amiga drivers/boot/console/SCSI under
+  `amiga/`; ALL struct/flag/constant layouts in `include/sys/*.h` + `include/vm/*.h`
+  (proc/class/disp/var/pcb/reg/trap/param/immu/vmparam/user/sysmacros, vm/pte, vm/seg).
+- **BINARY-ONLY (RE/transcribe via --weaken override, see [[040-detour-jmp-crashes]]):**
+  `os/exp` (newproc/sched/fork/procdup/main/p0init), `disp/exp` (swtch/setbackdq/ts_*/sys_*),
+  `ml/exp` (save@0x84/resume@0x9c/idle@0x19c), `vm/exp` (hat_*/segu_*/seg*/as_*/page_*).
+
+### Remaining 040 work as BATCHES (do related sites together):
+1. **CONTEXT SWITCH -- DONE (2026-06-23).** resume040 (mainmarks.s) dual-path remap; swtch
+   pmove→movec patched; save@0x84 unchanged (works).  See the top section.
+2. **TRAP/EXCEPTION FRAMES -- PARTLY DONE.** get_fault 040 format-7 access-error frame =
+   DONE (getfault040.s).  Still SOURCE-editable if more frame issues surface: ttrap.s
+   `stkrestore`/`framesz` + vec.s (signal return / sigreturn frame sizes), use trap.h/reg.h/pcb.h.
+3. **child context (setuctxt/procdup) -- DONE in effect** (children resume + run; resume040
+   transfers correctly).  Revisit only if a child's first-resume frame misbehaves.
+4. **user-VM hat family 040 port (BINARY/RE) -- MOSTLY DONE.** DONE + boot-verified in the BASE
+   build (hat040.s): hat_pteload (fault-fill), hat_alloc, hat_free040/hat_ptfree (teardown, with
+   [pages_base,pages_end) garbage-slot guards), hat_chgprot040 (fires), hat_unload040.  Still
+   PENDING: **hat_dup** (fork -- BASE unix-040 has STOCK-030 hat_dup; only the dbg build stubs it,
+   so the base is not fork-safe = ISSUE-4), **hat_exec@0xb6f20** (exec stack move -- 030 garbage-
+   write source, currently neutered by the garbage-slot guards; port to per-4KB-page move via our
+   hat040 primitives), **hat_growsdt@0xb6058** (build -- lazy-patched in hat_pteload for now).
+   Port like hat_pteload: 4-byte descs, va>>25/>>18/>>12 indices, immu.h sde_t/pte_t + vm_hat.h
+   hat_t.  Start with hat_dup (biggest exposure).
+5. **user SW page-table walkers (BINARY/RE)** -- uvirtophys/uvatosde/uvatopte (per-proc root);
+   needed when the inert 030 st_top1 path is exercised for user procs.
+6. **Model B 4KB sweep (byte-patch, 696 NEW sites kernel-wide; detect_pagesize.py)** --
+   DONE groups (patch_modelb_pager.py): ufs,pvngp,segmap,buf,genst,bufbk,dmapio,segu.
+   Needed-soon: **hat_chgprot** (×6, COW/protection on fork-exec).  DEAD on 040 (inert 030
+   st_top1 builders, ignore): p0init/swapinub/segu_get-2nd-loop.  Rest: patch as each path
+   is first exercised (the dispatch primitives setbackdq/dq_sruninc/swtch are already CLEAN).
+
+## >>> (prior) REAL enqueue path found (setrun was WRONG target) <<<
+**Methodology fix (user-flagged):** the kernel CORE (newproc/sched/swtch/ts_*/sys_* etc.)
+ships ONLY as binary objects (`amix-src/sys/{disp,os,ml,vm}/exp` = ELF .o, NO C source) ->
+function disasm is unavoidable.  BUT struct layouts/offsets/flags DO have C source:
+`vanillarw/usr/include/sys/{proc.h,class.h,disp.h,var.h,ts.h}`.  STOP reverse-engineering
+offsets -- read them.  Already corrected: p_stat@0 (SRUN=2), p_flag@4 (SSYS=0x1, SLOAD=0x10,
+SPROCIO=0x400, SULOAD=0x2000), p_pri@24, p_cid@228, p_clproc@232, p_clfuncs@236.
+classfuncs_t (class.h): cl_admin@0, cl_enterclass@4, cl_exitclass@8, cl_fork@12,
+**cl_forkret@16**, cl_getclinfo@20, ... cl_setrun@52, ... cl_swapin@64, cl_swapout@68.
+
+**Corrected diagnosis:** the earlier "setrun never called" hunt was a RED HERRING -- setrun
+(0x489c2) is NOT on the fork path.  The real new-proc ENQUEUE is:
+  newproc -> CL_FORKRET (cl_funcs@16 @0x41812) -> sys_forkret(0xba936) -> setbackdq(child).
+(SYS class because main's 4 daemons are kernel procs; sys_fork sets clproc=the proc itself,
+so sys_forkret(clproc)=setbackdq(proc).)  newproc's CL_ENTERCLASS error branch only LOGS,
+it still falls through to CL_FORKRET, so the enqueue should happen.
+
+**THE mechanism (read from setbackdq 0xb926e disasm + disp.h):** setbackdq always links pp
+into dispq[p_pri], but only updates maxrunpri/dqactmap/dq_sruncnt -- i.e. makes pp VISIBLE
+to the swtch dispatcher -- when `(p_flag & (SLOAD|SPROCIO)) == SLOAD`  OR  `SSYS(0x1)` set
+(b92c0: andil #0x410 vs 16; b92d2: btst #0,@(7)=SSYS).  So if the children are enqueued with
+BOTH SLOAD(0x10) and SSYS(0x1) CLEAR, they sit on the dispq INVISIBLE -> maxrunpri stays -1
+-> swtch idles.  Exactly the observed symptom.  (On 030 the daemons must therefore have SSYS
+and/or SLOAD set; if 040 fails to set the flag, that's the bug.)
+
+**PROBE INSTALLED (boot build/unix-040-dbg):** setrun detour REMOVED; new setbackdq detour
+(src/patch_setbackdq_hook.py + mainmarks.s setbackdq_hook @0xd8128) prints
+"DBG setbackdq pp=%x flag=%x pri=%x" for the first 6 calls.  Verdict table:
+  - NO "DBG setbackdq" at all -> newproc->CL_FORKRET->sys_forkret->setbackdq broken on 040
+    (next: detour sys_forkret 0xba936 + check the cl_funcs@16 indirect dispatch).
+  - "DBG setbackdq" fires with flag having NEITHER 0x1 nor 0x10 -> THE BUG: child flag wrong
+    on 040 (trace where SSYS/SLOAD is set for a new proc: newproc/procdup p_flag init).
+  - fires with 0x1 or 0x10 set but resume STILL never fires -> bug is downstream in
+    swtch/dispatcher maxrunpri scan (the 040 swtch port).
+NEXT: boot unix-040-dbg, read the DBG setbackdq flag values.
+
+## >>> (prior) hat_alloc + swtch DONE.  children not RUNNABLE <<<
+The kernel now boots through swap config AND creates all 4 standard processes (proc 1
+init + pageout + fsflush + aio -- confirmed via a kvsegu-VA ptload trace).  proc 0 then
+runs sched() -> sleep(&runin) -> swtch, but **swtch idles** (jsr idle @0xb90fc, the
+25-32% CPU spin) because **maxrunpri == -1 -- NO runnable procs**.  A verbatim resume()
+override with a one-shot marker proved `DBG resume` NEVER prints (swtch never dispatches),
+and the hat_alloc ENTER marker never prints (the children's child paths -- as_alloc ->
+hat_alloc -> icode -- never run).  So: **the children are created but never put on the
+run queue.**  newproc makes a child runnable via an INDIRECT scheduling-class op
+(curproc@(228) -> class[cid] -> @(4) = CL_FORK/ts_fork @0x417b8) that should reach
+setrun(0x489c2) (sets SRUN + dispq + maxrunpri).  That path is not completing on 040.
+PROBED setrun with a detour (patch_setrun_hook.py + mainmarks.s setrun_hook overwrite
+setrun's first 8 bytes with `jmp setrun_hook`): **`DBG setrun` NEVER fires -> setrun is
+NEVER CALLED for any of the 4 children.**  So the bug is the fork->dispatch path, NOT
+the dispq/maxrunpri update inside setrun.  newproc DOES mark the child SRUN directly
+(`moveb #2,%a2@` @0x41742) and calls the scheduling-class ops (cl_funcs@(4) @0x417b8,
+cl_funcs@(16) @0x41812, cl_funcs = class[cid] @a2@(236)), but the ts-class ops
+(ts_fork @0xbaec2, ts_enterclass @0xbac36) do NOT call setrun.  setrun's real callers are
+swapinub(0x4756c) + sched(0x47614) [swap-IN makes a proc dispatchable], the fork callers
+(0x4fd4a/0x4fdf4/0x5fd48), wakeprocs(0x489ae), and 0x3dfaa.  So the child is SRUN but never
+placed on the dispq (setrun) -> swtch dispatcher sees maxrunpri==-1 -> idle.
+**NEXT: find WHO is supposed to call setrun(child) after newproc and why it doesn't on
+040.  Two leads: (1) the children may be created !SLOAD (swapped-out) so sched->swapinub
+(0x4756c) is meant to swap them in AND setrun them -- check if swapinub short-circuits/fails
+on 040 (the u-areas ARE in core via segu_get, so the SLOAD flag may be the mismatch); (2)
+the fork callers (cfork/fork1 @0x4fd4a etc.) call setrun after newproc -- check if main's
+daemon-creation path reaches a setrun.  Mark swapinub / the 0x4fd4a-region setrun callers.**
+(Also pending in this layer once children run: setuctxt's child stack copy + the 040 trap/
+exception frames.)  Commits: f081e6d (hat_alloc+swtch), f2bad8c/eed4bdf/f55d48d (diag).
+hat_alloc=040 root @as@(20); swtch pmove crp->movec urp (both correct, not the gate here).
+
+## >>> (prior) READ-ZERO BUG FIXED + SWAP CONFIGURES + U-AREA FIXED <<<
+The whole VM / page-cache / disk-I/O / swap-config / u-area path now WORKS on 040.  Boots
+through swapconf, configures swap, creates proc 1, and goes IDLE at 0% CPU (a wait, NOT a
+crash) in proc 1's setup because the per-proc hat + context switch are unported.  Three
+root causes were found and fixed this session; the next blocker is the deferred fork/hat
+layer (well-scoped below).
+
+### FIX 1 — the read-zero / "swapconf namei" bug = gen_strategy PFN<<11 (DONE)
+The "namei ENOENT" was NOT namei: directory page-reads returned an all-zero page
+(blkatoff probe `PAGE phys=9D8B000 ram=[0 0 0 0]`).  ROOT CAUSE: **gen_strategy (0x3d988)**
+converts a B_PAGEIO buf's page to a DMA-target PHYS = `PFN<<11` (0x3d9c0 single-page,
+0x3dae6 breakup) and the device DMAs there; under Model B the page is at `PFN<<12`, so disk
+data landed at HALF the address and the 4KB page stayed zero.  Found via a new whole-kernel
+AUTO-DETECTOR `src/detect_pagesize.py` (scans objdump for the 2KB idioms, attributes
+to functions, excludes false-positives; reports **719** page-size sites kernel-wide, NOT
+~150 -- the constant pervades the whole VM/FS/exec ABI; re-finds 85/94 known sites).  Fixed
+with the targeted I/O-path groups in patch_modelb_pager.py: **genst** (gen_strategy 7),
+**bufbk** (buf_breakup 3), **dmapio** (dma_pageio 7 -- its 512-byte sector >>9 logic left).
+RESULT: dir reads return real data, ALL namei lookups resolve (`/dev/dsk/c6d0s2 -> r=0`).
+
+### FIX 2 — swap now really configures (DONE)
+relink-040-dbg.sh DROPPED the swapconf skip-stub (namei works now), so stock swapconf runs:
+it opens `/dev/dsk/c6d0s2` (ddopen slice=2, r=0) and populates `swapinfo`.  This cleared the
+`swap_xlate+0x26` NULL-swapinfo bus error (which was only ever a side effect of no-swap).
+
+### FIX 3 — u-area maps as 2x4KB, not 4x2KB = segu_get/segu_softload (DONE)
+First-fork u-area mapping hit `hat_pteload: pfn mismatch va=4844x800 *pte=...X newpfn=...X+1`
+(a stock-030 FATAL check too, 0xb4eba -- NOT our over-strict assertion).  ROOT CAUSE:
+**segu_get** allocates an 8KB u-area (anon_resv/page_get 0x2000) and maps it as a hardcoded
+4 x 2KB pages (moveq #3 bound @0xaa6a2, #2048 va step @0xaa69c); under Model B page_get(8192)
+returns 2 x 4KB pages -> consecutive pfns X,X+1 mapped 2KB apart -> same 4KB leaf -> mismatch.
+Fixed with group **segu** (segu_get loop -> 2 iters/4KB step; segu_softload swap-in -> 4KB
+step + >>11->>>12 index).  segu_get's SECOND loop (st_top1, the INERT 030 u-area page table)
+is LEFT -- dead on 040 until uvirtophys is ported.  hat040.s's pfn-mismatch check is
+temporarily WARN (prints va/*pte/newpfn) -- RESTORE to panic(3) once the u-area path is clean.
+
+### >>> NEXT BLOCKER: the per-proc hat + context switch (the deferred fork/hat layer) <<<
+After swap configures, main() does: schedpaging -> newproc(proc 1) -> as_alloc -> hat_alloc
+-> segvn_create -> as_map -> copyout(icode).  The boot goes IDLE at 0-5% CPU here.
+CONFIRMED (mainmarks.s schedpaging marker PRINTS -> swapconf returned; so the idle is in
+proc-1 setup, not swapconf).  CONFIRMED in disasm (no boot needed) -- TWO unported pieces:
+1. **swtch @0xb923c executes 030 `pmove %a1@,%crp`** (+ `pflusha` @0xb9240) to load the
+   per-proc root -- an F-line on 040 (which uses `movec %dn,%urp`).  The scheduler therefore
+   cannot switch to proc 1 -> proc 1 never runs -> proc 0 idles (idle, not crash = 0% CPU).
+2. **hat_alloc @0xb4188** builds the per-proc root via `mem_align` -- the 4-entry 030 root;
+   needs the 128-entry 040 root port (and to set the root so swtch's movec urp loads it).
+Related unported (memory file): hat_growsdt/hat_dup (currently STUBBED in forkdbg.s),
+uvirtophys/uvatosde (the per-proc 030 software walkers), and the **040 trap/exception
+frames** (≠030 -- bites on proc 1's first fault/syscall; the memory's biggest-risk item).
+
+**NEXT (recommended): port the per-proc hat + context switch as one coherent chunk:**
+1. **hat_alloc** (0xb4188): build a 128-entry 040 root (like kroot040 but per-proc); zero it;
+   store it where swtch reads the root from (hatp@? the as->hat).  Mirror the kroot040/
+   sysseginit pointer-descriptor format.  hat_growsdt/hat_dup follow.
+2. **swtch** (0xb923c): replace `pmove %a1@,%crp ; pflusha` with the 040 `movec %dn,%urp`
+   (+ `pflusha` 040 form / cinv) -- a relink override (transcribe swtch tail) OR a byte
+   patch (the pmove `f011 4c00` -> movec + the pflusha is already an F-line; patch_pmmu_040
+   handles pflusha).  This is the same pmove-crp->movec-urp change needed in hat_map/exec/
+   asload.
+3. Build, boot: expect proc 1 to run the icode -> exec /sbin/init -> getty/login on console.
+   The 040 trap-frame port likely bites here (proc 1's first user fault).
+
+Build: `sh relink-040.sh` (-> build/unix-040) then `sh relink-040-dbg.sh` (-> build/
+unix-040-dbg; ddopen + blkatoff + schedpaging-marker probes, hat_dup/anon_resv stubs).
+Detector: `python3 src/detect_pagesize.py` (719-site whole-kernel report; the full
+Model B sweep is deferred -- patch path-by-path as each new code path is exercised).
+
+### Diagnostics still in the tree (remove once past the fork/hat layer)
+- hat040.s: DBG hat_unload/revmap-miss markers; pfn-mismatch lowered to WARN (restore to
+  panic(3)).  ddopen_dbg.s, blkatoff_dbg.s, forkdbg.s (hat_dup/anon_resv stubs), mainmarks.s
+  (schedpaging marker).  All layered ONLY in build/unix-040-dbg, not build/unix-040.
+- **nomsg halt-path pmoves NOPed** (patch_pmmu_040.py 0x18ed8/ee2/ee6) -> clean panics.
+  Context-switch pmoves (hat_map/exec/asload/swtch `pmove crp`) STILL unpatched -> item 2 above.
+
+
+## ★ MAJOR MILESTONE (2026-06-19): 040 CPU/MMU/VM/fork port COMPLETE.
+The kernel now boots all the way through MMU-enable -> paging -> kmem -> mlsetup/
+kvm_init -> svirtophys -> **fork1/procdup (first process, HAT page tables) -> main()
+-> vfs_mountroot**.  The HAT first-fork port (hat_pteload linked + ptalloc/sdtalloc/
+pt2ptdat byte-patches + kas@0x14=kroot040) WORKED -- procdup's child-u-area bcopy no
+longer faults.  The hard part (the whole 040 virtual-memory bring-up) is DONE.
+
+## TWO LINES (2026-06-19; EMULATOR line SUPERSEDED by the 06-22 top milestone):
+- **REAL-HARDWARE line: STILL PAUSED** (resume later).  On real 040 the VM port + 040
+  page-table walk are verified working; it hits ONE localized blocker -- a deferred bus
+  error in p0init's u-area-PTE loop (a real-silicon write-buffer/cache effect the emulators
+  don't model).  Full writeup + open hypotheses + how to resume:
+  **`docs/archive/RESUME-HERE-040-HARDWARE.md`**.  (Emulators do NOT reproduce it -- they pass p0init.)
+- **EMULATOR line: the SCSI / root-mount problem (below) is now SOLVED** (root mounts;
+  see the 06-22 top milestone).  Current emulator blocker = swapconf (top of file).
+
+## >>> MILESTONE 2026-06-21: ROOT FILESYSTEM MOUNTS on 040 <<<
+The SCSI/root-mount problem is **SOLVED**.  All disk I/O works on 040 (getrdb/getpb read
+RDSK/PART correctly; stock sdpartition returns 0 with dev=0x480016 ctrl=0 slice=1 ->
+partab filled -> VOP_OPEN succeeds -> root mounts).  Test-1's transient "error 6" was
+first-access SCSI nondeterminism; it read clean on every retry.  **The boot now sails PAST
+vfs_mountroot into the post-mount VM path.**
+
+### NEW BLOCKER -> FIXED (needs boot test): hat_unlock: invalid sde
+After mount, s5mountroot -> fbrelsei (s5 buffer release) -> **hat_unlock** (0xb5d1e)
+PANIC "invalid sde".  Same inert-030-tree problem as vatosde: hat_unlock walked the 030
+segment tree (root[region*8+4] -> 8-byte SDE) but the live root is kroot040 (040 4-byte
+descriptors) -> garbage SDE -> DT==0 -> panic.  **PORTED**: src/hat040.s now has a
+hat_unlock 040 replacement (standard 040 walk A=va>>25&7f, B=va>>18&7f, leaf=Bdesc&
+0xffffff00+(va>>12&3f)*4 -- same as vatopte; hat_pt2ptdat + lock-count + free_pts/wakeprocs
+tail kept verbatim).  relink-040.sh: --weaken-symbol hat_unlock, --globalize-symbol
+free_pts/pt_waiting.  Built clean (0 reloc complaints).  **NEXT: boot unix-040-dbg, expect
+past hat_unlock -> next post-mount blocker (likely sibling HAT fns hat_unload/hat_chgprot/
+hat_pagesync per the worklist, or 040 syscall/trap frames as init starts).**
+
+## (historical) ACTIVE: root filesystem mount (DEVICE/FS domain, not MMU) -- the SCSI problem
+`s5mountroot VOP_OPEN error 6` (ENXIO) -> `nfs_mountroot` fallback -> PANIC
+`vfs_mountroot: cannot mount root: errno 89`.  `rootdev` = 0x00480016 = major 18 / minor 22.
+
+### FULL OPEN-PATH TRACE (2026-06-21, disassembled from vanilla/stand/unix)
+- bdevsw[18].d_open = **ddopen** (0xbcb8).  major 18 = the **dd** SCSI-disk driver.
+- `ddopen(devp)`: ctrl = (*devp>>3)&1 = (22>>3)&1 = **0**.  Calls, in order:
+    1. **`sdopen(ctrl)`** (0xd6ba): calls SCSI `init()` then returns ENXIO(6) unless
+       `queue[ctrl][0] != 0` -- i.e. the host adapter for ctrl 0 is REGISTERED.
+    2. **`sdpartition(*devp, ddstrategy)`** (0xd848): slice = (22>>4)&7 = **1** (nonzero)
+       -> calls **`getrdb()`** = physically **READS the RigidDiskBlock off the disk via
+       SCSI DMA**, parses partitions.  Returns ENXIO(6) on read/parse failure.
+  Error 6 can come from EITHER call.  (If slice were 0 it'd skip getrdb -- but it's 1.)
+- **SCSI host registration** (`init` 0xd736 -> `autocon` 0x19222 -> `insert` -> queue[]):
+  the A3000 ONBOARD SCSI is NOT a Zorro autoconfig board; `autocon` has a hardcoded
+  **special case**: if scsicard[0].field0==0x0202f003 && ctrl==0 && `0x07000000 < end`,
+  it returns DMAC address **0xDD0000** and queue[0] gets set.  `end` = loader-resolved
+  top-of-kernel (base+size, e.g. 0x07100000) so the gate `0x07000000<end` holds -> queue[0]
+  SHOULD be set.  (Confirmed in fs-uae.log: "Initializing A3000 mainboard SCSI / Adding ...
+  HD unit 6" / "00DD0000 64K A3000 DMAC" -- the emulator presents exactly this.)
+- **DMA address translation**: SCSI uses `vtop`(0xb7568); for KERNEL buffers (arg2==0)
+  it delegates to **`svirtophys`** (which we PORTED).  svirtophys returns `va` unchanged
+  for region!=1 (identity: regions 0/2/3) and walks the 040 tree (vatosde/vatopte) for
+  region 1.  So kernel-buffer phys is correct on 040 in BOTH regions.  => statically,
+  BOTH sdopen and sdpartition should succeed; need RUNTIME data to see which fails.
+
+### TEST RESULTS (2026-06-21, WinUAE 040, kernel @ 0x08000000)
+1. ddopen probe -> **"sdpartition FAILED (getrdb RDB disk read / DMA)"**.  So sdopen
+   (host registration) is FINE; the failure is in sdpartition.
+2. sdpartition probe (calls real getrdb, prints block[0]) -> **"getrdb returned 0,
+   block[0]=5244534B"** (== "RDSK") and "ddopen: both sub-calls OK".  **=> THE SCSI DMA
+   READ WORKS on 040.  getrdb reads the RigidDiskBlock CORRECTLY.**  Not a DMA/cache bug!
+   (With getpb/partab skipped, VOP_OPEN now succeeds but the mount still errno-89's
+   because partab is left empty -- expected for the debug shortcut.)
+**CONCLUSION:** the original "error 6" is NOT disk I/O -- it's in sdpartition's
+**partition-block walk** (getpb 0xda22 / the rdb_PartitionList traversal / partab fill,
+0xd876-0xd8ee), which the stock code runs AFTER getrdb.  getpb uses the SAME working
+read()/block, so suspect: rdb_PartitionList (block@0x1c) value, or a PARTIAL block DMA
+(block[0] ok but later longs stale), or the partab geometry math.  NEXT probe (built):
+prints rdb_PartitionList + getpb result -> boot unix-040-dbg, read the two new DBG lines.
+
+### DECISIVE DEBUG BUILD (ready): build/unix-040-dbg
+`sh relink-040-dbg.sh` layers an instrumented **ddopen** (src/ddopen_dbg.s,
+GLOBAL-weaken override) onto the patched build/unix-040.  It prints (CE_WARN) exactly
+which sub-call fails:
+- `DBG ddopen: sdopen FAILED ...`      -> host registration (queue[0]==0): autocon/end/onboard
+- `DBG ddopen: sdpartition FAILED ...` -> getrdb RDB read / **040 DMA** (the user's suspicion)
+- `DBG ddopen: both sub-calls OK`      -> open succeeded; failure is upstream (rootdev/vfs)
+**Boot it: `unix_boot040 unix-040-dbg`** and report which line prints -- that bifurcates
+all further work (detection vs DMA).
+
+### Emulator facts (fs-uae a3000ux config + log, this laptop)
+- Working 030 config: `~/Asiakirjat/FS-UAE/Configurations/a3000ux.fs-uae` (cpu=68030,
+  hard_drive_0=amix_hardfileX11R5.hdf, hard_drive_0_controller=**scsi6** = A3000 onboard
+  SCSI unit 6).  Kernel files exposed to Amiga via hard_drive_2 = the kernelsupport dir.
+- For 040 testing: switch cpu to 68040 (the WinUAE screenshots are the 040 runs).
+- Aside (likely unrelated): fs-uae.log shows a `bzero` loop (PC=0x...032c) hitting "Gary
+  timeout" writes to unmapped Zorro-III 0x2006xxxx -- some board-struct init, not SCSI.
+
+SUSPECTS if it's **sdpartition** (DMA): (1) 040 copyback cache coherency on DMA-in (real
+HW only -- emulator wouldn't show it); (2) the A3091 startdma (0xd40a) writes only a
+24-bit DMA addr from iopb@12..14 -- verify the high byte / region is set for a buffer
+above 16MB.  SUSPECTS if **sdopen**: autocon `end` gate or scsicard[0].field0 mismatch.
+This is a NEW phase (device drivers on 040); the VM port this file documents is finished.
+
+---
+# (historical) RESUME HERE — AMIX 68040 port status (2026-06-18)
+
+One-line: **68040 bootstrap paging works; kernel boots to `page_init` which
+bus-errors writing the `pages[]` array (lives in unmapped kvseg).  pstart040 now
+builds the kvseg-wide 040 scaffold (kptr040); NEXT = port kvm_init + segkmem_mapin
+to FILL it so kvseg maps and page_init advances.**
+
+## LAST TEST (2026-06-18, WinUAE on 040) — confirms the target
+PANIC: KERNEL FAULT pc=0x70AF474 vector=0x2 (Bus Error).  Kernel loads at
+0x07000000 -> fault = offset 0xAF474 = **page_init+0x4a** = `orib #0x80,%a0@`, the
+loop initializing each `pages[]` struct (a0 = `pages`, stride 60, to `epages`).
+`pages` is in kvsegmap (0x40440000+), unmapped because kvm_init hasn't filled
+kptr040 yet.  EXACTLY the predicted blocker; pstart040 scaffold caused NO regression
+(still reaches page_init cleanly).  (The DOUBLE PANIC pc=0xF80C34 is the panic
+handler faulting again -- secondary, ignore.)
+
+## Where we are (the journey)
+```
+pstart040 (040 MMU enable) ✓  ->  ptest (030 ptestr, stubbed) ✓
+  ->  page_init BUS ERROR  <-- WE ARE HERE
+        cause: HAT (hat_init/hat_pteload/...) builds 030 2KB-format page tables;
+        the 040 MMU set up by pstart040 can't use them -> kvseg unmapped.
+```
+Achieved today: found & fixed the relink bug so pstart040 actually runs
+(`--weaken-symbol`, not `--redefine-sym`); 040 paging up; clean-panic visibility;
+mapped the blocker chain into the HAT.
+
+## Build & test (the loop)
+```
+. /home/asokero/kehitys/amix-playground/gcc-cross-amix/build/env.sh   # cross toolchain
+export PATH="/home/asokero/kehitys/amiga-gcc-bin/bin:$PATH"           # amiga gcc (loader)
+
+# kernel (pstart040 + stubs):
+m68k-cbm-sysv4-gcc -m68040 -c src/pstart040.s -o build/pstart040.o
+sh relink-pstart.sh build/pstart040.o          # -> build/unix-040  (uses --weaken-symbol)
+python3 src/patch_pflusha_040.py         # 030 pflusha -> 040 (re-run after each relink)
+python3 src/patch_pmmu_040.py            # ptest/ptest0 stubs (re-run after each relink)
+python3 src/check_relink_relocs.py       # MUST print "0 complaints"
+
+# loader (only if changed): see LOCAL-BUILD-NOTES.md §3
+# Test in fs-uae/WinUAE on 040:  command `unix_boot040 unix-040`
+# Logs: ~/Asiakirjat/FS-UAE/Cache/Logs/fs-uae.log.txt  (logs the 040 MMU state!)
+#       ~/.wine/.../WinUAE/winuaelog.txt  (needs the logging checkbox ON)
+```
+The kernel's console is hardcoded to the native Amiga display, so clean panics
+render in the emulator — read the panic `pc=` to identify each blocker.
+
+## (historical / DONE) NEXT TASK — port the HAT (Phase 3)  [ALL CORE HAT FNS NOW DONE — see top]
+Full plan + inventory + the exact 030→040 format change + per-fn port spec:
+**`src/hat-040-port-worklist.md`**.
+
+**DONE: `hat_pteload`** — `src/hat040.s` (040 port, byte-faithful, relocs
+clean, reloc-validator 0 complaints).  Two infrastructure results proven en route:
+- **Local-symbol override mechanism** (`relink-hat.sh`): HAT fns are file-LOCAL,
+  so `--weaken-symbol` alone can't override them.  Use `objcopy --globalize-symbol`
+  (local→global) on every referenced/replaced HAT fn, THEN `--weaken-symbol` the
+  replaced ones.  Verified: kernel callers redirect to our def, validator clean.
+- Leaf PTEs are format-compatible (030 status {0,1,5} == 040 PDT/W bits); only the
+  page shift 11→12 + PFN width 21→20 change.  Structural rewrites are confined to
+  the root/pointer descriptor read+build (8-byte→4-byte).  (Details in worklist.)
+
+**REPRIORITIZED (trace 2026-06-18): page_init is reached via the STATIC kernel-map
+path, NOT the HAT batch.**  Full trace in the worklist ("MAJOR FINDING"/"THE REAL
+page_init MILESTONE PATH").  The kvseg maps the 040 MMU walks at page_init are built
+by `kvm_init` (writes kvseg pointer descriptors into `st_top1`, pstart's B-table) +
+`segkmem_mapin` (writes leaf PTEs into `seg->s_ptbl`) — neither calls hat_pteload.
+
+**CORRECTED DIAGNOSIS + FIX (2026-06-18 later): the kmem/seg_alloc/valid_usr_range
+theory above was WRONG -- it misidentified the panic's LC label.**  Disassembly of
+kvm_init's .data string pool (0x6700..) shows the six messages in order:
+LC%0="No space for mapping files", LC%1="...u areas", LC%2="cannot allocate segkmap",
+LC%3="segmap_create segkmap", LC%4="cannot allocate segu", LC%5="segu_create segu".
+So the reported **"No space for mapping files" = LC%0**, used at **0x48cc0 -- the
+`smsegs <= 0` check**, NOT the kvsegmap seg_alloc (that would print "cannot allocate
+segkmap").  `smsegs = maxclick>>6 - (v+63)>>6` (0x48ca4..0x48cb4).
+ROOT CAUSE: **pstart040 passed `v` (d2) to mlsetup as a 2KB-click high-water mark**
+(its 030 table build computes d2 = (st_top1+12287)>>11, i.e. `lsrl #11`).  Under Model
+B every downstream click consumer is 4KB: maxclick = memsize>>12 (halved, patched),
+mlsetup's bzero does v<<12, sysseginit does v<<12, kvm_init's smsegs uses maxclick &
+v together.  With v in 2KB clicks but maxclick in 4KB clicks, v is ~2x too big ->
+smsegs collapses to <=0 -> panic.
+**FIX APPLIED (src/pstart040.s, tail before `jsr mlsetup`):** `addql &1,%d2 ;
+lsrl &1,%d2` -- convert v to 4KB clicks (round up) so it matches maxclick.  d2 is dead
+after mlsetup (Lpepi restores it from the saved-reg frame).  +4 bytes, .text stays
+4-aligned, relink clean (0 complaints).  This also makes smsegs ~= half the 030 value,
+which is exactly why the Tier-1 `<<18` kvsegmap/kvsegu window patches are correct
+(half the segments x double the per-seg bytes = same window).  Built: `sh relink-040.sh`.
+**TEST RESULT (smsegs fix): PASSED -- boot went through ALL of mlsetup+kvm_init**
+(smsegs, susegs, kvsegmap/kvsegu seg_alloc, segmap/segu_create, p0init's own
+svirtophys(u-area)) and hit the NEXT panic at pstart040's tail: **"PANIC: Svirtophys:
+SDE_invalid"** (fs-uae + WinUAE identical).
+
+**svirtophys FIX (2026-06-18, applied):** pstart040's tail calls
+`svirtophys((*proc_sched + 95) & ~15)`.  `*proc_sched = &proc[0]` (a kmem_zalloc'd proc
+struct in **kvseg**, region 1 ~0x40040000+).  `svirtophys` walks the **inert 030 tree**
+via `vatosde` (`kas@(0x14)` -> tbl[1].addr=st_top1 -> st_top1[(va>>17)&0x1fff]); but the
+kvseg mappings now live ONLY in the live **040 kptr040 tree** (sysseginit/segkmem write
+there, not st_top1), so st_top1[kvseg_idx]=DT0 -> SDE_invalid.  (p0init's own
+svirtophys(u=0x40000000) worked because pstart040 DOES populate st_top1[0]=the u-area.)
+KEY: svirtophys's DT switch + cmn_err + phys assembly are FORMAT-AGNOSTIC -- it reads
+the descriptor type via `bfextu @(3){6:2}` = byte-3 low 2 bits, which is the 030 DT AND
+the 040 UDT (same bits).  So only the WALKERS change:
+- **vatosde/vatopte ported to 040** (kvm040.s, GLOBAL T -> --weaken-symbol): vatosde
+  returns `&kptr040[((va>>18)-4096)*4]` (the flat 040 pointer descriptor, exactly how
+  sysseginit/kvm_init address it); vatopte returns `(*sde & 0xffffff00) +
+  ((va>>12)&0x3f)*4` (040 leaf PTE).  No kas@(0x14) change needed -- vatosde reads
+  kptr040 directly.  Also fixes krnxmemflt (the only other vatosde caller).
+- **svirtophys phys assembly 4KB-patched** (patch_modelb.py: 0xb77c0 `&-2048->-4096`,
+  0xb77c8 `&2047->4095`).
+Built clean (`sh relink-040.sh`: vatosde/vatopte single strong defs, contiguous, 0
+reloc complaints, 28 Model B patches).
+**TEST RESULT (svirtophys fix): PASSED.**  Boot went svirtophys -> pstart returns ->
+main() -> vfs_mountroot -> **fork1 -> newproc -> procdup** (creating proc 1) and hit a
+**BUS ERROR pc=0x70002E6 = mcpy** (memcpy/bcopy worker; bcopy `bral`s to mcpy).
+proc=0x4007EC00 (proc[0] now in kvseg -- proc_sched resolved correctly).
+
+**THE HAT / fork MILESTONE (2026-06-18, Phase 4 -- the big remaining chunk):**
+procdup does `bcopy(u=0x40000000, child_uarea, 0x2000)` to copy the u-area into the
+child.  The child u-area comes from `segu_get` (segu = kvsegu 0x48440000, region 1),
+which maps it via `hat_memload` (0xb4cb0, a tiny wrapper: pfn=(pp-pages)/60+pages_base,
+then `hat_pteload`).  **hat_pteload writes the page-table entry the MMU walks -- but it
+is (a) not linked into this build and (b) the kernel hat's root isn't the 040 root**, so
+the child u-area VA is unmapped on 040 -> bcopy faults.  First PER-PROCESS mapping path.
+
+ARCHITECTURE (verified): `hat_pteload` roots its walk at `arg@(12)@(20)` = the hat's
+ROOT table, walking `root[va>>25&0x7F] -> ptr[va>>18&0x7F] -> leaf[va>>12&0x3F]`.  For a
+region-1 kernel VA this standard 040 walk lands on the SAME `kptr040` entry as
+sysseginit/vatosde's flat `(va>>18)-4096` indexing (root040[32+k]->kptr040+k*512, and
+(kptr040+k*512)[Bidx] == kptr040[(va>>18)-4096]).  So IF the kernel hat's root = kroot040,
+hat_pteload writes into root040->kptr040->leaf and the 040 MMU (SRP=root040) sees it.
+`kroot040` is already exported by pstart040 for exactly this.
+
+HAT PORT WORKLIST (the Phase-4 sub-project; full per-fn specs in
+`src/hat-040-port-worklist.md`):
+- **hat_pteload** -- DONE (`src/hat040.s`, 040 walk).  NOT YET in the build -- add
+  hat040.o to relink-040.sh (it's `t` LOCAL -> globalize+weaken hat_pteload).
+- **hat_memload** -- no port needed (page-struct arithmetic; calls hat_pteload).
+- **hat_ptalloc** (0xb688e) -- allocate a leaf page table (4KB/64-entry on 040); port.
+- **hat_pt2ptdat** (0xb5e0a) -- page-table addr -> ptdat; check page-size sites.
+- **hat_growsdt** (0xb6058) / **hat_sdtalloc** (0xb632e) -- segment-descriptor-table
+  alloc/grow (pointer-table level); port to 040 4-byte descs.
+- **hat_alloc** (0xb4188) -- allocates the hat root via mem_align (4-entry 030 -> 128-entry
+  040); AND the KERNEL hat's root must be set to kroot040 (hat_init only sets free-lists,
+  so the root install is hat_alloc or the kas/segu setup -- find it).
+- **flushmmu** -- called by hat_pteload; verify pflusha (already patched) or its own edit.
+
+**HAT FIRST-FORK PORT DONE (2026-06-19) -- ready to boot-test.**  Scoping showed the
+procdup-bcopy fault needs FAR less than the full HAT port: the child u-area uses the
+KERNEL hat (already kptr040-rooted via kas@0x14=kroot040), and on first fork memory is
+plentiful so the allocators take their SUCCESS paths -- which skip the structural
+8->4-byte descriptor code (the page-table STEAL path) and never call hat_growsdt.  So:
+- hat_pteload (040 walk, hat040.s) LINKED (relink-040.sh: globalize+weaken hat_pteload;
+  globalize hat_ptalloc/hat_pt2ptdat so hat040.o's calls bind to the kernel LOCAL defs).
+- hat_ptalloc/hat_sdtalloc/hat_pt2ptdat success-path click->byte shifts byte-patched
+  (patch_modelb.py: b6a74, b63d6/b6484/b6524, b5e1c -- all `moveq #11->#12`).  Carve
+  keeps 4 tables/page in the low 2KB of the 4KB click; >>11 page-frame index -> >>12.
+- kas@0x14=kroot040 (pstart040 tail).  flushmmu pflusha already in patch_pflusha_040.
+Build clean: hat_pteload single strong def, 33 Model B patches, 0 reloc complaints,
+UND==stock.  **NEXT: BOOT build/unix-040 -- expect past procdup's bcopy (child u-area
+now mapped on 040).**
+DEFERRED (next blockers, when proc 1 faults in USER pages via its OWN hat): hat_growsdt
+(8192->128 descriptor builder), hat_alloc (4->128 child-hat root), the hat_ptalloc STEAL
+path (structural 8->4-byte descs + PFN 21->20 + asll#3->#2), uvirtophys/uvatosde/uvatopte
+(user v->p walkers), and trap/exception-frame 040 work (bites on first syscall/fault).
+
+**MODEL B Tier-0 PASSED (2026-06-18 earlier test):** got PAST kmem_allocspool -- the bus
+error is gone, now a CLEAN panic "No space for mapping files" at the kvsegmap/segmap
+setup (kvm_init 48ef8 `seg_alloc(kas, kvsegmap, smsegs<<17)` returns 0).  Model B
+4KB page frame WORKS for the allocator.  NEXT FRONTIER (Tier-1 segmap) -- add to
+patch_modelb.py:
+- **seg_alloc** (b2820) page-size rounding: b2832 #-2048->#-4096, b283e #2047->#4095,
+  b2844 #-2048->#-4096.
+- **kvm_init segmap size** 48ee6 `moveq #17`->`#18` (segment 128KB->256KB; smsegs is
+  halved under B so <<18 restores the 030-equiv byte size).  Same for kvsegu (48f58).
+- **seg_attach** (b28f0): check its page-size sites (seg_alloc fails via valid_va_range
+  OR seg_attach<0 -- pin down which; seg_attach actually checks the VA/seg list).
+- The kvm_init kvsegmap/kvsegu LOOPS (48d0c/48dc0) were left inert (write to st_top1);
+  once segmap actually maps kvsegmap they likely need the kptr040 + Model B treatment
+  too (like sysseginit) -- but seg_alloc/seg_attach (struct setup) fails BEFORE any
+  mapping, so fix those first.
+Then rebuild + retest.
+
+**MODEL B Tier-0 BUILD (2026-06-18):** `sh relink-040.sh` ->
+`build/unix-040`.  Model A got PAST page_init but hit its wall at the kmem allocator
+(page_get returns physically scattered 2KB clicks -> can't be paired into 4KB pages).
+Switched to **Model B (4KB page frame)**: each click IS a 4KB page, so scattered
+clicks map 1:1.  Tier-0 = 21 SAME-SIZE byte patches (patch_modelb.py: mlsetup
+maxclick+sptmap, kvm_init page_hash size, segkmem_alloc + segkmem_mapin leaf builders,
+sptalloc) + 1 structural override (sysseginit -> kptr040, re-touched to Model B in
+kvm040.s).  Build: 0 reloc complaints, contiguous.  **Boot on 040, read next panic
+pc.**  Expect to advance past kmem_allocspool+0x19c (0x41D1A).  If a new page-size
+fault appears, add its site to patch_modelb.py (Tier-1 fns: hat_*, segvn_*, execmap,
+coffcore -- see worklist Model B scope).
+
+**NEXT (page_init milestone), in order:**
+1. **pstart040 — DONE.**  Extended to build the 040 root with entries 32..63 ->
+   `kptr040` (a flat 16 KB region of 32 pointer tables for the kvseg 1GB), u-area
+   mapped via `kptr040[0]` -> `uarea_pt`.  `kptr040` is EXPORTED (global, in the
+   kernel now) so kvm_init writes 040 pointer descriptors at
+   `kptr040 + ((va>>18)-4096)*4`.  st_top1 left untouched (still 030, read by
+   sysseginit/p0init/bp_map/swapinub/segu_get).  Assembles/relinks/patches/
+   reloc-validates clean, text/data contiguous.  (Boot behaviour unchanged until
+   kvm_init fills kptr040 -- entries are invalid/zeroed for now.)
+2. **kvm_init** (LOCAL → globalize+weaken): B-level build → 040 4-byte pointer descs
+   written into **kptr040** (not st_top1): index `(va>>18)-4096` *4, single-long
+   `*slot = leaftable<<12 | UDT(2)`; `>>17&0x1FFF→>>18`, `asll#3→#2`, `<<11→<<12`,
+   drop the 030 limit/status template.  (Build it like hat040.s: a new object,
+   globalize+weaken kvm_init.)
+3. **segkmem_mapin** (GLOBAL → weaken): leaf edits (`>>11→>>12`, `#2048→#4096`,
+   `{0:21}→{0:20}`, `andiw#-2047→#-4095`); PTE low-byte format unchanged.  +sptalloc.
+Build alongside pstart040, run `patch_pflusha_040.py`/`patch_pmmu_040.py`, test → page_init.
+
+**LATER (next milestone — first user process):** the HAT batch.  `hat_pteload` is
+DONE (`hat040.s`); add `hat_ptalloc`/`hat_sdtalloc`/`hat_growsdt`/`hat_pt2ptdat`
+(+ `hat_alloc` 4→128 root) to `hat040.s` & `relink-hat.sh`.  hat_pteload's leaf
+analysis transfers directly to segkmem_mapin (same PTE low-byte format).
+
+## Map of the docs
+- `hat-040-port-worklist.md` — the HAT-port plan (NEXT work).
+- `docs/mmu-format-030-to-040.md` — the exact 030/040 page-table format (the spec).
+- `src/pstart-040-design.md` — pstart040 design (done).
+- `KNOWN-ISSUES.md` — ISSUE-1: clib2-built loader's 68030 MMU-config bug (deferred;
+  use the UPSTREAM `unix_boot/bin/unix_boot` for any 030 baseline; OUR
+  `build/unix_boot040` for 040).
+- `LOCAL-BUILD-NOTES.md` — toolchains, paths, how to (re)build the loader.
+- `docs/boot-path-map.md`, `docs/68040-68060-support-analysis.md` — background.
+
+## Progress estimate (2026-06-22): VM/HAT port DONE; boots to swapconf
+Foundation + the entire HAT/VM format port are DONE (boots through init + banner to
+swapconf).  Remaining to single-user: swapconf (current blocker), then first user
+fork/exec (deferred per-proc hat fns: hat_alloc/dup/exec/asload/swtch), then **040
+trap/exception frames** (biggest risk).  Then 68060, then real-HW p0init blocker.
+(Old "~33%" estimate superseded.)

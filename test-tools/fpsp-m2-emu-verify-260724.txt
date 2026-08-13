@@ -2,7 +2,7 @@ FPU Tier-2 M2 -- Motorola 040 FPSP integration: EMU-VERIFIED WORKING
 ====================================================================
 Date: 2026-07-24
 Kernel: build/unix-040-fpsp-dbg  (68040-260724-07) = standard dbg 260724-04
-        + build/fpsp040.o (M1) + prototypes/fpsp_glue040.o (M2), M68Kvec[11]
+        + build/fpsp040.o (M1) + src/fpsp_glue040.o (M2), M68Kvec[11]
         retargeted nullvect -> fpsp_vec11.
 Loader: build/unix_boot040 REBUILT with the rel.c PC-relative relocation fix
         (commit f0ed373) -- REQUIRED, see below.

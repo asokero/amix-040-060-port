@@ -8,7 +8,7 @@
  * THE PACKAGE IS IN THE KERNEL, NOT HERE.  This binary contains only Motorola's *test*
  * image (dist/ftest.sa) plus a 128-byte call-out section pointing at printf.  The
  * instructions it executes trap to vector 11 and are emulated by the FPSP the kernel links
- * in (prototypes/fpsp060_glue.s + Motorola's fpsp.sa).  So a pass here is a statement about
+ * in (src/fpsp060_glue.s + Motorola's fpsp.sa).  So a pass here is a statement about
  * the kernel, measured with the vendor's own yardstick.
  *
  * WHAT EACH ENTRY POINT MEANS (dist/test.doc), and what to expect on AMIX today:

@@ -4,7 +4,7 @@
  * only way to prove the 040 per-process page-table walk:
  *
  *   prusrio  ->  prfastmapin   (fast path: page already resident, no COW needed)
- *                 |                040 override in prototypes/prfastmap040.s
+ *                 |                040 override in src/prfastmap040.s
  *                 +-> declines -> as_fault(F_SOFTLOCK) + prmapin -> vtop(addr, p)
  *                                  -> uvatopte040                (ISSUE-18a fix)
  *            ->  prfastmapout  (byte-patched phys >> PNUMSHFT, 11 sites)

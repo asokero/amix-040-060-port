@@ -155,7 +155,7 @@ Attribution, one item at a time:
 
 8. Files
 ---------
-prototypes/fpsp060_glue.s     the M2b call-outs (this unit)
+src/fpsp060_glue.s     the M2b call-outs (this unit)
 build-fpsp060.sh              + FPSP060_VARIANT=fpsp|pfpsp for D2
 build-ftest060.sh             Motorola's test suite as an AMIX binary
 test-tools/fp060probe.c       now checks VALUES, through a pipe, FP-free in the parent

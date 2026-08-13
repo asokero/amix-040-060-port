@@ -9,7 +9,7 @@
 # are copied into build/ by z3660_modelb.py, which converts the ONE thing that is
 # wrong for us -- they target a 2 KiB-page kernel and inline phystopfn() as
 # `pa >> 11`, which on Model B maps (pa>>11)<<12 = 2*pa, the WRONG physical page.
-# See Z3660-KERNEL-FEASIBILITY-260731.md for the evidence and the wiring map.
+# See docs/Z3660-KERNEL-FEASIBILITY-260731.md for the evidence and the wiring map.
 #
 # Registration (patch_z3660.py): a four-row scsicard[] table replacing the stock
 # three, the cdevsw[48].d_str streamtab store from the parinit hook, and the
@@ -33,12 +33,12 @@ echo "[*] base: $(basename "$IN")"
 # `moveq #12`.  The source rewrite below is now belt-and-braces for phystopfn
 # (it still owns the page COUNTS, which no header can fix).
 echo "[*] Model-B header set (mirror sysroot + geometry probe)"
-sh "$HERE/prototypes/mk_modelb_sysroot.sh" | sed 's/^/      /'
+sh "$HERE/src/mk_modelb_sysroot.sh" | sed 's/^/      /'
 AMIX_SYSROOT="$HERE/build/sysroot-modelb"
 export AMIX_SYSROOT
 
 echo "[*] Model-B source copies (phystopfn 2 KiB -> 4 KiB; page counts halved, bytes unchanged)"
-python3 "$HERE/prototypes/z3660_modelb.py"
+python3 "$HERE/src/z3660_modelb.py"
 
 echo "[*] cross-compiling both drivers"
 CF=$(echo "$AMIX_KERNEL_CFLAGS" | sed 's/-m68020/-m68040/')
@@ -55,10 +55,10 @@ m68k-cbm-sysv4-gcc $CF -I"$V/usr/sys/amiga/alien" -I"$HERE/build" \
 # 11 as a value (a SCSI CDB length compare; a DLPI constant written into a
 # structure), and an over-eager grep on `moveq #11` fails on those.  Asserted in
 # the compiled bytes because a wrong page shift is invisible until it corrupts.
-# Moved into prototypes/check_page_geometry.sh (2026-08-01) so every compiled-in
+# Moved into src/check_page_geometry.sh (2026-08-01) so every compiled-in
 # object gets the same check, and widened there to `asrl` as well as `lsrl` -- a
 # SIGNED `>> 11` compiles to asrl and the old check here could not see it.
-sh "$HERE/prototypes/check_page_geometry.sh" \
+sh "$HERE/src/check_page_geometry.sh" \
 	"$HERE/build/z3660_040.o" "$HERE/build/z3660eth_040.o"
 for o in z3660_040 z3660eth_040; do
 	m68k-linux-gnu-objdump -d "$HERE/build/$o.o" | grep -A1 "moveq #12," | grep -q "lsrl" \
@@ -67,7 +67,7 @@ done
 echo "[OK] both driver objects shift by 12 (4 KiB PFN), none by 11"
 
 echo "[*] assembling the registration glue"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/z3660_glue040.s" -o "$HERE/build/z3660_glue040.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/z3660_glue040.s" -o "$HERE/build/z3660_glue040.o"
 
 # parinit is the io_init[] hook (same one the VA2000 driver uses, and for the same
 # reason).  Weaken the stock one and expose it as parinit_orig so the glue can
@@ -101,7 +101,7 @@ LEAK=$(m68k-linux-gnu-nm "$OUT" | awk '$1=="U" && $2!="edata" && $2!="end" && $2
 echo "[OK] no unresolved symbols"
 
 echo "[*] wiring (scsicard row + loop bound + dd.c ordering island)"
-python3 "$HERE/prototypes/patch_z3660.py" "$OUT"
+python3 "$HERE/src/patch_z3660.py" "$OUT"
 
 # The standard packaging guards -- same ones every other relink in this tree runs.
 CONTIG=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '
@@ -113,9 +113,9 @@ set -- $CONTIG
 DSZ=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print strtonum("0x"$6)}')
 [ $((DSZ % 4)) -eq 0 ] && echo "[OK] .data size 0x$(printf %x $DSZ) is 4-aligned." \
 	|| { echo "[FAIL] .data size not 4-aligned -> .bss misaligned at runtime"; exit 1; }
-python3 "$HERE/prototypes/patch_b2_flip.py" "$OUT" --check | sed 's/^/      /'
-( cd "$HERE" && python3 prototypes/check_relink_relocs.py "$OUT" | tail -1 )
-python3 "$HERE/prototypes/stamp_buildid.py" "$OUT"
+python3 "$HERE/src/patch_b2_flip.py" "$OUT" --check | sed 's/^/      /'
+( cd "$HERE" && python3 src/check_relink_relocs.py "$OUT" | tail -1 )
+python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
 echo "[OK] built $OUT"
 echo "     boot: unix_boot040 $(basename "$OUT")   <- unix_boot040 is MANDATORY"

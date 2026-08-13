@@ -46,10 +46,10 @@ none of these instructions.  It was luck, not coverage.
 
 WHY THIS WAS MISSED -- and it is the week's recurring pattern again
 ------------------------------------------------------------------
-The project ALREADY KNEW the vector-61 fact.  prototypes/lmul060.s's own header says:
+The project ALREADY KNEW the vector-61 fact.  src/lmul060.s's own header says:
 
     "The 64-bit mul/div forms are UNIMPLEMENTED on the 68060 (vector 61 trap); these are
-     the ONLY such sites in the whole kernel (census 2026-07-09, see 68060-prestudy.md)."
+     the ONLY such sites in the whole kernel (census 2026-07-09, see docs/68060-prestudy.md)."
 
 That census was correct and the fix was correct -- the KERNEL's own three sites, in `lmul`,
 were replaced with 060-legal arithmetic (validated against a muls.l reference model,
@@ -106,7 +106,7 @@ the READ-ONLY vanilla tree and counted 68060-unimplemented instructions:
 
 So cc1 contains none of them: 34a is real but is NOT what breaks cc1.
 
-Step 2 -- instrument instead of reasoning further.  prototypes/sigkill_dbg.s already wraps
+Step 2 -- instrument instead of reasoning further.  src/sigkill_dbg.s already wraps
 sigtoproc and prints sig/pid/psargs/uret/kcaller/fu, but its generic gate covered signals
 4..11 only.  Raised the upper bound to 12 (one immediate, in OUR OWN dbg-overlay source, base
 untouched) -> build 68040-260727-01 / 68060-260727-01.  On emu-060:

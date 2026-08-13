@@ -1,6 +1,6 @@
 sysconfig(_CONFIG_PAGESIZE): the kernel stops lying about its own page size
 ==========================================================================
-2026-07-27.  prototypes/patch_sysconfig_pagesize.py, ONE site + TWO canaries.
+2026-07-27.  src/patch_sysconfig_pagesize.py, ONE site + TWO canaries.
 Builds 68040-260727-05 (base) / -06 (dbg).  relocs 0.  Emulator only; no hardware.
 
 THE DEFECT

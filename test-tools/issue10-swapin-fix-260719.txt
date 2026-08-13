@@ -6,7 +6,7 @@ swap-kirjoitukset alkoivat, mutta vyory syttyi heti kun swap-IN-liikenne alkoi.
 Codex-auditit (analyysirepo 7739bf6): SPEC-SWAPIN-HOT-PATH-AUDIT.md nimesi klustsizen,
 UM-BIT-LIFECYCLE-CENSUS.md nimesi hat_pteload::Lreplacen.
 
-KORJAUS 1 -- klustsize-census + Model B swap-in -ryhma (prototypes/patch_swapin.py):
+KORJAUS 1 -- klustsize-census + Model B swap-in -ryhma (src/patch_swapin.py):
   Census: klustsize-lukijoita TASAN 6 (relokit, vanilla==build): spec_getapage x5
   (0x66cc2 adj_klustsize, 0x66e76/82/b8/ca read-ahead), spec_putpage x1 (0x6733e
   offlo/offhi-klusterointi). EI kirjoittajia. Kaikki 6 muuttuvat lahde-oikeiksi kun
@@ -84,4 +84,4 @@ writeback-ryhman jalkeen; dbg/quiet perivat basen. KVWALK_TEXTSIZE=0xdd0d0 (dbg)
 
 SEURAAVAKSI: real-HW-040-verifypaketti (pressure+burst4, writeback disk-truth,
 crash(1M) re-run, UFS-geometria, caches Step A writeback-verify) -- ks.
-REALHW-VERIFY-260719.md.
+docs/REALHW-VERIFY-260719.md.

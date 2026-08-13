@@ -21,10 +21,10 @@ verify_stock "$IN"
 [ -f "$IN" ] || { echo "ERROR: stock kernel $IN missing"; exit 1; }
 
 echo "[*] assembling serial hook + standalone serdbg_mark + exec/lookup markers"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/serdbg.s"       -o "$HERE/build/serdbg.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/serdbg_mark.s"  -o "$HERE/build/serdbg_mark.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/execmark.s"     -o "$HERE/build/execmark.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/asfault_probe.s" -o "$HERE/build/asfault_probe.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/serdbg.s"       -o "$HERE/build/serdbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/serdbg_mark.s"  -o "$HERE/build/serdbg_mark.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/execmark.s"     -o "$HERE/build/execmark.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/asfault_probe.s" -o "$HERE/build/asfault_probe.o"
 
 echo "[*] weaken conputc + all marker targets; add _orig aliases (addrs from stock unix)"
 cp "$IN" "$HERE/build/unix-030-dbg-stage1"

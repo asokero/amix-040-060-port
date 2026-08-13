@@ -53,7 +53,7 @@ LOCAL-BUILD-NOTES.md
 # --- Moved to the amix-unix-boot repository (Commodore-copyright sources) ---
 unix_boot/
 unix_boot.lha
-prototypes/copyit.*
+src/copyit.*
 
 # --- Local configuration: never published ---
 config.sh

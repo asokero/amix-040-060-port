@@ -7,7 +7,7 @@ serial2usb 9600 (panic-mustalaatikko; HUOM merkkikato, ks. sivulöydokset).
 Siirtotie: NFS nasu:Public/amix/hw260719 -- BINAARITURVALLINEN (payload 1570 8192,
 hat_dup_cow 18025 16 verifioitu molemmin puolin; ei tftp-netascii-riskia).
 
-AJOLISTA JA TULOKSET (REALHW-VERIFY-260719.md:n mukaan):
+AJOLISTA JA TULOKSET (docs/REALHW-VERIFY-260719.md:n mukaan):
 
 1. Boot + login (dbg 260719-02): PUHDAS, 0 bus-virhetta serialissa.
 2. Staus-verifiointi: payload 1570 8192, hat_dup_cow 18025 16 seka NFS:lla etta /tmp:ssa.

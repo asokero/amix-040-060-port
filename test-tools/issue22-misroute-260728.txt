@@ -18,7 +18,7 @@ WHAT IT REFUTES
 Codex's static analysis (amix-kernel-analysis vm-map/ISSUE22-EFAULT-SOURCE.md, f757544) predicted
     DBG krnxflt FAILEXIT w=1 ... depth=5
 from the global Lkx_depth counter aggregating concurrent sleeping resolvers.  The counter IS global
-and IS held across as_fault (verified in prototypes/krnxmemflt040.s:52/272 -- that part of the
+and IS held across as_fault (verified in src/krnxmemflt040.s:52/272 -- that part of the
 analysis is correct), but it is not what fires:
 
   * depth=1 at the failure.
@@ -81,7 +81,7 @@ THE RUN
 
 NEXT: 68040-260728-39
 ---------------------
-Same image plus, in prototypes/userspace040.s:
+Same image plus, in src/userspace040.s:
   * a probe that logs fmt / fc / fa / raw SSW whenever the function code is not user (cap 8 for
     user addresses = the misroute, cap 4 for kernel addresses = context and positive control);
   * .globl counters readable with kpeek: us_calls (the denominator), us_odd_user, us_odd_kern,
@@ -119,7 +119,7 @@ Verified byte-exactly in the stock binary:
 The loop never reloads DFC.  Note also that its source read is a PLAIN movel from the kernel
 segmap -- that is the supervisor-data fault our probe counts by the thousand.
 
-prototypes/wb040.s's Lwb_do sets DFC = WBxS&7 to re-issue a pending write-back with the faulted
+src/wb040.s's Lwb_do sets DFC = WBxS&7 to re-issue a pending write-back with the faulted
 access's function code, and never restores it.  DFC is not saved by the exception mechanism, so
 the value survives the rte back into the interrupted copy loop.  From there:
 

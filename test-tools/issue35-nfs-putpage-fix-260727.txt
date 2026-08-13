@@ -1,6 +1,6 @@
 ISSUE-35 FIX: nfs_putpage io_len advances in 4 KiB pages
 ========================================================
-2026-07-27 evening.  prototypes/patch_nfs_putpage.py, TWO ATOMIC sites + 4 canaries.
+2026-07-27 evening.  src/patch_nfs_putpage.py, TWO ATOMIC sites + 4 canaries.
 Builds 68040-260727-07 (base) / -08 (dbg).  relocs 0.
 ** THE FIX ITSELF IS NOT YET VERIFIED ON TARGET -- see "what is missing" below. **
 

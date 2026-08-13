@@ -82,7 +82,7 @@ sub-page window by `NBPP` would yield zero.
 * The `#ifndef NBPP / #error` guard in the ethernet header exists because `z3660eth.h` uses `NBPP`
   while `z3660eth.c` is what includes `<sys/immu.h>` (line 54, before the header at line 68). If a
   toolchain dislikes `#error`, drop those three lines — the patch works without them.
-* If upstream adopts these, this tree's `prototypes/z3660_modelb.py` must be updated: it rewrites
+* If upstream adopts these, this tree's `src/z3660_modelb.py` must be updated: it rewrites
   exactly these constants at build time and **asserts each replacement count**, so an upstream that
   no longer matches will fail the build loudly rather than silently doing nothing. That is the
   intended behaviour, not a bug to work around.

@@ -16,7 +16,7 @@ hardware at vector 61 and the kernel named the instruction itself:
     = muls.l (12,%a6),%d1:%d2
 
 a 64-bit multiply taking its source from the stack frame.  See
-REALHW-260807-11-ACCEPTANCE.md section 8 for the attribution: the FPSP served wolf3d 632
+docs/REALHW-260807-11-ACCEPTANCE.md section 8 for the attribution: the FPSP served wolf3d 632
 times and declined nothing; this was never a floating-point fault.
 
 SCOPE, MEASURED RATHER THAN GUESSED
@@ -199,7 +199,7 @@ instrument; without it this change could have shipped with nothing under test ha
   f60 after the battery: entry 634 = done 634, real 0, last_co 12.
   634 = wolf3d's 632 + the battery's own fputest Test A (2).  wolf3d's 632 FPSP entries
   reproduce EXACTLY the figure measured on the previous RTG build (68060-260809-01) in
-  REALHW-260807-11-ACCEPTANCE.md section 8 -- two different kernel builds, same count.
+  docs/REALHW-260807-11-ACCEPTANCE.md section 8 -- two different kernel builds, same count.
 
 6. Two defects in the harness, found and fixed here rather than glossed
 -----------------------------------------------------------------------
@@ -220,7 +220,7 @@ where stale addresses survive:
 
 5. Files
 ---------
-prototypes/isp61_060.s        the widened decode (this unit)
+src/isp61_060.s        the widened decode (this unit)
 test-tools/isp61ea.c          the driver: values compared as bit patterns, one child per case
 test-tools/isp61ea_asm.s      one hand-encoded instruction per accepted mode + one declined
 test-tools/batteryrun7.sh     battery re-addressed for textsize 0xf25dc, now reading isp61 too

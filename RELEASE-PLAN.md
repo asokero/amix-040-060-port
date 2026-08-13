@@ -28,7 +28,7 @@ and invite a report, not merely refuse.
 
 `unix_boot/` — **18 tracked files** — carries `Copyright (C) 1991, Commodore Business Machines`:
 `unix_boot.c`, `bind.c`, `rel.c`, `streq.c`, `streqn.c`, the headers, `copyit.s`, `Supervisor.s`.
-`prototypes/copyit.s` is the same file with our 040/060 MMU-disable changes.
+`src/copyit.s` is the same file with our 040/060 MMU-disable changes.
 
 So the loader **cannot be published as sources either**, and the separate loader project the owner
 proposed is the right shape but not for the reason assumed: its licence is not "determined by its
@@ -106,7 +106,7 @@ Result, with the verifications that were actually run:
   credentials     local/secrets.env (gitignored) + a tracked .example; five documents
                   redacted; test-tools/hw.py committed for the first time, reading the
                   env file -- it was previously un-committable BECAUSE it held the password
-  loader          unix_boot/ (18 files) and prototypes/copyit.s moved out to the new
+  loader          unix_boot/ (18 files) and src/copyit.s moved out to the new
                   amix-unix-boot repository as FIVE PATCHES over unix_boot.lha
   self-test       apply.sh + patches reproduce the working tree BYTE FOR BYTE
   history         git filter-repo: password 0 occurrences in all 621 commits,
@@ -119,11 +119,11 @@ Result, with the verifications that were actually run:
 
 Two corrections were needed along the way and are recorded in the commit: the patch baseline
 is `unix_boot.lha`, **not** `vanilla/usr/sys/amiga/boot` (different lineage — patches against it
-would have been wrong), and `prototypes/copyit.s` was a stale duplicate that nothing built.
+would have been wrong), and `src/copyit.s` was a stale duplicate that nothing built.
 
 ### Phase 1 — as originally planned
 
-1. Move `unix_boot/` and `prototypes/copyit.s` out of this repository into the loader project, and
+1. Move `unix_boot/` and `src/copyit.s` out of this repository into the loader project, and
    convert them there into **patches against Commodore's originals** plus build scripts.
 2. Credentials: create `local/secrets.env` (gitignored), referenced by `test-tools/hw.py`-style
    tooling; remove the five documents' inline credentials.
@@ -206,15 +206,41 @@ layout move is phase 5, and the front door must not describe a structure that do
 **Acceptance:** a reader following only `BUILDING.md` on a clean machine reaches a built kernel.
 Tested for real in phase 6.
 
-### Phase 5 — layout
+### Phase 5 — layout ✅ **DONE 2026-08-13**
+
+```
+  prototypes/ -> src/     495 references rewritten; the name was actively misleading, since
+                          these are the shipping product rather than prototypes
+  docs/                   51 acceptance records, contracts, audits and findings
+  docs/archive/           41 session prompts, run-lists and task briefs -- working notes,
+                          kept deliberately rather than deleted for looking untidy
+  root                    6 documents: README, BUILDING, STATUS, KNOWN-ISSUES, RELEASE-PLAN
+                          and the gitignored LOCAL-BUILD-NOTES
+  75 files                had stale bare references to moved documents; all repointed
+```
+
+**One deviation from the plan, taken deliberately:** `prototypes/` was NOT split into `src/` and
+`patches/`. Several byte-patchers belong to one specific override unit — `patch_isp_vec61.py`
+with `isp61_060.s`, `patch_fpsp_vectors.py` with the FPSP glue — and separating them into two
+directories would break that pairing for no reader benefit. One rename, not a four-way split.
+
+The relink scripts also stay at the repository root: they are the documented entry points
+(`sh relink-040.sh`), and burying them under `build-scripts/` would add a path for nobody's
+benefit.
+
+**Acceptance:** three full rebuilds during the move (after the rename, after the document move,
+after the reference rewrite), each differing from its reference in exactly one byte — the
+build-id counter. `check-env.sh` still exits 0. No dead links in any root document.
+
+### Phase 5 — as originally planned
 
 Proposed:
 
 ```
   README.md  BUILDING.md  STATUS.md  KNOWN-ISSUES.md  LICENSE  NOTICE
   config.sh.example
-  src/          the override units (today: prototypes/*.s)
-  patches/      the byte-patch scripts (today: prototypes/patch_*.py)
+  src/          the override units (today: src/*.s)
+  patches/      the byte-patch scripts (today: src/patch_*.py)
   tools/        status-facts.sh, check-env.sh, relink checkers
   build-scripts/ relink-040.sh and variants
   test-tools/   unchanged

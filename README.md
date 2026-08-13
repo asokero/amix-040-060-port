@@ -33,7 +33,7 @@ Both CPUs are hardware-accepted on the same image, on an Amiga 3000:
 | 64-bit integer emulation (vector 61) | — (in hardware) | ✅ measured subset |
 | RTG graphics + X11 + games | ✅ | ✅ |
 
-Measured, not asserted: every claim above has an acceptance document (`REALHW-*.md`) naming the kernel
+Measured, not asserted: every claim above has an acceptance document in `docs/` naming the kernel
 build, the instrument and the numbers.
 
 ### Known issues
@@ -81,13 +81,15 @@ Full instructions, including the toolchains and how the override mechanism works
 | path | what |
 |---|---|
 | `relink-040.sh` | the build — assembles the override units, rebinds symbols, byte-patches, validates |
-| `prototypes/*.s` | the override units: MMU/HAT, fault resolvers, cache and DMA, FPSP/ISP glue, FP context |
-| `prototypes/patch_*.py` | byte-patchers for what a symbol override cannot express |
-| `tools/` | `check-env.sh`, `status-facts.sh` (generates counter addresses), `verify-stock.sh` |
+| `relink-040-*.sh` | variants: debug probes, serial mirror, and the RTG graphics kernels |
+| `src/*.s` | the override units: MMU/HAT, fault resolvers, cache and DMA, FPSP/ISP glue, FP context |
+| `src/patch_*.py` | byte-patchers for what a symbol override cannot express |
+| `tools/` | `check-env.sh`, `status-facts.sh` (generates counter addresses), `verify-stock.sh`, `config-load.sh` |
 | `test-tools/` | the instruments — `protfault`, `fpenab060`, `fp060probe`, `isp61ea`, `kpeek`, the battery |
+| `docs/` | acceptance records, contracts, audits and findings — the evidence behind the table above |
+| `docs/archive/` | session prompts, run-lists and task briefs: working notes, kept deliberately |
 | `STATUS.md` | canonical status: what is proven, on which platform, with links to the evidence |
 | `KNOWN-ISSUES.md` | 44 issues, chronological, corrections in place |
-| `REALHW-*.md` | hardware acceptance records — the evidence behind the table above |
 
 ## Documentation
 

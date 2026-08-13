@@ -3,7 +3,7 @@
 #
 # SLIMMED 2026-07-12: the former quiet040.s load-bearing overrides (sched,
 # schedpaging, idle, resume040, hardbus page-crossing fix) were PROMOTED into the
-# base link (prototypes/runtime040.s via relink-040.sh) after the Codex
+# base link (src/runtime040.s via relink-040.sh) after the Codex
 # PROCESS-MMU-CONTEXT-SWITCH-CONTRACT.md packaging finding.  This overlay now layers
 # ONLY the serial mirror on top of the already-bootable build/unix-040:
 #   serdbg.s = conputc serial mirror (banner / cmn_err / panics -> serial @9600)
@@ -22,7 +22,7 @@ IN="$HERE/build/unix-040"
 [ -f "$IN" ] || { echo "ERROR: $IN missing -- run sh relink-040.sh first"; exit 1; }
 
 echo "[*] assembling serdbg.s"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/serdbg.s"   -o "$HERE/build/serdbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/serdbg.s"   -o "$HERE/build/serdbg.o"
 
 echo "[*] weaken the overridden symbol (conputc)"
 cp "$IN" "$HERE/build/unix-040-quiet-stage1"
@@ -68,10 +68,10 @@ echo "[OK] .data size 0x$(printf %x $DSZ) is 4-aligned (bss placement safe)."
 
 echo
 echo "[*] B2 page-release hooks: re-verify/re-fix the page_free bsr.l displacement for this link"
-python3 "$HERE/prototypes/patch_cb_release.py" "$OUT" | tail -3
+python3 "$HERE/src/patch_cb_release.py" "$OUT" | tail -3
 
 echo
 echo "[*] stamping build id -> utsname.machine tag (inherits inituname040 from unix-040)"
-python3 "$HERE/prototypes/stamp_buildid.py" "$OUT"
+python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
 echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-quiet"

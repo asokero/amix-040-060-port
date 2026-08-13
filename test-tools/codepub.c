@@ -1,6 +1,6 @@
 /* codepub.c -- acceptance test for the user-code cache-publication ABI
  * (USER-CODE-PUBLISH, 2026-08-01).  Spec: analyysirepo
- * vm-map/USER-CODE-CACHE-ABI-SPEC.md; kernel unit prototypes/codepub040.s.
+ * vm-map/USER-CODE-CACHE-ABI-SPEC.md; kernel unit src/codepub040.s.
  *
  * THE ABI UNDER TEST
  *   A successful mprotect(addr, len, prot) whose prot contains PROT_EXEC is a

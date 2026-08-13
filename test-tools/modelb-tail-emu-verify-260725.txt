@@ -5,10 +5,10 @@ Emulator verification, 2026-07-25
 
 WHAT WAS BUILT
 
-  prototypes/patch_kmapools.py   NEW  26 sites  ISSUE-15 + kmem_avail
-  prototypes/prfastmap040.s      NEW  uvatopte040 + prfastmapin 040 override
-  prototypes/patch_procio.py     NEW  15 sites  prfastmapout(11) + prusrio(4)
-  prototypes/vtop040.s           MOD  proc-aware dispatch, user branch -> uvatopte040
+  src/patch_kmapools.py   NEW  26 sites  ISSUE-15 + kmem_avail
+  src/prfastmap040.s      NEW  uvatopte040 + prfastmapin 040 override
+  src/patch_procio.py     NEW  15 sites  prfastmapout(11) + prusrio(4)
+  src/vtop040.s           MOD  proc-aware dispatch, user branch -> uvatopte040
   relink-040.sh                  MOD  assemble/weaken/link/patch wiring
 
   Base kernel analysed:  build/unix-040
@@ -253,7 +253,7 @@ ISSUE-27  as_iolock (0xaee34, 12 sites) + the whole segmap_pagecreate consumer f
           (fbzero 0x3fa8a, spec_write 0x665f2, writei 0x70cfa, rwip 0x7f8ac, rwvp
           0x88f28) still round the pagecreate tail-zero bound to 2 KiB while
           segmap_pagecreate itself is ALREADY 4 KiB.  Live, silent stale-data exposure on
-          the UFS root write path.  Codex brief written: PAGECREATE-TAILZERO-TASK.md.
+          the UFS root write path.  Codex brief written: docs/archive/PAGECREATE-TAILZERO-TASK.md.
 ISSUE-28  memcntl / lock_mem / mem_unlock (0x4319a..0x434b6) unconverted 2 KiB page
           rounding: 0x4331c 0x43328 0x4332e 0x43348 0x43352 0x43358 0x4338e 0x43394.
 ISSUE-29  the KMA free-list report above.

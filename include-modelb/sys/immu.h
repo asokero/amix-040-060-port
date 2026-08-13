@@ -24,7 +24,7 @@
  * override a system header -- that is why the -I flags in AMIX_KERNEL_CFLAGS
  * pointing at vanilla/usr/include have in fact never been consulted for any
  * header the sysroot also provides.  The override is therefore installed by
- * building a sysroot MIRROR (prototypes/mk_modelb_sysroot.sh -> AMIX_SYSROOT),
+ * building a sysroot MIRROR (src/mk_modelb_sysroot.sh -> AMIX_SYSROOT),
  * in which this file replaces <sys/immu.h> and the stock file remains reachable
  * as <sys/immu_stock.h>.
  *
@@ -38,9 +38,9 @@
  * would be far worse than a build failure.  If you hit one of those errors,
  * that is this file asking you to audit the site -- not to delete the poison.
  *
- * Verified by prototypes/modelb_geom_probe.c, which fails to COMPILE unless
+ * Verified by src/modelb_geom_probe.c, which fails to COMPILE unless
  * every constant below has the Model-B value, and at the object level by
- * prototypes/check_page_geometry.py.
+ * src/check_page_geometry.py.
  */
 
 #ifndef _MODELB_SYS_IMMU_H

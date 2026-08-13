@@ -25,8 +25,8 @@ IN="$HERE/build/unix-040"
 # schedpaging, idle, resume, hardbus) now live in the BASE link (runtime040.s via
 # relink-040.sh) and are inherited through $IN.  Only serdbg + ddopen_dbg layer here.
 echo "[*] assembling serdbg.s + ddopen_dbg.s"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/serdbg.s"     -o "$HERE/build/serdbg.o"
-m68k-cbm-sysv4-gcc -m68040 -c "$HERE/prototypes/ddopen_dbg.s" -o "$HERE/build/ddopen_dbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/serdbg.s"     -o "$HERE/build/serdbg.o"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/ddopen_dbg.s" -o "$HERE/build/ddopen_dbg.o"
 
 echo "[*] weaken the overridden symbols (conputc + ddopen)"
 cp "$IN" "$HERE/build/unix-040-quiet-test-stage1"
@@ -72,6 +72,6 @@ fi
 echo "[OK] .data size 0x$(printf %x $DSZ) is 4-aligned (bss placement safe)."
 
 echo "[*] stamping build id"
-python3 "$HERE/prototypes/stamp_buildid.py" "$OUT"
+python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
 echo "[OK] built $OUT -- boot: unix_boot040 unix-040-quiet-test (capture serial!)"

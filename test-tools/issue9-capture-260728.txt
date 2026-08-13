@@ -7,7 +7,7 @@ PROCESS (from ps -ef on the live machine):
     uucp   256   254 15 23:45:00 ?  1:50 /usr/lib/uucp/uudemon.cleanu
   parent 97 = cron; machine clock 23:47, uptime 9 min -> a PERIODIC job, not a test.
 
-KERNEL-SIDE PROBE STATE (prototypes/sigkill_dbg.s):
+KERNEL-SIDE PROBE STATE (src/sigkill_dbg.s):
     23 x  DBG SIG sig=11 pid=256 stat=6 psargs=/usr/lib/uucp/uudemon.cleanu  uret=80011BF5 uarg2=80011A8C kcaller=804858C
      8 x  DBG SEGVCTX a0=400B5604 a1=1 pte=94C6019 cell=4AFC0000 uva=48478000
      8 x  DBG SEGVDMP p0=0 p4=0 cm4=74000000 c0=4AFC0000 c4=0 c8=0
