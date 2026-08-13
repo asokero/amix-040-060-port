@@ -216,34 +216,36 @@ survives as history but its conclusion has been replaced.
 
 ## 5. Release blockers
 
-1. ~~**ISSUE-42**~~ — **closed on 68040 silicon 2026-08-13** (A3640). `protfault` 3/3, and the
-   original defect reproduced on the same boot with the fix switched off. What remains is coverage,
-   not correctness: the WB1 write-back path has never executed on either platform, and the battery
-   and burst suites have not been run on the A3640.
-2. **ISSUE-10 / ISSUE-9** — two intermittent 040 faults that are captured but not attributed.
-   Neither blocks normal use; both block a confident release claim.
-3. **The current image has no 040 hardware run.** `68060-260812-02` is 060-accepted only.
+1. **ISSUE-10 and ISSUE-9** — two intermittent 68040 faults, captured but not attributed. Neither
+   blocks normal use; both block a confident release claim. ISSUE-10 additionally carries a
+   methodological trap: it is **intermittent**, so a single-boot bisect proves nothing, and July's
+   "retired" verdict turned out to be a debug-instrument artifact.
+2. **Coverage, not correctness** — three paths that have never executed anywhere:
+   * the **WB1** write-back slot and its ISSUE-11 bus-lane realignment (the emulators never set
+     WB1S valid; the A3640 run reached WB3 only);
+   * ISSUE-40's `ptd_wake_n` / `pt_waiting` branch;
+   * ISSUE-43's two `UFPRWRT` branches — nothing in this repo writes FP registers through old
+     `ptrace`, which is also audit gate 6.
+3. **The burst suite has not run on the A3640.** Copyback and burst were accepted on a Mercury
+   card with 32 MiB; this one has 12.7 MiB and a different memory topology.
 
-Nothing on the 68060 side is currently blocking.
+~~ISSUE-42~~ closed on silicon 2026-08-13. Nothing on the 68060 side is blocking.
 
 ---
 
 ## 6. Recommended order
 
-0. ~~Tag and archive `68060-260812-02`~~ — **done 2026-08-12**, see §1.
-1. **ISSUE-42**, bundled into one 68040 hardware session with `NEXT-040-SESSION-RUNLIST.md`,
-   since both need the card swap.
-2. **Re-verify the current image on 040 hardware** in that same session, closing the empty
-   column in §2.
-3. ISSUE-10 / ISSUE-9 attribution — slower work, needs repeat boots rather than cleverness.
-4. **Decide the 68LC060 question as a product decision**, not a technical debt: "requires a full
-   68060" is a legitimate answer, provided the kernel says so clearly at boot instead of failing
-   strangely.
-5. RAM > 32 MB, then Zorro III, as feature work with their own acceptance.
-
-Two coverage gaps are worth closing whenever their area is next opened, neither being a
-suspected defect: ISSUE-40's `ptd_wake_n` (`pt_waiting` branch never executed) and ISSUE-43's
-two `UFPRWRT` branches (nothing in this repo writes FP registers through old `ptrace`).
+0. ~~Tag and archive~~ · ~~ISSUE-42~~ · ~~re-verify the image on 040 hardware~~ — all done
+   2026-08-12/13. `68040/68060-260812-06` is accepted on both silicon.
+1. **Burst suite on the A3640**, then wolf3d/X11 on the RTG kernel `68040-260813-01`
+   (`NEXT-EVENING-RUNLIST-260813.md`).
+2. **ISSUE-10 / ISSUE-9 attribution** — the last two release blockers. Slow work: repeat boots,
+   not cleverness, and no single-boot bisect.
+3. **Decide the 68LC060 question as a product decision**, not technical debt.
+4. RAM > 32 MB — and note the corrected shape: coalescing the regions is not enough on its own,
+   the kernel must also be bound at the bottom of the merged span, or startup taught to accept
+   memory below the kernel. Then Zorro III.
+5. The three unexercised paths in §5.2, whenever their area is next opened.
 
 ---
 
