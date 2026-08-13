@@ -57,3 +57,4 @@ src/copyit.*
 
 # --- Local configuration: never published ---
 config.sh
+local/muistiinpanot.txt

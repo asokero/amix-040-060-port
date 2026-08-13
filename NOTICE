@@ -34,6 +34,13 @@ attribution is given here and in the source-file comments.
 **Linux/m68k** was consulted for behaviour when establishing contracts (notably the 68060 MA
 fault rounding and the write-back propagation model).  No code was copied.
 
+Patches to other projects
+-------------------------
+`z3660-upstream-patches/` holds two diffs written here and intended for the separate upstream
+projects `amix-z3660scsi` and `amix-z3660net`.  The patch text is ours; the context lines are
+theirs, and those projects carry their own terms.  Nothing in this repository builds or modifies
+them.
+
 Hardware documentation
 ----------------------
 Motorola MC68040 and MC68060 user manuals, and Commodore's AMIX headers as installed on the
