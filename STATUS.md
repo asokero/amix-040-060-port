@@ -220,14 +220,17 @@ survives as history but its conclusion has been replaced.
    blocks normal use; both block a confident release claim. ISSUE-10 additionally carries a
    methodological trap: it is **intermittent**, so a single-boot bisect proves nothing, and July's
    "retired" verdict turned out to be a debug-instrument artifact.
-2. **Coverage, not correctness** — three paths that have never executed anywhere:
+2. **Coverage, not correctness** — paths that have never executed anywhere:
    * the **WB1** write-back slot and its ISSUE-11 bus-lane realignment (the emulators never set
      WB1S valid; the A3640 run reached WB3 only);
-   * ISSUE-40's `ptd_wake_n` / `pt_waiting` branch;
    * ISSUE-43's two `UFPRWRT` branches — nothing in this repo writes FP registers through old
      `ptrace`, which is also audit gate 6.
-3. **The burst suite has not run on the A3640.** Copyback and burst were accepted on a Mercury
-   card with 32 MiB; this one has 12.7 MiB and a different memory topology.
+   * ~~ISSUE-40's `ptd_wake_n` / `pt_waiting` branch~~ — **executed for the first time 2026-08-13**,
+     7 times, during the burst suite on a 12.7 MiB machine. Reached by memory pressure, not by
+     workload type.
+3. ~~The burst suite has not run on the A3640.~~ **Run 2026-08-13**: 72/72 sums, every anomaly
+   count 0, at 12.7 MiB against the 32 MiB of every previous acceptance. ISSUE-39 did **not** fire,
+   which sharpens its characterisation as fragmentation rather than pressure.
 
 ~~ISSUE-42~~ closed on silicon 2026-08-13. Nothing on the 68060 side is blocking.
 

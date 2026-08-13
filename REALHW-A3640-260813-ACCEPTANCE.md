@@ -192,3 +192,59 @@ before they started, so the run is attributable after the fact:
 normally lose the measurement. It did not, because the counters are cumulative and the baseline
 had been written to files on the machine beforehand. Taking a baseline early costs one command and
 converts "we forgot to measure" into a subtraction.
+
+---
+
+## 8. Burst suite on the A3640 — and a branch that had never executed anywhere
+
+Driver: `test-tools/burstloop11.sh` (the AMIX-grep-safe replacement), 3 rounds × 4 bursts ×
+(6 concurrent 4 MiB copies + `hat_dup_cow 64`).
+
+```
+  good sums     72   = 24 per round × 3, exactly the expected count
+  wrong sums    none
+  anomalies     bad address 0 · read error 0 · cannot open 0 · No space 0
+                BUS ERROR 0 · PANIC 0 · Segmentation 0 · Killed 0
+```
+
+Every previous burst acceptance ran on a Mercury card with **32 MiB**. This one ran with
+**12.7 MiB** of `availrmem` — less than half — and copyback held.
+
+### The pre-registered expectation that did NOT happen
+
+`NEXT-EVENING-RUNLIST-260813.md` predicted that **ISSUE-39** (`hat_sdtalloc` out of contiguous
+memory) might fire here for the first time, since the suite had never run at half the RAM, and
+said in advance that this would be a finding rather than a regression.
+
+**It did not fire.** The `i39` block shows no change at all across the whole run: `i39_fail_n` = 0.
+That is a clean negative and it sharpens the earlier characterisation — ISSUE-39 is fragmentation,
+not pressure, and halving the memory did not reproduce it.
+
+### The branch that did
+
+```
+  ptd_wake_n    0 -> 7
+```
+
+`ptd_wake_n` counts ISSUE-40's `pt_waiting` wake path. It has been **zero on every machine, every
+emulator and every run since the unit landed**, and `STATUS.md` §5.2 listed it as one of three
+paths that had never executed anywhere. Twelve megabytes of RAM and six concurrent 4 MiB copies
+put processes into the state the branch exists for, and it ran seven times.
+
+What that does and does not establish: the code executes and the system stayed correct through it
+(72/72 sums, no anomaly, no panic). It is not a proof that the branch is *right* — nothing here
+tests its outcome specifically — but it is no longer untested code, and the way it was reached is
+now known: **memory pressure, not workload type**. Anyone wanting to exercise it can reproduce the
+condition.
+
+### The rest of the block
+
+```
+  ptd_calls 2760 -> 13902     ptd_retired_n 2760 -> 13902     ptd_tblfreed_n 2760 -> 13902
+  ptd_pgfreed_n 132 -> 225
+```
+
+`ptd_calls == ptd_retired_n == ptd_tblfreed_n` across **11 142** teardowns — ISSUE-40's invariant
+holding under the heaviest load this machine has seen.
+
+`wbf` unchanged: no write-back denial under that load either.
