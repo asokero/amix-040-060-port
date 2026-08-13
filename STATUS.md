@@ -250,7 +250,11 @@ survives as history but its conclusion has been replaced.
    `Lcm_sel` framebuffer class → firmware. The prize is real and measured: 3.09 MB/s through the
    Z2 aperture against 28.66 MB/s local, with a width test showing the bus saturated rather than
    serialised.
-5. The three unexercised paths in §5.2, whenever their area is next opened.
+5. The unexercised paths in §5.2, whenever their area is next opened.
+6. **060-D, the two CACR knobs** (`060-D-CACHE-KNOBS-PLAN.md`) — store buffer and branch cache,
+   both still off. Motivated by the corrected clock: a superscalar 68060 is only 7.1 % faster per
+   clock than the 68040, which is low. Needs the 060 back in the machine, so it is a batched
+   session of its own, and the branch cache needs an instruction-cache-invalidation audit first.
 
 ### Two decisions taken 2026-08-13, recorded so they are not silently reopened
 
