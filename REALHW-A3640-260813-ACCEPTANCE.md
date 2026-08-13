@@ -112,3 +112,49 @@ true *of the machine* — and it is a property of the A3640 having no RAM of its
 bears on ISSUE-42, but both are regression coverage for a card that has never run this kernel —
 and copyback and burst were accepted on the *Mercury*, whose memory topology is different. That is
 the first item of the next 68040 session.
+
+---
+
+## 6. Battery on the A3640 — added the same session
+
+Driver: `test-tools/batteryrun10.sh`, **generated** for this image at load base `0x07000000` rather
+than substituted from an earlier run — the reason being that on this card every counter address
+sits 16 MiB lower than on every machine before it. It aborts on any magic mismatch before reading
+a single counter; it did not abort, so all **nine** blocks were addressed correctly.
+
+```
+  proctest      PROCTEST-RESULT PASS   (T1-T7, both child cases: 10 sub-tests, bad=0)
+  fputest       Test A PASS -- 040 hardware FP arithmetic correct
+  msynctst      MSYNC-OK path=/msync_test.dat sz=65536
+  bigargv       PASS 45 args 4500 bytes
+  ptracepoke    PTRACEPOKE-RESULT PASS
+  mul64test     MUL64-RESULT PASS
+  bmaptest      BMAPTEST-RESULT PASS
+  exectest 20   EXECTEST-RESULT PASS (data+bss verified across every generation)
+  leaktest 50 1 fork_failures=0, 50 fork+exec pairs completed
+```
+
+No `FAIL` anywhere in the log. `leaktest` was initially invoked without its arguments by the
+generated driver — a defect in the driver, not a result — and was re-run by hand.
+
+### What moved, and what did not
+
+Counter blocks diffed before and after the run:
+
+| Block | Moved? | Reading |
+|---|---|---|
+| `wbf` | **no** | no write-back denial during the whole battery — the ISSUE-42 path is not something ordinary work reaches |
+| `segvn_prot` | **no** | no per-page permission denial outside `protfault` |
+| `i39` | **no** | no `hat_sdtalloc` contiguity failure under this load |
+| `isp61` | **no** | vector 61 never fired — correct on a 68040, which implements 64-bit multiply in hardware |
+| `f60` | **no** | the 68060 package is untouched on this CPU |
+| `kvp` | yes | `kvp_n` +3865, `kvp_user_n` +3865 — ordinary trap traffic, all user-origin |
+| `i40` | yes | `i40_pgfreed_n` +1, `i40_held_n` +108 — page-table reclaim during exec/exit |
+| `ptd` | yes | `ptd_calls` +380, `ptd_retired_n` +380, `ptd_pgfreed_n` +3, `ptd_tblfreed_n` +380 |
+
+`ptd_calls == ptd_retired_n == ptd_tblfreed_n` across 380 teardowns is the ISSUE-40 invariant
+holding on this card. ⚠ `ptd_wake_n` is still 0: the `pt_waiting` branch remains unexercised, as on
+every other machine.
+
+**Not run:** the burst suite, deliberately deferred — it is long, and it is the one test whose
+timing behaviour is most likely to differ on a card with no local RAM.
