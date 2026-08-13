@@ -496,3 +496,44 @@ Not done this session, and why:
   Replaced this session with a copy taken from the live machine; the original symlink is recorded
   in the scratchpad as `sysroot-libc-symlink.orig` and kept as
   `usr/lib/libc.so.1.vanilla-symlink`.
+
+---
+
+## CORRECTION (2026-08-13): §9's clock figure was wrong, and the conclusion changes
+
+**The Mercury's 68040 runs at 35 MHz, not 33.** Its oscillator is 70 MHz and the 68040 runs at
+half clock; the 68060 runs from a 66 MHz oscillator at **full** clock. Established by the person
+who fits the oscillators, which outranks every document here that said 33 — including §9's table.
+
+Recomputed:
+
+```
+  clock ratio     66/35 = 1.886      (not 2.000)
+  measured ratio  60 463.6 / 29 950.4 = 2.019
+  surplus         +7.1 % beyond clock scaling
+```
+
+§9's headline — *"+102 % over the 040 — almost exactly the clock ratio"* — is therefore **wrong**,
+and so is the argument built on it: that with ESS=0 the doubling was fully explained and there was
+nothing left to account for. There is a 7.1 % surplus, and the ESS question was settled separately
+in the other direction: `REALHW-260806-06-ACCEPTANCE.md` measured `pcr_boot = 0x04300601`, **ESS=1**.
+
+So the corrected statement is the opposite of the original one in an interesting way:
+
+> A **superscalar** 68060 was only **7.1 % faster per clock** than the 68040 on Dhrystone.
+
+That is a *low* number for superscalar dispatch, and this same document already records where the
+missing performance most plausibly is — the two knobs it found switched off:
+
+| CACR bit | | state at that measurement |
+|---|---|---|
+| 23 | `IC60_EBC` branch cache | off |
+| 29 | `DC60_ESB` store buffer | off |
+
+The question therefore moves from "why is it exactly the clock ratio" (which it never was) to
+"how much of the missing per-clock performance do the branch cache and store buffer account for" —
+which is a measurable A/B on two bits, and the campaign's existing F4-060-D item.
+
+Source of the corrected 040 number: `REALHW-A3640-260813-ACCEPTANCE.md` §9, where the same
+correction also removed a 6.5 % "memory penalty" for the A3640 that turned out to be the 33 MHz
+artifact rather than a measurement.

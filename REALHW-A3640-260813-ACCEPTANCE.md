@@ -271,30 +271,63 @@ reads EOF and prints "Measured time too small"; the correct form is `echo 100000
 
 ### Against the recorded numbers
 
+⚠ **The clock figure used by every earlier document in this project was wrong.** The Mercury's
+68040 runs from a **70 MHz oscillator at half clock = 35 MHz**, not 33; the 68060 runs from a
+66 MHz oscillator at **full** clock. Both established 2026-08-13 by the person who fits the
+oscillators, which is better provenance than any of the documents that said 33. Everything below
+is recomputed.
+
 | configuration | Dhrystones/s | per MHz |
 |---|---:|---:|
-| 68040 @ 33 MHz Mercury, caches off | 11 538.5 | 349.7 |
-| 68040 @ 33 MHz Mercury, write-through | 18 292.7 | 554.3 |
-| 68040 @ 33 MHz Mercury, copyback | 29 950.4 | 907.6 |
+| 68040 @ **35** MHz Mercury, caches off | 11 538.5 | 329.7 |
+| 68040 @ **35** MHz Mercury, write-through | 18 292.7 | 522.6 |
+| 68040 @ **35** MHz Mercury, copyback | 29 950.4 | 855.7 |
 | **68040 @ 25 MHz A3640, copyback** | **21 214.6** | **848.6** |
-| 68060 @ 66 MHz, copyback | 60 463.6 | 916.1 |
+| 68060 @ 66 MHz, copyback, ESS=1 | 60 463.6 | 916.1 |
 
-Clock-scaling the Mercury copyback figure to 25 MHz predicts **22 690/s**. The A3640 measures
-**21 215/s** — **6.5 % below**, or 93.5 % of the Mercury's throughput per MHz.
+### The A3640 costs nothing measurable on this benchmark
 
-### What that 6.5 % is, and why it is smaller than it looks
+Clock-scaling the Mercury to 25 MHz predicts **21 393/s**; the A3640 measures **21 215/s** —
+**0.8 % below**, i.e. **99.2 % of the Mercury per MHz**. That is inside the band where kernel
+build, compiler and clock precision differences live, so the honest statement is:
 
-The A3640 has **no local memory**: every cache miss goes over the A3000 motherboard bus, where the
-Mercury had its own RAM. So a deficit is expected, and its size is the interesting part.
+> On Dhrystone, having no local RAM costs the A3640 nothing that this benchmark can see.
 
-**Dhrystone systematically under-reports it.** The benchmark's working set largely fits in the
-68040's 4 KiB instruction and 4 KiB data caches, so most of the run never touches the bus at all;
-6.5 % is what leaks through in the misses. A memory-bound workload would show a much larger gap.
-This number should therefore be read as *"the A3640 costs at least 6.5 %"*, not as a measurement of
-its memory penalty.
+Which is the same point as before, sharpened: the working set fits in the 68040's 4 KiB caches,
+most of the run never reaches the bus, and the benchmark is therefore blind to exactly the property
+that distinguishes these two cards. A memory-bound comparison would need a different instrument.
 
-Two further honesty notes: the Mercury figures were taken on July kernels and this one on
-`68040-260812-06`, so the kernel is not a controlled variable (Dhrystone is userland CPU-bound, so
-the effect should be small but it was not measured); and the per-MHz figures for the 33 MHz 040 and
-the 66 MHz 060 agree within 1 %, which is the unexplained 2.0× ratio recorded in
-`060-F0-MEASUREMENT-260805.md` §9 — still unexplained, and not something this measurement touches.
+**An earlier draft of this section reported a 6.5 % deficit and explained it as the motherboard-bus
+penalty.** That was an artifact of the 33 MHz figure. The explanation was plausible, the mechanism
+is real, and the number did not exist — which is the exact failure mode of reasoning from a
+plausible mechanism to a measurement.
+
+### The correction lands on the 68060 as well, and there it changes a conclusion
+
+`060-F0-MEASUREMENT-260805.md` §9 recorded the 060 as "+102 % over the 040 — almost exactly the
+clock ratio (66/33 = 2.0)", and built on it the argument that with scalar dispatch there was
+nothing to explain. With the real clocks:
+
+```
+  clock ratio    66/35 = 1.886
+  measured ratio 60 463.6 / 29 950.4 = 2.019
+  surplus beyond clock scaling        +7.1 %
+```
+
+So the 68060 is **7.1 % faster per clock** than the 68040, not equal to it. And the surplus is
+*small* — because `pcr_boot` was later measured as `0x04300601`, **ESS = 1**, so that 060 was
+running **superscalar**. A superscalar 68060 delivering only +7 % per clock over a 68040 on
+Dhrystone is a low figure that now wants an explanation.
+
+Two named candidates, both recorded as **off** in the same F0 measurement and both single-bit
+knobs:
+
+| CACR bit | | state |
+|---|---|---|
+| 23 | `IC60_EBC` branch cache | **off** |
+| 29 | `DC60_ESB` store buffer | **off** |
+
+That makes the 060 performance question bounded rather than mysterious, and it is the campaign's
+existing F4-060-D item. Nothing here changes any correctness result; it changes what the
+performance numbers mean.
+

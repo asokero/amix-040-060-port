@@ -282,6 +282,9 @@ hypothesis, but nothing new should be built on any of it.
 | `cc1`'s SIGSYS was something other than the missing FPSP | ISSUE-34b | It was the FPSP (F3 M5 §8) |
 | `fpc_excp_n` would be non-zero on hardware | `REALHW-RUNLIST-ISSUE43-260812.md` | Our own call-out converts the frame to idle before the OS sees it, so `0xe0` never reaches `fpu_save` |
 | The ExecBase → `expansion.library` route can enumerate Zorro cards | early `lszorro` notes | AMIX overwrites the AmigaOS library list nodes |
+| The Mercury 68040 runs at 33 MHz | every document before 2026-08-13 | **35 MHz** — 70 MHz oscillator at half clock. The 68060 runs at 66 MHz, full clock |
+| The 68060's Dhrystone is "almost exactly the clock ratio", so scalar dispatch explains it | `060-F0-MEASUREMENT-260805.md` §9 | The ratio is 1.886, the measurement 2.019 → **+7.1 % per clock**, measured with **ESS=1** (superscalar). A low surplus that points at the branch cache and store buffer, both off |
+| The A3640 costs 6.5 % on Dhrystone versus the Mercury | an earlier draft of `REALHW-A3640-260813-ACCEPTANCE.md` §9 | 0.8 %, i.e. nothing this benchmark can see. The 6.5 % was the 33 MHz artifact |
 
 `RESUME-HERE-260727.md` is a snapshot of 2026-07-27 and has not been maintained since. Read it as
 history; read this file for status.
