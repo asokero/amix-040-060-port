@@ -1,144 +1,211 @@
 # Release plan — publishing the AMIX 68040/68060 port
 
-**Decided 2026-08-13.** After the current hardware tests, publication becomes the main track ahead
-of further feature work. Zorro III remains the one substantial development item worth doing; the
-RAM-above-32 MB work is declined (`STATUS.md` §6).
+**Decided 2026-08-13**, revised the same day after four checks that changed it. Publication is the
+main track ahead of further feature work; Zorro III remains the one substantial development item;
+the RAM-above-32 MB work is declined (`STATUS.md` §6).
 
-This document is the plan, not the announcement. It exists because publishing this particular
-project has three constraints that most releases do not, and getting them wrong is expensive in
-ways that cannot be undone.
+---
+
+## 0. Four findings that shape everything below
+
+### 0.1 The vanilla kernel must be **byte-exact**, and nothing checks it today
+
+The patch scripts work on hard-coded `.text` addresses (`0x132`, `0x158`, `0x19b50`, `0x5b3c2`, …),
+byte-pattern assertions and relocation offsets. A different build of `/stand/unix` would not fail
+cleanly — it would patch the wrong bytes.
+
+```
+reference:  AMIX SVR4 2.1c  /stand/unix
+sha256      7d26cb6f04991be5776d9e5361259b20b413d97e3da33bf88e6f312e7be2ec23
+```
+
+`relink-040.sh` currently contains **zero** hash checks of its input. Adding one is small and it is
+the single most important safety change for anyone else running this. Whether every 2.1c
+installation carries this exact image is *unverified* — so the check must print the expected hash
+and invite a report, not merely refuse.
+
+### 0.2 The loader sources are Commodore's, not ours
+
+`unix_boot/` — **18 tracked files** — carries `Copyright (C) 1991, Commodore Business Machines`:
+`unix_boot.c`, `bind.c`, `rel.c`, `streq.c`, `streqn.c`, the headers, `copyit.s`, `Supervisor.s`.
+`prototypes/copyit.s` is the same file with our 040/060 MMU-disable changes.
+
+So the loader **cannot be published as sources either**, and the separate loader project the owner
+proposed is the right shape but not for the reason assumed: its licence is not "determined by its
+origin" in a way that allows redistribution — its origin is proprietary. The loader repository must
+therefore be exactly the same kind of artifact as this one: **patches plus build scripts, applied
+to sources the user already has.**
+
+That is a coherent story rather than an awkward one: *two patch layers, one over the kernel and one
+over the loader, both requiring your own AMIX media.*
+
+### 0.3 The FPSP/ISP packages are already fetched, not vendored
+
+`build-fpsp040.sh` and `build-fpsp060.sh` extract Motorola's packages from NetBSD's `syssrc.tgz`,
+which is outside the repository. Only the path is hard-coded. Nothing to remove — just to
+parameterise.
+
+### 0.4 A byte-exact regression test for the whole build system already exists
+
+Established when `hw-68060-260812-02` was tagged: rebuilding from a tree reproduces the accepted
+binary **except for one byte**, the build-id counter digit at a known offset. That makes every
+refactoring phase below verifiable without hardware and without judgement:
+
+> after the change, rebuild and diff against the reference binary — exactly one byte may differ.
+
+This is the acceptance criterion for phases 1–5.
 
 ---
 
 ## 1. What is actually being published
 
-**Not a kernel.** This repository is an override and patch layer applied to a proprietary AT&T /
-Commodore binary: 69 override units, 43 patch scripts, and the tooling that links them. The
-product of a build is a *derived work* of a kernel nobody here has the right to redistribute.
+**Not a kernel, and not a loader.** Two override-and-patch layers over proprietary binaries. The
+build produces derived works of material nobody here may redistribute, so:
 
-That single fact drives most of the plan:
+* no kernel or loader binaries in the repositories;
+* every user supplies their own licensed AMIX 2.1c installation;
+* the build must therefore work on someone else's machine, or the release is decorative.
 
-* **no kernel binaries may be published** — not the vanilla one, not ours;
-* every user must supply **their own licensed AMIX installation**;
-* therefore the build must work on someone else's machine, or the release is decorative.
+The owner may separately provide a prebuilt kernel to amigaunix.com, where the historical
+distribution already lives. That is outside these repositories and outside this plan — but it means
+the published build instructions must be good enough that the binary is a convenience, not the only
+way in.
 
-The reproducibility gate (§4) is not a quality nicety here. It is the whole delivery mechanism.
+## 2. Two audiences
 
-## 2. Two audiences, and they need different things
+**Runs it:** prerequisites stated bluntly, a working build, the hardware matrix, an honest open-issue
+list. Small audience.
 
-**The Amiga enthusiast who wants to run it.** Needs: prerequisites stated bluntly, a build that
-works, `unix_boot040`, the hardware matrix (what is accepted on which silicon), and an honest list
-of what is still open. This audience is small and will find the project by word of mouth.
+**Wants to know how it was done:** pre-registered expectations, predictions recorded as wrong,
+counter invariants that caught what no passing test would have, three external audits that
+overturned conclusions. Larger audience, rarer content, and served by curation and a narrative
+rather than by more code.
 
-**The reader interested in how it was done.** This is the larger audience and the rarer content.
-The project has an unusual amount of it: pre-registered expectations, records of predictions that
-turned out wrong, counter invariants that caught defects no passing test would have, three
-external audits that overturned conclusions, and a measurement discipline that is legible in the
-commit log. Most reverse-engineering write-ups do not survive that kind of scrutiny because the
-record was never kept.
+---
 
-The second audience is served by *curation and a narrative*, not by more code.
+## 3. The phases
 
-## 3. Blocking gates — none of these are optional
+Each phase is independently completable and ends with the byte-exact rebuild check (§0.4). Nothing
+before phase 6 needs the Amiga.
 
-### 3.1 Credentials are in the git history
+### Phase 0 — decisions (needs the owner, blocks everything)
 
-`10.0.10.10` and the root password appear in tracked documents **and in the commit history**.
-Editing the files does not remove them. Two options, and this is a decision to take deliberately
-rather than by default:
-
-| Option | Cost | Consequence |
+| Decision | Options | Recommendation |
 |---|---|---|
-| Rewrite history (`filter-repo`) | one careful pass, every hash changes | keeps the full record, including the failure log that makes the project interesting |
-| Publish a fresh repository whose history starts at publication | trivial | loses the commit-by-commit record, which is a substantial part of the value |
+| Licence for our own work | MIT / BSD-2 / other | **MIT**, matching `va2000-amix` and `xrtg-amix` |
+| Third-party attribution | — | a `NOTICE` file: NetBSD-derived algorithms (BSD-2), Motorola packages fetched under their own terms, AMIX/Commodore material never redistributed |
+| Git history | rewrite vs fresh start | **rewrite** — the commit-by-commit record including the failures is a substantial part of the value |
+| Credentials | where they live | a gitignored local file the tooling reads; never a tracked file |
+| Repo split | one repo vs kernel + loader | **two**: `amix-040-port` and `amix-unix-boot` |
 
-**Recommendation: rewrite.** The history is the artifact most worth publishing. A scrub pass over
-~40 commits touching five documents is a bounded job.
+### Phase 1 — licence hygiene (blocking, no functional change)
 
-### 3.2 Hard-coded local paths
+1. Move `unix_boot/` and `prototypes/copyit.s` out of this repository into the loader project, and
+   convert them there into **patches against Commodore's originals** plus build scripts.
+2. Credentials: create `local/secrets.env` (gitignored), referenced by `test-tools/hw.py`-style
+   tooling; remove the five documents' inline credentials.
+3. Rewrite history to remove credentials (`git filter-repo`), once, carefully.
 
-Measured: **59 occurrences of `/home/asokero` across 29 tracked files**, concentrated in
-`LOCAL-BUILD-NOTES.md` (13), `emu-reset-boot.sh` (5), and the relink and tools scripts. Every one
-of them is a place where someone else's build fails.
+**Acceptance:** byte-exact rebuild; `git log -S` finds no credential; no tracked file carries a
+third-party copyright except quoted console banners.
 
-Work: introduce a single `env.sh`-style configuration point (toolchain prefix, vanilla kernel
-path, emulator paths), and make the scripts read it. Bounded and mechanical, but it must be done
-before anyone else tries the build, not after.
+### Phase 2 — environment (the one that decides whether anyone else can build)
 
-### 3.3 Third-party material
+1. One configuration point: `config.sh` (gitignored) generated from a tracked `config.sh.example`,
+   holding toolchain prefixes, the vanilla kernel path, the NetBSD tarball path, emulator paths.
+2. De-hard-code the **59 `/home/asokero` occurrences across 29 tracked files**.
+3. `tools/check-env.sh`: verifies every dependency, prints exactly what is missing and where to get
+   it, and exits non-zero. This is the script a newcomer runs first.
 
-Already handled correctly by `.gitignore` — `amix-src/`, `svr4-src-3b2/`, `usl-svr42/`,
-`ghindra-unix/`, kernel binaries and the original archives are all excluded, and 421 tracked files
-contain no AT&T source. What remains:
+**Acceptance:** byte-exact rebuild with `config.sh` pointing at the same paths; `check-env.sh`
+passes on this machine and fails informatively when a tool is hidden.
 
-* Motorola's 060SP/040SP and the NetBSD tree must be **fetched by script**, not vendored;
-* their licence notices must be reproduced where the build uses them.
+### Phase 3 — input validation
 
-### 3.4 The README's first sentence
+1. Hard sha256 check of the vanilla kernel in `relink-040.sh`, with the expected hash and a request
+   to report mismatches.
+2. Same for the NetBSD tarball used by the FPSP builds.
 
-It must say what this is: a patch layer over a proprietary kernel, requiring the reader's own AMIX
-installation. Without that, the repository reads as a bootable kernel, and the first issue filed
-will be from someone who expected one.
+**Acceptance:** byte-exact rebuild; a deliberately corrupted input is refused with a message that
+names the file and both hashes.
 
-## 4. The reproducibility gate
+### Phase 4 — documentation
 
-**`sh relink-040.sh` must run to completion on a machine that has only the documented toolchain**
-— no scratchpad, no local paths, no artifacts from this working tree. Until that is demonstrated,
-the release is a claim rather than a deliverable.
+1. **`README.md`**, following the `va2000-amix` structure: Overview · Disclaimer · Status · Hardware
+   requirements · Files · Quick start · Known issues · License. First sentence states that this is a
+   patch layer requiring the reader's own AMIX.
+2. **`BUILDING.md`** — generic build instructions: dependencies (cross toolchains, m68k binutils,
+   Python 3), how to obtain each, how to configure, how to build, how to verify.
+3. **External drivers** — how to build `va2000` / `xrtg` / other drivers into the kernel
+   (`relink-040-rtg.sh` and friends), since that is the main extension point.
+4. **`LOCAL-BUILD-NOTES.md`** — see the assessment in §4 below.
 
-Test it the honest way: a clean container or a second machine, following only `LOCAL-BUILD-NOTES.md`
-as written, with a vanilla kernel supplied from a licensed install. Anything the notes fail to
-mention is a bug in the notes.
+**Acceptance:** a reader following only `BUILDING.md` on a clean machine reaches a built kernel.
+Tested for real in phase 6.
 
-Acceptance: reloc `TOTAL complaints: 0`, and the produced image differs from the reference build
-only in the build-id counter digit — which is already a verified property (`hw-68060-260812-02`).
+### Phase 5 — layout
 
-## 5. What to publish, out of 220+ documents
+Proposed:
 
-`kernelsupport/` has 90 markdown files and the analysis repository 132. Publishing all of them
-unedited would bury the reader; deleting them would destroy the record. Proposed split:
+```
+  README.md  BUILDING.md  STATUS.md  KNOWN-ISSUES.md  LICENSE  NOTICE
+  config.sh.example
+  src/          the override units (today: prototypes/*.s)
+  patches/      the byte-patch scripts (today: prototypes/patch_*.py)
+  tools/        status-facts.sh, check-env.sh, relink checkers
+  build-scripts/ relink-040.sh and variants
+  test-tools/   unchanged
+  docs/         acceptance records, audits, contracts
+  docs/archive/ session prompts, run-lists, RESUME-HERE-*
+```
 
-| Class | Treatment |
-|---|---|
-| `STATUS.md`, `KNOWN-ISSUES.md`, `LOCAL-BUILD-NOTES.md`, `RELEASE-PLAN.md` | front matter, curated |
-| hardware acceptance records (`REALHW-*.md`) | publish as-is — they are the evidence |
-| Codex audits and contracts (`vm-map/*.md`) | publish; they are the specification half of the work |
-| session prompts, run-lists, `RESUME-HERE-*` | publish in an `archive/` subtree, clearly labelled as working notes |
-| task briefs superseded by their answers | archive |
+Nothing is deleted for looking untidy: the refuted conclusions and the working notes are part of the
+evidence.
 
-Rule: **nothing is deleted for looking untidy.** The refuted conclusions in `STATUS.md` §7 are part
-of the evidence, and a reader who cannot see the wrong turns cannot judge the right ones.
+### Phase 6 — the real test
 
-## 6. The method piece
+Clone to another machine, run `check-env.sh`, follow `BUILDING.md` only, supply a vanilla kernel,
+build. **Every step the notes fail to mention is a bug in the notes.** Then boot the result on the
+Amiga to confirm the clone-built kernel is byte-identical to the reference.
 
-One document, written once, that the second audience actually reads. It should not be a victory
-lap. The material that makes it worth reading is specific:
+### Phase 7 — publish
+
+`LICENSE` (MIT), `NOTICE`, the method piece (§5), then push. Zorro III becomes the first
+post-release development.
+
+---
+
+## 4. Assessment: what to do with `LOCAL-BUILD-NOTES.md`
+
+It currently mixes two things, and the mix is why it cannot be published as-is (13 of the 59
+hard-coded paths are in it).
+
+**Split it.**
+
+* The **generic half** — three toolchains and what each is for, the `ld -r` override mechanism, the
+  `--weaken-symbol` / `--add-symbol` pattern, the relink hazards (it does not abort on an assembler
+  error), the reloc validator, the "`ld -r` last" ordering rule — is genuinely valuable and belongs
+  in `BUILDING.md`. This is knowledge nobody can rediscover cheaply.
+* The **machine-specific half** — where the toolchains live on this laptop, NAS mounts, emulator
+  paths — stays as `LOCAL-BUILD-NOTES.md`, **gitignored**, as the owner's own working tool.
+
+That split is also the honest test of every other document: if it only makes sense on one laptop,
+it is a local note; if it would help a stranger, it is documentation.
+
+## 5. The method piece
+
+One document, written once. Not a victory lap — the material that earns attention is specific:
 
 * an invariant counter that found a defect four of six tests were green through (ISSUE-44);
-* a pre-registered prediction that was wrong and what that error exposed (ISSUE-42's `si_addr`,
-  off by one, on the right page, where no test would ever have caught it);
-* a fix that was reverted within an hour because the flag it set meant the opposite of what was
-  assumed (ISSUE-43, 5-of-6 → 0-of-6);
-* three external audits, two of which overturned a conclusion that had already been written down;
-* the emulator/silicon divergences that only measurement could have separated.
+* a pre-registered prediction that was wrong, and the defect its wrongness exposed (ISSUE-42's
+  `si_addr`, off by one, on the right page, where no test would have caught it);
+* a fix reverted within an hour because a flag meant the opposite of what was assumed (ISSUE-43);
+* a clock figure that was wrong for months and deleted one finding while creating a better one;
+* emulator-versus-silicon divergences that only measurement could separate.
 
-**On the AI framing, stated honestly.** The repository's own commit log contradicts any claim that
-this was done *by* an AI: the hardware, the priorities, the card swaps and several of the
-corrections are the owner's, and two audits by a second model overturned conclusions this one had
-committed. What the record does support is narrower and more interesting — that AI-assisted work
-on a 34-year-old proprietary kernel is feasible **when it is held to a measurement discipline**,
-and that most of the value came from the discipline rather than from the generation. Publishing
-the failures is what makes that claim checkable.
-
-## 7. Order
-
-1. Finish the pending hardware tests (burst on the A3640, wolf3d/X11 on the RTG kernel).
-2. Decide history rewrite vs fresh repository (§3.1) — everything else depends on it.
-3. Path de-hardcoding (§3.2) and the fetch scripts (§3.3).
-4. Prove the reproducibility gate on a clean machine (§4).
-5. README + curation (§3.4, §5).
-6. The method piece (§6).
-7. Publish, then Zorro III as the first post-release development.
-
-Nothing in steps 2–6 needs the Amiga powered on, which makes them the natural work for the periods
-between hardware sessions.
+**On the AI framing, stated plainly.** The commit log contradicts any claim that this was done *by*
+an AI: the hardware, the priorities, the card swaps and several of the corrections are the owner's,
+and audits by a second model overturned conclusions this one had committed. What the record does
+support is narrower and more interesting — that AI-assisted work on a 34-year-old proprietary
+kernel is feasible **when it is held to a measurement discipline**, and that the value came from the
+discipline rather than the generation. Publishing the failures is what makes that claim checkable.
