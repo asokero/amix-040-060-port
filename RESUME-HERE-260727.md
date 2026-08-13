@@ -844,11 +844,11 @@
 > - **Emulator `telnet` client closes during option negotiation** in the current state — use
 >   the repo raw-socket runner instead: `test-tools/emu.py` (emulator, root = NO password; does
 >   minimal telnet negotiation — telnetd WAITS for an IAC answer before printing login:). A
->   `real.py` for the real machine (10.0.10.10, root/REDACTED-see-local-secrets-env) is NOT in the repo — recreate it
+>   `real.py` for the real machine (10.0.10.10, root/(see local/secrets.env)) is NOT in the repo — recreate it
 >   from emu.py + creds in ~/kehitys/CLAUDE.md when needed (NEVER commit creds). Sentinel gotcha:
 >   the echoed command line contains your sentinel — use a quote-split marker (`echo CMD''DONE`,
 >   match `CMDDONE`). Console keystrokes (login/priming) via `test-tools/sendkeys.py` (SEND_KEY IPC).
-> - **Real-HW telnet**: `telnet 10.0.10.10` root/REDACTED-see-local-secrets-env (creds only in ~/kehitys/CLAUDE.md,
+> - **Real-HW telnet**: `telnet 10.0.10.10` root/(see local/secrets.env) (creds only in ~/kehitys/CLAUDE.md,
 >   NEVER in repo). nohup does NOT survive session exit on the real machine — keep the session
 >   alive and poll, or run synchronously.
 > - **File transfer to AMIX**: slirp-NAT-safe TFTP = `test-tools/tftp_onesock.py` (replies from

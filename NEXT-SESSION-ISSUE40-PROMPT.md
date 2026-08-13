@@ -39,7 +39,7 @@ toteutusta — kysymykset koskevat juuri sitä mitä toteutus tarvitsee: mihin k
 kaari kuuluu, mitkä sectionit vapautetaan, ja onko hat_growsdt(...,0) ylipäätään kutsuttavissa
 portin tilassa vai onko turvallisempi kutsua hat_sdtfree suoraan.
 
-Rauta: A3000+Mercury 040 osoitteessa 10.0.10.10 (root/REDACTED-see-local-secrets-env), ajuri real.py
+Rauta: A3000+Mercury 040 osoitteessa 10.0.10.10 (root/(see local/secrets.env)), ajuri real.py
 durable-tools-hakemistossa. Emulaattori: emu-reset-boot.sh [040|060|a3640] loki.txt IMAGE.
 NAS: amix/hwtest-260801/ (imaget, SHA256SUMS, testilähteet, lokit, konsolikuvat).
 Älä käytä Agent-työkalua. Vastaa suomeksi.

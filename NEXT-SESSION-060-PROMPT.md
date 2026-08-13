@@ -59,7 +59,7 @@ x60_compat_n, x60_rw_read_n, x60_rw_write_n, x60_far_fail_n, x60_last_fa, x60_la
 wb_dfc_*:n muotoon. Ilman niitä Codexin XPAGE-hyväksyntää EI voi ottaa: tällä hetkellä mikään ei
 laske fmt-4-kehyksiä, joten boottaava kone todistaa että polut selvittiin, ei että ne ajettiin.
 
-Rauta: A3000 + Mercury 68060 osoitteessa 10.0.10.10 (root/REDACTED-see-local-secrets-env), ajuri real.py durable-tools-
+Rauta: A3000 + Mercury 68060 osoitteessa 10.0.10.10 (root/(see local/secrets.env)), ajuri real.py durable-tools-
 hakemistossa. Emulaattori: emu-reset-boot.sh [040|060] loki.txt IMAGE. NAS: amix/hwtest-260802b/.
 Älä käytä Agent-työkalua. Vastaa suomeksi.
 

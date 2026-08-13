@@ -45,3 +45,12 @@ usl-svr42/
 fs-uae/
 __pycache__/
 z3660-upstream-patches.zip
+
+# --- Local, machine-specific and secret: never published ---
+local/secrets.env
+LOCAL-BUILD-NOTES.md
+
+# --- Moved to the amix-unix-boot repository (Commodore-copyright sources) ---
+unix_boot/
+unix_boot.lha
+prototypes/copyit.*

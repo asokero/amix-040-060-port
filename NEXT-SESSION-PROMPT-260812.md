@@ -138,7 +138,7 @@ python3 emu.py 'uname -m'
 
 ## Rauta
 
-* `10.0.10.10`, root / `REDACTED-see-local-secrets-env`. Kirjoita `hw.py` scratchpadiin (`test-tools/emu.py` + salasana,
+* `10.0.10.10`, root, password in `local/secrets.env`. Kirjoita `hw.py` scratchpadiin (`test-tools/emu.py` + salasana,
   `HOST=10.0.10.10`, `PORT=23`, `--timeout`-tuki). **Älä committoi sitä.**
 * Bootin jälkeen ping vastaa ennen telnetiä — **odota porttia 23**, älä pingiä.
 * `/kpeek` ja `/pgc` säilyvät juuressa; `/tmp` tyhjenee joka bootissa (`cp /kpeek /tmp/kpeek`).

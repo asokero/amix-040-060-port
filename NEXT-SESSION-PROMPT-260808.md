@@ -149,7 +149,7 @@ Monta tiedostoa: tee tarball isännällä ja pura vieraassa — yksi kierros mon
 
 ## Oikea rauta
 
-* `10.0.10.10`, root / `REDACTED-see-local-secrets-env`, telnet. Ajuri: kirjoita `hw.py` scratchpadiin (`emu.py` + salasana).
+* `10.0.10.10`, root, password in `local/secrets.env`, telnet. Ajuri: kirjoita `hw.py` scratchpadiin (`emu.py` + salasana).
   **Älä committoi sitä** — se kantaa tunnuksen, ja siksi `real.py` ei ole koskaan ollut repossa.
 * `/kpeek` ja `/pgc` säilyvät juuressa. `/tmp` tyhjenee joka bootissa. `/payload.bin` on olemassa,
   summa `1570 8192`.
