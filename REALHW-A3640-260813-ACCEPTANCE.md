@@ -248,3 +248,53 @@ condition.
 holding under the heaviest load this machine has seen.
 
 `wbf` unchanged: no write-back denial under that load either.
+
+---
+
+## 9. Dhrystone on the A3640 — the first 68040 number from a card with no local RAM
+
+```
+  21 220.2 /s   (owner's run)
+  21 208.9 /s   (re-run, same binary /root/amix-bench/dhry, 1 000 000 iterations)
+                spread 0.05 %
+```
+
+Two things were verified before comparing it to anything, because a benchmark compared across an
+unverified configuration is worse than no benchmark:
+
+* **cache mode**: `hat_cm_ram` reads `0x20` = CM=01 = **copyback** — the same mode as the numbers
+  it is being compared against;
+* **the same binary** as every earlier measurement in this project.
+
+⚠ The run count goes on **stdin**, not in `argv`. `dhry 1000000` silently ignores the argument,
+reads EOF and prints "Measured time too small"; the correct form is `echo 1000000 | dhry`.
+
+### Against the recorded numbers
+
+| configuration | Dhrystones/s | per MHz |
+|---|---:|---:|
+| 68040 @ 33 MHz Mercury, caches off | 11 538.5 | 349.7 |
+| 68040 @ 33 MHz Mercury, write-through | 18 292.7 | 554.3 |
+| 68040 @ 33 MHz Mercury, copyback | 29 950.4 | 907.6 |
+| **68040 @ 25 MHz A3640, copyback** | **21 214.6** | **848.6** |
+| 68060 @ 66 MHz, copyback | 60 463.6 | 916.1 |
+
+Clock-scaling the Mercury copyback figure to 25 MHz predicts **22 690/s**. The A3640 measures
+**21 215/s** — **6.5 % below**, or 93.5 % of the Mercury's throughput per MHz.
+
+### What that 6.5 % is, and why it is smaller than it looks
+
+The A3640 has **no local memory**: every cache miss goes over the A3000 motherboard bus, where the
+Mercury had its own RAM. So a deficit is expected, and its size is the interesting part.
+
+**Dhrystone systematically under-reports it.** The benchmark's working set largely fits in the
+68040's 4 KiB instruction and 4 KiB data caches, so most of the run never touches the bus at all;
+6.5 % is what leaks through in the misses. A memory-bound workload would show a much larger gap.
+This number should therefore be read as *"the A3640 costs at least 6.5 %"*, not as a measurement of
+its memory penalty.
+
+Two further honesty notes: the Mercury figures were taken on July kernels and this one on
+`68040-260812-06`, so the kernel is not a controlled variable (Dhrystone is userland CPU-bound, so
+the effect should be small but it was not measured); and the per-MHz figures for the 33 MHz 040 and
+the 66 MHz 060 agree within 1 %, which is the unexplained 2.0× ratio recorded in
+`060-F0-MEASUREMENT-260805.md` §9 — still unexplained, and not something this measurement touches.
