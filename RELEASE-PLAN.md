@@ -175,7 +175,24 @@ from it"; it does not stop the file from looking like every other build.
 **Acceptance:** byte-exact rebuild; a deliberately corrupted input is refused with a message that
 names the file and both hashes.
 
-### Phase 4 — documentation
+### Phase 4 — documentation ✅ **DONE 2026-08-13**
+
+```
+  README.md      the front door, va2000-amix structure: what this IS (a patch layer, not a
+                 kernel), disclaimer, a both-CPU status table, known issues, quick start,
+                 files, related projects, licence
+  BUILDING.md    dependencies with sources and reasons, configure, build, verify, the
+                 stock-hash rationale, booting, HOW THE PORT WORKS in one page, external
+                 drivers, and the two things the emulator cannot decide
+  LICENSE        MIT
+  NOTICE         what is deliberately absent and why; Motorola and NetBSD attribution
+  LOCAL-BUILD-NOTES.md  keeps only what is true of one laptop, with the split rule stated
+```
+
+Every file the README links to was checked to exist. `docs/` is referenced nowhere yet — the
+layout move is phase 5, and the front door must not describe a structure that does not exist.
+
+### Phase 4 — as originally planned
 
 1. **`README.md`**, following the `va2000-amix` structure: Overview · Disclaimer · Status · Hardware
    requirements · Files · Quick start · Known issues · License. First sentence states that this is a

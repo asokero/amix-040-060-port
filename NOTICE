@@ -1,0 +1,40 @@
+NOTICE
+======
+
+What is in this repository
+--------------------------
+Override units, byte-patch scripts, build tooling, test instruments and documentation written
+for this project.  MIT-licensed; see LICENSE.
+
+What is NOT here, and why
+-------------------------
+**Amiga UNIX itself.**  The kernel this port patches is
+
+    Copyright (C) 1991, Commodore Business Machines, Inc. / AT&T
+
+and is not redistributed here in any form.  You supply your own licensed installation.  A kernel
+built with this repository is a derived work of that binary: yours to run, not ours to publish.
+No kernel binary appears in this repository or its releases.
+
+**The AmigaOS bootstrap.**  `unix_boot` is likewise Commodore's.  The patches that make it work
+on a 68040/68060 live in the companion repository `amix-unix-boot`, again as patches only.
+
+Third-party material used at build time
+---------------------------------------
+**Motorola 68040/68060 Support Packages** (FPSP, ISP).  Extracted at build time from a NetBSD
+source tarball you supply; not vendored here.  They carry Motorola's own notice, which the build
+deliberately keeps in the linked object (`copyright.S` is assembled and linked with the package,
+and the build fails if it is missing).
+
+**NetBSD.**  Several sequences in this port were written from NetBSD's m68k support as the
+reference for architectural behaviour -- the 68040 write-back realignment in `wb040.s` and the
+68060 FP context save/restore ordering in `fpu060.s` most directly.  NetBSD is BSD-licensed;
+attribution is given here and in the source-file comments.
+
+**Linux/m68k** was consulted for behaviour when establishing contracts (notably the 68060 MA
+fault rounding and the write-back propagation model).  No code was copied.
+
+Hardware documentation
+----------------------
+Motorola MC68040 and MC68060 user manuals, and Commodore's AMIX headers as installed on the
+user's own system, are the normative references for the architectural work.
