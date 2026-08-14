@@ -107,7 +107,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-dbg-stage1" $OBJPATHS
 # HARD CHECK (2026-07-29, ISSUE-38 bisect): a probe subset must not leave dangling references.
 # The probe objects depend on each other -- mainmarks is needed by nearly all of them, and
 # hatalloc_dbg -> assegat_dbg -> sigkill_dbg is a chain -- so dropping one can leave another's
-# reference unresolved.  unix_boot does not report that as a missing symbol: it dies before
+# reference unresolved.  The loader does not report that as a missing symbol: it dies before
 # printing anything with the guru D245 4C41 ("RELA", its unsupported-relocation code), which
 # costs a hardware boot to discover.  Fail here instead.
 UND=$(m68k-linux-gnu-nm "$OUT" | awk '$1=="U" && $2!="edata" && $2!="end" && $2!="etext" {print $2}')
@@ -167,4 +167,4 @@ echo
 echo "[*] stamping build id -> utsname.machine tag (inherits inituname040 from unix-040)"
 python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
-echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-dbg"
+echo "[OK] built $OUT -- boot: unix_boot040 $(basename "$OUT")   <- unix_boot040 is MANDATORY"

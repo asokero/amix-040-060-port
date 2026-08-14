@@ -172,8 +172,21 @@ Copy `build/unix-040` to the Amiga's AmigaOS volume and boot with the patched lo
 unix_boot040 unix-040
 ```
 
-* **`unix_boot040` is mandatory.** The stock loader mis-applies PC-relative relocations, and the
-  FPSP body carries about 330 of them. It is a separate project: `amix-unix-boot`.
+* **`unix_boot040` is mandatory**, for three independent reasons — any one of them is sufficient.
+  It is a separate project: `amix-unix-boot`.
+
+  1. **The stock loader traps before the kernel runs.** Its `copyit.s` disables the MMU with
+     unguarded 68030 `pmove tc/crp/srp`, which is illegal on a 68040/68060. This was the first
+     bring-up blocker of the whole port.
+  2. **`cputype` is poked into the kernel by the loader**, not by the kernel itself. Without it a
+     68060 keeps the built-in default of 40, and every CPU-gated path — `fpu_save`/`fpu_restore`/
+     `fpu_setup`, `isp61_vec`, the FPSP 060 call-outs — takes the 68040 branch on 68060 silicon.
+     Nothing about that failure is loud.
+  3. **The stock `rel.c` mis-applies PC-relative relocations.** Measured on the current build:
+     `FPSP=1` has 330 of them (PC32 106, PC16 223, PC8 1) out of 29 857 relocations; `FPSP=0` has
+     **zero**. So this reason, alone, does not apply to a `FPSP=0` bisect build — which is why
+     that build used to print an instruction to use the stock loader. Reasons 1 and 2 still do,
+     so it no longer does.
 * **On a 68060, run SetPatch first.** It is a boot precondition, not an optimisation.
 * On a 68040 the loader sets `cputype = 40`; verify it reads `0x28` rather than assuming.
 

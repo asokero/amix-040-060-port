@@ -64,4 +64,4 @@ run_step 1 python3 "$HERE/src/check_relink_relocs.py" "$OUT"
 echo "[*] stamping build id:"
 run_step all python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
-echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-xsvga-dbg"
+echo "[OK] built $OUT -- boot: unix_boot040 $(basename "$OUT")   <- unix_boot040 is MANDATORY"

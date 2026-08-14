@@ -759,8 +759,28 @@ echo
 echo "[*] stamping build id -> utsname.machine tag (banner + uname -m)"
 python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
+# 2026-08-14: the FPSP=0 branch used to say "boot: unix_boot", i.e. the STOCK loader, on the
+# grounds that only the FPSP body carries PC-relative relocations and it is those that the stock
+# rel.c mis-applies.  Measured, and that much is true:
+#
+#     FPSP=1   29857 relocations, 330 PC-relative (PC32 106, PC16 223, PC8 1)
+#     FPSP=0   28734 relocations,   0 PC-relative
+#
+# But it is not the only reason the patched loader is required, and the other two apply to every
+# build this script can produce:
+#
+#   * the stock copyit.s disables the MMU with unguarded 68030 `pmove tc/crp/srp`, which is
+#     illegal on a 68040/68060 -- it traps before the kernel gets control.  This is the first
+#     bring-up blocker of the whole port;
+#   * `cputype` is poked into the kernel BY THE LOADER (unix_boot.c, pokesymlong).  The stock
+#     loader does not do it, so on a 68060 the kernel keeps its built-in default of 40 and every
+#     cputype-gated path -- fpu_save/fpu_restore/fpu_setup, isp61_vec, the FPSP 060 call-outs --
+#     silently takes the 68040 branch on 68060 silicon.
+#
+# So there is no image here that the stock loader should be pointed at, and one message saying
+# otherwise is worth more damage than the bisect convenience it was offering.
 if [ "$FPSP" = "1" ]; then
 	echo "[OK] built $OUT (WITH FPSP) -- boot: unix_boot040 unix-040   <- unix_boot040 is MANDATORY"
 else
-	echo "[OK] built $OUT (NO FPSP -- bisect build) -- boot: unix_boot unix-040"
+	echo "[OK] built $OUT (NO FPSP -- bisect build) -- boot: unix_boot040 unix-040   <- unix_boot040 is MANDATORY"
 fi

@@ -75,4 +75,4 @@ echo
 echo "[*] stamping build id -> utsname.machine tag (inherits inituname040 from unix-040)"
 python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
-echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-quiet"
+echo "[OK] built $OUT -- boot: unix_boot040 $(basename "$OUT")   <- unix_boot040 is MANDATORY"
