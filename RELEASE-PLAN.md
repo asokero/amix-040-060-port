@@ -24,7 +24,14 @@ the single most important safety change for anyone else running this. Whether ev
 installation carries this exact image is *unverified* — so the check must print the expected hash
 and invite a report, not merely refuse.
 
-### 0.2 The loader sources are Commodore's, not ours
+### 0.2 The loader sources are not ours to publish
+
+> **Corrected 2026-08-15.** This section originally read "The loader sources are Commodore's, not
+> ours". `unix_boot` is **Markus Wild's** program (Aminet `misc/unix/unix_boot`, v1.1c) — not a
+> Commodore product. Its readme records that he took the boot sources from `/usr/sys/amiga/boot`,
+> changed device I/O to DOS, and converted the assembler from SGS to MIT syntax for GCC, which is
+> why the derived files still carry Commodore's 1991 header. No licence is stated for his own
+> work. The conclusion below is unchanged and now rests on two grounds instead of a wrong one.
 
 `unix_boot/` — **18 tracked files** — carries `Copyright (C) 1991, Commodore Business Machines`:
 `unix_boot.c`, `bind.c`, `rel.c`, `streq.c`, `streqn.c`, the headers, `copyit.s`, `Supervisor.s`.

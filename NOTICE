@@ -31,8 +31,18 @@ and is not redistributed here in any form -- no kernel binary appears in this re
 releases.  You supply your own licensed installation, and what you build with this repository
 you build from your own copy.
 
-**The AmigaOS bootstrap.**  `unix_boot` is likewise Commodore's.  The patches that make it work
-on a 68040/68060 live in the companion repository `amix-unix-boot`, again as patches only.
+**The AmigaOS bootstrap.**  `unix_boot` is **Markus Wild's** program, distributed on Aminet as
+version 1.1c (`misc/unix/unix_boot`).  It is not a Commodore product, though it is derived from
+Commodore's AMIX boot sources: its own readme says the author took the boot sources from
+`/usr/sys/amiga/boot`, changed them to use DOS instead of device I/O, and converted the assembler
+from SGS to MIT syntax for GCC.  The derived files accordingly still carry
+`Copyright (C) 1991, Commodore Business Machines, Inc.`, and no licence is stated for Markus
+Wild's own work.
+
+Both facts point the same way, which is why the patches that make it work on a 68040/68060 live in
+the companion repository `amix-unix-boot` as **patches only**: you supply `unix_boot` yourself.
+(Until 2026-08-15 this notice said the loader was "likewise Commodore's".  That was wrong, and the
+correction came from the person who knows the Amiga history rather than from the files.)
 
 Third-party material used at build time
 ---------------------------------------
