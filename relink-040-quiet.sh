@@ -17,6 +17,7 @@ set -e
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+. "$(cd "$(dirname "$0")" && pwd)/tools/build-step.sh"
 IN="$HERE/build/unix-040"
 
 [ -f "$IN" ] || { echo "ERROR: $IN missing -- run sh relink-040.sh first"; exit 1; }
@@ -68,7 +69,7 @@ echo "[OK] .data size 0x$(printf %x $DSZ) is 4-aligned (bss placement safe)."
 
 echo
 echo "[*] B2 page-release hooks: re-verify/re-fix the page_free bsr.l displacement for this link"
-python3 "$HERE/src/patch_cb_release.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_cb_release.py" "$OUT"
 
 echo
 echo "[*] stamping build id -> utsname.machine tag (inherits inituname040 from unix-040)"

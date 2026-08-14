@@ -15,6 +15,7 @@ set -e
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+. "$(cd "$(dirname "$0")" && pwd)/tools/build-step.sh"
 IN="$HERE/build/unix-040"
 
 [ -f "$IN" ] || { echo "ERROR: $IN missing -- run sh relink-040.sh first"; exit 1; }
@@ -156,7 +157,7 @@ echo "    into relinked code Line-F-crashes on this 040; jsr-override entry work
 
 echo
 echo "[*] B2 page-release hooks: re-verify/re-fix the page_free bsr.l displacement for this link"
-python3 "$HERE/src/patch_cb_release.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_cb_release.py" "$OUT"
 
 echo
 echo "[*] enabling early-boot serial phase trace (btrace_on=1; base/quiet stay silent)"

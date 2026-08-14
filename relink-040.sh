@@ -17,6 +17,7 @@ set -e
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+. "$(cd "$(dirname "$0")" && pwd)/tools/build-step.sh"
 STOCK="${STOCK:-$AMIX_ROOT/stand/unix}"
 . "$(cd "$(dirname "$0")" && pwd)/tools/verify-stock.sh"
 verify_stock "$STOCK"
@@ -491,7 +492,7 @@ echo "[OK] codepub040 mprotect wrapper @0x$MPADDR is the strong def (stock body 
 # that ISSUE-38 is closed.  Printed, and asserted to be one of the two legal
 # values by the script itself; the write-through control is the derived image
 # (patch_b2_flip.py --wt).
-python3 "$HERE/src/patch_b2_flip.py" "$OUT" --check | sed 's/^/      /'
+run_step indent python3 "$HERE/src/patch_b2_flip.py" "$OUT" --check
 echo
 m68k-linux-gnu-size "$OUT" | sed 's/^/      /'
 
@@ -519,44 +520,44 @@ echo "[OK] .data size 0x$(printf %x $DSZ) is 4-aligned (bss placement safe)."
 
 echo
 echo "[*] patching remaining 030 PMMU instructions (pflusha, ptest stubs)"
-python3 "$HERE/src/patch_pflusha_040.py" "$OUT" | tail -2
-python3 "$HERE/src/patch_pmmu_040.py" "$OUT" | tail -2
+run_step 2 python3 "$HERE/src/patch_pflusha_040.py" "$OUT"
+run_step 2 python3 "$HERE/src/patch_pmmu_040.py" "$OUT"
 
 echo "[*] Model B (4KB page frame) Tier-0 byte patches"
-python3 "$HERE/src/patch_modelb.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_modelb.py" "$OUT"
 
 echo "[*] Model B Tier-2 pager/fs page-I/O (dir-read chain) byte patches"
-python3 "$HERE/src/patch_modelb_pager.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_modelb_pager.py" "$OUT"
 
 echo "[*] Model B writeback/putpage conversion (docs/archive/WRITEBACK-TASK.md; WRITEBACK_GROUPS=spec,pvn,ufs,callers)"
-python3 "$HERE/src/patch_writeback.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_writeback.py" "$OUT"
 
 echo "[*] Model B block-swap page-IN conversion (ISSUE-10: klustsize 0x800 data init + residuals)"
-python3 "$HERE/src/patch_swapin.py" "$OUT" | tail -6
+run_step 6 python3 "$HERE/src/patch_swapin.py" "$OUT"
 
 echo "[*] Model B swap resource geometry (SWAPADD-MODEL-B-PATCH-SPEC.md: swapadd/swapdel/swapinfo_free/undelswap)"
-python3 "$HERE/src/patch_swapgeom.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_swapgeom.py" "$OUT"
 
 echo "[*] Model B exec initial-stack group (EXEC-INITIALSTK-PATCH-SPEC.md: extractarg + exec_initialstk data init)"
-python3 "$HERE/src/patch_execstk.py" "$OUT" | tail -2
+run_step 2 python3 "$HERE/src/patch_execstk.py" "$OUT"
 
 echo "[*] Model B pageout-policy defaults (SETUPCLOCK-VMETER-PATCH-SPEC.md: lotsfree/desfree/minfree + vmmeter UPIO fold)"
-python3 "$HERE/src/patch_pageoutdefs.py" "$OUT" | tail -2
+run_step 2 python3 "$HERE/src/patch_pageoutdefs.py" "$OUT"
 
 echo "[*] Model B mincore vector (MINCORE-VECTOR-PATCH-SPEC.md: btoc + alignment gate; 0x40000 chunk unchanged)"
-python3 "$HERE/src/patch_mincore.py" "$OUT" | tail -2
+run_step 2 python3 "$HERE/src/patch_mincore.py" "$OUT"
 
 echo "[*] Model B device-mmap PFN geometry (scrmmap/ammmap/timmap phystopfn >>11 -> >>12; fractal/julia + /dev/amiga + TIGA)"
-python3 "$HERE/src/patch_devmmap_pfn.py" "$OUT" | tail -2
+run_step 2 python3 "$HERE/src/patch_devmmap_pfn.py" "$OUT"
 
 echo "[*] CM-B1 segkmem reader geometry (CM-PTE-WRITER-MATRIX.md: checkprot/getprot 2K->4K + stock-body canaries)"
-python3 "$HERE/src/patch_segkmem.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_segkmem.py" "$OUT"
 
 echo "[*] B1 DMA hook: retarget A3091/SDMAC stopdma calls -> dma_a3091_stopdma (DMA-INITIATOR-CENSUS.md)"
-python3 "$HERE/src/patch_a3091_dma.py" "$OUT" | tail -6
+run_step 6 python3 "$HERE/src/patch_a3091_dma.py" "$OUT"
 
 echo "[*] ISSUE-21 fix: retarget _start jsr config -> config_cachefix (cache-off handoff)"
-python3 "$HERE/src/patch_config_cachefix.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_config_cachefix.py" "$OUT"
 
 echo "[*] ISSUE-39: count hat_sdtalloc out-of-contiguous-memory warnings"
 python3 "$HERE/src/patch_sdtfail.py" "$OUT"
@@ -565,22 +566,22 @@ echo "[*] per-process fault-depth gate: assert v.v_proc matches the table size"
 python3 "$HERE/src/check_vproc.py" "$OUT"
 
 echo "[*] DBG-TEXT-PUBLISH: publish debugger writes to user text (3 relocation retargets)"
-python3 "$HERE/src/patch_dbgpublish.py" "$OUT" | tail -4
+run_step 4 python3 "$HERE/src/patch_dbgpublish.py" "$OUT"
 
 echo "[*] B2 page-release barrier: page_free + free_vp_pages choke-point hooks (CB-PAGE-LIFECYCLE-CLOSURE.md)"
-python3 "$HERE/src/patch_cb_release.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_cb_release.py" "$OUT"
 
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/src/patch_framesz060.py" "$OUT"
 
 echo "[*] ISSUE-15: KMA pool page counts (SMALLCLICKS/BIGCLICKS 2K->4K clicks) + kmem_avail ptob"
-python3 "$HERE/src/patch_kmapools.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_kmapools.py" "$OUT"
 
 echo "[*] ISSUE-17/18: procfs user-memory I/O geometry (prfastmapout shift + prusrio page loop)"
-python3 "$HERE/src/patch_procio.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_procio.py" "$OUT"
 
 echo "[*] ISSUE-28: memcntl/mem_unlock mlock-bitmap geometry (as_ctl + segvn_lockop are ALREADY 4K)"
-python3 "$HERE/src/patch_memcntl.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_memcntl.py" "$OUT"
 
 # ISSUE-27 (PAGECREATE-TAILZERO-SPEC.md).  segmap_pagecreate is ALREADY a 4 KiB producer;
 # its consumers still rounded their zero-fill to 2 KiB, leaving
@@ -589,20 +590,20 @@ python3 "$HERE/src/patch_memcntl.py" "$OUT" | tail -3
 # Groups: PAGECREATE_GROUPS=live,fbzero,spec (default all).  'live' (as_iolock+rwip+rwvp)
 # is ATOMIC.  S5 writei and ufs_bmap's own arithmetic are deliberately NOT in this patch.
 echo "[*] ISSUE-27: segmap_pagecreate consumer tail-zero + as_iolock geometry (PAGECREATE_GROUPS=live,fbzero,spec)"
-python3 "$HERE/src/patch_pagecreate.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_pagecreate.py" "$OUT"
 
 # pvn_vptrunc final-page tail zeroing (Codex P1, PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md).
 # MAX(zbytes, PAGESIZE - (vplen & PAGEOFFSET)) still used 2 KiB while clearing a 4 KiB
 # page.  The 8 KiB segmap-slot constants next to it are asserted as canaries.
 echo "[*] pvn_vptrunc: final-page tail zeroing PAGESIZE term (2 sites + 2 segmap-slot canaries)"
-python3 "$HERE/src/patch_pvntrunc.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_pvntrunc.py" "$OUT"
 
 # ISSUE-31: ufs_bmap VM-page geometry -- the UFS provider half of the ISSUE-27 boundary.
 # rwip now feeds it a 4 KiB-derived alloc_only; its own PAGESIZE arithmetic must match.
 # 11 sites; the three moveq #11 NDADDR-1 direct-block thresholds are asserted UNCHANGED,
 # and the patch refuses to run unless ISSUE-27 (as_iolock) is already 4 KiB.
 echo "[*] ISSUE-31: ufs_bmap page geometry (11 sites + 3 NDADDR canaries + ISSUE-27 precondition)"
-python3 "$HERE/src/patch_ufsbmap.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_ufsbmap.py" "$OUT"
 
 # ISSUE-32: live ELF exec mapping boundary (EXEC-BOUNDARY-CENSUS.md).  Three atomic
 # groups: exhd (header-cache ranges), execmap (VOP_MAP eligibility + mapping inputs),
@@ -610,14 +611,14 @@ python3 "$HERE/src/patch_ufsbmap.py" "$OUT" | tail -3
 # producer in the LOCAL symbol mapelfexec was found while discharging its proof
 # obligation).  COFF core/exec and grow/brk stay deferred.
 echo "[*] ISSUE-32: ELF exec mapping boundary (EXECBOUNDARY_GROUPS=exhd,execmap,elfsz)"
-python3 "$HERE/src/patch_execboundary.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_execboundary.py" "$OUT"
 
 # ISSUE-33: remaining device-mmap crossings.  d_mmap must return a 4 KiB PFN because
 # hat_devload maps it as pfn<<12; mmmmap//dev/mem and resmmap still produced phys>>11.
 # Plus segdev_incore's vector stride, which crosses into the already-4-KiB mincore.
 # The rest of the segdev family stays 2 KiB on purpose and is asserted unchanged.
 echo "[*] ISSUE-33: device-mmap PFN + segdev_incore vector (DEVMMAP2_GROUPS=pfn,incore)"
-python3 "$HERE/src/patch_devmmap2.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_devmmap2.py" "$OUT"
 
 # sysconfig(_CONFIG_PAGESIZE) reported 2048 on a 4 KiB kernel -- the kernel misreporting
 # ITSELF to user space, which is also how a program computes an alignment that lands at
@@ -632,7 +633,7 @@ python3 "$HERE/src/patch_devmmap2.py" "$OUT" | tail -3
 # TWO INSTRUCTIONS and a half-applied pair is worse than either endpoint; the script refuses.
 # The other four sites of the six-site group stay unconverted and are asserted as canaries.
 echo "[*] ISSUE-35: nfs_putpage io_len in 4 KiB pages (2 ATOMIC sites + 4 canaries)"
-python3 "$HERE/src/patch_nfs_putpage.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_nfs_putpage.py" "$OUT"
 
 # ISSUE-36 (NFS read side): the minimum SAFE repair is four sites, not the one that produces the
 # SIGBUS.  nfs_getpage's EOF allowance (0x8b6ba) is the direct producer -- it rejects the final
@@ -644,10 +645,10 @@ python3 "$HERE/src/patch_nfs_putpage.py" "$OUT" | tail -3
 # The other nine sites of the thirteen stay unconverted and are asserted as canaries -- notably
 # 0x8b72c, which must never be converted without the countdown.
 echo "[*] ISSUE-36: nfs_getpage EOF + pl[] countdown + io_len (4 ATOMIC sites + 9 canaries)"
-python3 "$HERE/src/patch_nfs_getpage.py" "$OUT" | tail -6
+run_step 6 python3 "$HERE/src/patch_nfs_getpage.py" "$OUT"
 
 echo "[*] sysconfig: _CONFIG_PAGESIZE reports 4096, not 2048 (1 site + 2 canaries)"
-python3 "$HERE/src/patch_sysconfig_pagesize.py" "$OUT" | tail -2
+run_step 2 python3 "$HERE/src/patch_sysconfig_pagesize.py" "$OUT"
 
 # ---------------------------------------------------------------------------
 # Motorola 68040 FPSP (Floating-Point Support Package) + AMIX glue.
@@ -736,8 +737,8 @@ if [ "$FPSP" = "1" ]; then
 	echo "      all FPSP entry points defined, no unresolved FPSP refs"
 
 	echo "[*] FPSP 4/4: retarget M68Kvec[11] and FP arith vectors 48/51/52/53/54/55"
-	python3 "$HERE/src/patch_fpsp_vec11.py"   "$OUT" | tail -2
-	python3 "$HERE/src/patch_fpsp_vectors.py" "$OUT" | tail -3
+	run_step 2 python3 "$HERE/src/patch_fpsp_vec11.py"   "$OUT"
+	run_step 3 python3 "$HERE/src/patch_fpsp_vectors.py" "$OUT"
 else
 	echo
 	echo "[*] FPSP=0 -- building WITHOUT the Motorola FPSP (A/B / bisect build)"
@@ -748,11 +749,11 @@ fi
 # and FPSP=1 images get identical vector-61 behaviour.  No FPSP script touches slot 61.
 echo
 echo "[*] ISP: retarget M68Kvec[61] (unimplemented integer) -> isp61_vec"
-python3 "$HERE/src/patch_isp_vec61.py" "$OUT" | tail -2
+run_step 2 python3 "$HERE/src/patch_isp_vec61.py" "$OUT"
 
 echo
 echo "[*] reloc validation:"
-( cd "$HERE" && python3 src/check_relink_relocs.py | tail -1 )
+run_step 1 python3 "$HERE/src/check_relink_relocs.py" "$OUT"
 
 echo
 echo "[*] stamping build id -> utsname.machine tag (banner + uname -m)"

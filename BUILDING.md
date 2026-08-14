@@ -127,6 +127,18 @@ memory region** it finds, so an accelerator with its own RAM gives `0x08000000` 
 without any — an A3640, for instance — gives `0x07000000`. Read `tvaddr` from the loader's own
 boot output and pass it.
 
+### What happens when a patch target has moved
+
+Each of the 43 byte-patch scripts asserts the **old** bytes before writing the new ones. If an
+assertion fails the script aborts, and the build stops there with the failing command named and
+its full output printed — it does not continue and it does not print `[OK] built`. The output
+file at that point is partially patched; do not boot it, rebuild.
+
+That is the correct behaviour and it is newer than the checks themselves: until 2026-08-14 every
+patcher was invoked through `| tail -n`, and a pipeline's exit status in POSIX sh is its *last*
+command's. `set -e` never saw the failures. See ISSUE-45 in `KNOWN-ISSUES.md` — including the
+measurement of what the old build did with a deliberately broken patch site.
+
 ### Reproducibility
 
 Rebuilding the same tree twice produces images differing **only in the build-id stamp** (a date

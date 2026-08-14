@@ -4298,3 +4298,87 @@ Kernel side: `src/legacysdt040.s` and `src/ptdatfree040.s`, with the `i40_*` and
 the `pt_waiting` wake path in the teardown edge has never executed on either CPU. That is a
 coverage gap, not a suspected defect — the same shape as ISSUE-43's two unexercised `UFPRWRT`
 branches.
+
+---
+
+## ✅ ISSUE-45 (2026-08-14, FIXED THE SAME DAY): every byte-patch assertion in the build was disarmed by a shell pipe
+
+> **Ledger: FIXED** — build tooling; no kernel change. Canonical: [`STATUS.md`](STATUS.md) §4.
+
+**Not a kernel defect. A defect in the thing that checks the kernel** — which is worse, because
+it is the layer that decides whether anything else gets believed.
+
+42 of the 43 byte-patch scripts in `src/` assert the OLD bytes before writing the new ones, and
+41 of them exit non-zero when the assertion fails. That assertion is the port's central safety
+property: the patchers address the kernel by hard-coded offsets, so a patcher firing at a moved
+target does not fail — it writes correct bytes to the wrong address. Every one of them was
+invoked as
+
+```sh
+python3 "$HERE/src/patch_foo.py" "$OUT" | tail -3
+```
+
+and in POSIX sh the exit status of a pipeline is the status of its **last** command. `tail`
+always succeeds. `set -e` — present since the first version of the script — never saw a thing:
+
+```
+$ sh -c 'set -e; (exit 3) | tail -1; echo "still here, status=$?"'
+still here, status=0
+```
+
+### Measured, not argued
+
+One expected opcode in `src/patch_config_cachefix.py` was changed from `4eb9` to `4eba`,
+simulating a patch target that has moved, and the same build was run with the old script and
+the new one:
+
+| | old script | after the fix |
+|---|---|---|
+| exit status | **0** | 1 |
+| `[OK] built` printed | **yes** | no |
+| patch steps that ran after the failed one | **25** | 0 |
+| build id stamped on the result | **yes** | no |
+
+The old build produced a complete, named, plausible kernel image that was missing the ISSUE-21
+cache-off handoff fix, and said `[OK] built`. Nothing downstream — not the relocation census,
+not the build-id stamp, not the acceptance run-lists — would have distinguished it from a good
+one, because all of them describe the image rather than the process that made it.
+
+### Second defect found in the same place
+
+`src/check_relink_relocs.py` **hard-coded** the image path `build/unix-040` and ignored `argv`.
+Four variant scripts (`rtg`, `xsvga`, `va2000`, `z3660`) passed their own output as an argument
+that was silently discarded, so each was shown the relocation census of a *different* kernel,
+labelled as its own. The script also never exited non-zero — it printed `TOTAL complaints: N`
+and returned success — so the callers that did check it could not have noticed. `relink-040-rtg.sh`
+is the script that builds the kernel used for the RTG hardware sessions.
+
+Re-measured after the fix: all eight existing images are genuinely at 0 complaints, so nothing
+was actually wrong in the artifacts — only in the ability to tell.
+
+### Fix
+
+`tools/build-step.sh`, sourced by every relink script: `run_step <mode> cmd...` runs the step
+with no pipe, captures its output, prints the requested tail on success, and on failure prints
+everything and stops the build. 40 call sites converted; `|| true` removed from the reloc check
+and the build-id stamp in three variant scripts (both were measured to succeed on every variant
+before hardening). `check_relink_relocs.py` now honours `argv`, exits 1 on complaints and 2 on
+an unreadable image, and names the image on its verdict line.
+
+`relink-040-va2000.sh` was found to default to `build/unix-040-dbg.STD-backup`, a scratch image
+from 2026-07-24 that predates FPSP being folded into the base — so the script's own FPSP guard
+rejected its own default and it could not run without an explicit argument. Now defaults to
+`build/unix-040-dbg` like every other variant.
+
+### How it was found, and the one that got away
+
+Found by a second model reviewing the repository for publication readiness — not by any test
+here, because no test here tests the build system. Worth recording: while writing the fix, the
+first version of `run_step` reported `exit status 0` in its own failure banner, because `$?`
+after an `if` is the status of the `if`, not of the command. The unit test caught it only
+because the banner prints the status at all. The same lesson as ISSUE-44: the instrument has to
+say something falsifiable, or it is decoration.
+
+**Byte-exact regression:** rebuilding the base after all of this yields an image differing from
+the pre-change build in exactly **two bytes**, both inside the build-id string (`260813-09` →
+`260814-01`). All six variant kernels build; all reloc checks pass against their own image.

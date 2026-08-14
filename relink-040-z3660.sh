@@ -20,6 +20,7 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+. "$(cd "$(dirname "$0")" && pwd)/tools/build-step.sh"
 V=$AMIX_ROOT
 
 IN="${1:-$HERE/build/unix-040-dbg}"
@@ -113,8 +114,8 @@ set -- $CONTIG
 DSZ=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print strtonum("0x"$6)}')
 [ $((DSZ % 4)) -eq 0 ] && echo "[OK] .data size 0x$(printf %x $DSZ) is 4-aligned." \
 	|| { echo "[FAIL] .data size not 4-aligned -> .bss misaligned at runtime"; exit 1; }
-python3 "$HERE/src/patch_b2_flip.py" "$OUT" --check | sed 's/^/      /'
-( cd "$HERE" && python3 src/check_relink_relocs.py "$OUT" | tail -1 )
+run_step indent python3 "$HERE/src/patch_b2_flip.py" "$OUT" --check
+run_step 1 python3 "$HERE/src/check_relink_relocs.py" "$OUT"
 python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
 echo "[OK] built $OUT"

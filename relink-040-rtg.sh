@@ -28,6 +28,7 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+. "$(cd "$(dirname "$0")" && pwd)/tools/build-step.sh"
 . "$HERE/src/xsvga-provenance.sh"
 
 IN="${1:-$HERE/build/unix-040-dbg}"
@@ -132,20 +133,20 @@ PCOUNT=$(m68k-linux-gnu-nm "$OUT" | grep -cE " T parinit$")
 # a fixed order and let each assert its own preconditions.
 # ---------------------------------------------------------------------------
 echo "[*] register 1/2: cdevsw[67] -> svga* + svgammap Model-B geometry"
-python3 "$HERE/src/patch_xsvga.py" "$OUT" | tail -3
+run_step 3 python3 "$HERE/src/patch_xsvga.py" "$OUT"
 
 echo "[*] register 2/2: cdevsw[68] -> va2000* (major 68 = /dev/va2000)"
-python3 "$HERE/src/patch_va2000_cdevsw.py" "$OUT" | tail -8
+run_step 8 python3 "$HERE/src/patch_va2000_cdevsw.py" "$OUT"
 
 echo
 echo "[*] reloc validation:"
-( cd "$HERE" && python3 src/check_relink_relocs.py "$OUT" 2>/dev/null | tail -1 ) || true
+run_step 1 python3 "$HERE/src/check_relink_relocs.py" "$OUT"
 DSZ=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print strtonum("0x"$6)}')
 [ $((DSZ % 4)) -eq 0 ] && echo "[OK] .data 4-aligned ($DSZ)" || { echo "[FAIL] .data misaligned ($DSZ)"; exit 1; }
 echo "[*] PC-relative relocs present (loader MUST have the f0ed373 fix):"
 m68k-linux-gnu-readelf -rW "$OUT" 2>/dev/null | awk '$3 ~ /^R_68K_PC/{n++} END{print "      "n" PC-relative records"}'
 
-python3 "$HERE/src/stamp_buildid.py" "$OUT" || true
+run_step all python3 "$HERE/src/stamp_buildid.py" "$OUT"
 rm -f "$STAGE"
 echo "[OK] built $OUT"
 echo "     boot: unix_boot040 $(basename "$OUT")   <- unix_boot040 is MANDATORY"

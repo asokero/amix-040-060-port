@@ -33,9 +33,14 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+. "$(cd "$(dirname "$0")" && pwd)/tools/build-step.sh"
 
 # $1 = base kernel (default: standard DEBUG base). $2 = output path.
-IN="${1:-$HERE/build/unix-040-dbg.STD-backup}"
+# 2026-08-14: was unix-040-dbg.STD-backup, a scratch image from 2026-07-24 that predates FPSP
+# being folded into the base.  The FPSP guard below (added 2026-07-26) therefore rejected this
+# script's OWN default, so it could not run at all without an explicit argument.  Every other
+# variant script defaults to build/unix-040-dbg; this one now does too.
+IN="${1:-$HERE/build/unix-040-dbg}"
 [ -f "$IN" ] || IN="$HERE/build/unix-040-dbg"
 OUT="${2:-$HERE/build/unix-040-va2000-dbg}"
 FPWORK="$HERE/build/fpsp-work/usr/src/sys/arch/m68k/fpsp"
@@ -113,14 +118,14 @@ PCOUNT=$(m68k-linux-gnu-nm "$OUT" | grep -cE " T parinit\$")
 [ "$PCOUNT" -eq 1 ] || { echo "[FAIL] expected exactly 1 strong 'parinit' def, found $PCOUNT"; exit 1; }
 
 echo "[*] patch 3/3: cdevsw[68] -> va2000* (major 68 = /dev/va2000)"
-python3 "$HERE/src/patch_va2000_cdevsw.py" "$OUT" | tail -8
+run_step 8 python3 "$HERE/src/patch_va2000_cdevsw.py" "$OUT"
 
 echo "[*] reloc validation:"
-( cd "$HERE" && python3 src/check_relink_relocs.py "$OUT" 2>/dev/null | tail -1 ) || true
+run_step 1 python3 "$HERE/src/check_relink_relocs.py" "$OUT"
 DSZ=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print strtonum("0x"$6)}')
 [ $((DSZ % 4)) -eq 0 ] && echo "[OK] .data 4-aligned" || { echo "[FAIL] .data misaligned"; exit 1; }
 echo "[*] PC-relative relocs present (loader MUST have the f0ed373 fix):"
 m68k-linux-gnu-readelf -rW "$OUT" 2>/dev/null | awk '$3 ~ /^R_68K_PC/{n++} END{print "      "n" PC-relative records"}'
 
-python3 "$HERE/src/stamp_buildid.py" "$OUT" || true
+run_step all python3 "$HERE/src/stamp_buildid.py" "$OUT"
 echo "[OK] built $OUT"

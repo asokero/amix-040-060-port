@@ -3,11 +3,27 @@
 # allocbss logic over a relinked kernel (big-endian ELF32 m68k) to catch
 # relocations rel.c would abort on (RELA guru 0xD2454C41) BEFORE booting.
 # Flags: symbols in unbound sections, or UND refs (e.g. GLOBAL refs to kernel
-# FILE-LOCAL symbols, which ld -r cannot bind).  Edit the path/bindaddr inline.
-# Usage: python3 check_relink_relocs.py   (expects build/unix-040)
+# FILE-LOCAL symbols, which ld -r cannot bind).
+#
+# Usage: python3 check_relink_relocs.py [image]      (default build/unix-040)
+#
+# Exit status: 0 clean, 1 complaints, 2 could not read the image.
+#
+# 2026-08-14: BOTH of those were defects until this date.  The path was hard-coded, so the
+# four variant scripts that passed their own output as argv (rtg, xsvga, va2000, z3660) had
+# the argument silently ignored and were shown the RELOC CENSUS OF A DIFFERENT KERNEL --
+# build/unix-040 -- labelled as their own.  And the script only printed its verdict, never
+# exiting non-zero, so the callers that did check could not have noticed either.  The image
+# actually read is now echoed, because a checker that will not say what it checked is how
+# that lasted this long.
 
 import struct,sys
-f=open('build/unix-040','rb').read()
+path = sys.argv[1] if len(sys.argv) > 1 else 'build/unix-040'
+try:
+    f=open(path,'rb').read()
+except OSError as e:
+    print("CANNOT READ %s: %s" % (path, e)); sys.exit(2)
+print("image:", path)
 def u16(o): return struct.unpack('>H',f[o:o+2])[0]
 def u32(o): return struct.unpack('>I',f[o:o+4])[0]
 # ELF header (big-endian)
@@ -82,4 +98,8 @@ for s in secs:
             if complaints<=12:
                 print("BADSHNDX: reloc in %s off=0x%x -> sym[%d] '%s' shndx=%d"%(
                     s['nm'],r_off,symidx,symname(sm),shndx))
-print("TOTAL complaints:",complaints)
+# The image is named on the VERDICT line, not only at the top: callers show the last line
+# only, and a verdict that does not say what it was about is what let four scripts validate
+# somebody else's kernel for months.
+print("TOTAL complaints: %d   [%s]" % (complaints, path))
+sys.exit(1 if complaints else 0)

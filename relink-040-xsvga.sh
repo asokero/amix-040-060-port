@@ -25,6 +25,7 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+. "$(cd "$(dirname "$0")" && pwd)/tools/build-step.sh"
 
 . "$HERE/src/xsvga-provenance.sh"
 
@@ -55,13 +56,12 @@ echo "[*] stray new UND refs from exp (should be none):"
 m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'svga|screengroups|activescreen' | sed 's/^/      LEAK: /' || true
 
 echo "[*] register cdevsw[67] + fix svgammap geometry:"
-python3 "$HERE/src/patch_xsvga.py" "$OUT" | tail -8
+run_step 8 python3 "$HERE/src/patch_xsvga.py" "$OUT"
 
 echo "[*] reloc validation:"
-( cd "$HERE" && python3 src/check_relink_relocs.py "$OUT" 2>/dev/null | tail -1 ) || \
-( cd "$HERE" && python3 src/check_relink_relocs.py | tail -1 ) || true
+run_step 1 python3 "$HERE/src/check_relink_relocs.py" "$OUT"
 
 echo "[*] stamping build id:"
-python3 "$HERE/src/stamp_buildid.py" "$OUT" || true
+run_step all python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
 echo "[OK] built $OUT -- boot on 68040: unix_boot unix-040-xsvga-dbg"
