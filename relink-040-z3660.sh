@@ -105,13 +105,18 @@ echo "[*] wiring (scsicard row + loop bound + dd.c ordering island)"
 python3 "$HERE/src/patch_z3660.py" "$OUT"
 
 # The standard packaging guards -- same ones every other relink in this tree runs.
+# Hex -> decimal is done by the shell, not by awk: strtonum() is a GNU extension and the
+# default awk on Debian/Ubuntu is mawk, where it is a hard error.  2026-08-14.
 CONTIG=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '
-	{gsub(/[][]/,"")} $2==".text"{to=strtonum("0x"$5); ts=strtonum("0x"$6)}
-	$2==".data"{do_=strtonum("0x"$5)} END{printf("%d %d", to+ts, do_)}')
+	{gsub(/[][]/,"")}
+	$2==".text" {to=$5; ts=$6}
+	$2==".data" {do_=$5}
+	END{print to, ts, do_}')
 set -- $CONTIG
+set -- $(( 0x$1 + 0x$2 )) $(( 0x$3 ))   # $1 = text end, $2 = data offset, decimal
 [ "$1" = "$2" ] && echo "[OK] text/data contiguous." \
 	|| { echo "[FAIL] text/data NOT contiguous"; exit 1; }
-DSZ=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print strtonum("0x"$6)}')
+DSZ=$(( 0x$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print $6}') ))
 [ $((DSZ % 4)) -eq 0 ] && echo "[OK] .data size 0x$(printf %x $DSZ) is 4-aligned." \
 	|| { echo "[FAIL] .data size not 4-aligned -> .bss misaligned at runtime"; exit 1; }
 run_step indent python3 "$HERE/src/patch_b2_flip.py" "$OUT" --check

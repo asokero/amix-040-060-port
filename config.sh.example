@@ -2,9 +2,14 @@
 #
 #   cp config.sh.example config.sh && $EDITOR config.sh && sh tools/check-env.sh
 #
-# Every script in this repository sources config.sh from the repository root.  Nothing here
-# has a default that points at one particular machine: if a path is wrong the build stops with
-# a message naming the variable, rather than failing somewhere deep in a linker.
+# Every script in this repository sources config.sh from the repository root.
+#
+# The values below are EXAMPLES, not defaults that will work.  They are written relative to
+# $HOME, so they contain no other person's user name, but they do assume the directory layout
+# of the machine this port was developed on -- expect to edit most of them.  What the scripts
+# guarantee is the failure mode, not the paths: a wrong path stops the build with a message
+# naming the variable, rather than failing somewhere deep in a linker.  `sh tools/check-env.sh`
+# tells you which ones are wrong before you build anything.
 #
 # See BUILDING.md for what each dependency is and where to get it.
 

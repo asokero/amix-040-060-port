@@ -60,12 +60,15 @@ m68k-linux-gnu-size "$OUT" | sed 's/^/      /'
 
 # 5. text/data contiguity (loader copies them as one block; hat040.o .text must be
 #    a multiple of 4 bytes).
+# Hex -> decimal is done by the shell, not by awk: strtonum() is a GNU extension and the
+# default awk on Debian/Ubuntu is mawk, where it is a hard error.  2026-08-14.
 CONTIG=$(m68k-linux-gnu-readelf -SW "$OUT" 2>/dev/null | awk '
     {gsub(/[][]/,"")}
-    $2==".text" {to=strtonum("0x"$5); ts=strtonum("0x"$6)}
-    $2==".data" {do_=strtonum("0x"$5)}
-    END{printf("%d %d", to+ts, do_)}')
+    $2==".text" {to=$5; ts=$6}
+    $2==".data" {do_=$5}
+    END{print to, ts, do_}')
 set -- $CONTIG
+set -- $(( 0x$1 + 0x$2 )) $(( 0x$3 ))   # $1 = text end, $2 = data offset, decimal
 if [ "$1" = "$2" ]; then
     echo "[OK] text/data contiguous."
 else

@@ -46,12 +46,15 @@ m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'swtch|as_fault|hardbus_orig|cu
 	| sed 's/^/      LEAK: /' || echo "      (none)"
 
 # text/data contiguity (loader copies them as one block)
+# Hex -> decimal is done by the shell, not by awk: strtonum() is a GNU extension and the
+# default awk on Debian/Ubuntu is mawk, where it is a hard error.  2026-08-14.
 CONTIG=$(m68k-linux-gnu-readelf -SW "$OUT" 2>/dev/null | awk '
 	{gsub(/[][]/,"")}
-	$2==".text" {to=strtonum("0x"$5); ts=strtonum("0x"$6)}
-	$2==".data" {do_=strtonum("0x"$5)}
-	END{printf("%d %d", to+ts, do_)}')
+	$2==".text" {to=$5; ts=$6}
+	$2==".data" {do_=$5}
+	END{print to, ts, do_}')
 set -- $CONTIG
+set -- $(( 0x$1 + 0x$2 )) $(( 0x$3 ))   # $1 = text end, $2 = data offset, decimal
 if [ "$1" = "$2" ]; then echo "[OK] text/data contiguous."
 else echo "[FAIL] text/data NOT contiguous: text_end=0x$(printf %x $1) data_off=0x$(printf %x $2)"; exit 1; fi
 
@@ -61,7 +64,7 @@ else echo "[FAIL] text/data NOT contiguous: text_end=0x$(printf %x $1) data_off=
 # but the SDMAC 32-bit DMA engine has no A[1:0] bits: a misaligned DMA buffer (e.g.
 # sdpart.c `block`) reads the RDB into the wrong offset -> 'RDSK' scan fails ->
 # root mount ENXIO. This is exactly the quiet-on-Amiberry root-mount regression.
-DSZ=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print strtonum("0x"$6)}')
+DSZ=$(( 0x$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print $6}') ))
 if [ $((DSZ % 4)) -ne 0 ]; then
 	echo "[FAIL] .data size 0x$(printf %x $DSZ) not a 4-byte multiple -> .bss misaligned at runtime (add .balign 4 to the offending .s)"; exit 1
 fi

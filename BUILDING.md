@@ -22,6 +22,11 @@ distribute.
 | **Your AMIX installation**, mounted or unpacked | the kernel this port patches | AMIX SVR4 2.1c; the file needed is `stand/unix` |
 | **NetBSD source tarball** (`syssrc.tgz`) | Motorola's 68040/68060 support packages are extracted from it — they are not vendored here | any recent NetBSD release |
 
+The build scripts are POSIX `sh` and POSIX `awk`, deliberately: **no bash and no gawk**. They used
+to call `strtonum()`, a GNU awk extension, which on a Debian or Ubuntu machine — where `awk` is
+mawk — is a hard error rather than a wrong answer. The hex arithmetic is done by the shell now, and
+the whole build is verified under `mawk` as well as `gawk`.
+
 ### Optional
 
 | What | Needed for |

@@ -122,7 +122,7 @@ run_step 8 python3 "$HERE/src/patch_va2000_cdevsw.py" "$OUT"
 
 echo "[*] reloc validation:"
 run_step 1 python3 "$HERE/src/check_relink_relocs.py" "$OUT"
-DSZ=$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print strtonum("0x"$6)}')
+DSZ=$(( 0x$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print $6}') ))
 [ $((DSZ % 4)) -eq 0 ] && echo "[OK] .data 4-aligned" || { echo "[FAIL] .data misaligned"; exit 1; }
 echo "[*] PC-relative relocs present (loader MUST have the f0ed373 fix):"
 m68k-linux-gnu-readelf -rW "$OUT" 2>/dev/null | awk '$3 ~ /^R_68K_PC/{n++} END{print "      "n" PC-relative records"}'
