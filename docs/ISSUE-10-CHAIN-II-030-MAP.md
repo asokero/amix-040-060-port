@@ -4,7 +4,7 @@
 > hunt in KNOWN-ISSUES.md (kvseg buffer PTE holds wrong PFN; KMA double-backing PRIME).**
 
 **2026-07-15 night.** After the reliable repro + smoking gun (disk-read ELF reuse,
-`6e4449b`) and the hat_pagesync040 test that ruled out chain (I) (`1ae680a`), this maps
+`16e3995`) and the hat_pagesync040 test that ruled out chain (I) (`6fc7e36`), this maps
 where chain (II) lives, grounded in the Codex `amix-kernel-analysis/vm-map/` audits
 (authoritative — they diff the exact AMIX objects, not just the 3b2 source).
 
@@ -35,7 +35,7 @@ mapping, so free+reuse left the victim reading the disk-read ELF content.
 
 Overridden-to-040 (safe producers/removers): `hat_pteload`, `hat_dup040`, `hat_unload`,
 `hat_free`, `hat_pageunload`, `hat_chgprot`, `hat_alloc`, `hat_ptfree`, `hat_unlock`,
-`hat_pagesync` (ported this session, `f2767aa`).
+`hat_pagesync` (ported this session, `d200778`).
 
 Still **stock 030** and able to break the invariant (from `P-MAPPING-MATRIX.md` + the
 per-op audits):
@@ -46,7 +46,7 @@ per-op audits):
 | 2 | `hat_exec` | 0xb6f20 | UNPORTED except an 8-byte root-load patch; "all section/segment/page/SDE/PTE/ptdat arithmetic is still 030" (`HAT-EXEC-AUDIT.md`). Zero-flag fallback "can copy/move old PTEs on old geometry" → can publish/leave a non-registered mapping (`HAT-EXEC-POLICY.md` recommends blocking/diagnosing it). | yes — exec on every cp/sh/expr |
 | 3 | `hat_swapout` | stock | old SDT/PTE tree walk, "does not match live 040 mappings" — unlinks by the wrong tree. | maybe — process swapper `sched` is disabled, but verify no other caller |
 | 4 | `relvm`/`as_free`/`as_exec`/`hat_asload`/`segvn_unmap` | stock 030 | AS teardown drivers; NOT overridden. They should route real PTE work through the ported `hat_unload`/`hat_free`, but the 030 driver arithmetic (SDE/ptdat) around those calls is unaudited for VA/range correctness on the 040 tree. | yes — relvm on every exec, as_free on every exit |
-| — | `hat_map` | 0xb58d2 | phantom-preload producer — **VERIFIED STILL DISABLED** (braw at 0xb58d2, 317944f). Not a current producer. | no |
+| — | `hat_map` | 0xb58d2 | phantom-preload producer — **VERIFIED STILL DISABLED** (braw at 0xb58d2, 178364a). Not a current producer. | no |
 
 ## Structural root (Codex, incompatibility #2)
 
@@ -96,7 +96,7 @@ via 040 faults through `hat_pteload`. A no-op never calls `hat_ptalloc` → no s
 Strictly safer than today (removes both the corruption vector and the NULL-panic). Testable
 against the reliable repro.
 
-## Audit #1 FIX TESTED → REFUTED (2026-07-15 night, build 260715-20, commit e6b5e46)
+## Audit #1 FIX TESTED → REFUTED (2026-07-15 night, build 260715-20, commit be9a23f)
 
 Built the no-op `hat_exec` (`src/hat_exec040.s`, `--weaken-symbol hat_exec`), booted
 emu-040 clean to login (exec exercised heavily by init/getty/login/print-services — no-op does
@@ -135,7 +135,7 @@ suspects 1–3 one patch at a time.
 
 ## Chain-II SEGVCHAIN probe DEPLOYED — correct + safe, but repro morphology blocks capture (2026-07-16)
 
-Built the victim-context reverse-map probe (`src/sigkill_dbg.s`, commit `cc21ff7`,
+Built the victim-context reverse-map probe (`src/sigkill_dbg.s`, commit `45c8af8`,
 builds 260715-21/-22). On a SIGSEGV whose saved-`a0` URP walk reaches a **resident leaf**
 (the sh-heap double-use morphology), after the existing SEGVDMP/SEGVPP dump it walks
 `pp->p_mapping` and reports:

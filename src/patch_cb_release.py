@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # patch_cb_release.py -- caches Step B2: install the copyback page-release
 # barrier hooks (2026-07-23).  Spec:
-# docs/contracts/CB-PAGE-LIFECYCLE-CLOSURE.md (pinned e920c27 / base sha d3e1f80a).  Companion object:
+# docs/contracts/CB-PAGE-LIFECYCLE-CLOSURE.md (pinned bc27d81 / base sha d3e1f80a).  Companion object:
 # src/cb_release040.s (Lcb_core + the two islands below).
 #
 # Hook 1 -- page_free @0xafb08: the six bytes 40c3 46fc 2400 (movew %sr,%d3 +

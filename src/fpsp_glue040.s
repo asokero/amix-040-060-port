@@ -17,7 +17,7 @@
 | ureturn, nullvect, copyin, copyout, panic) and the package entry fpsp_fline
 | resolve at the kernel relink (m68k-cbm-sysv4-ld -r).
 |
-| Pinned kernel anchors (build/unix-040-dbg, 0af9c58): nullvect 0x11b4,
+| Pinned kernel anchors (build/unix-040-dbg, 51f3d71): nullvect 0x11b4,
 | ureturn 0x11f8, u (fixed u-area) = ABS 0x40000000 -> u_ar0 @ 0x40000864,
 | EXC_SR = 4, cache-mode from sup_cacr, exception frame SR at (sp).
 

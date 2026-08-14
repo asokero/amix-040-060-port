@@ -108,7 +108,7 @@ kernel        build/unix-040        68040-260801-12  textsize 0xe46ec
               sha256 d1acde8d3442c348924bf9ab9ffb8639a53394d18f54305a13380fc94822f24b
 measured on   build/unix-040-quiet  68040-260801-11  textsize 0xe472c
 source        kernelsupport         src/legacysdt040.s + hat040.s @ Lhf_nodbg
-                                    commits 52e86fe, d74e584, 5f0422a
+                                    commits fbb93aa, 2b35a65, d9d3b15
 records       kernelsupport/ISSUE40-LEGACY-SDT-LANDED-260801.md   (emulator, re-scoping)
               kernelsupport/REALHW-ISSUE40-PART1-260801.md        (hardware, all predictions)
 logs          NAS amix/hwtest-260801b/i40regr.log, i40d.log

@@ -28,7 +28,7 @@ B2 low-physical-alias implementation policy are outside this census.
 Target:
 
 - kernel commit:
-  `a04a97f529ba0eb2523a33f1b4595f2742ff872f`
+  `8be69dfeb7437f48c0b377db5c7e43a182cc92e5`
 - `build/unix-040` SHA-256:
   `ef63f751c5059245d4ffd0696bde338cbab08d5b7d98c54f1b3e1a19d53edc03`
 - ELF `.text` address/file-offset relation:

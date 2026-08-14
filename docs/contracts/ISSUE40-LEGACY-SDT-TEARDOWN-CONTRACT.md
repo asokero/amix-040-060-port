@@ -30,7 +30,7 @@ does not patch the kernel.
 
 | Artifact | Identity |
 |---|---|
-| Kernel source tree | `kernelsupport` commit `0a3a1de` |
+| Kernel source tree | `kernelsupport` commit `0ebca71` |
 | Kernel | `build/unix-040`, build `68040-260801-04` |
 | Kernel SHA-256 | `e956ea34dd83c77bb759151e957713b0a3d7e2148f4596126523d56f3739befb` |
 | Active destructor | `hat_free 0x000d82bc` |

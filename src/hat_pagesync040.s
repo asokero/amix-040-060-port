@@ -18,7 +18,7 @@
 | an ACTIVELY-USED page and frees it.  A concurrent segmap/exec disk-read then reuses
 | the freed frame while the owner's PTE still maps it -> the owner reads freshly
 | disk-read ELF content (ISSUE-10 reuse-while-mapped; latent until the pageout daemon
-| went live, schedpaging retirement 6f53d5c).
+| went live, schedpaging retirement feacac3).
 |
 | THIS PORT: same U/M gather+clear (bit ops mirror the stock, proven correct), but
 | replace the whole conditional flushmmu block with an UNCONDITIONAL cpusha bc +

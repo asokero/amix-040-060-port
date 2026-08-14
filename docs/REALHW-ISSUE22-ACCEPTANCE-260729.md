@@ -76,7 +76,7 @@ plus `us_odd_user = 0` is the pair that says the hazard occurred and was neutral
 
 ## Not re-run, deliberately
 
-* **Reboot disk-truth** — PASSED at 206f32f on the same copyback configuration; the DFC/SFC contract
+* **Reboot disk-truth** — PASSED at 5f79c96 on the same copyback configuration; the DFC/SFC contract
   touches no disk path.
 * **Dhrystone** — copyback measured three times (30000.0 / 30037.5 / 29813.7 /s vs the write-through
   baseline 18292.7). A few instructions per page fault cannot move a CPU benchmark, and there is no

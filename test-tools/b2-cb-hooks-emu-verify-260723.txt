@@ -3,7 +3,7 @@ Caches Step B2 -- COPYBACK hook group + hat_cm_ram flip: emulator regression
 Date: 2026-07-23 (implementation session immediately after B1 HW acceptance)
 Specs: analyysirepo 1823681 vm-map/PT-MEMORY-B2-POLICY.md +
        CB-PAGE-LIFECYCLE-CLOSURE.md + A3091-B2-PREPARE-PATCH-SPEC.md
-       (pinned e920c27 / base sha d3e1f80a; all patch anchors re-verified here)
+       (pinned bc27d81 / base sha d3e1f80a; all patch anchors re-verified here)
 Builds (all with the full B2 hook group; relocs 0 complaints each):
   WT baseline (hat_cm_ram=0x00): base 260723-06 / dbg -07 / quiet -08
     11b4f21f8a97d651730b631afb6e7eeafe8a2315055178226ed00f0965b26125  unix-040

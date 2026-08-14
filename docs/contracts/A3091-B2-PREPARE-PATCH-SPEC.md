@@ -19,7 +19,7 @@ protocol. The specification itself changed no kernel file.
 
 Pinned target:
 
-- kernel implementation commit: `e920c27`
+- kernel implementation commit: `bc27d81`
 - `build/unix-040` SHA-256:
   `d3e1f80a65394f951ffe894eefe2efcfe7b862786937b0eaf0154440608e8404`
 - `build/unix-040-dbg` SHA-256:

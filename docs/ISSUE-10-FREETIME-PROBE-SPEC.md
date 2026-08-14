@@ -2,7 +2,7 @@
 
 > **STATUS 2026-07-16 (SUPERSEDED as the primary lead):** the chain-II question was answered
 > instead by a *victim-context* probe (`DBG SEGVCHAIN` in `src/sigkill_dbg.s`, commit
-> `6ec4be2`), which is cheaper (fires only on the crash, in the victim's context) than this
+> `f259347`), which is cheaper (fires only on the crash, in the victim's context) than this
 > free-time all-AS/kernel-tree scan. It measured **`in=1`** — the victim's live PTE IS in the
 > freed page's `p_mapping` chain — so **chain-II "missing-live-entry" is REFUTED and the
 > reverse map is intact.** The real root is a **DOUBLE-REGISTERED frame** (a file vnode-cache
@@ -59,7 +59,7 @@ At `page_free`/`page_abort` entry, for pp with `p_mapping == 0`:
   frame-walk helper), OR a new `src/freeprobe_dbg.s` in the dbg overlay only.
 - dbg-overlay ONLY (never base) — it's instrumentation. `relink-040-dbg.sh` link list.
 - 040 privileged/scan ops via `.word` where the native cc lacks mnemonics; end every
-  section `.balign 4` (bss-misalign → SDMAC DMA → root-mount ENXIO, 06d7935).
+  section `.balign 4` (bss-misalign → SDMAC DMA → root-mount ENXIO, da9dd06).
 
 ## Validation
 Boot `unix-040-dbg` with the probe, run the fast 6×4 MiB pressure repro (tftp a 4 MiB

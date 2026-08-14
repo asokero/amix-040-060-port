@@ -10,7 +10,7 @@ analyysi + patch-speksit asserteilla; Fable toteuttaa.**
 
 ## Kohde ja pinnaus
 
-- Kernelrepo commit: `0af9c58`
+- Kernelrepo commit: `51f3d71`
 - `build/unix-040` SHA-256:
   `5bd37386d9c5a0f89be451b187fa5dfe9e4f05bcf2f1c37accdc22177a225b38`
 - `build/unix-040-dbg` SHA-256:

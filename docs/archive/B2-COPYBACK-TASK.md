@@ -1,7 +1,7 @@
 # Codex-toimeksianto: B2-copyback-suunnittelukierros (3 tuotosta)
 
-**Määritelty 2026-07-23, heti B1-WT-rautahyväksynnän jälkeen (commit e920c27 +
-docs 6c4f0d6, tagit `pre-dc-enable`/`b1-dc-enable`). B1 on HYVÄKSYTTY oikealla
+**Määritelty 2026-07-23, heti B1-WT-rautahyväksynnän jälkeen (commit bc27d81 +
+docs 56f6cc2, tagit `pre-dc-enable`/`b1-dc-enable`). B1 on HYVÄKSYTTY oikealla
 A3000+Mercury040:llä** (Dhrystone +59 %, burst4 24/24, virtakatkaisu-disk-truth
 7/7 — evidenssi `test-tools/b1-dcwt-verify-260723.txt`). B2 = managed-RAM:n
 CM-luokan flippi writethrough→copyback (`hat_cm_ram` 0x00→0x20, yksi
@@ -11,7 +11,7 @@ toimeksianto tuottaa niiden speksit; toteutus tehdään vasta niiden valmistuttu
 
 ## Kohde ja pinnaus (UUSI — ankkurit siirtyneet B1:n jäljiltä!)
 
-- Kernelrepo commit: `e920c27` (B1-DC-ENABLE; docs-tila `6c4f0d6`)
+- Kernelrepo commit: `bc27d81` (B1-DC-ENABLE; docs-tila `56f6cc2`)
 - `build/unix-040` (base 260723-03) SHA-256:
   `d3e1f80a65394f951ffe894eefe2efcfe7b862786937b0eaf0154440608e8404`
 - `build/unix-040-dbg` (dbg 260723-04, rautahyväksytty image) SHA-256:

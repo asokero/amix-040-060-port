@@ -1,8 +1,8 @@
 # Real-HW-040-verifypaketti B (koottu 2026-07-19 ilta — Model-B-jäännösryhmät)
 
 Delta edelliseen (REALHW-VERIFY-260719.md, ajettu ja hyväksytty HW:lla 260719-01/-02):
-tämä paketti verifioi NELJÄ uutta Model-B-ryhmää (commitit cfd2f56 / 3e7c600 / 3010e34 /
-3ca42c4) + jatkaa ISSUE-22-jahtia. Emu-hyväksyntä puhdas per ryhmä JA kaikki yhdessä
+tämä paketti verifioi NELJÄ uutta Model-B-ryhmää (commitit 50abe53 / 5637b04 / 3425d82 /
+c79730a) + jatkaa ISSUE-22-jahtia. Emu-hyväksyntä puhdas per ryhmä JA kaikki yhdessä
 (buildit 260719-13/-14/-15; 0 bus-virhettä, 0 4AFC005F:ää koko illassa).
 
 ## Staus (NAS tai levyke → /tmp)

@@ -8,7 +8,7 @@ Implementation is deferred until after the pending hardware session regardless o
 ## Provenance
 
 ```text
-kernel HEAD      5cab9e9 (this brief)         analysed image: build/unix-040
+kernel HEAD      8aab30c (this brief)         analysed image: build/unix-040
 build/unix-040   68040-260726-01
                  sha256 767ea9a0b904752701f3d49d8df9bba55fe46bbadbc70da95c8001b0e22540fb
 .text            sha256 9b49c77a59d3b77effab6c1847a0f6633200f7ce0f0600d3f696e6ce41ac4111

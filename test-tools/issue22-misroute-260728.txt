@@ -1,7 +1,7 @@
 ISSUE-22 NAMED ON REAL HARDWARE -- the fault is MISROUTED, not nested
 =====================================================================
 2026-07-28 evening, A3000 + Mercury 040, kernel 68040-260728-36 (copyback + the FAILEXIT probe).
-kernelsupport HEAD d5b9414.  Serial capture /tmp/amix-issue22-hunt.log, offset at run start 218343.
+kernelsupport HEAD 733d118.  Serial capture /tmp/amix-issue22-hunt.log, offset at run start 218343.
 
 THE DECISIVE LINE
 -----------------

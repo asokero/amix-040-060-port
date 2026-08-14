@@ -118,7 +118,7 @@ not the machine? A short spec is enough; I will write the code.
 
 ```text
 kernelsupport/XPAGE-FPROT-FINDING-260806.md   the finding + all three refutations, in order
-kernelsupport/src/wb040.s              wb060_xpage, Lwx_callp, Lwx_prot (commit 7ebc7b9)
+kernelsupport/src/wb040.s              wb060_xpage, Lwx_callp, Lwx_prot (commit a860adc)
 kernelsupport/test-tools/xpagetest.c          the test, T3 is the unsafe one
 kernelsupport/REALHW-F2-ACCEPTANCE-260806.md  what the hardware currently guarantees
 vanilla stand/unix                            u_trap 0x5a586, k_trap 0x5a1ea, usrxmemflt 0x5aede

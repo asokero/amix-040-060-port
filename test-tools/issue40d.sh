@@ -1,6 +1,6 @@
 # issue40d.sh -- ISSUE-40 part 1 on REAL HARDWARE (2026-08-01).
 #
-# The legacy-SDT teardown edge (src/legacysdt040.s, commit 52e86fe) is in
+# The legacy-SDT teardown edge (src/legacysdt040.s, commit fbb93aa) is in
 # this kernel.  On the emulator it provably fires and provably returns ZERO
 # pages: i40_pgfreed_n = 0, i40_held_n = 434, residual p_sdtbits = 0x7FFC0000.
 # This run asks whether the real machine agrees, because the two things the

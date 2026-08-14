@@ -166,7 +166,7 @@ acceptance list:** verify old-byte windows, confirm `hat_cm_ram==0` + no live
 copyback, DTT0 handling, then flip CACR DC; acceptance = disk/swap/NFS/fork-COW
 + power-cut disk-truth on real 040 (and separately real 060).
 
-### Step B1 — WRITETHROUGH DC ENABLE  ✅ DONE + REAL-HW-ACCEPTED (2026-07-23, commit e920c27, builds 260723-03/-04/-05)
+### Step B1 — WRITETHROUGH DC ENABLE  ✅ DONE + REAL-HW-ACCEPTED (2026-07-23, commit bc27d81, builds 260723-03/-04/-05)
 
 **The DC-road departure commit** (git tags `pre-dc-enable` = last IC-only tree /
 `b1-dc-enable` = this; minimal revert = pstart040.s CACR immediate `0x80008000`

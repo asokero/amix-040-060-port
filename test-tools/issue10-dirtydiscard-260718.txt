@@ -93,7 +93,7 @@ JALJELLA OLEVAN TUOTTAJAN EPAILTYLISTA (staattinen skannaus, 2K-jaamat swap-in-k
   segvn_lockop+0x192/+0x246, segmap_faulta+0x72: pea #0x800 (softlock/readahead, kylmempia)
   hat_swapout: 5x addil #0x800 + 6x moveq#11 + 030-PTE-bittiopit (orl#4/andl#-5/andl#-2
     vaariin indekseihin >>11) -- JOS ptdat-koneisto ei ole inertti, sotkee elavia tauluja.
-  spec_getapage (konvertoitu 3620566, 35 patchia) -- EI KOSKAAN validoitu kuumana: #1-epailty.
+  spec_getapage (konvertoitu c4873ae, 35 patchia) -- EI KOSKAAN validoitu kuumana: #1-epailty.
 POST-MORTEM in-core-vs-levy -vertailu (kaatunut kone): 2 sivua taysin samaa, 5 taysin eri
 (= likaisia ei-viela-kirjoitettuja, odotettua), MUTTA pfn 09636: yksi probe tasmaa levyyn
 XOR-0x800-offsetilla ja pfn 0972F tasmaa vain keskiosin -> 2K-sekoittumisen hajua

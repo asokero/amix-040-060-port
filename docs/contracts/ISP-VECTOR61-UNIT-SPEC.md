@@ -11,7 +11,7 @@ static implementation specification, not kernel code.
 
 Pinned input:
 
-- kernel task commit: `bc565803623380c08d95a603f99f019913c86a3a`;
+- kernel task commit: `a3b9bb67a92d05c2ea23f072a01f9d825e3e5038`;
 - `build/unix-040` SHA-256:
   `66a98ca37be2525298691ea545fc05db8500844e0e5633444f9a11b9793a206d`;
 - linked `.text` size: `0x000e48b8`;

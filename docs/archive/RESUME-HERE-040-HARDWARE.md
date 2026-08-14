@@ -106,7 +106,7 @@
 > validations landed this session (full detail: docs/archive/RESUME-HERE-260727.md top banner + KNOWN-ISSUES
 > ISSUE-13):
 > 1. **ISSUE-13 capture 1 (NFS→local copy panic) fixed by `src/bp_map040.s`**
->    (commit `cfa2b78`): stock 030 `bp_map`/`bp_mapout` walked the retired `st_top1` tree
+>    (commit `46b159c`): stock 030 `bp_map`/`bp_mapout` walked the retired `st_top1` tree
 >    on the NFS/RFS page-I/O path → low-memory writes + a temp mapping the MMU never saw.
 >    Verified on the real A3000+040: the previously-panicking NFS→local copy now completes;
 >    **5 consecutive 3 MB copies, every one byte-perfect** (`sum` 11920 6060 identical
@@ -164,7 +164,7 @@
 >
 > ## ▶ NEXT VISIT (2026-07-09) — ISSUE-8 is FIXED on the emulator; RETEST on real silicon
 > **The real-HW p0init bus error was ISSUE-8's halved leaf-table address** — now root-caused and
-> fixed (commit `f6b6592`, 2026-07-09). `kvm_init`'s leaf-table `ctob`/`btoc` were left at 2 KB in
+> fixed (commit `ef3eb90`, 2026-07-09). `kvm_init`'s leaf-table `ctob`/`btoc` were left at 2 KB in
 > the Model-B conversion, so `word2` = the leaf phys was HALVED: `d5=0x714E` → `0x038A7000`, which
 > is real RAM on the emulator's low memory but an **unmapped hole on the real A3000** (chip ends
 > 0x200000, RAM at 0x07/0x08000000). p0init's STORE B wrote it and `segu_get` (0xaa6f8) read it
@@ -180,7 +180,7 @@
 > the live candidate is **hypothesis #1 below (STORE A / stale page-table cache lines)** — a real-
 > silicon cache-coherency effect the emulator doesn't model; try the `cpusha`-after-segkmem-PTE-
 > writes fix. The emulator line has since reached full login + `ls -alR` + reboot cycles (ISSUE-7
-> also fixed, commit `5786a40`), so the emulator is a solid regression baseline before each HW try.
+> also fixed, commit `c0a3cd8`), so the emulator is a solid regression baseline before each HW try.
 > **Current source of truth: `KNOWN-ISSUES.md` ISSUE-8 + the MILESTONE banner atop `docs/archive/RESUME-HERE-260727.md`.**
 > The STORE A/B markers + `cpusha` test at the bottom of THIS file remain the right HW-debug moves
 > if p0init still faults.

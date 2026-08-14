@@ -35,7 +35,7 @@ file-offset arithmetic is exact; see memory `amix-040-init-userpage-pfn`.)
 
 ## Already in place
 
-* **rw bit (5af14)** -- 02c554d byte-patched it to read the 040 SSW at `frame+76` bit 8
+* **rw bit (5af14)** -- 58ae780 byte-patched it to read the 040 SSW at `frame+76` bit 8
   (1=read/0=write) instead of the 030 `frame+72` bit 6.  Stays.
 * **wb040.s** -- after `usrxmemflt_orig` resolves the fault it `pflusha`es and re-issues the
   pending write-back store (the 68040 does not re-run a faulted write on `rte`).  Stays; it
@@ -95,7 +95,7 @@ Notes:
 
 5b050 still reads `frame+72` (= the 040 *effective address*, garbage), so even after Part 1
 puts us on the COW path the `(EA & 0x140)==0x100` test fails for our GOT VA and mis-routes to
-5b0f2/hardbus.  Mirror 02c554d: test the 040 SSW at `frame+76` bit 8, branch to 5b0f2 only on
+5b0f2/hardbus.  Mirror 58ae780: test the 040 SSW at `frame+76` bit 8, branch to 5b0f2 only on
 a READ fault.
 
 Original (24 bytes, 0x5b050..0x5b067), branch target 0x5b0f2:

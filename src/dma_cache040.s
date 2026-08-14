@@ -1,7 +1,7 @@
 | dma_cache040.s -- caches Step B DMA-coherency hook group.
 | B1 (2026-07-20): whole-cache FROM_DEVICE completion invalidate (stopdma wrap).
 | B2 (2026-07-23): full segment-ownership protocol per
-| docs/contracts/A3091-B2-PREPARE-PATCH-SPEC.md (pinned e920c27 / base sha d3e1f80a).
+| docs/contracts/A3091-B2-PREPARE-PATCH-SPEC.md (pinned bc27d81 / base sha d3e1f80a).
 |
 | WHY B2 CHANGES THIS FILE: under copyback the B1 completion-time whole-cache
 | `cinva dc` becomes FORBIDDEN -- DMA is asynchronous, the CPU dirties unrelated

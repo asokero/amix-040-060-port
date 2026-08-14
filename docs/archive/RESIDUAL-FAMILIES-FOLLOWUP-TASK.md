@@ -6,7 +6,7 @@ kernel. Three questions, in priority order — Q1 is the one that changes what w
 **Your pin was verified exactly on our side before this brief was written:**
 
 ```text
-kernel HEAD      272153158cc88d4413159743fbb227c109df4984      MATCH
+kernel HEAD      9d7ffe97c56a204fbfb55125cd2cfa7685a003d9      MATCH
 build/unix-040   767ea9a0b904752701f3d49d8df9bba55fe46bbadbc70da95c8001b0e22540fb   MATCH
 .text            9b49c77a59d3b77effab6c1847a0f6633200f7ce0f0600d3f696e6ce41ac4111   MATCH
 buildid          68040-260726-01

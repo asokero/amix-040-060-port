@@ -14,7 +14,7 @@ loader     build/unix_boot040 (mandatory)
 verdicts   telnet/login and kpeek only.  A base image has no conputc hook, so it emits nothing on
            serial by design -- a silent serial log could not have proved anything either way.
 records    ISSUE38-ICODE-CACHE-FINDING-260730.md, REALHW-COPYBACK-ACCEPTANCE-260730.md,
-           REALHW-COPYBACK-POWERCUT-260730.md; commits 431383e, d213941, 992036c, d90e7cd, 096be52
+           REALHW-COPYBACK-POWERCUT-260730.md; commits f1bf9d0, 5925163, 96b8177, 7d02bc3, f093bd8
 ```
 
 ## 1. The mechanism

@@ -64,7 +64,7 @@ Rewrite, always: any passage that reproduces the reference source's own text. Sa
 does, in your words — a table, a numbered sequence, pseudocode, an inequality — rather than
 showing its lines. The existing repository has worked examples of the target style; compare the
 headers of `src/patch_pvntrunc.py`, `src/patch_ufsbmap.py` and `src/patch_kmapools.py` against
-their state before commit `c011275`, which is exactly this transformation done by hand.
+their state before commit `612d4c8`, which is exactly this transformation done by hand.
 
 Do not bring across: whole decompilations, long disassembly listings, long excerpts of any
 reference source. Short disassembly of *the specific instructions this port patches* is fine and

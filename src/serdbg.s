@@ -1,5 +1,5 @@
 | serdbg.s -- mirror kernel console output to the Amiga serial port (conputc hook).
-| ISOLATION TEST: added to the PURE banner-visible baseline (b1efd8c), nothing else changed.
+| ISOLATION TEST: added to the PURE banner-visible baseline (ebd564e), nothing else changed.
 | Override conputc (-> serdbg_putc): emit each char on serial, then call the real coputc (screen).
 | serper @0xDFF032 (9600=0x174), serdat @0xDFF030 (STOPBIT|ch), serdatr @0xDFF018 (TBE=0x2000).
 |

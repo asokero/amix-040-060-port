@@ -65,8 +65,8 @@ M2 RESULTS (emu-040)
 
 STATUS / WHAT REMAINS
 ---------------------
-M1 (package build)  DONE, reproducible: build-fpsp040.sh (b68662c).
-M2 (glue + vector 11) DONE and now VERIFIED (906afff + loader fix f0ed373).
+M1 (package build)  DONE, reproducible: build-fpsp040.sh (e1a2615).
+M2 (glue + vector 11) DONE and now VERIFIED (c6e8378 + loader fix f0ed373).
 M3 (native cc)       DONE as a side effect.
 M4 (hardening) still open: vectors 48-55 retarget, per-class real_* FPSR
    pending-bit cleanup, copyin/copyout fault unwind, enabled/masked exception

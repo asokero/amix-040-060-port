@@ -10,19 +10,19 @@ serial (no `PANIC`/`Bus Error`, no `kstack`/`KSTKCHAIN`/`PREEMPT1 uprocp=0` recu
 clean `haltsys`).
 
 **Fix chain this session (all committed to master, all boot-tested):**
-- **ISSUE-8 RESOLVED** (commit `f6b6592`) — `kvm_init` leaf-table `ctob`/`btoc` left at 2 KB in the
+- **ISSUE-8 RESOLVED** (commit `ef3eb90`) — `kvm_init` leaf-table `ctob`/`btoc` left at 2 KB in the
   Model-B conversion → halved `word2` leaf phys (0x038A7000, a real-HW hole). 6-patch source-backed
   fix. The earlier "click<<11 DISPROVEN" verdict was itself wrong (fs-uae masked the halved read;
   only 2 of 6 sites had been patched). Emulators now behave identically.
-- **ubptbl wrappers** (commit `ada651b`) — `segu_get`/`swapinub` rebuild `p_ubptbl` from the live
+- **ubptbl wrappers** (commit `0cc9fb4`) — `segu_get`/`swapinub` rebuild `p_ubptbl` from the live
   kptr040 tree (same halved-leaf exposure, closed for the fork path).
-- **ISSUE-7 RESOLVED** (commit `5786a40`) — ROOT was `wb040`: its write-back replay re-issued the
+- **ISSUE-7 RESOLVED** (commit `c0a3cd8`) — ROOT was `wb040`: its write-back replay re-issued the
   faulted store with one wide `moves`, so an UNALIGNED PAGE-CROSSING store (KSTKWB: long "xres"
   @0x40736FFE) had only its near page resolved → infinite re-cross/re-fault → the recursion ate the
   u-area kernel stack → `u_procp=0`. Fix = replay BYTE-WISE. **Never a HAT bug** — which is why the
-  10 HAT hypotheses all missed. Diagnostic probes: commit `3dd2456`.
+  10 HAT hypotheses all missed. Diagnostic probes: commit `3aeeb7c`.
 
-- **Cold-boot flakiness RESOLVED** (commit `196ed09`, 2026-07-09 PM) — the `ed`/`more` warm-up
+- **Cold-boot flakiness RESOLVED** (commit `55b211b`, 2026-07-09 PM) — the `ed`/`more` warm-up
   requirement was a LOADER bug, not kernel or uninitialized memory: `AllocMem(MEMF_FAST)` placed
   the ELF buffer where the ~0.96 MB image OVERLAPPED it by ~25 KB, and `copyit`'s inverted
   copy-direction choice corrupted the first 25 KB of the copied kernel (incl. `_start`) → wild
@@ -43,15 +43,15 @@ sites**. Everything through login + `ls -alR` + reboot + fsck works on a clean d
 
 **Merged + boot-tested (no regression) this session (all on master):**
 - **ISSUE-4 (hat_dup) CLOSED** — the real `hat_dup040` fork/COW port is merged into the base
-  (commit 75225d7), single strong override in both `unix-040` and `unix-040-dbg`. Boot-tested:
+  (commit 17b6081), single strong override in both `unix-040` and `unix-040-dbg`. Boot-tested:
   no regression. (Direct fork-without-exec COW *stress* validation still pending — the
   `amix-kernel-analysis/runtime-tests/hat_dup_cow` acceptance test is built but not yet run; see below.)
-- **hat_map phantom-PTE bug FIXED** (commit 317944f) — retained stock hat_map was writing
+- **hat_map phantom-PTE bug FIXED** (commit 178364a) — retained stock hat_map was writing
   legacy `pfn<<11` phantom PTEs into `pp->p_mapping` chains, mixing formats with the live
   `pfn<<12` entries. A 1-byte preload-disable removes the phantom producer (chains are now
   single-format from every producer); boot-tested, no regression. Plan:
   `src/hat-map-040-fix-plan.md`.
-- **hat_sdtfree Model-B pfn fix** (commit 03b2c93) — its 2 free-side shifts were missed by the
+- **hat_sdtfree Model-B pfn fix** (commit 05d7c99) — its 2 free-side shifts were missed by the
   2KB→4KB conversion (alloc side was done); could corrupt an unrelated page's offset-32
   metadata. Real bug, fixed. (Was tested as an ISSUE-7 candidate — ruled out, see below.)
 - Two hat_ptalloc CANWAIT→CANWAIT|NOSTEAL hardening sites (no effect on tested workloads).

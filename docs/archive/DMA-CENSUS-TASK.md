@@ -1,6 +1,6 @@
 # Codex-toimeksianto: DMA-initiaattoritäyscensus + prepare/complete-omistajuus
 
-**Määritelty 2026-07-20 (CM-B1:n landauksen jälkeen, kernel a04a97f).
+**Määritelty 2026-07-20 (CM-B1:n landauksen jälkeen, kernel 8be69df).
 Tämä on caches Step B:n (WT/DC-enable, rautasessio) viimeinen analyysi-gate:
 CM-PTE-WRITER-MATRIX.md:n B1-ryhmän kohta 8 ("Add DMA-read completion
 invalidation before enabling the data cache") jäi tietoisesti odottamaan tätä
@@ -8,7 +8,7 @@ censusta. Ilman tätä DC-enablea ei saa tehdä edes WT-tilassa.**
 
 ## Kohde ja pinnaus
 
-- Kernelrepo commit: `a04a97f` (CM-B1 landattu; segkmem040.s + patch_segkmem.py mukana)
+- Kernelrepo commit: `8be69df` (CM-B1 landattu; segkmem040.s + patch_segkmem.py mukana)
 - `build/unix-040` SHA-256: `ef63f751c5059245d4ffd0696bde338cbab08d5b7d98c54f1b3e1a19d53edc03`
 - Vanilla-referenssi: `vanilla/stand/unix` (7d26cb6f...) + ajurilähteet
   `vanilla/usr/sys/amiga/driver/` (READ-ONLY mount) — hd.c (WD33C93+SDMAC),

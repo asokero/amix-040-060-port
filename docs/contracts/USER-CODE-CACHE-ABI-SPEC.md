@@ -23,7 +23,7 @@ The specification itself changes no kernel code.
 ## Pinned input
 
 ```text
-kernel repository HEAD       df32af8
+kernel repository HEAD       a7007ed
 build/unix-040 build id      68040-260731-02
 build/unix-040 SHA-256       572d8a0b58215d11bbed96dafb8b6aa56091486bd09faa4b9fc4e6ea6feffeca
 mprotect                     0x58550, syscall 116

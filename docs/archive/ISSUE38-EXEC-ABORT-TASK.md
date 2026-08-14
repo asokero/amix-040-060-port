@@ -15,7 +15,7 @@ This is the bug that appeared the moment we booted the image that would actually
 ## Provenance
 
 ```text
-kernel repo HEAD                       1236c1d + the commit that adds this file
+kernel repo HEAD                       48ab481 + the commit that adds this file
 unix-040-260729-04    base, write-through, no probes   c5d7f1808a1b5751...   BOOTS
 unix-040-b2-260729-07 base, COPYBACK,      no probes   c63b89a198965597...   HANGS
 unix-040-b2-dbg-260729-06  copyback + full probe overlay                     BOOTS

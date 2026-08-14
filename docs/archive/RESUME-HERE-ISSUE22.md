@@ -152,7 +152,7 @@ Lkx_fn 080FFFB4  xpage_on 080FFFB8 (=1, ANCHOR)  Lkx_depth 080FFFBC
 
 ## 7. What is done, and what is left
 
-**Done** (commits a2d7a60, 1501409, f52f2b8, 3f5b92b, b714d0b):
+**Done** (commits fd97f04, b240aa3, 8631bf9, 80487ad, eabd43f):
 
 * DFC preserved across a fault; proven by injection and accepted under the copyback pressure suite.
 * SFC preserved by the same contract. Codex offered removing `ptest040.s:52`'s SFC write instead;

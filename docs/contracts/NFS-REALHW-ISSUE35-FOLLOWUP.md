@@ -31,7 +31,7 @@ The hardware report ran:
 - debug build `68040-260727-01`, consisting of that base plus diagnostics.
 
 The source tree advanced after the report. At tree HEAD
-`47ee1af4f76052009cc1853e95f67f763c9c75db`, the rebuilt image SHA-256 is
+`20b57bdde8d9a730b18aeadd2507a589cff849a8`, the rebuilt image SHA-256 is
 `89d1312bf7d1bc69d1e4d1d8fa095d09ad92062c1e75b1e685b4341637db0f06`.
 That change patches only `sysconfig`; the NFS function and addresses below
 are unchanged.

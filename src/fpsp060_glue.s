@@ -309,7 +309,7 @@ Lco_fparith:
 	movew	#0x6000,%sp@(0x2)	| idle status at offset TWO -- the real discriminator
 	frestore %sp@+			| balanced: sp is the raw frame again
 | *** THIS JMP IS LOAD-BEARING AND IT WAS MISSING FOR ONE DAY ***  (2026-08-12)
-| b664bfd removed the null-frame guard from this body -- correctly -- but the guard block
+| 9245d81 removed the null-frame guard from this body -- correctly -- but the guard block
 | ended in this jmp, so removing it left the arithmetic exit FALLING THROUGH into Lco_bsun.
 | Measured on hardware the first time that build ran: per enabled exception, f60_arith_n +1
 | AND f60_bsun_n +1, f60_real_n +2 against f60_entry_n +1, i.e. the unit's own

@@ -43,7 +43,7 @@ source operand's exponent. Divide-by-zero is exactly the class whose operand is 
 
 ### `-01` — the fix works, and a one-day-old defect surfaces
 
-`-01` carried the ISSUE-43 unit (`src/fpu060.s`, `f65ea04`). On its first boot:
+`-01` carried the ISSUE-43 unit (`src/fpu060.s`, `140e0c0`). On its first boot:
 
 * **DZ passed bit-exactly** — the defect this session targeted was gone;
 * **OPERR failed on one bit**: `fpsr 00002080` where Motorola says `01002080`. The missing bit
@@ -60,14 +60,14 @@ The counters named the cause without a hypothesis being needed. Per enabled exce
   kvp_vec[51] +1     only ONE arrival at nullvect, and it was the fall-through's
 ```
 
-`b664bfd` (2026-08-11) removed the null-frame guard from `Lco_fparith` — correctly — but the
+`9245d81` (2026-08-11) removed the null-frame guard from `Lco_fparith` — correctly — but the
 guard block **ended in the exit's own `jmp nullvect`**, so removing it left every arithmetic
 call-out falling through into `Lco_bsun`. That body does `andib #0xfe,%sp@` on the saved FPSR,
 which clears the NaN condition bit: right for a real BSUN, wrong for everyone else. Nothing
 crashed, because the BSUN prelude's stack arithmetic happens to balance, and four of the six
 classes still passed because only NaN-valued results carry the bit it clears.
 
-Fixed in `592b7ed`, one instruction.
+Fixed in `8d4065b`, one instruction.
 
 ### `-02` — six of six
 

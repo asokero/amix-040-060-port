@@ -1,6 +1,6 @@
 # Codex-toimeksianto: DTT0-kavennuscensus + fyysisen-ikkunan koherenssispeksi
 
-**Määritelty 2026-07-22 (ISSUE-21:n ratkaisun jälkeen, kernel 2d22ea8).
+**Määritelty 2026-07-22 (ISSUE-21:n ratkaisun jälkeen, kernel a6c25c4).
 Tämä on caches Step B:n (WT/DC-enable, rautasessio) VIIMEINEN avoin analyysi-gate.**
 CM-B1-ryhmä (Lcm_sel + hat_cm_ram + segkmem-julkaisu) ja A3091-DMA-hook ovat jo
 landattu dormanttina ja emu-verifioitu; DMA-census on tehty (58f1cda). DC:tä EI
@@ -16,7 +16,7 @@ DTT0 koskee DATA-cachea ja on erillinen, yhä avoin asia.
 
 ## Kohde ja pinnaus
 
-- Kernelrepo commit: `2d22ea8` (ISSUE-21-fix + CM-B1 + A3091-DMA-hook mukana)
+- Kernelrepo commit: `a6c25c4` (ISSUE-21-fix + CM-B1 + A3091-DMA-hook mukana)
 - `build/unix-040` SHA-256: `fff91777831d2e917baf3cb7692b06385374a08ac80b1dfe5ff10d5ebb2dcabe`
 - Vanilla-referenssi: `vanilla/stand/unix` (`7d26cb6f...`, ET_REL) + MI-lähteet
   SVR4 3b2 -referenssistä (ppcopy/pagezero/hat-perhe) — lue kontrakti lähteestä ENSIN

@@ -1,5 +1,5 @@
 ISSUE-21 config-wrapper (config040.s) real-HW verification -- 2026-07-22
-Kernel: unix-040-dbg 260722-04 (commit 00163ce), A3000 + Mercury 68040, dbg build -04.
+Kernel: unix-040-dbg 260722-04 (commit 8d913b8), A3000 + Mercury 68040, dbg build -04.
 AmigaOS IC PAALLA (EI cpu nocache). Ajuri: durable-tools/reboot_loop.py 8 (reboot-komento).
 Serial-loki: /tmp/amix-hw-cachetest4.log (9600 baud).
 

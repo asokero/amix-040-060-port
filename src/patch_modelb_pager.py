@@ -33,7 +33,7 @@ KERNEL = sys.argv[1] if len(sys.argv) > 1 else "build/unix-040"
 # into the SAME 4KB MMU leaf as the offset-0 page -> the 2nd clobbers the 1st -> gexec reads
 # the wrong page (ELF magic 0) -> ENOEXEC -> init never execs.
 #
-# WHY pvnk alone broke the early mount dir-read (commit 20d3c13/10b0a2d), and why it is now
+# WHY pvnk alone broke the early mount dir-read (commit 580f58d/c287447), and why it is now
 # SAFE *together with* pgget: pvn_kluster's final loop (0xb1976-0xb19bc) does page_get(size),
 # then walks the returned circular page LIST calling page_enter, advancing the file offset by
 # one page (a3) each iteration.  The loop count == the number of frames page_get returns; the

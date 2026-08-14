@@ -1,6 +1,6 @@
 # hat_map 040 fix — approach investigation (2026-07-07)
 
-> **STATUS: Option A IMPLEMENTED (commit 317944f), awaiting boot test.** Patch added to
+> **STATUS: Option A IMPLEMENTED (commit 178364a), awaiting boot test.** Patch added to
 > `patch_pmmu_040.py` at 0xb58d2 (`67`→`60`, beqw→braw); byte-verified present in all three
 > kernels; 0 reloc complaints. The rest of this doc is the original decision record.
 

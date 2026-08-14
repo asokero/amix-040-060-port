@@ -31,7 +31,7 @@ sessiossa.
    unclean-kill (virtakatkaisu) → fsck → boot → `sum /press*.bin` yhä 1570 8192
    (Model-B pfn-kirjoitukset oikeisiin blokkeihin myös oikealla SCSI:llä).
 7. **msync-roundtrip**: käännä msynctst.c, aja (emu-referenssi: MSYNC-OK +
-   cold-cache sum 32895 128, 86dd88f).
+   cold-cache sum 32895 128, c01d9c0).
 8. **crash(1M) re-run** (ISSUE-13:n jäännös): `dd if=/dev/kmem` unmapatusta
    osoitteesta → siisti ENXIO (emu-verifioitu; HW-vahvistus puuttuu).
 9. **UFS-geometria** (amix-root-fs-geometry-muistin aukko): `df -g /` tai

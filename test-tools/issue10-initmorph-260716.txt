@@ -1,4 +1,4 @@
-ISSUE-10 chain-II SEGVCHAIN probe deployment (builds 260715-21/-22, commit cc21ff7)
+ISSUE-10 chain-II SEGVCHAIN probe deployment (builds 260715-21/-22, commit 45c8af8)
 3 emu-040 runs -- probe correct+safe but repro morphology blocked capture:
  * full 6-cp pressure x2: escalated to /sbin/init PID1 control-flow corruption (C0800084,
    PC:E, a0=FFFFFFFF, walk-bails) -> no SEGVDMP/SEGVPP/SEGVCHAIN. cap-split worked (4 bail lines).

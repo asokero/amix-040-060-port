@@ -11,7 +11,7 @@ exact, the denominator is exact, and one hypothesis has already been eliminated 
 ## Provenance
 
 ```text
-kernel repo HEAD        3f9d80c (this file adds to it)
+kernel repo HEAD        fd0a789 (this file adds to it)
 build/unix-040          68040-260801-04
   SHA-256               e956ea34dd83c77bb759151e957713b0a3d7e2148f4596126523d56f3739befb
   textsize              0xe4588   (.data offsets below are relative to it)

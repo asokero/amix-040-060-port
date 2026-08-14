@@ -137,7 +137,7 @@ Run first, as the campaign rule requires both CPU configurations to boot before 
    exactly this; the fix is to grep for a string the command line does not contain.
 3. **The buildid prefix is not evidence about the banner.** `strings`/`nm` show `" 68040-"`
    in every image regardless of target CPU. An earlier edit to the session prompt asserted the
-   banner always reads `68040-` on that basis and was reverted (`92d5028` → `378a220`); the
+   banner always reads `68040-` on that basis and was reverted (`7501e90` → `7d77830`); the
    040 emulator could not distinguish the hypotheses, and the hardware falsified it at once.
 
 ## Status after this run
