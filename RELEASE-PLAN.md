@@ -306,8 +306,9 @@ hard-coded paths are in it).
 **Split it.**
 
 * The **generic half** — three toolchains and what each is for, the `ld -r` override mechanism, the
-  `--weaken-symbol` / `--add-symbol` pattern, the relink hazards (it does not abort on an assembler
-  error), the reloc validator, the "`ld -r` last" ordering rule — is genuinely valuable and belongs
+  `--weaken-symbol` / `--add-symbol` pattern, the relink hazards (`ld -r` links cleanly when an
+  override definition is missing), the reloc validator, the "`ld -r` last" ordering rule — is
+  genuinely valuable and belongs
   in `BUILDING.md`. This is knowledge nobody can rediscover cheaply.
 * The **machine-specific half** — where the toolchains live on this laptop, NAS mounts, emulator
   paths — stays as `LOCAL-BUILD-NOTES.md`, **gitignored**, as the owner's own working tool.

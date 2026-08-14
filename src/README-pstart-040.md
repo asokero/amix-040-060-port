@@ -27,7 +27,8 @@ that never execute (no ELF/reloc surgery, no boot-time warning).
 
 ## Test (fs-uae, 68040)
 1. Copy `build/unix-040` to the AmigaDOS volume next to the kernel.
-2. Boot it with the 040-aware loader:  `unix_boot unix-040`
+2. Boot it with the 040-aware loader:  `unix_boot040 unix-040` (the stock `unix_boot` cannot
+   boot a 68040 at all — see BUILDING.md §6 for the three reasons)
    (keep the name distinct from `unix` to avoid loading the wrong file).
 
 ### Expected

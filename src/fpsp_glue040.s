@@ -1,5 +1,10 @@
 | fpsp_glue040.s -- AMIX OS glue for the Motorola 68040 FPSP (M2, 2026-07-24).
 |
+| LICENCE.  A MODIFIED VERSION under the Motorola M68040 Software Package licence, identified as
+| such as that licence requires: this file supplies the OS callbacks the package leaves
+| unresolved, written for AMIX.  Full notice, unaltered:
+| THIRD_PARTY_NOTICES/MOTOROLA-M68040-FPSP.txt.
+|
 | Provides the 12 OS-callback symbols that build/fpsp040.o (M1, build-fpsp040.sh)
 | leaves unresolved, plus the vector-11 dispatch entry.  Spec: analyysirepo
 | vm-map/FPSP-INTEGRATION-PLAN.md.  MINIMAL M2 scope: get a previously-crashing

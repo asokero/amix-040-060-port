@@ -9,11 +9,9 @@
 # rwip now passes a 4 KiB-derived pagecreate as ufs_bmap's `alloc_only` argument
 # (ISSUE-27, landed), but ufs_bmap's own PAGESIZE arithmetic was still 2 KiB.  That is a
 # producer/consumer split of exactly the kind that produced ISSUE-27 and ISSUE-28.
-# The behavioural site is
-#
-#     } else if (!alloc_only || roundup(size, PAGESIZE) < bsize) {   /* read the block */
-#
-# (ufs_bmap.c:398-399 and :448).  With fs_bsize 8192 and the old 2 KiB rounding, sizes
+# The behavioural site (ufs_bmap.c:398-399 and :448) decides whether to READ the block: it
+# does so unless the caller asked for allocation only AND the request, rounded up to a page,
+# covers the whole filesystem block.  With fs_bsize 8192 and the old 2 KiB rounding, sizes
 # 4097..6144 round to 6144 and satisfy `< 8192`, so the block is read; with correct
 # 4 KiB rounding they round to 8192 and the read is skipped.  Skipping is only safe
 # because the caller will now fill whole 4 KiB pages -- which is precisely what the

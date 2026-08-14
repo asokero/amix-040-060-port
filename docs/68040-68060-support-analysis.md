@@ -87,11 +87,9 @@ The TC/TT formats differ; the 040/060 transparent-translation registers are
 The 68030 has a simple 32-bit `CACR` (instruction + data cache enable/freeze/clear
 bits). The trap handler switches cache mode on every kernel entry:
 
-`sys/amiga/ml/ttrap.s`, repeated at every interrupt vector:
-```asm
-    mov.l   sup_cacr,%d0     # Switch cache mode to supervisor
-    mov.l   %d0,%cacr
-```
+`sys/amiga/ml/ttrap.s` does this at every interrupt vector: it loads the kernel's cached
+supervisor CACR value from a global and writes it to `%cacr`, i.e. cache mode is re-selected on
+every kernel entry rather than left alone.
 
 `stand/unix` confirms the cached values are kernel globals:
 ```
@@ -116,10 +114,8 @@ using a `framesz` lookup table:
 ```asm
     mov.b   (framesz,%d0.w),%d0   # number of bytes in frame, by format nibble
 ```
-```asm
-stkclear:    # convert stack to 4 word frame
-stkrestore:  # restore 68020 stack frame from u-block save area
-```
+Two routines in the same file carry the frame conversion: one collapses the exception frame to
+the four-word form, the other rebuilds a 68020 frame from the copy saved in the u-block.
 
 The 68040 and 68060 generate **different frame formats and sizes** (notably the
 format `$7` access-error frame on the 040, and the 060's frames), and the 060 in

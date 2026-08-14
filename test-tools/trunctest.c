@@ -1,13 +1,11 @@
 /* trunctest.c -- pvn_vptrunc final-page tail zeroing (Codex P1, ISSUE-30 candidate).
  *
- * CONTRACT (svr4-src-3b2/usr/src/uts/3b2/vm/vm_pvn.c, pvn_vptrunc):
- *
- *     addr = segmap_getmap(segkmap, vp, vplen & MAXBMASK);
- *     kzero(addr + (vplen & MAXBOFFSET),
- *           MAX(zbytes, PAGESIZE - (vplen & PAGEOFFSET)));
- *
- * "the contents of the pages following the end of the file must be zero'ed in case it
- * ever become accessable again because of subsequent file growth" -- ufs_inode.c.
+ * CONTRACT (svr4-src-3b2/usr/src/uts/3b2/vm/vm_pvn.c, pvn_vptrunc), described rather than
+ * quoted: it maps the block containing the new end-of-file through segmap, then zeroes from
+ * the offset within that block for a length of at least PAGESIZE minus the offset within the
+ * page -- i.e. always out to the end of the page the new EOF falls in.  The commentary in
+ * ufs_inode.c gives the reason: bytes past end-of-file must read as zero in case the file
+ * later grows and makes them reachable again.
  *
  * Only the PAGESIZE/PAGEOFFSET term is VM page geometry; MAXBMASK/MAXBOFFSET are the
  * 8 KiB segmap slot and must not be touched.  In build/unix-040 the term is

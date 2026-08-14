@@ -3,7 +3,9 @@
 **This is the canonical status document. When another document in this tree disagrees with it,
 this one is right and the other one is history.**
 
-Last reviewed: **2026-08-14**. Commit at review: `3a61aa1`.
+Last reviewed: **2026-08-14**. The exact commit is not typed here — `sh tools/status-facts.sh`
+prints it, along with everything else in this file that changes on every build. Rule 1 below is
+the reason.
 
 ## How to read this file, and how to keep it true
 

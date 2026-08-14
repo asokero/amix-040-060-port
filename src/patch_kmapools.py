@@ -2,10 +2,10 @@
 # patch_kmapools.py -- ISSUE-15: Model B (4KB page frame) KMA pool page counts
 # (SMALLCLICKS/BIGCLICKS) + kmem_avail ptob() shift.
 #
-# Authoritative source contract: svr4-src-3b2/usr/src/uts/3b2/os/kma.c:67-70 --
-#   SMALLCLICKS = btoc(SMALLBYTES)   (SMALLBYTES = 4096)
-#   BIGCLICKS   = btoc(BIGBYTES)     (BIGBYTES   = 16384)
-# btoc() is bytes-to-clicks (pages), compile-time constant for a given PAGESIZE.
+# Authoritative source contract: svr4-src-3b2/usr/src/uts/3b2/os/kma.c:67-70, which defines
+# the two pool click counts as the byte sizes of the pools converted to pages -- 4096 bytes
+# for the small pool and 16384 for the big one.  The conversion is compile-time for a given
+# PAGESIZE, which is exactly why the constant is baked into the binary and has to be patched.
 # Stock 030 PAGESIZE=2048 -> SMALLCLICKS=2, BIGCLICKS=8.  Model B PAGESIZE=4096 ->
 # SMALLCLICKS=1, BIGCLICKS=4.  Today's build still asks sptalloc for the STOCK
 # click counts (2 pages / 8 pages) while every other accounting field (bitmap

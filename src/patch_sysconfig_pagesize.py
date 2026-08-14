@@ -19,7 +19,7 @@
 # session, in test-tools/realhw-verify-260727.txt.
 #
 # SOURCE CONTRACT
-# svr4-src-3b2/usr/src/uts/3b2/sys/sysconfig.h:21  #define _CONFIG_PAGESIZE 6
+# svr4-src-3b2/usr/src/uts/3b2/sys/sysconfig.h:21 gives _CONFIG_PAGESIZE the selector value 6.
 # The disassembly agrees: `moveq #6,%d1` at 0x44e22 is the case comparison whose branch
 # reaches 0x44e7c.  Classified the WHOLE function (0x44e12..0x44e92, 128 bytes) rather than
 # trusting a single-site claim; there is exactly one page-size immediate in it.

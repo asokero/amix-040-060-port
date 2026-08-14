@@ -4,8 +4,8 @@ This is the generic build guide. It assumes nothing about your machine except Li
 
 **Read this first:** this repository does not contain a kernel. It contains a patch and override
 layer that is applied to the kernel binary from **your own** Amiga UNIX installation. Nothing here
-works without that file, and the result is a derived work of it — yours to run, not ours to
-distribute.
+works without that file, and what you build you build from your own copy — no kernel binary is
+distributed here. See `NOTICE` for how this was made and what it does and does not contain.
 
 ---
 
@@ -144,6 +144,20 @@ patcher was invoked through `| tail -n`, and a pipeline's exit status in POSIX s
 command's. `set -e` never saw the failures. See ISSUE-45 in `KNOWN-ISSUES.md` — including the
 measurement of what the old build did with a deliberately broken patch site.
 
+### Provenance check
+
+```sh
+python3 tools/check-verbatim.py            # 0 unexplained, exit 0
+```
+
+This port was written with historical System V sources open as a reference for documented
+behaviour. Citing them — file, line, function, the shape of an algorithm — is not copying;
+pasting their lines is. The distinction is easy to state and easy to lose across a hundred
+documents, so it is checked rather than remembered: every tracked line is compared against the
+reference trees, and anything that matches has to be either rewritten as a description or
+argued for in `tools/check-verbatim.allow`. The check only runs where those trees are unpacked,
+and it says so when they are not, rather than passing silently.
+
 ### Reproducibility
 
 Rebuilding the same tree twice produces images differing **only in the build-id stamp** (a date
@@ -220,9 +234,13 @@ Rules learned the hard way, all of them enforced by the script:
 * **Every override object's section ends with `.balign 4`.** The loader places `.bss` at
   `data_end` *unaligned*.
 * **`--weaken-symbol`, never `--redefine-sym`** for replacing a routine.
-* **The relink does not abort on an assembler error.** It links the stock body instead and still
-  prints `[OK] built`. Always confirm with `nm` that the symbol actually moved — `status-facts.sh`
-  does this for the units that matter.
+* **Confirm with `nm` that the symbol actually moved.** `ld -r` does not fail when an override
+  object is missing or its definition was dropped — it simply leaves the stock body strong, and
+  the result links cleanly. `status-facts.sh` checks this in both directions for the units that
+  matter, and `relink-040.sh` asserts it at link time.
+  *(This bullet used to say the relink does not abort on an assembler error and still prints
+  `[OK] built`. That stopped being true on 2026-08-14 — measured, by putting an illegal
+  instruction in `src/config040.s`: the build exits 1 and prints no `[OK]`. See ISSUE-45.)*
 * **Counter addresses change on every build** (`load_base + textsize + nm .data offset`). Never
   carry one over from an older document; generate them, and read the magic word first.
 

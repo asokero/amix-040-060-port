@@ -94,4 +94,4 @@ else
 fi
 echo
 echo "[OK] built $OUT  ($MODE)"
-echo "     copy to your AmigaDOS volume and boot:  unix_boot $(basename "$OUT")"
+echo "     copy to your AmigaDOS volume and boot:  unix_boot040 $(basename "$OUT")   <- unix_boot040 is MANDATORY"

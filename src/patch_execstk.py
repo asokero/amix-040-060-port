@@ -5,10 +5,11 @@
 # Authoritative specs: amix-kernel-analysis/vm-map/EXEC-INITIALSTK-PATCH-SPEC.md
 # + DATA-INITIALIZER-PAGESIZE-CENSUS.md action matrix prio 1 (commit cbbf40f).
 #
-# Source contract (svr4-src-3b2 os/machdep.c extractarg + os/exec.c):
-#   int exec_initialstk = ctob(SSIZE);          /* SSIZE==1 -> one page */
-#   bsize = ptrs + strings + exec_initialstk;
-#   psize = btoc(bsize);  bsize = ctob(psize);  /* the +0x7ff / >>11 / <<11 trio */
+# Source contract (svr4-src-3b2 os/machdep.c extractarg + os/exec.c), described rather
+# than quoted: exec_initialstk is SSIZE clicks converted to bytes, SSIZE being 1, i.e. one
+# page.  The initial stack size is the pointer array plus the strings plus that constant;
+# it is then converted bytes -> clicks -> bytes, which is where the +0x7ff / >>11 / <<11
+# trio in the compiled form comes from.
 # The m68k port adds a 64-page-group rounding ((psize+63)&~63, then <<11) for
 # execstk_addr's fixed stack-window stepping below userstack (0xC0800000).
 #

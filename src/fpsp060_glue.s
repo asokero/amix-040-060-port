@@ -1,5 +1,14 @@
 | fpsp060_glue.s -- AMIX side of the M68060 FPSP (F3 M2b, 2026-08-08).
 |
+| LICENCE.  This file is a MODIFIED VERSION in the sense of the Motorola M68060 Software
+| Package licence, and is identified as such here because that licence requires it.  Two short
+| sequences below are taken from Motorola's own fskeletn.s -- the skeleton the package publishes
+| for integrators to complete -- with the destination changed to this port's signal path: the
+| three-instruction prelude of the six IEEE arithmetic exits, and the five instructions of the
+| BSUN exit.  Everything else here is written for AMIX.  Motorola's notice is reproduced in full,
+| unaltered, in THIRD_PARTY_NOTICES/MOTOROLA-M68060-SP.txt, and is also assembled and linked into
+| every kernel this repository builds.
+|
 | Concatenated AFTER the package image by build-fpsp060.sh; see fpsp060_head.s for why the
 | three pieces are one assembly unit.  Only the 128-byte table may precede the image, so
 | every stub below lives past it.

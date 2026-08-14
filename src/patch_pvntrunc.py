@@ -2,15 +2,14 @@
 # patch_pvntrunc.py -- pvn_vptrunc final-page tail zeroing (Codex P1 in
 # vm-map/PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md).
 #
-# Source contract: svr4-src-3b2/usr/src/uts/3b2/vm/vm_pvn.c, pvn_vptrunc():
+# Source contract: svr4-src-3b2/usr/src/uts/3b2/vm/vm_pvn.c, pvn_vptrunc().  Described
+# rather than quoted: it maps the block containing the new end-of-file through segmap,
+# then zeroes from the offset within that block for a length of MAX(zbytes, PAGESIZE -
+# (vplen & PAGEOFFSET)) -- i.e. at least to the end of the page the new EOF lands in.
 #
-#     addr = segmap_getmap(segkmap, vp, vplen & MAXBMASK);
-#     (void) kzero(addr + (vplen & MAXBOFFSET),
-#                  MAX(zbytes, PAGESIZE - (vplen & PAGEOFFSET)));
-#
-# Its purpose, per ufs_inode.c: "the contents of the pages following the end of the
-# file must be zero'ed in case it ever become accessable again because of subsequent
-# file growth".  The page it is clearing is a 4 KiB page, but the PAGESIZE/PAGEOFFSET
+# Its purpose, per the commentary in ufs_inode.c, is that the bytes after end-of-file
+# must be zero in case the file later grows and makes them reachable again.  The page it
+# is clearing is a 4 KiB page, but the PAGESIZE/PAGEOFFSET
 # term is still 2 KiB, so a truncation whose offset lands in the LOWER half of a 4 KiB
 # page clears only as far as the next 2 KiB boundary and leaves the upper part of the
 # final page holding data from beyond the new EOF.

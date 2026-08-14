@@ -1,5 +1,10 @@
 | fpsp060_head.s -- the 128-byte call-out section of the M68060 FPSP (F3 M2a, 2026-08-07).
 |
+| LICENCE.  A MODIFIED VERSION under the Motorola M68060 Software Package licence, identified as
+| such as that licence requires: the table's shape and its 32 four-byte fields are the package's
+| contract, the contents are this port's.  Full notice, unaltered:
+| THIRD_PARTY_NOTICES/MOTOROLA-M68060-SP.txt.
+|
 | THIS FILE IS CONCATENATED, NOT LINKED.  build-fpsp060.sh emits
 |     fpsp060_head.s + 060sp/fpsp.S + fpsp060_glue.s
 | into one source and assembles it as a single unit.  That is not a style choice:

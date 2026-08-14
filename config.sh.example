@@ -30,7 +30,8 @@ M68K_GNU_BIN="/usr/bin"
 # 3. Your own AMIX installation, mounted or unpacked read-only.
 #    The port is a patch layer over the kernel binary in it.  The one file that must be present:
 #        $AMIX_ROOT/stand/unix        sha256 7d26cb6f04991be5776d9e5361259b20b413d97e3da33bf88e6f312e7be2ec23
-#    (AMIX SVR4 2.1c.  A different build will NOT fail cleanly -- see BUILDING.md.)
+#    (AMIX SVR4 2.1c.  A different build is REFUSED by tools/verify-stock.sh before anything is
+#    patched, because the patch offsets would land on the wrong bytes -- see BUILDING.md.)
 AMIX_ROOT="$HOME/kehitys/amix-playground/vanilla"
 
 # 4. NetBSD source tarball, for Motorola's 68040/68060 support packages.

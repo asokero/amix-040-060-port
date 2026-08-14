@@ -1,0 +1,20 @@
+# check-verbatim.allow -- paths whose verbatim matches are known, deliberate and defended.
+#
+# One path prefix per line, then a reason.  Entries here are still REPORTED, so nobody can
+# forget they exist; they just do not fail the check.  A path belongs here only when the
+# matching text is dictated by an interface rather than chosen by an author.
+#
+# Adding an entry is a decision to be able to defend, not a way to make output quieter.
+
+include-modelb/	The Model-B header override: <sys/param.h> and <sys/immu.h> with the page shift
+	changed from 11 to 12.  The macros that match -- ptob/btop/btopr, PAGEMASK, PAGEOFFSET,
+	phystopfn, pfntophys, kvtopfn and the mmu_* forms -- are the kernel's compile-time ABI.
+	Code compiled against them must agree with the kernel bit for bit, so their form is
+	dictated by the interface: there is no other way to write "shift by the page shift" that
+	still interoperates.  What this port changed is the constant; what it kept is the only
+	expression that works.  Twelve lines, all one-liners, all interface.
+	OPEN OPTION, recorded so the decision is not silently permanent: these two files could be
+	GENERATED at build time from the reader's own installed headers, the way this project
+	already ships the AmigaOS loader as patches rather than as files (amix-unix-boot).
+	src/mk_modelb_sysroot.sh already builds the mirror sysroot and already has a geometry
+	probe that would validate the result, so the instrument for the change exists.
