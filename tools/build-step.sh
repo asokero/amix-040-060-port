@@ -43,7 +43,7 @@ run_step() {
 
 	# `cmd || _rs_status=$?` and not `if cmd; then`: the `if` form makes $? the status of the
 	# IF, which is 0 when no branch ran -- the failure banner then reports "exit status 0".
-	# (Caught by the unit test below, which is why it prints the status at all.)  The `||` also
+	# (Caught by tools/test-build-step.sh, which is why it prints the status at all.)  The `||` also
 	# keeps the caller's `set -e` from killing the shell before the diagnostics are printed.
 	_rs_status=0
 	"$@" >"$_STEP_LOG" 2>&1 || _rs_status=$?

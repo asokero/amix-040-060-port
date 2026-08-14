@@ -285,7 +285,7 @@ failures is what makes that claim checkable.
 
 ---
 
-*Project: 628 commits over eight weeks, 61 issue records, 69 override units, 43 byte-patch
+*Project, counted 2026-08-14: 638 commits over eight weeks, 61 issue records, 69 override units, 43 byte-patch
 scripts, 53 purpose-built test programs, 22 hardware acceptance documents, 129 contract and audit
 documents, 9 counter blocks. One Amiga 3000, two CPU cards, and a great deal of writing things
 down before finding out.*

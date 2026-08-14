@@ -104,7 +104,8 @@ be silently rewritten to match a newer image.
 
 ## Research notes referenced but not imported
 
-Thirty analysis records are named inside these contracts and are **deliberately not here**.
+Twenty-nine analysis records are named inside these contracts and are **deliberately not
+here**.
 They are supporting research history -- how a conclusion was reached -- not specifications the
 implementation is written against, and they stay in the private analysis repository.
 
@@ -120,7 +121,6 @@ this import and worth reporting.
 | `UFS-PUTPAGE-WRITEBACK-CONTRACT.md` | `PAGECREATE-REACHABILITY-AND-UFSBMAP.md`, `PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md` |
 | `USER-EXECUTABLE-CACHE-PUBLICATION-CENSUS.md` | `DEBUGGER-TEXT-PUBLICATION-PATCH-SPEC.md`, `USER-CODE-CACHE-ABI-SPEC.md` |
 | `040-FAULT-RESOLVER-AUDIT.md` | `XPAGE-COVERAGE-AUDIT.md` |
-| `040-fix-plan.md` | `INDEX.md` |
 | `FPU-STATE-CENSUS.md` | `FPU-LAZY-CONTRACT-AUDIT.md` |
 | `GENERIC-PUTPAGE-CALLERS-AUDIT.md` | `PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md` |
 | `HARDBUS-XPAGE-RETRY-AUDIT.md` | `XPAGE-COVERAGE-AUDIT.md` |

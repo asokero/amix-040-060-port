@@ -81,7 +81,7 @@ The one place where interface text is reproduced
 override: the vendor's own headers with the page shift changed from 11 to 12, substituted into a
 mirror sysroot so that C compiled into the kernel sees the same 4 KiB page the kernel uses.
 
-Twelve one-line macros in them are identical to the originals -- `ptob`, `btop`, `btopr`,
+Eleven one-line macros in them are identical to the originals -- `ptob`, `btop`, `btopr`,
 `PAGEMASK`, `PAGEOFFSET`, `phystopfn`, `pfntophys`, `kvtopfn` and the `mmu_*` forms.  That is not
 a shortcut: these macros are the kernel's compile-time ABI, code compiled against them has to
 agree with the kernel bit for bit, and there is no second way to write "shift by the page shift"
@@ -89,7 +89,7 @@ that still interoperates.  What this port changed is the constant.
 
 This is stated rather than buried because the rest of the repository claims to reproduce no
 vendor text, and one exception that nobody mentions is worse than one exception that is argued
-for.  `tools/check-verbatim.py` reports these twelve lines on every run.
+for.  `tools/check-verbatim.py` reports them on every run.
 
 They could be generated at build time from the reader's own installed headers instead -- the same
 patches-not-files pattern this project already uses for the AmigaOS loader.  See

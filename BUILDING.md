@@ -144,11 +144,19 @@ patcher was invoked through `| tail -n`, and a pipeline's exit status in POSIX s
 command's. `set -e` never saw the failures. See ISSUE-45 in `KNOWN-ISSUES.md` — including the
 measurement of what the old build did with a deliberately broken patch site.
 
-### Provenance check
+### Self-tests
 
 ```sh
-python3 tools/check-verbatim.py            # 0 unexplained, exit 0
+sh tools/test-build-step.sh        # 15 cases; the build must stop when a step fails
+python3 tools/check-verbatim.py    # 0 unexplained
 ```
+
+**`test-build-step.sh`** exists because the fix for ISSUE-45 was a fix *to a check*, and a check
+that silently stops working is the failure this repository has spent the most effort learning to
+refuse. It asserts, among other things, that a failing step reports its own exit status rather
+than the shell's — which is the bug the first version of that fix actually had.
+
+**`check-verbatim.py`** is the provenance gate.
 
 This port was written with historical System V sources open as a reference for documented
 behaviour. Citing them — file, line, function, the shape of an algorithm — is not copying;

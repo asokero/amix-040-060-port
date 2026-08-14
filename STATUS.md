@@ -116,7 +116,8 @@ under which a row that is green in one column and blank in another means anythin
 | Swap / pageout | EMU | HW | EMU | HW | pressure suites, ISSUE-40 |
 | UFS | EMU | HW | EMU | HW | disk-truth, power-cut |
 | NFS (read + write + mmap tail) | EMU | HW | EMU | HW | ISSUE-35 / ISSUE-36, `docs/REALHW-ISSUE36-260728.md` |
-| exec (ELF + COFF path) | EMU | HW | EMU | HW | ISSUE-32, ISSUE-38 |
+| exec (ELF) | EMU | HW | EMU | HW | ISSUE-32, ISSUE-38 |
+| exec (COFF) | ? | ? | ? | ? | **deferred, not tested** — see §9 and `docs/contracts/EXEC-BOUNDARY-CENSUS.md` |
 | XPAGE / `mprotect` per-page | EMU | HW | EMU | HW | ISSUE-41, `docs/XPAGE-FPROT-FINDING-260806.md` |
 | Denied write-back propagation | EMU | **HW** | — | **HW: inert, proven** | ISSUE-42 **closed on an A3640 2026-08-13**, and the defect itself reproduced on silicon; `docs/REALHW-A3640-260813-ACCEPTANCE.md` |
 | ISP: vector 61 integer emulation | EMU | ? | EMU | HW | `docs/ISP-VECTOR61-LANDED-260806.md`, `isp61ea` 7/7 |
@@ -125,7 +126,7 @@ under which a row that is green in one column and blank in another means anythin
 | FPU: 68060 FPSP, `main` group | — | — | ✗ (see note) | HW | `ftest060 main` 4/4 passed |
 | FPU: 68060 enabled IEEE exceptions | — | — | ✗ (see note) | **HW 6/6** | `docs/REALHW-ISSUE43-ACCEPTANCE-260812.md` |
 | FPU: 68060 context save/restore | — | — | EMU | HW | ISSUE-43; `fpc_*` counters |
-| Graphics: Piccolo / Xsvga (Z2) | — | — | — | HW | `amix-xsvga-driver-feasibility` |
+| Graphics: Piccolo / Xsvga (Z2) | — | — | — | HW | `docs/REALHW-ACCEPTANCE-260731.md` §Xsvga, `docs/REALHW-ACCEPTANCE-260801.md` |
 | Graphics: VA2000 RTG | — | HW | — | HW | `docs/REALHW-ACCEPTANCE-260801.md` |
 | RAM above 32 MB | — | — | — | **not implemented** | §3; private analysis retained outside this repository |
 | Zorro III device aperture | — | — | — | **documented limitation** | `docs/Z3-BUSBENCH-Z2-MEASUREMENT-260810.md` |
@@ -345,7 +346,7 @@ history; read this file for status.
 | FP contract | `docs/contracts/FPU-LAZY-CONTRACT-AUDIT.md`, `docs/contracts/FPU-TIER1-ENABLE-SPEC.md` |
 | RAM expansion | §3; the declined private analysis is not an implementation dependency |
 | Zorro III | `docs/Z3-BUSBENCH-Z2-MEASUREMENT-260810.md` |
-| Build and toolchain | `LOCAL-BUILD-NOTES.md`, `relink-040.sh` |
+| Build and toolchain | `BUILDING.md`, `relink-040.sh`, `tools/check-env.sh` |
 | Test tooling | `test-tools/README.md` |
 
 ---
@@ -377,7 +378,7 @@ Decided 2026-08-13: **MIT licence · history rewritten rather than truncated · 
 | Licence | MIT + `NOTICE` bounding what is *not* ours | `LICENSE`, `NOTICE` |
 | Redistribution hygiene | 462 tracked files after the contract import, no AT&T or Commodore source among them | `.gitignore` excludes `amix-src/`, `svr4-src-3b2/`, `usl-svr42/`, `ghindra-unix/`, kernel binaries, the distribution archives |
 | Root password | **gone from the working tree and from every commit** | `git log --all -S` finds no commit containing it |
-| Hard-coded home paths | 59 → **11, in 8 files, all prose** — none in any build script | `git grep /home/asokero` |
+| Hard-coded home paths | 59 → **10, in 8 files, all prose** — none in any build script | `git grep /home/asokero` |
 | One configuration point | `config.sh` (gitignored) from `config.sh.example`; `tools/check-env.sh` verifies every dependency and exits non-zero | phase 2 |
 | Stock-kernel gate | `tools/verify-stock.sh`, positive and negative tested | phase 3 |
 | Build fails loudly | ISSUE-45: a broken patch site now stops the build, measured against the old behaviour | phase 3 |

@@ -40,7 +40,7 @@
  *
  * Verified by src/modelb_geom_probe.c, which fails to COMPILE unless
  * every constant below has the Model-B value, and at the object level by
- * src/check_page_geometry.py.
+ * src/check_page_geometry.sh.
  */
 
 #ifndef _MODELB_SYS_IMMU_H
