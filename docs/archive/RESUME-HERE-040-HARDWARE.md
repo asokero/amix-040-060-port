@@ -32,7 +32,7 @@
 > each test proves: `docs/REALHW-VERIFY-260725.md`; evidence for the 260726 line:
 > `test-tools/fpsp-into-base-260726.txt`.
 >
-> Boot with `unix_boot040` (rel.c PC-rel reloc fix f0ed373) — mandatory for any kernel
+> Boot with `unix_boot040` (rel.c PC-rel reloc fix f0ed373 (pre-split kernelsupport hash; published as amix-unix-boot d6439a5)) — mandatory for any kernel
 > carrying FPSP. Use `reboot`, never `init 6` (ISSUE-24).
 >
 > **SERIAL CAPTURE IS AVAILABLE AND IS THE PRIMARY RECORD (corrected 2026-07-27).** The

@@ -3,7 +3,7 @@
 # group (2026-07-19).
 #
 # Authoritative spec: docs/contracts/SWAPADD-MODEL-B-PATCH-SPEC.md
-# (commit cbbf40f).  swap_xlate (0xb2aea) is already Model B (slot k -> si_soff +
+# (analysis-repo commit cbbf40f).  swap_xlate (0xb2aea) is already Model B (slot k -> si_soff +
 # (k << 12)), but the resource CONSTRUCTORS/DESTRUCTORS still count and step 2KB
 # slots.  Live-observed symptom: swapadd allocates 51199 swapent slots for a
 # 25600-page (100MiB) resource -- double slot table, si_soff/si_eoff rounded at

@@ -376,7 +376,7 @@ Decided 2026-08-13: **MIT licence · history rewritten rather than truncated · 
 | | State | Check |
 |---|---|---|
 | Licence | MIT + `NOTICE` bounding what is *not* ours | `LICENSE`, `NOTICE` |
-| Redistribution hygiene | 462 tracked files after the contract import, no AT&T or Commodore source among them | `.gitignore` excludes `amix-src/`, `svr4-src-3b2/`, `usl-svr42/`, `ghindra-unix/`, kernel binaries, the distribution archives |
+| Redistribution hygiene | 463 tracked files after the contract import, no AT&T or Commodore source among them | `.gitignore` excludes `amix-src/`, `svr4-src-3b2/`, `usl-svr42/`, `ghindra-unix/`, kernel binaries, the distribution archives |
 | Root password | **gone from the working tree and from every commit** | `git log --all -S` finds no commit containing it |
 | Hard-coded home paths | 59 → **10, in 8 files, all prose** — none in any build script | `git grep /home/asokero` |
 | One configuration point | `config.sh` (gitignored) from `config.sh.example`; `tools/check-env.sh` verifies every dependency and exits non-zero | phase 2 |
@@ -393,7 +393,11 @@ Decided 2026-08-13: **MIT licence · history rewritten rather than truncated · 
    follow `BUILDING.md` and nothing else, then boot the clone-built kernel on the Amiga. This is
    the gate that decides whether the instructions are true; everything above is this machine
    testifying about itself.
-2. **Phase 7 — the push**, plus a publication tag.
+2. **Phase 7 — the push**, plus a publication tag. Two things can only be done at that point and
+   are easy to forget: the **repository URLs** — `README.md` requires `amix-unix-boot` to boot
+   anything built here and currently names it without linking it, and neither repository has a
+   remote yet — and a decision on the repository **slug**, since `kernelsupport` is a working name
+   that says nothing.
 3. **`10.0.10.10` appears in 20 documents.** A private RFC1918 address, not a secret; a decision
    about tidiness rather than a blocker.
 4. **ISSUE-9 and ISSUE-10 are open**, and honestly recorded. They argue for publishing as a

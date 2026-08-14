@@ -73,7 +73,7 @@ check "a missing command fails the build" "yes" \
 # ---------------------------------------------------------------- the real caller
 check "relink-040.sh sources it" "1" "$(grep -c 'tools/build-step.sh' "$HERE/relink-040.sh")"
 check "no patcher is still piped into tail" "0" \
-	"$(grep -h 'python3.*| *tail' "$HERE"/relink-040*.sh 2>/dev/null | wc -l | tr -d ' ')"
+	"$(grep -h 'python3.*| *tail' "$HERE"/relink-*.sh 2>/dev/null | wc -l | tr -d ' ')"
 
 echo
 echo "build-step: $pass passed, $fail failed"

@@ -22,7 +22,7 @@
 #
 # FPSP comes from the BASE link (relink-040.sh) since 2026-07-26; this script requires
 # it and does not add it.  The loader MUST be build/unix_boot040 (rel.c PC-rel reloc fix
-# f0ed373) -- the FPSP body carries ~330 PC-relative records.
+# amix-unix-boot d6439a5) -- the FPSP body carries ~330 PC-relative records.
 #
 # NOT the standard kernel.  Usage: sh relink-040-rtg.sh [base-kernel] [output]
 set -e
@@ -143,7 +143,7 @@ echo "[*] reloc validation:"
 run_step 1 python3 "$HERE/src/check_relink_relocs.py" "$OUT"
 DSZ=$(( 0x$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print $6}') ))
 [ $((DSZ % 4)) -eq 0 ] && echo "[OK] .data 4-aligned ($DSZ)" || { echo "[FAIL] .data misaligned ($DSZ)"; exit 1; }
-echo "[*] PC-relative relocs present (loader MUST have the f0ed373 fix):"
+echo "[*] PC-relative relocs present (loader MUST have the amix-unix-boot d6439a5 fix):"
 m68k-linux-gnu-readelf -rW "$OUT" 2>/dev/null | awk '$3 ~ /^R_68K_PC/{n++} END{print "      "n" PC-relative records"}'
 
 run_step all python3 "$HERE/src/stamp_buildid.py" "$OUT"

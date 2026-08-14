@@ -10,8 +10,8 @@ AMIX telnetd sends IAC DO TERMINAL-TYPE and WAITS for an answer before printing
 Sentinel gotcha: the echoed command line contains the sentinel text, so build
 it with a quote split (echo CMD''DONE -> output CMDDONE).
 
-Usage: hw.py 'cmd1' 'cmd2' ...          (root login, no password on emulator)
-       emu.py --wait-login               (just poll until login prompt appears)
+Usage: hw.py 'cmd1' 'cmd2' ...          (root login WITH a password -- see local/secrets.env)
+       hw.py --wait-login               (just poll until login prompt appears)
 """
 import socket, sys, time
 

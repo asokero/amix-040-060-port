@@ -6,9 +6,15 @@ the RAM-above-32 MB work is declined (`STATUS.md` §6).
 
 ---
 
-## 0. Four findings that shape everything below
+## 0. Four findings, as they stood before the release work
 
-### 0.1 The vanilla kernel must be **byte-exact**, and nothing checks it today
+> **Read this section as history.** It was written on 2026-08-13, before any of the release work,
+> and it describes the repository as it was then. Everything in 0.1 and 0.3 has since been fixed;
+> the finding is kept because *why* each mattered is the argument for the shape the repository now
+> has. Where this section and `STATUS.md` disagree, `STATUS.md` is right. Each subsection ends with
+> what actually happened.
+
+### 0.1 The vanilla kernel must be **byte-exact**, and nothing checked it
 
 The patch scripts work on hard-coded `.text` addresses (`0x132`, `0x158`, `0x19b50`, `0x5b3c2`, …),
 byte-pattern assertions and relocation offsets. A different build of `/stand/unix` would not fail
@@ -19,10 +25,15 @@ reference:  AMIX SVR4 2.1c  /stand/unix
 sha256      7d26cb6f04991be5776d9e5361259b20b413d97e3da33bf88e6f312e7be2ec23
 ```
 
-`relink-040.sh` currently contains **zero** hash checks of its input. Adding one is small and it is
-the single most important safety change for anyone else running this. Whether every 2.1c
-installation carries this exact image is *unverified* — so the check must print the expected hash
-and invite a report, not merely refuse.
+`relink-040.sh` contained **zero** hash checks of its input. Adding one was small and it was the
+single most important safety change for anyone else running this. Whether every 2.1c installation
+carries this exact image is *unverified* — so the check had to print the expected hash and invite a
+report, not merely refuse.
+
+**Done** (phase 3): `tools/verify-stock.sh`, sourced by every script that patches the stock kernel,
+tested in both directions, with `AMIX_ALLOW_UNKNOWN_STOCK=1` as the documented override. ISSUE-45
+later closed the second half of the same problem: a failing patch assertion now stops the build
+instead of scrolling past.
 
 ### 0.2 The loader sources are not ours to publish
 
@@ -33,7 +44,7 @@ and invite a report, not merely refuse.
 > why the derived files still carry Commodore's 1991 header. No licence is stated for his own
 > work. The conclusion below is unchanged and now rests on two grounds instead of a wrong one.
 
-`unix_boot/` — **18 tracked files** — carries `Copyright (C) 1991, Commodore Business Machines`:
+`unix_boot/` — **18 files, tracked at the time** — carried `Copyright (C) 1991, Commodore Business Machines`:
 `unix_boot.c`, `bind.c`, `rel.c`, `streq.c`, `streqn.c`, the headers, `copyit.s`, `Supervisor.s`.
 `src/copyit.s` is the same file with our 040/060 MMU-disable changes.
 
