@@ -3,7 +3,7 @@
 |
 | Spec: docs/contracts/CM-PTE-WRITER-MATRIX.md
 | ("Direct segkmem blocker", "Census closure", "B1 implementation group" items
-| 5-6) against kernel 4aad0a9 / build/unix-040 sha256 bc5a43e6...  Companion
+| 5-6) against kernel 8727ef9 / build/unix-040 sha256 bc5a43e6...  Companion
 | byte patches (segkmem_checkprot/segkmem_getprot READERS, same 2 KiB geometry
 | family) live in patch_segkmem.py -- the whole family is ONE unit; do not ship
 | a build with only part of it (the spec's explicit rejection rule).

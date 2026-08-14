@@ -43,8 +43,8 @@ Model-B residuals, but none produces this hard failure.
 ## Pin
 
 ```text
-kernel repository HEAD at task issue     cf4da52
-task's kernel build commit               af40f2b
+kernel repository HEAD at task issue     f9918da
+task's kernel build commit               1d3c662
 build/unix-040                           68040-260727-07
 ELF SHA-256                              5df4158bc548803515334f02ab2607e21f8c0e27d3b48b4fa236117e4e68eaba
 .text SHA-256                            f6faa8178d9ba02a6a15c47da1eb52cfebcf6c7ca7ecc47e41e75781ddd14c63

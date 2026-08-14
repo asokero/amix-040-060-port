@@ -24,7 +24,7 @@ It specifies the small relocation-retargeted wrapper unit used by the current
 ## Pinned input
 
 ```text
-kernel repository HEAD       9c8fd38
+kernel repository HEAD       df32af8
 build/unix-040 build id      68040-260731-02
 build/unix-040 SHA-256       572d8a0b58215d11bbed96dafb8b6aa56091486bd09faa4b9fc4e6ea6feffeca
 .text SHA-256                4d048182366f1697b1bdd26be222c71e5946e549cbc7ab9ff8a3f40a8002ccc2

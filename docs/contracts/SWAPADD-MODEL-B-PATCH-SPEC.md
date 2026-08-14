@@ -17,7 +17,7 @@ patch. No kernel binary is modified by this analysis.
 Target:
 
 - kernel commit:
-  `3b7afdc2a47ca74611a26d554470d0c82f93d1df`
+  `9213d702395aee4640f925d832b166ab89013f1b`
 - `build/unix-040` SHA-256:
   `47d9bedc2ddce5e056f358058879914d4c8d634e5f2223bf1f89a82d530d99bd`
 - ELF `.text` file offset: `0x34`

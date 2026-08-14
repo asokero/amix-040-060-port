@@ -5,7 +5,7 @@ Nothing below has been run on silicon. Every expectation here is PRE-REGISTERED 
 before any hardware number existed, which is the only way the run can tell "the fix worked" from
 "the code never ran".**
 
-The emulator half is done and recorded in `8f4e43a`: both CPUs, one image, the 060 path exercised
+The emulator half is done and recorded in `f65ea04`: both CPUs, one image, the 060 path exercised
 10 080 times and the 040 path untouched. What the emulator **cannot** decide is the actual defect:
 it raises no enabled IEEE FP exceptions at all, so all six `fpenab060` classes are unexercised
 there. DZ is owed to hardware.

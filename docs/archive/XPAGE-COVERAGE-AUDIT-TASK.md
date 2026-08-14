@@ -9,7 +9,7 @@ Requested deliverable: an analysis note in `amix-kernel-analysis/vm-map/`, sugge
 ## Provenance
 
 ```text
-kernel repo HEAD            e17ab78
+kernel repo HEAD            1e7edf2
 build/unix-040              68040-260728-16   base + FPSP + ISSUE-35 + ISSUE-36 + xpage
 build/unix-040-dbg          68040-260728-17   + probes (pvn_probe, as_fault segment identity)
 build/unix-040-rtg-dbg      68040-260728-18   + Xsvga(67) + VA2000(68)   <- the hardware runs

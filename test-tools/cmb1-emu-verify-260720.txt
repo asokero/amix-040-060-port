@@ -3,7 +3,7 @@ CM-campaign B1 (writethrough-pilot scaffolding, dormant no-op port) — emu acce
 Date: 2026-07-20
 Builds: base 68040-260720-01 / dbg -02 / quiet -03 (kernel repo, relink-040*.sh)
 Spec:   amix-kernel-analysis f2b56cd vm-map/CM-PTE-WRITER-MATRIX.md
-        + STOCK030-SDE-CI-CENSUS.md (target image bc5a43e6... = kernel 4aad0a9)
+        + STOCK030-SDE-CI-CENSUS.md (target image bc5a43e6... = kernel 8727ef9)
 Note:   ALL CM effects dormant on both platforms (CACR DC off + DTT0 blanket
         data-inhibit).  This acceptance proves "no regression + the classifier
         provably emits the intended CM bits", NOT cache correctness (HW-gated).

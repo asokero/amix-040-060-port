@@ -10,7 +10,7 @@ paragraph because it will save you effort on the questions below.
 ## Provenance
 
 ```text
-kernel repo HEAD                 b8adfc7 + the commit that adds this file
+kernel repo HEAD                 d5b9414 + the commit that adds this file
 build/unix-040-b2-dbg            68040-260728-45   copyback + the DFC fix + mechanism counters
                                  sha256 fb79d8c699262c20e1dc808a9ff8000c4e2a92dbc516e9d490b7033373d725de
 earlier images in the chain      -36 (captured the failure), -39 (misroute probe), -42 (fix, no counters)

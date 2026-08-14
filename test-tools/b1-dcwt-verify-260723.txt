@@ -6,9 +6,9 @@ Builds: base 68040-260723-03 / dbg -04 / quiet -05
   sha256 dbg  : 410a6143097ce4d2394f9555d3f2c55cddbdf1c9a991126f43bf05d8676df117
   sha256 quiet: f66d17f1407d9194ba1b22317e359cd43c87c35475be37f5c1fc071157194fc8
 Spec:  analyysirepo vm-map/DTT0-PHYS-WINDOW-CENSUS.md + DTT0-NARROWING-SPEC.md
-       (pinned kernel 6dc9a83, unix-040 sha fff91777...; only the buildid stamp differed
+       (pinned kernel 2d22ea8, unix-040 sha fff91777...; only the buildid stamp differed
        in the rebuilt baseline 260723-01 -- pstart @0xd71a8 and all census anchors matched)
-Marker: git tag `pre-dc-enable` = last IC-only commit (e952553).  Revert of the whole
+Marker: git tag `pre-dc-enable` = last IC-only commit (3857c10).  Revert of the whole
        B1 flip = pstart040.s CACR immediate 0x80008000 -> 0x00008000.
 
 What changed (per DTT0-NARROWING-SPEC.md "Decision" -- deliberately minimal)

@@ -109,7 +109,7 @@ control).  All CM effects dormant (CACR DC off + DTT0 blanket-inhibit).
 ### Step B1-DMA — FROM_DEVICE completion invalidation (A3000-first)  ✅ IMPLEMENTED AS DORMANT NO-OP PORT (2026-07-20, builds 260720-05/-06/-07)
 
 Census + contract: analyysirepo `vm-map/DMA-INITIATOR-CENSUS.md` +
-`DMA-PREPARE-COMPLETE-CONTRACT.md` (commit 58f1cda). This closes CM-B1 matrix
+`DMA-PREPARE-COMPLETE-CONTRACT.md` (analysis-repo commit 58f1cda). This closes CM-B1 matrix
 item 8 for the hardware this project actually runs on.
 
 **Why DMA hooks are mandatory for DC (not optional):** the moment CACR DC turns
@@ -166,7 +166,7 @@ acceptance list:** verify old-byte windows, confirm `hat_cm_ram==0` + no live
 copyback, DTT0 handling, then flip CACR DC; acceptance = disk/swap/NFS/fork-COW
 + power-cut disk-truth on real 040 (and separately real 060).
 
-### Step B1 — WRITETHROUGH DC ENABLE  ✅ DONE + REAL-HW-ACCEPTED (2026-07-23, commit 5f745d5, builds 260723-03/-04/-05)
+### Step B1 — WRITETHROUGH DC ENABLE  ✅ DONE + REAL-HW-ACCEPTED (2026-07-23, commit e920c27, builds 260723-03/-04/-05)
 
 **The DC-road departure commit** (git tags `pre-dc-enable` = last IC-only tree /
 `b1-dc-enable` = this; minimal revert = pstart040.s CACR immediate `0x80008000`

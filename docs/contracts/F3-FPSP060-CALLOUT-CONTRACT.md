@@ -42,7 +42,7 @@ that table.
 Kernel repository:
 
 ```text
-HEAD 67fa0ac4e18ce7ddb7b4fab2cce430e8050efed1
+HEAD d3c6fd7e275585c508a2eb38dfa565337e7da763
 task SHA256 aed01e6d6e3d1f2544cbbf35fa8e1db67b7176f568fdf079d98bac69449ac5d7
 build/unix-040 SHA256 8f0f743d2d7cb5479fc2444004bee9a13d0567bcfdf797c084041e0f88b1c568
 build/fpsp060_pkg.o SHA256 1b0429d20ae39e28893a1d7a64bf2bb5c7c79f0372906348316677184598ec9a

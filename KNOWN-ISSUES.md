@@ -156,7 +156,7 @@ record from `active_pts`/`free_pts`, calls `hat_sdtfree`, or wakes `pt_waiting` 
 eliminated for `hat_exec_orig`) steal path. Not an observed bug yet (steal path currently
 unreachable from the CANWAIT sites above); full detail in `HAT-PTFREE-AUDIT.md`.
 
-**hat_map phantom-preload — FIXED + boot-tested 2026-07-07 (commit 9b7f00c).** Codex's
+**hat_map phantom-preload — FIXED + boot-tested 2026-07-07 (commit 317944f).** Codex's
 `P-MAPPING-MATRIX.md`/`HAT-MAP-AUDIT.md` found retained `hat_map` writes legacy `pfn<<11`
 phantom PTEs into `pp->p_mapping` chains (mixing with live `pfn<<12` entries → breaks the
 one-format invariant). Fixed with a 1-byte preload-disable (0xb58d2 beqw→braw); investigation
@@ -190,7 +190,7 @@ step "Practical next step"). Low urgency until D-cache work begins.
 > STATUS.md §7 lists which.
 **Status: RESOLVED (2026-07-05, fix v3, boot-confirmed).** Final fix = `haltsys040.s`
 makes the reboot/halt MMU-disable UNCONDITIONALLY use the 040 `movec`+`pflusha` path
-(commit ded2e58), after v1 (guarded `haltsys`) and v2 (`rtnfirm` override, commit 23a3532)
+(commit 83d22a6), after v1 (guarded `haltsys`) and v2 (`rtnfirm` override, commit 2789ca0)
 turned out necessary but insufficient. Reboot now completes: a dirty-disk boot ran
 `fsck` → rebooted → reached login cleanly.
 
@@ -322,7 +322,7 @@ panicked. Root-caused with the `segvn_softunlock_dbg` diagnostic wrapper (dbg bu
 replicated the per-page page_hash find and dumped the failing page's state. TWO distinct
 bugs, both leftover 2KB/4KB Model-B conversion errors in the VM layer:
 
-1. **`swap_xlate`/`swap_anon` used a 2KB pagesize shift** (commit faa1ace). They translate
+1. **`swap_xlate`/`swap_anon` used a 2KB pagesize shift** (commit 027967c). They translate
    anon-slot-index ↔ swap-vnode byte-offset with `<<11`/`>>11` (×2048) — byte-identical to
    the 2KB vanilla, missed in the Model-B pass even though the anon/swap ACCOUNTING was
    already 4KB. Result: anon `p_offset` came out 2KB-aligned (e.g. 0x1F800 = 63×2048), not
@@ -330,7 +330,7 @@ bugs, both leftover 2KB/4KB Model-B conversion errors in the VM layer:
    `moveq #11→#12` at both sites (patch_modelb.py). This was real but NOT the panic trigger.
 
 2. **`segvn_softunlock`'s inlined PAGE_HASHFUNC was patched to `>>12` while the other 7
-   inlined hash sites stayed `>>11`** (commit 61dd64e — the actual fix). patch_modelb.py had
+   inlined hash sites stayed `>>11`** (commit 369d96f — the actual fix). patch_modelb.py had
    a tuple at 0xabdae mislabeled "page idx >>11"; that shift is the `off>>PGSHIFT` term of
    the hash, not a page index. `page_hashin` (the ENTER side), `page_find`, `page_exists`,
    `page_hashout`, `xpage_find`, `findpage`, `segmap_unlock` all kept stock `>>11`. A hash
@@ -352,13 +352,13 @@ into `relink-040-dbg.sh` only (base build unaffected); useful for ISSUE-7.
 > **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
 > STATUS.md §7 lists which.
-**Status: RESOLVED (2026-07-09), commit `51cdbc7`. Verified: fs-uae boots to login, runs
+**Status: RESOLVED (2026-07-09), commit `5786a40`. Verified: fs-uae boots to login, runs
 `ls -alR`, survives 7 reboot cycles with ZERO panics and ZERO recursion signatures
 (`kstack`/`KSTKCHAIN`/`PREEMPT1 uprocp=0` all absent), clean `haltsys`.**
 
 **ROOT CAUSE (finally): `wb040` write-back replay could not handle an UNALIGNED PAGE-CROSSING
 store.** The 040 access-error handler re-issues the faulted store from the write-back frame with
-one wide `moves`. Measured via the new KSTKWB probe (commit `24a54cf`): a supervisor long store
+one wide `moves`. Measured via the new KSTKWB probe (commit `3dd2456`): a supervisor long store
 of "xres" to `0x40736FFE` (offset 0xFFE) crosses into the next page; the 040 reported FA = the
 NEAR address, `as_fault` resolved only that (already-present) page, and the single wide `moves`
 re-crossed the boundary and re-faulted **forever**. The infinite kernel-fault recursion ate the
@@ -413,7 +413,7 @@ Codex's `HAT-UNLOAD-COHERENCY-AUDIT.md` found that `hat_unload`'s normal exit wa
 post-clear `cpusha bc; pflusha` — every OTHER 040 HAT writer (hat_pteload/hat_chgprot/
 hat_pageunload/resume) ends with that pair, but hat_unload clears PTEs and returns with only
 a *pre*-clear pflusha. Fix applied in `hat040.s` (unconditional cpusha bc/pflusha on the
-non-rootnull exit) alongside the ISSUE-4 hat_dup040 merge (commit 302b588). **User boot-tested
+non-rootnull exit) alongside the ISSUE-4 hat_dup040 merge (commit 75225d7). **User boot-tested
 2026-07-07: bug reproduces identically** — same PREEMPT1-5 signature (`uprocp=0
 curproc=4011AC00 psegu=48466000`, `u318=40736000` matching the established `0x4073X000`
 pattern, `wproc=0` via the PERMANENT p_segu window confirming the page genuinely lacks
@@ -451,7 +451,7 @@ markers), `hatalloc_dbg` LIVEABORT (narrowed to keepcnt!=0), and the `UTRAP` u_p
 entry probe in execmark.s. Serial capture via serdbg (docs/SERIAL-DEBUG.md).
 
 ### 9. setuctxt kmem_alloc(KM_SLEEP) window (2026-07-07, RULED OUT — probe never fired)
-Codex timing hypothesis #1 (`src/setuctxt_dbg.s`, commit `c0b78c5`): does `u_procp`
+Codex timing hypothesis #1 (`src/setuctxt_dbg.s`, commit `f11b925`): does `u_procp`
 survive `setuctxt`'s own internal `kmem_alloc(KM_SLEEP)` loop? **User boot-tested 2026-07-07:
 `grep -a "DBG setuctxt POST-RETURN" /tmp/amix-boot.log` printed nothing** — the wrapper is
 confirmed correctly wired (verified via disassembly pre-test: `setuctxt` was file-local,
@@ -476,7 +476,7 @@ freshly-created) proc — so the next probe should watch procs across repeated d
 proc creation.
 
 ### PREEMPT6 result (2026-07-07, DONE — boot-tested): isolated to one proc
-`src/preempt_dbg.s`'s multi-proc watermark scan (commit `959194f`) fired on the
+`src/preempt_dbg.s`'s multi-proc watermark scan (commit `b33962d`) fired on the
 2026-07-07 crash: `scanned=16 zerocount=1 pid1=9F`. **Confirms the corruption is ISOLATED to
 exactly one proc**, not systemic — of 16 live procs checked, only 1 (pid `0x9F`=159) had
 `u_procp==0`. This supports a per-allocation/per-proc race (e.g. in HAT table or page
@@ -529,7 +529,7 @@ usable from a pristine disk image in the meantime.
   documented "phantom PTE" double-entry risk — the last now FIXED, see below) — even though
   none has been proven to BE ISSUE-7, the offset itself is clearly fragile and worth watching
   generically rather than chasing one caller at a time.
-  NOTE (2026-07-07): the HAT-MAP phantom-PTE producer is now disabled (commit 9b7f00c,
+  NOTE (2026-07-07): the HAT-MAP phantom-PTE producer is now disabled (commit 317944f,
   hat_map preload skip) — so `pp->p_mapping` chains are single-format (live 040 only) from
   every producer again. This is a correctness cleanup, NOT confirmed as ISSUE-7's cause, but
   it does eliminate one of the three offset-32 corruption classes above; if ISSUE-7 is
@@ -556,7 +556,7 @@ usable from a pristine disk image in the meantime.
 > The text below is the working record and may contain hypotheses later refuted;
 > STATUS.md §7 lists which.
 
-> **✅ RESOLVED (2026-07-09), commit `998737f`.** The `click<<11` intuition was RIGHT after all —
+> **✅ RESOLVED (2026-07-09), commit `f6b6592`.** The `click<<11` intuition was RIGHT after all —
 > the 2026-07-07 "DISPROVEN" verdict was itself wrong, for two reasons: (1) fs-uae SILENTLY MASKS
 > the halved read (so "`<<11` boots" proved nothing — the 2026-07-08 Amiberry.log compare later
 > showed `Gary timeout 038a78XX R` at segu_get, confirming the halved address IS wrong on an
@@ -569,7 +569,7 @@ usable from a pristine disk image in the meantime.
 > shape (`sptr->wd2.address = ptptr`, `ptptr = ctob(nextfree)`, `ksegmappt = ctob(nextfree)`,
 > `nextfree = btoc(ptptr)`). **Fix = convert ALL 6 `ctob`/`btoc` sites together** (`<<11`→`<<12`,
 > `+2047`→`+4095`); the `#512` SDE strides are Model-B-invariant and untouched. The `segu_get`/
-> `swapinub` ubptbl wrappers (commit `df82ef8`) rebuild `p_ubptbl` from the live kptr040 tree,
+> `swapinub` ubptbl wrappers (commit `ada651b`) rebuild `p_ubptbl` from the live kptr040 tree,
 > closing the same halved-leaf exposure on the fork path. Emulators now behave identically.
 >
 > **Real-HW status: UNTESTED with this fix.** The real-A3000 p0init bus error was this halved
@@ -590,7 +590,7 @@ LOADER/handoff-level failure, NOT this kernel panic). SECOND boot → this p0ini
 immediately (screen goes black after unix_boot, nothing else, then the panic). Pattern repeats.
 => Treat as TWO separate phenomena: (a) the first-boot guru is a loader cold-start/handoff
 robustness issue — **UPDATE 2026-07-09: almost certainly the cold-boot flakiness bug, since
-ROOT-CAUSED AND FIXED (commit `a70e8df`): the loader's ELF buffer overlapped the copy
+ROOT-CAUSED AND FIXED (commit `196ed09`): the loader's ELF buffer overlapped the copy
 destination by ~25 KB and copyit's inverted copy-direction choice corrupted the copied kernel
 head (incl. `_start`) → wild execution → guru; a 2nd boot's AmigaOS allocation residue shifted
 the buffer past the overlap, which is why the second boot got further. Fixed loader
@@ -797,7 +797,7 @@ PTE; `hat_pageunload` walks + NULLs; `page_abort`/`hat_unload` free only when
 hat_dup040.s `Lhd_copy`/`Lhd_share` (both splice), hat_unload040 `Lhl_findmap`/`Lhl_unlink`
 (with an `Lhl_findfail` diagnostic that fires iff a to-be-unloaded PTE is absent from the
 list). And the ONE known violator — stock `hat_map`'s phantom vnode-preload that published
-legacy pfn<<11 reverse-map entries — was already DISABLED (9b7f00c, 0xb58d2 beqw→braw).
+legacy pfn<<11 reverse-map entries — was already DISABLED (317944f, 0xb58d2 beqw→braw).
 **So "a PTE loaded without p_mapping registration" is NOT the surviving mechanism.** The
 narrowed suspect set is now: (a) page-table **coherency/ordering** — the +256 reverse-map
 link or PTE write not pushed to RAM (cpusha/pflusha) before a page-table is freed+reused
@@ -882,7 +882,7 @@ earlier "frozen at 121430" was a stale read) gives the discriminator:**
   machinery) + `flushmmu`. The ref/mod BIT POSITIONS happen to align (immu.h `PG_REF`=bit3,
   `PG_M`=bit4 == 040 U/M), so the read isn't obviously wrong; the suspect part is the retired
   `hat_pt2ptdat`/`flushmmu` ATC handling on the 040 tree (Codex "hat_pagesync cpusha gap
-  LATENT"). **LATENT until pageout went live** (schedpaging retirement 836cec7) — which is
+  LATENT"). **LATENT until pageout went live** (schedpaging retirement 6f53d5c) — which is
   exactly why ISSUE-10's hit-rate jumped this same day.
 - **HONEST confidence:** hat_pagesync-unported is a REAL gap in the reclaim safety path and the
   best structural lead, BUT the exact corruption chain is not yet closed: the B_FREE path DOES
@@ -896,7 +896,7 @@ earlier "frozen at 121430" was a stale read) gives the discriminator:**
   (II). Porting `hat_pagesync040` (read U/M from the +256 leaf PTE, global `pflusha`) is the
   candidate FIX to test once the probe confirms.
 
-**★ hat_pagesync040 BUILT + TESTED 2026-07-15 night (build 260715-18, commit 4833ae6) — does
+**★ hat_pagesync040 BUILT + TESTED 2026-07-15 night (build 260715-18, commit f2767aa) — does
 NOT fix ISSUE-10; rules out chain (I), points at chain (II).** Ported `hat_pagesync` to 040
 (src/hat_pagesync040.s: verbatim U/M gather+clear, retired flushmmu block replaced with
 unconditional `cpusha bc`+`pflusha`). Boots clean to login (hat_pagesync is exercised by
@@ -913,13 +913,13 @@ pageout LRU ref-bit sampling regardless of ISSUE-10) but is NOT the ISSUE-10 fix
 `test-tools/issue10-hatpagesync-negative-260718.txt`. **Next: the page_get free-list-reuse probe
 (chain-II direct test) — still the decisive instrument.**
 
-**★ hat_exec steal REFUTED 2026-07-15 (audit #1, commit 79c1faa, build 260715-20).** No-op
-`hat_exec` (src/hat_exec040.s, 6e56ee0 — removes the flag-0 steal path + NULL-panic) boots
+**★ hat_exec steal REFUTED 2026-07-15 (audit #1, commit 540dd21, build 260715-20).** No-op
+`hat_exec` (src/hat_exec040.s, e6b5e46 — removes the flag-0 steal path + NULL-panic) boots
 clean but the 4-burst repro reproduces IDENTICALLY (same pp=400AA2C0, 4AFC005F, `\x7fELF`). hat_exec's
 steal is NOT the producer. No-op KEPT as Codex `HAT-EXEC-POLICY` safety hardening, not the fix.
 Evidence `test-tools/issue10-noexec-negative-260715.txt`.
 
-**★★★ SEGVCHAIN PROBE + ROOT REFRAMED 2026-07-16 (commit 744cd65, build 260715-22) — chain-II
+**★★★ SEGVCHAIN PROBE + ROOT REFRAMED 2026-07-16 (commit 6ec4be2, build 260715-22) — chain-II
 REFUTED; it is a DOUBLE-REGISTERED frame.** Added a victim-context reverse-map probe to
 `src/sigkill_dbg.s`: on a SIGSEGV whose saved-a0 URP walk reaches a resident leaf (the sh-heap
 morphology), after SEGVDMP/SEGVPP it walks `pp->p_mapping` and prints `DBG SEGVCHAIN cnt in head vpte
@@ -995,7 +995,7 @@ pressure earlier the same day on 260715-10, task-5 evidence), but its trigger th
 clearly moved UP: amixadm's light forking is no longer enough to land sh's heap on a
 stale/reused page. Likely causes of the reduced hit-rate since 2026-07-10: the completed
 Model-B page-in/writeback conversion (fewer stale/half-read pages) and possibly the orderly
-pageout reclaim from the schedpaging retirement (836cec7). **Practical consequence: amixadm is
+pageout reclaim from the schedpaging retirement (6f53d5c). **Practical consequence: amixadm is
 retired as a reliable repro; ISSUE-10 is now a RARE, pressure-gated corruption, consistent with
 the source-first finding that the core p_mapping machinery is correct. Recommended handling:
 land the DIRECT free-time invariant probe (above) so the residual is caught opportunistically
@@ -1022,7 +1022,7 @@ in the background rather than chased with an increasingly-unreliable trigger.**
   (vtop040.s header; assegat_dbg.s "sh's data page 0x80010000" probes). Suspect classes,
   in order: (1) phys double-use (a user page that is/was also a kernel u-page — the
   ISSUE-5/6 family), (2) ZFOD dirt (anon page not zeroed — one instance already fixed in
-  44ebf05, `pagezero(pp,0,0x800)` half-zero), (3) buffer-cache/DMA into a user phys page.
+  8ffd089, `pagezero(pp,0,0x800)` half-zero), (3) buffer-cache/DMA into a user phys page.
 
 **Next data (cheap, deterministic repro!):** boot `unix-040-dbg` (build ≥ 260710-13, the
 hardbus probe now also prints `uva=` = curproc->u_va), run amixadm, capture serial. Read:
@@ -1135,7 +1135,7 @@ beyond-brk garbage link 0x800120C0 every time).
    demand path → FLTBOUNDS → SIGSEGV; sh's own retry makes the flood).
 
 *Fixes landed during the hunt (kept, genuine, but not the corruptor):*
-- s5getapage ×23 + spec_getapage ×12 Model-B conversion (903210c) — real file-tail
+- s5getapage ×23 + spec_getapage ×12 Model-B conversion (3620566) — real file-tail
   half-read/half-zero bugs on the s5 root fs.
 - wb060_sswsynth + wb060_xpage (060 fixes, merged with 060-B).
 
@@ -1225,7 +1225,7 @@ split remains a layout artifact, not a CPU mechanism. The resume recipe (write-w
 > STATUS.md §7 lists which.
 
 **Status (2026-07-12): CAPTURE 1 = FIXED + VERIFIED ON REAL HW (bp_map040, commit
-4099f4e — see the "CAPTURE-1 FIXED" block at the end of this section). CAPTURE 2 =
+cfa2b78 — see the "CAPTURE-1 FIXED" block at the end of this section). CAPTURE 2 =
 OPEN, lower priority (crash(1M) /dev/kmem nested-fault storm: krnxmemflt_orig F_PWRITE
 030-walk + k_trap landing-pad recursion window). Two captures, backtraces read from
 photos (~/Lataukset/IMG_20260712_013119397.jpg = capture 1, IMG_20260712_103720403.jpg
@@ -1357,7 +1357,7 @@ PFNs. The capture-1 root cause (bp_map/bp_mapout on the retired st_top1 tree) is
 resolved. Remaining ISSUE-13 follow-up (lower priority, separate): capture-2's
 krnxmemflt_orig F_PWRITE 030-walk (the crash(1M) nested-fault amplifier) + the
 k_trap landing-pad recursion window. bp_map040 is ready to COMMIT (awaiting user go).
-(Committed 4099f4e, 2026-07-12.)
+(Committed cfa2b78, 2026-07-12.)
 
 **CAPTURE-2 PLAN UPGRADED (2026-07-13, Codex `040-FAULT-RESOLVER-AUDIT.md`):** the
 fix is NOT just "port the F_PWRITE walk to vatopte". `krnxmemflt_orig` is a COUPLED
@@ -1379,7 +1379,7 @@ needed. Full port spec + acceptance table: Codex `040-FAULT-RESOLVER-AUDIT.md`
 passing 2026-07-13: the base kernel previously lacked the crossing-page `hardbus`
 (runtime040.s promotion, see docs/archive/RESUME-HERE-260727.md).
 
-**CAPTURE-2 FIXED — VERIFIED ON EMULATOR 040+060 (2026-07-13, commit cfa5e49):**
+**CAPTURE-2 FIXED — VERIFIED ON EMULATOR 040+060 (2026-07-13, commit b5fd960):**
 `src/krnxmemflt040.s` implements the native resolver core per the spec above
 (validated software walk of the live kernel tree instead of the URP-blind ptest;
 rw + protection gate from the synthesized frame+76 SSW; every non-classifiable
@@ -1601,7 +1601,7 @@ fail the segu_get/swapinub call. Both are hardening items on the (now base-linke
 runtime040.s resume + the segu wrappers; instrument only if a matching failure
 signature ever appears.
 
-**★★★ MEMWATCH-JAHTI 2026-07-18 (ba99d82+66c8cff) — CURRENT FRONTIER, supersedes the probe plans
+**★★★ MEMWATCH-JAHTI 2026-07-18 (9355197+7673eb6) — CURRENT FRONTIER, supersedes the probe plans
 above.** Added an IPC-driven silent memwatch to Amiberry (SET_MEMWATCH/GET_MEMWATCH_LOG; kernel-PC-only
 ring, no halt; v2 also logs A1=dest / A0=src regs). Watching sh's data frame (phys 0x9E19000,
 deterministic every boot; g_shdatabase runtime @ 0x08000000+.textsize+nm-offset): **timing NAILED,
@@ -1676,15 +1676,15 @@ was the one remaining unconditional HAT-side dirty-loss site.
 
 **★ MODEL-B-JÄÄNNÖSRYHMÄT LANDATTU 2026-07-19-ilta (Codex-speksit, analyysirepo cbbf40f
 vm-map/): kaikki 4 ryhmää emu-hyväksytty erikseen + yhdessä.** (1) swapadd-geometria
-(1475e16, `patch_swapgeom.py`, 12 sitea / 5 funktiota — yllä oleva "patch as its own set"
+(cfd2f56, `patch_swapgeom.py`, 12 sitea / 5 funktiota — yllä oleva "patch as its own set"
 -merkintä TEHTY; slottimäärä todistettu swapctl SC_LIST -probella `test-tools/swapls.c`:
-PAGES 25600, ei 51199-tuplausta). (2) exec_initialstk+extractarg (7f8ac6e,
+PAGES 25600, ei 51199-tuplausta). (2) exec_initialstk+extractarg (3e7c600,
 `patch_execstk.py`, 0x800→0x1000 symtab-resolvoitu + jaettu shift 11→12; hyväksyntä
 `test-tools/bigargv.c` = 4500 B argv execin yli tavuntarkasti ×3). (3) pageout-oletukset
-(7f36144, `patch_pageoutdefs.py`: lotsfree 128→64 / desfree 50→25 / minfree 16→8 =
+(3010e34, `patch_pageoutdefs.py`: lotsfree 128→64 / desfree 50→25 / minfree 16→8 =
 dokumentoidut TAVUkynnykset 4K-sivuina + vmmeter UPIO-fold 2→1 nelänä nop:ina —
 **burst4-thrash 8 min/bursti → 1,4 min/bursti**, freemem-129-jäätymä poissa). (4) mincore
-(9c4139c, `patch_mincore.py`: btoc-vektori + PAGEOFFSET-portti @0x585e2, joka speksissä
+(3ca42c4, `patch_mincore.py`: btoc-vektori + PAGEOFFSET-portti @0x585e2, joka speksissä
 jäi auki — varmistettu 3b2 grow.c:523:sta; hyväksyntä `test-tools/mincoretst.c`: tasan 8
 vec-tavua + EINVAL 2K-kohdistuksesta). Buildit 260719-04…-15; joka ryhmällä hat_dup_cow
 64 PASS, 0 bus-virhettä, 0 4AFC005F:ää. JÄLJELLÄ: real-HW-verify-delta (REALHW-VERIFY-tyyli).
@@ -1725,7 +1725,7 @@ palauttaa IC:n (Step A / 2× nopeus säilyy). Loader-riippumaton (matkaa kernel-
 puhtaita — `K00000000` ×9 (wrapperin CACR-takaisinluku=0), `AC00000000` ×9 (pstart 'A' CACR=0 = nolla
 säilyi wrapperista 'A':han), `FLT v00007008` ×9 (kaikki OK-init, 0× ILLEGAL/ADDRERR). Vrt. ilman
 wrapperia IC-only (CACR=0x00008000) kaatui satunnaisesti parissa bootissa. **Ei enää tarvetta `cpu
-nocache`-workaroundille.** Landattu commit 6c8a929; wrapper base+quiet+dbg (K-dumppi flag-gated dbg-only).
+nocache`-workaroundille.** Landattu commit 00163ce; wrapper base+quiet+dbg (K-dumppi flag-gated dbg-only).
 IMPLIKAATIO DC-tavoitteelle: ongelma oli nimenomaan IC-handoff, EI copyback-DC — B1/B2-kampanjan
 varhaisbootin herkkyys poistui (peritty IC hoidettu). Alla oleva tutkimushistoria säilytetty.
 
@@ -1733,8 +1733,8 @@ varhaisbootin herkkyys poistui (peritty IC hoidettu). Alla oleva tutkimushistori
 
 
 **PÄIVITYS 2026-07-20 (btrace-lokalisointi + FLT-työkalu):** Lisättiin flag-gated
-varhainen boot-trace (`src/btrace.s`, vaihemerkit A–H/S/s/P; commit 235018a) ja
-one-shot FIRST-FAULT-latch (`src/ktrap_latch.s` FLT-lohko, commit 8d4e1ee).
+varhainen boot-trace (`src/btrace.s`, vaihemerkit A–H/S/s/P; commit 8c1f6d3) ja
+one-shot FIRST-FAULT-latch (`src/ktrap_latch.s` FLT-lohko, commit 83f47f3).
 Kaappaus dbg -11:llä (evidenssi /tmp/amix-hw-a3091-dbg*.log): epäonnistuva boot tulostaa
 **`A`** (kernel entry) → heti fault → stock kstack-rekursio (`kstack 0x080DCxxx`, askel
 0xBC=188 B). 'k'-virta = katkenneet kstack-rivit. **Fault on 'A':n ja 'B':n VÄLISSÄ =
@@ -1815,7 +1815,7 @@ päällä ja toimii bootin jälkeen, joten burst EI ole universaalisti rikki —
 copyback-DC/varhaisikkuna. Selvitettävä ennen DC-käyttöönottoa.
 
 **PÄIVITYS 2026-07-22 (RATKAISEVA: syyllinen on INSTRUCTION CACHE, EI data cache):** CACR/RAMSEY-dumppi
-lisätty pstart040 'A':han (btrace_hex; commit 7139bdc). Ristiin-OS-tieto (käyttäjä): AmigaOS/Debian/OpenBSD/
+lisätty pstart040 'A':han (btrace_hex; commit cfe97a1). Ristiin-OS-tieto (käyttäjä): AmigaOS/Debian/OpenBSD/
 RedHat ajavat tällä Mercuryllä datacache päällä ongelmitta → rautahypoteesi kumoutui, kyse OHJELMISTO. Kokeet
 (dbg -02, cpu-output SER:iin, evidenssi /tmp/amix-hw-cachetest*.log):
 - cpu nocache: CACR=0x00000000 (IC off, DC off) → 15/15 reboot OK.
@@ -1846,7 +1846,7 @@ Luenta: sisäkkäisiä kernel-trap-kehyksiä (188 B/kehys) proc-0:n kernel-pinos
 alaosa 0x7008 = FORMAT 7 / VEKTORI 8 = access error, f72 = 0x080DC830 = pinoalueen
 osoite. Eli varhainen satunnainen access error jonka käsittely faultaa uudelleen →
 kstack-rekursiovahti tulostaa tasot. AJOITUS satunnainen (kylmä/lämmin-tyyppinen?) —
-sukua vanhalle cold-boot-perheelle mutta ERI mekanismi kuin a70e8df:n loader-overlap
+sukua vanhalle cold-boot-perheelle mutta ERI mekanismi kuin 196ed09:n loader-overlap
 (se on fiksattu) ja mahdollisesti sama juuri kuin ISSUE-8:n deferred idle-Bus-Error-
 luuppi. SEURAAVA ASKEL kun tähän tartutaan: ktrap_latchin kenttien tarkka decode
 (f64/f76-semantiikka krnxmemflt040-kehyksestä) + serial-merkkikadon fixi jotta koko
@@ -2245,7 +2245,7 @@ kirjoitusta (btst #5,serdatr-ylätavu = word-bitti 13) → SERDAT-kirjoitus → 
 Bounded-odotus säilyy fail-safena (puuttuva serial = pudotettu merkki, ei jumi).
 Nopeus pidettiin 9600:ssa (SERPER-nosto edelleen optiona, arvot alla). Alkuperäinen
 juurisyy: Real-HW:lla serial
-pudottaa merkkejä dbg-floodissa (9584647:n sivulöydös). Juurisyy luettu `src/serdbg.s`:stä:
+pudottaa merkkejä dbg-floodissa (a7b69fa:n sivulöydös). Juurisyy luettu `src/serdbg.s`:stä:
 `serdbg_putc` kirjoittaa `SERDAT ← merkki` ENSIN ja odottaa TBE:tä (SERDATR 0x2000) vasta
 jälkeen, ILMAN keskeytyssuojaa. conputc-hookkia kutsutaan sekä prosessi- että
 KESKEYTYSKONTEKSTISTA (dbg clock_sampler!) → TBE-odotusikkunaan (~1 ms/merkki @9600) osuva
@@ -3011,7 +3011,7 @@ Ks. ISSUE-34a, `test-tools/issue34-060-unimpl-integer-260727.txt`.
 
 Codex's `XPAGE-COVERAGE-AUDIT.md` (a61d2ac) specified six items as **one frame-aware unit**, for the
 stated reason that changing only the address threshold leaves the status loss and the nonconvergence
-intact. All six are now in (`12a8934`, `95d8f3f`):
+intact. All six are now in (`cc9049d`, `026c4f3`):
 
 | # | item | where |
 |---|---|---|
@@ -3904,7 +3904,7 @@ its own — they ride along with the next boot.
 > STATUS.md §7 lists which.
 
 **Status: FIXED** in `src/segvn_prot040.s`, kernel `260806-05` and later (commits
-8f4a704 finding, ee16389 fix, 8bde13a + 46c8424 regression). Record:
+00a2dee finding, dd1b327 fix, c50b870 + dfd1f2c regression). Record:
 `docs/SEGVN-PAGEPROT-PANIC-260806.md`. Predicted statically by Codex
 (`amix-kernel-analysis/vm-map/XPAGE-FPROT-CONTRACT.md`, 0a3aab3) before it was reproduced.
 
@@ -4161,19 +4161,19 @@ also settles two things this port had wrong or unknown:
 
 ### Two fix attempts that FAILED — do not repeat either
 
-1. **`fpu_save` + `UFPRWRT`** (`296e490`): saved the registers on a null frame and set bit 0 so
+1. **`fpu_save` + `UFPRWRT`** (`4bfc0f6`): saved the registers on a null frame and set bit 0 so
    `fpu_restore`'s `null_state` would restore them. Turned 5-of-6 into **0-of-6** on hardware.
    The bit was read backwards: in `fpu_save` "set" means *skip saving*.
-2. **A word-zero null guard in the FPSP glue** (`c13d3b8`, removed): `tstw %sp@` classifies a
+2. **A word-zero null guard in the FPSP glue** (`b664bfd`, removed): `tstw %sp@` classifies a
    zero source operand as a null frame and discards the state — the same offset error, in our
    own code. Motorola's original three-instruction prelude (FSAVE, `0x6000` at offset **two**,
    FRESTORE) is restored for all six exits.
 
 ### The corrective unit — WRITTEN AND EMULATOR-ACCEPTED, hardware verdict owed
 
-1. ✅ Motorola's prelude for all six IEEE exits — `c13d3b8`.
+1. ✅ Motorola's prelude for all six IEEE exits — `b664bfd`.
 2. ✅ 68060 `fpu_save` / `fpu_restore` test **`fp+0x72`**, `UFPRWRT` semantics and the inherited
-   branch ordering unchanged — `src/fpu060.s`, `8f4e43a`.
+   branch ordering unchanged — `src/fpu060.s`, `f65ea04`.
 3. ✅ A complete 12-byte 68060 reset frame in the 68060 `fpu_setup` path — same unit.
 4. ✅ **The 68040 path is byte-identical**: `0x132`/`0x158`/`0x19b50` compare equal to vanilla in
    the built image, and every `fpc_*` counter reads 0 on an emulator 040 boot.
@@ -4239,7 +4239,7 @@ Separate latent gap found by the same audit, not part of this issue: the `/proc`
 
 **Found on silicon by an invariant counter, on the first boot of the build that contained it.**
 
-`c13d3b8` removed the null-frame guard from `Lco_fparith` in `src/fpsp060_glue.s`. That
+`b664bfd` removed the null-frame guard from `Lco_fparith` in `src/fpsp060_glue.s`. That
 removal was correct — the guard was itself a defect, built on the same byte-offset mistake as
 ISSUE-43. But the guard block **ended in the exit's own `jmp nullvect`**, and removing the block
 took the jump with it. Every arithmetic call-out then fell through into `Lco_bsun`.
@@ -4266,9 +4266,9 @@ bit it clears.
 **Why no test caught it before:** the emulator raises no enabled IEEE FP exceptions, so
 `Lco_fparith` never executes there at all (`f60_arith_n` = 0 on both emulator CPUs). The body has
 exactly one instrument in existence — `fpenab060` on hardware — and the previous hardware run
-(2026-08-11) predates `c13d3b8`. The build's first boot anywhere was its first execution.
+(2026-08-11) predates `b664bfd`. The build's first boot anywhere was its first execution.
 
-Fixed by restoring the one instruction (`7cbbc67`); `68060-260812-02` measures `f60_bsun_n` 0 and
+Fixed by restoring the one instruction (`592b7ed`); `68060-260812-02` measures `f60_bsun_n` 0 and
 `entry == real == arith`.
 
 **The lesson worth keeping is about instruments, not about assembly.** A passing test would not

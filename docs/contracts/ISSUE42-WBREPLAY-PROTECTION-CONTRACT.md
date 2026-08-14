@@ -22,7 +22,7 @@ the current-state note above records the later implementation and acceptance.
 Pinned input:
 
 - kernel repository commit:
-  `dedb93c4fbc8502535d4dd6823a397252a9d4179`;
+  `0d3b6689fdce273341bd58c9dce4da78f453c53b`;
 - `build/unix-040` SHA-256:
   `c187b86887dd855c46ac725aed2bc90dfcfc1b243d655ea4ee314301d31f94d2`;
 - linked `.text`: file offset `0x34`, size `0x000e4bb8`, SHA-256

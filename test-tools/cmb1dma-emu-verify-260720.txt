@@ -3,7 +3,7 @@ CM-campaign B1 DMA hook (A3091/SDMAC FROM_DEVICE completion invalidate) — emu 
 Date: 2026-07-20
 Builds: base 68040-260720-05 / dbg -06 / quiet -07
 Spec:  amix-kernel-analysis 58f1cda vm-map/DMA-INITIATOR-CENSUS.md
-       + DMA-PREPARE-COMPLETE-CONTRACT.md (target image 8c0772a, sha ef63f751...)
+       + DMA-PREPARE-COMPLETE-CONTRACT.md (target image a04a97f, sha ef63f751...)
 Scope: A3000-first — only the A3091/SDMAC controller (the one host-RAM DMA path an
        A3000+Mercury040 uses, and the one the a3000ux emulator drives).
        A2090 / A2091 (+chip bounce) / native A2090 ST-506 hd = deferred (not in this

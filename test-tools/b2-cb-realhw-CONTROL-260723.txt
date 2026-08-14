@@ -78,11 +78,11 @@ Actions taken / not taken
 * No hat_cm_ram flip shipped.  The WT-hooks baseline (260723-06 base / -07 dbg,
   hat_cm_ram=0x00) remains the current good real-HW state -- it passed 16 clean
   bursts (only the pre-existing ISSUE-22 EFAULT, which also predates the hooks).
-* B1 (writethrough) remains HW-accepted and unaffected (commit 5f745d5).
+* B1 (writethrough) remains HW-accepted and unaffected (commit e920c27).
 
 Next
 ----
-1. Keep B2 code committed (0b84a65) but DORMANT: ship WT (hat_cm_ram=0x00).
+1. Keep B2 code committed (3387c0d) but DORMANT: ship WT (hat_cm_ram=0x00).
 2. Root-cause the silent disk corruption -- Codex analysis round on the WRITE
    path + targeted instrumentation (per-inode / per-buffer, which file, whether
    the corrupt block is metadata or data, DMA-initiator write-path re-census).

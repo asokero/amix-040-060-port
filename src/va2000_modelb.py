@@ -56,7 +56,7 @@ NEW = ("        /* Model-B (4 KiB page, PNUMSHFT=12) adaptation of the vanilla\n
 # Same hazard, same fix as the Xsvga `exp` object whose path used to default into a /tmp scratchpad:
 # pin the content and fail closed.  Updating the pin is a deliberate act; drifting past it is not.
 EXPECT_SHA256 = "f5aa2c04beb3a7513380769f106c6b3aedf4233383116cdde52d94d8d7bd3595"
-EXPECT_BRANCH = "va2000-8bit-support"     # commit 3f3af25
+EXPECT_BRANCH = "va2000-8bit-support"     # va2000-amix commit 3f3af25
 EXPECT_NOTE = ("the 8-bit display mode support wolf3d needs lives ONLY on this branch; "
                "main is 16-bit only")
 

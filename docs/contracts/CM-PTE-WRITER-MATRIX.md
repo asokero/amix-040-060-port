@@ -35,7 +35,7 @@ No kernel file or binary is modified by this analysis.
 Target:
 
 - kernel commit:
-  `4aad0a95f409ebf98e8a0ff606b34cbba1693618`
+  `8727ef9984512ca9a7c6ec9a6b11b7e01cbe3d4d`
 - `build/unix-040` SHA-256:
   `bc5a43e6f8dc6ecd1854e11864e458eac2e473b40be08132a9096f2b6e2764ee`
 - ELF `.text` address/file-offset relation: `file_offset = address + 0x34`

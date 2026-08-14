@@ -28,7 +28,7 @@ It did not itself change kernel code or claim 68040-silicon acceptance.
 Pinned input:
 
 - kernel repository commit:
-  `cdad0648209d888caca049d8ccfa767098bffa08`;
+  `1d75906257eccf3b6d4f12b666977c2d0e1c7ec2`;
 - commit subject: `ISSUE-42: propagate a denied write-back instead of swallowing it`;
 - `build/unix-040` SHA-256:
   `80d5943591104e69c3e38bf0c712b0f3a898dd145d6ab8bd8d9e08a782d444dc`;

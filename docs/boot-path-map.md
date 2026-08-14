@@ -63,7 +63,7 @@ above is not. For 040/060 this must become a `movec`-based MMU disable
 (AFB_68040 = bit 3, AFB_68060 = bit 7).
 **→ FIXED in our `unix_boot/src/copyit.s` (AttnFlags-guarded 040/060 `movec` path).**
 
-**⚠️ Second stock defect — the copy itself (FIXED 2026-07-09, commit `a70e8df`).** The
+**⚠️ Second stock defect — the copy itself (FIXED 2026-07-09, commit `196ed09`).** The
 stock copy loop had its direction choice INVERTED for overlapping ranges (dest<src copied
 descending, dest>=src ascending — each clobbers unread source bytes) and copied size+1
 bytes (one stray byte below the destination). With `AllocMem(MEMF_FAST)` placing the ELF

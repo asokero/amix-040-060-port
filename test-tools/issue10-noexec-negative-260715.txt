@@ -1,4 +1,4 @@
-ISSUE-10 repro on build 68040-260715-20 (no-op hat_exec, commit 6e56ee0)
+ISSUE-10 repro on build 68040-260715-20 (no-op hat_exec, commit e6b5e46)
 Test: 4-burst issue10-pressure.sh (6x4MiB cp + hat_dup_cow 64), emu-040.
 RESULT: corruption reproduced IDENTICALLY -> no-op hat_exec is NOT the ISSUE-10 fix.
 Audit #1 (hat_exec flag-0 steal -> orphaned 040 PTEs) REFUTED: steal path removed, corruption persists.

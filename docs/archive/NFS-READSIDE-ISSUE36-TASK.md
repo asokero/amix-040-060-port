@@ -16,7 +16,7 @@ we would rather convert the minimum than the group.
 ## Provenance — the base MOVED since your last pin
 
 ```text
-kernel HEAD    af40f2b
+kernel HEAD    1d3c662
 build/unix-040 68040-260727-07
                sha256  5df4158bc548803515334f02ab2607e21f8c0e27d3b48b4fa236117e4e68eaba
 .text          sha256  f6faa8178d9ba02a6a15c47da1eb52cfebcf6c7ca7ecc47e41e75781ddd14c63

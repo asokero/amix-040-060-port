@@ -26,8 +26,8 @@ This is static analysis only. No kernel code is changed.
 ## Pinned input
 
 ```text
-kernel task commit              d787e0d969af167a845c33f71a8bd45b4488ba8e
-implementation commit in brief e17ab78
+kernel task commit              2938896eb8dbd67b6208d646df86705dbd33ace9
+implementation commit in brief 1e7edf2
 build/unix-040 build id         68040-260728-16
 build/unix-040 SHA-256          b96dec1804d4731cea403e268331ab185e74a7fff2254cb2f6af3a57512942a0
 .text size                      0x000e4058 (933976 bytes)
@@ -35,7 +35,7 @@ build/unix-040 SHA-256          b96dec1804d4731cea403e268331ab185e74a7fff2254cb2
 ```
 
 The task commit adds only the brief. The image is the implementation state
-described by `e17ab78`.
+described by `1e7edf2`.
 
 Canonical addresses below are ELF `.text` offsets. The image is ELF32
 big-endian m68k `ET_REL`, so relocation records remain the authoritative call
@@ -44,7 +44,7 @@ targets.
 ### Post-pin drift
 
 During final review the kernel repository advanced to
-`064766bd918b9557e7157f23ebb5d4821a164cc6` and `build/unix-040` to build
+`e22069d9f9c7150d70fd30ae7c32f72e42f4f3c6` and `build/unix-040` to build
 `68040-260728-20` (SHA-256
 `261d68436f5b791bca04f3efc5fd8f43a78f61702179cad2024d6f1eeaf89c36`).
 The only resolver-source change after the task pin is an `xpage_on` test
@@ -53,7 +53,7 @@ behavior audited here. It grows `.text` by eight bytes, however, so the
 old-byte anchors in this note remain assertions for `260728-16`, not for
 later images.
 
-Commit `064766b` also records a clean 16-burst ISSUE-22 run and prepares an
+Commit `e22069d` also records a clean 16-burst ISSUE-22 run and prepares an
 enabled/disabled XPAGE A/B. That is valuable runtime attribution evidence but
 does not change the static route verdict below. If disabling the kernel
 helper reproduces ISSUE-22, the direct copyout explanation still needs

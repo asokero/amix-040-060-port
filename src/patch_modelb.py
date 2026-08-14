@@ -383,8 +383,8 @@ P = [
  #   granularity lives in segvn_fault (these 8 sites) + as_fault (3 sites).  Verified by full
  #   disassembly 2026-06-25.
  #
- # WHY as_faulta + as_setprot are OMITTED (the 2026-06-25 21dda30 both-4KB failure post-mortem):
- #   21dda30 converted as_fault+segvn_fault (CORRECT bytes) BUT ALSO as_faulta + as_setprot, and
+ # WHY as_faulta + as_setprot are OMITTED (the 2026-06-25 8aaa10e both-4KB failure post-mortem):
+ #   8aaa10e converted as_fault+segvn_fault (CORRECT bytes) BUT ALSO as_faulta + as_setprot, and
  #   bus-errored in kmem_alloc.  Root cause = OVER-conversion: as_setprot rounds the protection
  #   range, then calls segvn_setprot which sizes/indexes the per-page vpage[] array -- still 2KB,
  #   UNCONVERTED.  4KB-rounded range vs 2KB vpage math overruns the vpage array -> kernel heap
@@ -411,7 +411,7 @@ P = [
  # ANON-ARRAY CONSUMERS -- the rest of the coupled set.  The anon[] array is now sized one-slot-
  # per-4KB-page (segvn_fault site 1).  Every function that WALKS or FREES that array by a
  # byte-size->slot-count conversion MUST also use >>12, else it runs off the (now smaller) array.
- # This is what bus-errored kmem_alloc in the both-4KB attempt (21dda30): NOT as_setprot, but the
+ # This is what bus-errored kmem_alloc in the both-4KB attempt (8aaa10e): NOT as_setprot, but the
  # relvm teardown.  Confirmed call path 2026-06-25: as_free -> seg_unmap -> segvn_unmap; for a
  # WHOLE-segment unmap (ab72a: addr==s_base && len==s_size, always true during relvm) segvn_unmap
  # calls seg_free -> segvn_free, which calls anon_free(base, BYTE size) + kmem_free(anon array,

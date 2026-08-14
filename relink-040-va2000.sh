@@ -23,7 +23,7 @@
 # add-symbol parinit_orig at its known address, ld -r in a new strong
 # `parinit` that calls va2000init() then tail-jmps parinit_orig.
 #
-# Requires the PC-relative-relocation loader fix (unix_boot rel.c, commit
+# Requires the PC-relative-relocation loader fix (amix-unix-boot, rel.c, commit
 # f0ed373) for the FPSP body's ~330 PC-relative relocs -- same requirement as
 # relink-040-fpsp-xsvga.sh.
 #

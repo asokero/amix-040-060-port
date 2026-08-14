@@ -10,14 +10,14 @@ This is a narrow question with strong runtime evidence behind it, not a general 
 ## Provenance
 
 ```text
-kernel repo HEAD                 46f9dca (this brief adds documentation only)
+kernel repo HEAD                 206f32f (this brief adds documentation only)
 build/unix-040                   68040-260728-34
 build/unix-040-dbg               68040-260728-35   + the new exit probe
 build/unix-040-b2-dbg            68040-260728-36   same, hat_cm_ram = 0x20 (copyback)
 ```
 
 `-35` and `-36` differ in the `hat_cm_ram` flip plus the build-id characters. `-34/-35` add only the
-ISSUE-22 exit probe over `12a8934`, which your XPAGE audit was pinned against.
+ISSUE-22 exit probe over `cc9049d`, which your XPAGE audit was pinned against.
 
 ---
 
@@ -119,7 +119,7 @@ is the stock binary and the paths we cannot read as easily.**
 ## 4. Context you may want, briefly
 
 * **ISSUE-37 is closed**: the 68040 reports a misaligned access's START address while the missing
-  page is the next one. Your audit's six-item unit is landed (`12a8934`), MA-based with the proven
+  page is the next one. Your audit's six-item unit is landed (`cc9049d`), MA-based with the proven
   address window kept as a second tier, and wolf3d — which wedged the machine on three kernels —
   now runs. The 040 regression was re-verified on hardware with the serial instrument **bracketed**
   before and after, after an identical 0-byte reading earlier that day turned out to be a dead

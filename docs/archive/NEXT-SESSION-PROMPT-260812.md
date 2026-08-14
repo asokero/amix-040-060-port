@@ -19,7 +19,7 @@ bitilleen oikein raudalla**. Kuudes, divide-by-zero, menettää fp0-7:n signaali
 
 ## TÄMÄN SESSION TYÖ: ISSUE-43:n korjaus, kohdat 2–4
 
-Kohta 1 on tehty (`c13d3b8`). Jäljellä auditin luvusta "D. Contract-derived CPU-specific state
+Kohta 1 on tehty (`b664bfd`). Jäljellä auditin luvusta "D. Contract-derived CPU-specific state
 implementation":
 
 2. **68060 `fpu_save` / `fpu_restore` testaamaan `fp+0x72`** (ei tavua 0), `UFPRWRT`-semantiikka
@@ -40,7 +40,7 @@ rikottu tässä (5/6 → 0/6), joten:
 * `build/unix-040` = **`68040-260811-06`**, reloc `TOTAL complaints: 0`. Motorolan prelude
   palautettu, oma virheellinen vahti purettu. Tämä on hyvä lähtökohta.
 * **Raudalla ajaa `-05`**, joka on toiminnallisesti sama (5/6). `-06` on kääntämättä raudalle.
-* Puu puhdas, kaikki committoitu. Viimeisin: `bd92206`.
+* Puu puhdas, kaikki committoitu. Viimeisin: `202c2a8`.
 
 ## Hyväksyntä — mitä pitää mitata, ja mitä lukemien pitää olla
 

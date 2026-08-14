@@ -114,7 +114,7 @@ or coincidence here: **not established.**
 ## 4. The two tracks open right now
 
 **Track 1 — Codex.** The brief is written, on the NAS, and committed: `docs/archive/ISSUE38-EXEC-ABORT-TASK.md`
-(commit 40e4707). It asks four things, the starred first one being a byte-exact enumeration of the
+(commit 45ebd21). It asks four things, the starred first one being a byte-exact enumeration of the
 exec-header paths that release the slot and abort without reaching `execmap`. Requested deliverable:
 `amix-kernel-analysis/vm-map/ISSUE38-EXEC-HEADER-ABORT.md`. **Check whether that file exists in
 `~/kehitys/amix-playground/amix-kernel-analysis` before building anything.**
@@ -226,4 +226,4 @@ Lkx_fn 080FFFB4  xpage_on 080FFFB8 (=1, ANCHOR)  Lkx_depth 080FFFBC
 ## 9. Machine state at the time of writing
 
 On `68040-260729-22` (bisectE, copyback + `mainmarks`/`hatalloc_dbg`/`assegat_dbg`), reachable by
-telnet, usable. The serial port was cleaned back to a single reader. Working tree clean at 40e4707.
+telnet, usable. The serial port was cleaned back to a single reader. Working tree clean at 45ebd21.

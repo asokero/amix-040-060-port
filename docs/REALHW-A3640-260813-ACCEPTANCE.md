@@ -20,7 +20,7 @@ both held:
 | `cputype` must be 40 on a real 040 | `0x28` |
 
 `tools/status-facts.sh` was given a load-base parameter before the boot for exactly this reason
-(`4736a80`). A pre-flight grep also confirmed that no override in this project hardcodes the load
+(`90696cd`). A pre-flight grep also confirmed that no override in this project hardcodes the load
 base — `hat040.s` uses `&_start` with runtime `pages_base`/`pages_end`, and its comment already
 anticipated both bank cases.
 

@@ -317,7 +317,7 @@ hypothesis, but nothing new should be built on any of it.
 | A null FSAVE frame means "no live FP state" on the 68060 | ISSUE-43 rounds 1–3 | Byte zero is the **source operand's exponent**; the discriminator is byte two |
 | DZ proved a null frame | ISSUE-43 round 1 | It proved its own operand was zero |
 | "7100 null saves per boot" | ISSUE-43 round 3 | Collected through the wrong predicate. Remeasured: 8048 null / 17 idle per boot on hardware |
-| Bit 0 of the u-area FP flags is a lazy-FPU owner bit | reverted attempt, `296e490` | It is `UFPRWRT`, "software wrote the programmer model". Setting it turned 5-of-6 into 0-of-6 |
+| Bit 0 of the u-area FP flags is a lazy-FPU owner bit | reverted attempt, `4bfc0f6` | It is `UFPRWRT`, "software wrote the programmer model". Setting it turned 5-of-6 into 0-of-6 |
 | ISSUE-10 was retired in July | `docs/archive/RESUME-HERE-260727.md` | It is back on probeless kernels and reproduces in the emulator; the "retirement" was a dbg-instrument artifact |
 | `cc1`'s SIGSYS was something other than the missing FPSP | ISSUE-34b | It was the FPSP (F3 M5 §8) |
 | `fpc_excp_n` would be non-zero on hardware | `docs/REALHW-RUNLIST-ISSUE43-260812.md` | Our own call-out converts the frame to idle before the OS sees it, so `0xe0` never reaches `fpu_save` |

@@ -43,7 +43,7 @@ hienovaraisemmasta racesta.
 
 ## Kohde ja pinnaus
 
-- Kernelrepo commit: `4fd4132` (B2-CB-HOOKS 0b84a65 + docs)
+- Kernelrepo commit: `2f97ecc` (B2-CB-HOOKS 3387c0d + docs)
 - `build/unix-040` (base, hat_cm_ram=0x00) SHA-256:
   `11b4f21f8a97d651730b631afb6e7eeafe8a2315055178226ed00f0965b26125`
 - `build/unix-040-b2` (hat_cm_ram=0x20) SHA-256:

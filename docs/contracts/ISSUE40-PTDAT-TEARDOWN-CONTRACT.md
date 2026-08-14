@@ -20,7 +20,7 @@ kernel.
 
 | Artifact | Identity |
 |---|---|
-| Kernel source tree | `kernelsupport` commit `cc7e134b0409b92fa9383be710022c7efa3950dd` |
+| Kernel source tree | `kernelsupport` commit `d74e5841d46ca155ebb05a0ffb7b6ec34a481e66` |
 | Kernel | `build/unix-040`, build `68040-260801-12` |
 | Kernel SHA-256 | `d1acde8d3442c348924bf9ab9ffb8639a53394d18f54305a13380fc94822f24b` |
 | Kernel `.text` size | `0x000e46ec` |
@@ -28,8 +28,8 @@ kernel.
 | Retained metadata free | local `hat_sdtfree 0x000b65ca` |
 | Retained stock table free | body at `0x000b6cf4` |
 | Active table free | native `hat_ptfree 0x000d85ce` |
-| Follow-up brief | `kernelsupport` commit `2e1180a`, `ISSUE40-PTDAT-CODEX-QUESTIONS.md` |
-| Hardware evidence | `kernelsupport` commit `c7cfd56`, `REALHW-ISSUE40-PART1-260801.md` |
+| Follow-up brief | `kernelsupport` commit `3d34ada`, `ISSUE40-PTDAT-CODEX-QUESTIONS.md` |
+| Hardware evidence | `kernelsupport` commit `5f0422a`, `REALHW-ISSUE40-PART1-260801.md` |
 | AMIX layout header | `vanilla/usr/include/vm/vm_hat.h:74..96` |
 | Reference implementation | `svr4-src-3b2/usr/src/uts/3b2/vm/vm_hat.c:2437..2719` |
 
@@ -39,7 +39,7 @@ data and functions.
 
 ## Evidence update: emulator and real hardware
 
-The `2e1180a` brief does not change P1 through P5 or the pinned kernel image. It
+The `3d34ada` brief does not change P1 through P5 or the pinned kernel image. It
 adds independent hardware confirmation that the `ptdat` allocation is the gate
 for the whole measured page leak, rather than a lower-rate residual:
 

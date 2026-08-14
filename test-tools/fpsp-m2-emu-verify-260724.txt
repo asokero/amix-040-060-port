@@ -5,7 +5,7 @@ Kernel: build/unix-040-fpsp-dbg  (68040-260724-07) = standard dbg 260724-04
         + build/fpsp040.o (M1) + src/fpsp_glue040.o (M2), M68Kvec[11]
         retargeted nullvect -> fpsp_vec11.
 Loader: build/unix_boot040 REBUILT with the rel.c PC-relative relocation fix
-        (commit f0ed373) -- REQUIRED, see below.
+        (amix-unix-boot commit f0ed373) -- REQUIRED, see below.
 Emulator: Amiberry a3000ux (68040, Piccolo_Z2), one clean instance.
 
 THE BOOT BLOCKER AND ITS FIX
@@ -65,8 +65,8 @@ M2 RESULTS (emu-040)
 
 STATUS / WHAT REMAINS
 ---------------------
-M1 (package build)  DONE, reproducible: build-fpsp040.sh (8d2a005).
-M2 (glue + vector 11) DONE and now VERIFIED (2b4c6ef + loader fix f0ed373).
+M1 (package build)  DONE, reproducible: build-fpsp040.sh (b68662c).
+M2 (glue + vector 11) DONE and now VERIFIED (906afff + loader fix f0ed373).
 M3 (native cc)       DONE as a side effect.
 M4 (hardening) still open: vectors 48-55 retarget, per-class real_* FPSR
    pending-bit cleanup, copyin/copyout fault unwind, enabled/masked exception

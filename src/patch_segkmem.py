@@ -3,7 +3,7 @@
 # 2 KiB stragglers in the direct linear-kptbl segkmem family (2026-07-20).
 #
 # Authoritative spec: docs/contracts/CM-PTE-WRITER-MATRIX.md
-# (commit f2b56cd), "Direct segkmem blocker": segkmem_setprot / _checkprot /
+# (analysis-repo commit f2b56cd), "Direct segkmem blocker": segkmem_setprot / _checkprot /
 # _getprot still computed a 2 KiB PTE index ((addr - s_base) >> 11) and stepped
 # +0x800 while segkmem_alloc/free/mapin/mapout were already Model B (>>12 /
 # +0x1000, patch_modelb).  The spec requires the family to be ported AS ONE
