@@ -89,7 +89,7 @@ Full instructions, including the toolchains and how the override mechanism works
 | `docs/` | acceptance records, contracts, audits and findings — the evidence behind the table above |
 | `docs/archive/` | session prompts, run-lists and task briefs: working notes, kept deliberately |
 | `STATUS.md` | canonical status: what is proven, on which platform, with links to the evidence |
-| `KNOWN-ISSUES.md` | 44 issues, chronological, corrections in place |
+| `KNOWN-ISSUES.md` | 45 issues, chronological, corrections in place |
 
 ## Documentation
 

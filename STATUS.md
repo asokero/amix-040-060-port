@@ -3,7 +3,7 @@
 **This is the canonical status document. When another document in this tree disagrees with it,
 this one is right and the other one is history.**
 
-Last reviewed: **2026-08-12**. Kernel commit at review: `99e2ae5`.
+Last reviewed: **2026-08-14**. Commit at review: `3a61aa1`.
 
 ## How to read this file, and how to keep it true
 
@@ -14,9 +14,10 @@ Two rules, both learned the expensive way in this project:
    returns a plausible number from whatever now lives at that address. Run:
 
    ```sh
-   export PATH=/home/asokero/opt/amix-cross/bin:$PATH
    sh tools/status-facts.sh            # or: sh tools/status-facts.sh build/unix-040-rtg
    ```
+
+   (It picks the toolchain up from `config.sh` like everything else — see `BUILDING.md`.)
 
    That prints the current artifact's identity, every `*_magic` block with its runtime address
    and the magic word read out of the artifact itself, and a both-directions check of the
@@ -42,7 +43,7 @@ a named test on a named platform is.
 | `68060-260812-02` | `bb906e2a` | 68060 hardware, 2026-08-12 | ISSUE-43 + ISSUE-44 closed; six enabled IEEE classes bit-exact | `docs/REALHW-ISSUE43-ACCEPTANCE-260812.md` |
 | `68060-260807-11` | `4962361b` | 68060 hardware, 2026-08-09 | 68060 FPSP (F3 M5) on silicon; `ftest060 unimp` passes; xv/wolf3d SIGSYS attributed | `docs/REALHW-260807-11-ACCEPTANCE.md` |
 | `68060-260806-06` | — | 68060 hardware, 2026-08-07 | ISSUE-41 closed; XPAGE + protfault + power-cut | `docs/REALHW-260806-06-ACCEPTANCE.md` |
-| `68040-260802-01` | `3727e5b4` | **68040 hardware, 2026-08-02** | **Last 68040 hardware run.** ISSUE-40 closed | `docs/REALHW-ISSUE40-ACCEPTANCE-260802.md` |
+| `68040-260802-01` | `3727e5b4` | 68040 hardware, 2026-08-02 | Last 68040-*only* baseline, superseded on 040 silicon by `-260812-06` on 2026-08-13. ISSUE-40 closed | `docs/REALHW-ISSUE40-ACCEPTANCE-260802.md` |
 | `68040-260731-10` | on NAS | 68040 hardware, 2026-07-31 | Copyback default re-accepted; 9/9 + battery | `docs/REALHW-ACCEPTANCE-260731.md` |
 | `68040-260727-01` | — | 68040 hardware, 2026-07-27 | First full delta acceptance + power-cut 8/8 | `test-tools/realhw-verify-260727.txt` |
 
@@ -50,20 +51,31 @@ a named test on a named platform is.
 CPU-specific path is gated on it. The build id says `68040-` because it is stamped at build
 time; the banner and `uname -m` say `68060-` when a 68060 is running it.
 
-**The current baseline is tagged and archived** (2026-08-12), because an accepted binary has
-already been lost once here — `-06` is gone from the build host and cannot be rebuilt, the base
-having moved underneath it.
+**Both accepted 2026-08-12 images are tagged**, because an accepted binary has already been lost
+once here: `68060-260806-06` is gone from the build host and cannot be rebuilt, the base having
+moved underneath it. Note that two different builds in this table end in `-06`; they are always
+written with their date here for that reason.
 
-| | |
-|---|---|
-| git tag | `hw-68060-260812-02` (annotated, on `99627b1`) |
-| archive | NAS `amix/baseline-68060-260812-02/` — binary, `SHA256SUMS.txt`, `status-facts.txt`, the acceptance document and this file |
-| reproducibility | **verified, not assumed**: rebuilding from the tag yields an image differing in exactly **one byte** — offset `0x10AF83`, the last digit of the build-id stamp, which is a per-build counter |
+| | current baseline | previous |
+|---|---|---|
+| build id | `68060-260812-06` | `68060-260812-02` |
+| git tag | `hw-68060-260812-06` (annotated, on `e23e322`) | `hw-68060-260812-02` (annotated, on `b95bcd2`) |
+| archive | tag only — **not yet copied to the NAS** | NAS `amix/baseline-68060-260812-02/` — binary, `SHA256SUMS.txt`, `status-facts.txt`, the acceptance document and this file |
+| reproducibility | — | **verified, not assumed**: rebuilding from the tag yields an image differing in exactly **one byte**, the build-id stamp's per-build counter |
 
-⚠ **The current image has never run on 68040 hardware.** The machine has carried the 68060
-since 2026-08-05; re-verifying the 040 needs a physical A3640 card swap. The 040 hardware column
-below therefore reads as of `68040-260802-01`, and the pending run-list is
-`docs/archive/NEXT-040-SESSION-RUNLIST.md`.
+⚠ **Archiving the current baseline to the NAS is outstanding**, and it is the one step whose
+omission has already cost this project a binary once.
+
+**The current image has run on 68040 hardware.** `68060/68040-260812-06` was accepted on an
+A3640 on 2026-08-13 — the first dual-silicon image here — which is what closed ISSUE-42. The
+machine carries whichever CPU card is physically installed; as of 2026-08-13 that is the A3640.
+
+The 040 run-list `docs/archive/NEXT-040-SESSION-RUNLIST.md` is **partly** discharged by that
+session: items 1 and 2 (ISSUE-42, and a 040 hardware baseline) are done, and the battery, burst
+suite, RTG kernel and Dhrystone were added on top. Items 3 and 4 were **not run** and are still
+owed — the M0 vector probe with the 040 as its control (`kvp_vec[11]` must stay 0 there), the
+Dhrystone A/B across `kvp_on` that would say what the probe costs per syscall, and the assertion
+that every `f60_*` and `isp61_*` counter still reads 0 after a full 040 battery.
 
 ---
 
@@ -72,26 +84,31 @@ below therefore reads as of `68040-260802-01`, and the pending run-list is
 Four platforms in one table on purpose: the interesting information is where a row is green in
 one column and blank in another.
 
-Legend: **HW** = measured on that silicon · **EMU** = measured under Amiberry only ·
-**—** = not applicable · **?** = not measured on that platform.
+Legend, per cell, describing **that column's platform only**: **HW** = measured on that silicon ·
+**EMU** = measured under Amiberry · **✗** = cannot be exercised there, see the note below the
+table · **—** = not applicable · **?** = not measured on that platform.
+
+(Until 2026-08-14 the two emulator columns carried `HW`, which the legend does not permit an
+emulator column to say. The cells now describe their own platform, which is the only reading
+under which a row that is green in one column and blank in another means anything.)
 
 | Capability | 040 emu | 040 HW | 060 emu | 060 HW | Evidence |
 |---|:--:|:--:|:--:|:--:|---|
-| Boot to multiuser, native userland | HW | HW | HW | HW | `docs/REALHW-ACCEPTANCE-260731.md`, `docs/REALHW-260806-06-ACCEPTANCE.md` |
-| MMU / HAT, page-table lifecycle | HW | HW | HW | HW | `amix-kernel-analysis/vm-map/`, battery |
-| fork / COW (`hat_dup`) | HW | HW | HW | HW | `hat_dup_cow` 1/32/256 PASS |
-| Context switch (native `resume`) | HW | HW | HW | HW | ISSUE-19 record, battery |
-| Instruction cache | HW | HW | HW | HW | `config040.s`, ISSUE-21 |
-| Data cache — copyback (default) | HW | HW | HW | HW | `docs/REALHW-COPYBACK-ACCEPTANCE-260730.md`, power-cut 8/8 |
-| DMA coherence (A3091 / SDMAC) | HW | HW | HW | HW | `dma_cache040.s`, disk-truth runs |
-| Swap / pageout | HW | HW | HW | HW | pressure suites, ISSUE-40 |
-| UFS | HW | HW | HW | HW | disk-truth, power-cut |
-| NFS (read + write + mmap tail) | HW | HW | HW | HW | ISSUE-35 / ISSUE-36, `docs/REALHW-ISSUE36-260728.md` |
-| exec (ELF + COFF path) | HW | HW | HW | HW | ISSUE-32, ISSUE-38 |
-| XPAGE / `mprotect` per-page | HW | HW | HW | HW | ISSUE-41, `docs/XPAGE-FPROT-FINDING-260806.md` |
+| Boot to multiuser, native userland | EMU | HW | EMU | HW | `docs/REALHW-ACCEPTANCE-260731.md`, `docs/REALHW-260806-06-ACCEPTANCE.md` |
+| MMU / HAT, page-table lifecycle | EMU | HW | EMU | HW | `amix-kernel-analysis/vm-map/`, battery |
+| fork / COW (`hat_dup`) | EMU | HW | EMU | HW | `hat_dup_cow` 1/32/256 PASS |
+| Context switch (native `resume`) | EMU | HW | EMU | HW | ISSUE-19 record, battery |
+| Instruction cache | EMU | HW | EMU | HW | `config040.s`, ISSUE-21 |
+| Data cache — copyback (default) | EMU | HW | EMU | HW | `docs/REALHW-COPYBACK-ACCEPTANCE-260730.md`, power-cut 8/8 |
+| DMA coherence (A3091 / SDMAC) | EMU | HW | EMU | HW | `dma_cache040.s`, disk-truth runs |
+| Swap / pageout | EMU | HW | EMU | HW | pressure suites, ISSUE-40 |
+| UFS | EMU | HW | EMU | HW | disk-truth, power-cut |
+| NFS (read + write + mmap tail) | EMU | HW | EMU | HW | ISSUE-35 / ISSUE-36, `docs/REALHW-ISSUE36-260728.md` |
+| exec (ELF + COFF path) | EMU | HW | EMU | HW | ISSUE-32, ISSUE-38 |
+| XPAGE / `mprotect` per-page | EMU | HW | EMU | HW | ISSUE-41, `docs/XPAGE-FPROT-FINDING-260806.md` |
 | Denied write-back propagation | EMU | **HW** | — | **HW: inert, proven** | ISSUE-42 **closed on an A3640 2026-08-13**, and the defect itself reproduced on silicon; `docs/REALHW-A3640-260813-ACCEPTANCE.md` |
 | ISP: vector 61 integer emulation | EMU | ? | EMU | HW | `docs/ISP-VECTOR61-LANDED-260806.md`, `isp61ea` 7/7 |
-| FPU: 68040 FPSP | HW | HW | — | — | `fputest` Test A on hardware 2026-07-27 |
+| FPU: 68040 FPSP | EMU | HW | — | — | `fputest` Test A on hardware 2026-07-27 |
 | FPU: 68060 FPSP, unimplemented | — | — | EMU | HW | `ftest060 unimp` passed |
 | FPU: 68060 FPSP, `main` group | — | — | ✗ (see note) | HW | `ftest060 main` 4/4 passed |
 | FPU: 68060 enabled IEEE exceptions | — | — | ✗ (see note) | **HW 6/6** | `docs/REALHW-ISSUE43-ACCEPTANCE-260812.md` |
@@ -211,6 +228,7 @@ survives as history but its conclusion has been replaced.
 | 42 | denied write-back replay is swallowed → silent lost store | **FIXED** | **68040 hardware (A3640)** | `protfault` 3/3; the defect itself reproduced on silicon with the fix switched off, killing the emulator-artifact hypothesis. WB1 still unexercised on both platforms |
 | 43 | 68060 zero-source-operand FP exception lost fp0-7 | FIXED | **060 HW 6/6** | frame discriminator is at `frame+2` |
 | 44 | FPSP arithmetic exit fell through into the BSUN body | FIXED | **060 HW** | one day old; found by an invariant counter, not by a failing test |
+| 45 | every byte-patch assertion was disarmed by `\| tail` | FIXED | build host | build tooling, not the kernel. A deliberately broken patch site: old script exit 0, `[OK] built`, 25 further patch steps; fixed script stops. `check_relink_relocs.py` also ignored `argv`, so four variant scripts validated a different kernel |
 
 ---
 
@@ -224,7 +242,11 @@ survives as history but its conclusion has been replaced.
    * the **WB1** write-back slot and its ISSUE-11 bus-lane realignment (the emulators never set
      WB1S valid; the A3640 run reached WB3 only);
    * ISSUE-43's two `UFPRWRT` branches — nothing in this repo writes FP registers through old
-     `ptrace`, which is also audit gate 6.
+     `ptrace`, which is also audit gate 6;
+   * the **M0 vector probe** (`kvp_*`) has no hardware validation on either CPU, and its cost per
+     syscall has never been measured. It wraps `nullvect`, which every syscall and every page
+     fault passes through, so it is the most load-bearing hook in the tree. Items 3 and 4 of
+     `docs/archive/NEXT-040-SESSION-RUNLIST.md`, not run in the A3640 session.
    * ~~ISSUE-40's `ptd_wake_n` / `pt_waiting` branch~~ — **executed for the first time 2026-08-13**,
      7 times, during the burst suite on a 12.7 MiB machine. Reached by memory pressure, not by
      workload type.
@@ -238,10 +260,12 @@ survives as history but its conclusion has been replaced.
 
 ## 6. Recommended order
 
-0. ~~Tag and archive~~ · ~~ISSUE-42~~ · ~~re-verify the image on 040 hardware~~ — all done
-   2026-08-12/13. `68040/68060-260812-06` is accepted on both silicon.
-1. **Burst suite on the A3640**, then wolf3d/X11 on the RTG kernel `68040-260813-01`
-   (`docs/archive/NEXT-EVENING-RUNLIST-260813.md`).
+0. ~~Tag~~ · ~~ISSUE-42~~ · ~~re-verify the image on 040 hardware~~ · ~~burst suite on the A3640~~ ·
+   ~~wolf3d and X11 on the RTG kernel~~ — all done 2026-08-12/13. `68040/68060-260812-06` is
+   accepted on both silicon; both graphics applications run on the A3640.
+   **Still owed from that list: copy the current baseline to the NAS archive.**
+1. **Publication.** The main track since 2026-08-13; §10 and `RELEASE-PLAN.md`. Phases 1–5 and
+   6a are done, 6b (a second machine) and 7 (the push) are not.
 2. **ISSUE-10 / ISSUE-9 attribution** — the last two release blockers. Slow work: repeat boots,
    not cleverness, and no single-boot bisect.
 3. **Decide the 68LC060 question as a product decision**, not technical debt.
@@ -299,7 +323,7 @@ history; read this file for status.
 
 | Area | Document |
 |---|---|
-| Issue detail and history | `KNOWN-ISSUES.md` (44 issues, chronological, corrections in place) |
+| Issue detail and history | `KNOWN-ISSUES.md` (45 issues, chronological, corrections in place) |
 | 060 FP acceptance | `docs/REALHW-ISSUE43-ACCEPTANCE-260812.md`, `test-tools/issue43-emu-verify-260812.txt` |
 | 060 FPSP acceptance | `docs/REALHW-260807-11-ACCEPTANCE.md` |
 | 060 baseline before FPSP | `docs/REALHW-260806-06-ACCEPTANCE.md`, `docs/REALHW-F2-ACCEPTANCE-260806.md` |
@@ -331,23 +355,36 @@ the summary that belongs in the canonical status.
 The goal of eventually publishing the port's own work on GitHub is realistic — the repository is
 already structured for it — but it is not one commit away.
 
-Already done: `.gitignore` deliberately excludes everything that is not ours to redistribute
-(`amix-src/`, `svr4-src-3b2/`, `usl-svr42/`, `ghindra-unix/`, kernel binaries, the original
-distribution archives). 421 tracked files, no AT&T source among them.
+Decided 2026-08-13: **MIT licence · history rewritten rather than truncated · two repositories**
+(this one, and `amix-unix-boot` for the loader patches).
 
-Open before anything is pushed:
+### Done, and how it was checked
 
-1. **Credentials are in five tracked documents and in the git history** (`10.0.10.10`, the root
-   password). Editing the files is not enough; this is a decision between rewriting history and
-   publishing a fresh repository whose history starts at the publication point. The plan
-   recommends rewriting, because the commit-by-commit record is one of the more valuable things
-   here.
-1b. **59 hard-coded `/home/asokero` paths across 29 tracked files** — measured, not estimated.
-   Every one is a place someone else's build fails.
-2. **The README's first sentence has to say what this is**: an override and patch layer over a
-   proprietary kernel binary, requiring the reader's own licensed AMIX installation. Without
-   that, it reads as a bootable kernel, which it is not.
-3. **Motorola's 060SP/040SP and the NetBSD tree** should be fetched by a script, not vendored.
-4. **Reproducibility is the real gate**: `relink-040.sh` must run clean on a machine that has
-   only the documented toolchain — no scratchpad, no local paths. That is testable, and it
-   should be tested before anyone else tries it.
+| | State | Check |
+|---|---|---|
+| Licence | MIT + `NOTICE` bounding what is *not* ours | `LICENSE`, `NOTICE` |
+| Redistribution hygiene | 422 tracked files, no AT&T or Commodore source among them | `.gitignore` excludes `amix-src/`, `svr4-src-3b2/`, `usl-svr42/`, `ghindra-unix/`, kernel binaries, the distribution archives |
+| Root password | **gone from the working tree and from every commit** | `git log --all -S` finds no commit containing it |
+| Hard-coded home paths | 59 → **11, in 8 files, all prose** — none in any build script | `git grep /home/asokero` |
+| One configuration point | `config.sh` (gitignored) from `config.sh.example`; `tools/check-env.sh` verifies every dependency and exits non-zero | phase 2 |
+| Stock-kernel gate | `tools/verify-stock.sh`, positive and negative tested | phase 3 |
+| Build fails loudly | ISSUE-45: a broken patch site now stops the build, measured against the old behaviour | phase 3 |
+| Documentation | `README.md` opens by saying this is not a kernel; `BUILDING.md`; `docs/METHOD.md` | phases 4, 5 |
+| Third-party material | Motorola's 040SP/060SP and NetBSD are **not vendored** — a path in `config.sh`, documented | phase 1 |
+| Clone test, this machine | a clean clone builds to within the build-id stamp, and found three files the working tree was hiding — but `config.sh` was copied and the toolchains already existed, so it does not test the dependency instructions | phase 6a |
+
+### Open
+
+1. **Phase 6b — a second machine.** Clone, build the cross toolchain from its own upstream,
+   follow `BUILDING.md` and nothing else, then boot the clone-built kernel on the Amiga. This is
+   the gate that decides whether the instructions are true; everything above is this machine
+   testifying about itself.
+2. **Phase 7 — the push**, plus a publication tag.
+3. **The analysis repository.** 98 tracked files here cite `amix-kernel-analysis/vm-map/`,
+   including the `SPECIFICATION` lines of the override units. Published as-is, the evidence chain
+   ends at a path the reader does not have. Either publish that repository too — it needs its own
+   hygiene pass over 132 documents — or import the contracts the override sources name.
+4. **`10.0.10.10` appears in 20 documents.** A private RFC1918 address, not a secret; a decision
+   about tidiness rather than a blocker.
+5. **ISSUE-9 and ISSUE-10 are open**, and honestly recorded. They argue for publishing as a
+   technical preview rather than as a finished port — not for waiting.
