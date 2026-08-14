@@ -674,7 +674,7 @@ run_step 2 python3 "$HERE/src/patch_sysconfig_pagesize.py" "$OUT"
 # comment "a 68060 boot of this dual-CPU binary must never enter the 040 path").
 # The 060 keeps the stock nullvect path; its own SP package is separate work.
 #
-# Requires build/unix_boot040 (rel.c PC-rel reloc fix, amix-unix-boot commit d6439a5) -- the FPSP body
+# Requires build/unix_boot040 (rel.c PC-rel reloc fix, amix-unix-boot v1.0-040-060) -- the FPSP body
 # carries ~330 PC-relative relocations that the stock loader mis-applies.
 #
 # FPSP=0 builds the pre-2026-07-26 kernel WITHOUT FPSP.  Keep that escape hatch:

@@ -72,9 +72,8 @@ is loaded into (analysed, declined), and the Zorro III device aperture (measured
 
 * Amiga 3000 (or A2500/A4000-class hardware AMIX supports) with a 68040 or 68060 accelerator
 * **SetPatch before booting on a 68060** — a precondition, not an optimisation
-* the patched loader, `unix_boot040`, from the companion project **`amix-unix-boot`** — which
-  patches Markus Wild's `unix_boot` (Aminet `misc/unix/unix_boot`), and inherits its requirement
-  for **`arp.library`** in `LIBS:`
+* the patched loader, `unix_boot040`, from the companion project **`amix-unix-boot`** (tag
+  `v1.0-040-060`) — which patches Markus Wild's `unix_boot`, Aminet `misc/unix/unix_boot`
 * your own AMIX SVR4 2.1c installation
 
 Tested accelerators: **Mercury with a 68040 (35 MHz)**, **Mercury with a 68060 (66 MHz)** and

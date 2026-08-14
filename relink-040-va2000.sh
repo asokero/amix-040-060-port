@@ -24,7 +24,7 @@
 # `parinit` that calls va2000init() then tail-jmps parinit_orig.
 #
 # Requires the PC-relative-relocation loader fix (amix-unix-boot, rel.c, commit
-# amix-unix-boot d6439a5) for the FPSP body's ~330 PC-relative relocs -- same requirement as
+# amix-unix-boot v1.0-040-060) for the FPSP body's ~330 PC-relative relocs -- same requirement as
 # relink-040-fpsp-xsvga.sh.
 #
 # Usage: sh relink-040-va2000.sh [base-kernel] [output]
@@ -124,7 +124,7 @@ echo "[*] reloc validation:"
 run_step 1 python3 "$HERE/src/check_relink_relocs.py" "$OUT"
 DSZ=$(( 0x$(m68k-linux-gnu-readelf -SW "$OUT" | awk '{gsub(/[][]/,"")} $2==".data"{print $6}') ))
 [ $((DSZ % 4)) -eq 0 ] && echo "[OK] .data 4-aligned" || { echo "[FAIL] .data misaligned"; exit 1; }
-echo "[*] PC-relative relocs present (loader MUST have the amix-unix-boot d6439a5 fix):"
+echo "[*] PC-relative relocs present (loader MUST have the amix-unix-boot v1.0-040-060 fix):"
 m68k-linux-gnu-readelf -rW "$OUT" 2>/dev/null | awk '$3 ~ /^R_68K_PC/{n++} END{print "      "n" PC-relative records"}'
 
 run_step all python3 "$HERE/src/stamp_buildid.py" "$OUT"

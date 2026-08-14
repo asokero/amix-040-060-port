@@ -379,7 +379,7 @@
 > matalan saavutettavuuden — ne kasvattaisivat validoimatonta deltaa ilman vastaavaa hyötyä.
 
 > ## ✅✅✅ 2026-07-24 — FPU TIER-2 (FPSP) M1–M4 VALMIS + GRAAFINEN X11 TOIMII PICCOLOLLA + VA2000-KERNELI RAUTATESTIIN
-> **1. LOADER-FIX (f0ed373 (pre-split kernelsupport hash; published as amix-unix-boot d6439a5)) — infrastruktuurivoitto.** FPSP-kerneli ei latautunut: Guru
+> **1. LOADER-FIX (f0ed373 (pre-split kernelsupport hash; published as amix-unix-boot v1.0-040-060)) — infrastruktuurivoitto.** FPSP-kerneli ei latautunut: Guru
 > `D245 4C41` EI ollut kaatuminen vaan **loaderin oma virhemakro** (rel.c:53
 > `COMPLAIN = Alert(0x52454C41|AT_DeadEnd)`, 0x52454C41 = ASCII "RELA"). `relocsection()`
 > osasi VAIN `R_68K_32`. Census: standardi 29154×R_68K_32 vs FPSP + **330 PC-suhteellista**

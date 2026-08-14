@@ -81,7 +81,7 @@ printf "image     %s\n" "$IMG"
 printf "build id  %s   (the banner shows 68060- on a 060: that is the CPU, not the image)\n" "${BID:-UNSTAMPED}"
 printf "sha256    %s\n" "$SHA"
 printf "text      %s (0x%x)   data %s   bss %s\n" "$TEXT" "$TEXT" "$DATA" "$BSS"
-printf "loader    unix_boot040 is MANDATORY (PC-rel reloc fix, amix-unix-boot d6439a5)\n"
+printf "loader    unix_boot040 is MANDATORY (PC-rel reloc fix, amix-unix-boot v1.0-040-060)\n"
 printf "load base %s   <- addresses below assume this; read tvaddr from the boot output\n" "$BASE"
 echo '```'
 echo

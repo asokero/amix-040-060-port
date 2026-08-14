@@ -215,9 +215,10 @@ unix_boot040 unix-040
      that build used to print an instruction to use the stock loader. Reasons 1 and 2 still do,
      so it no longer does.
 * **On a 68060, run SetPatch first.** It is a boot precondition, not an optimisation.
-* **`unix_boot` needs `arp.library`** at run time — a requirement of Markus Wild's original, not
-  of our patches. It is not present on a stock AmigaOS 3.x install; put it in `LIBS:` first or the
-  loader will not start.
+* **`arp.library` is not needed** by `unix_boot040`. Markus Wild's readme lists it and the
+  *prebuilt* loader in his archive does reference it, but the sources do not and neither does the
+  binary built from the patches — measured: zero references to `arp.library` or `ArpBase` in
+  `unix_boot040`, three in the shipped executable. It matters only if you run his original.
 * On a 68040 the loader sets `cputype = 40`; verify it reads `0x28` rather than assuming.
 
 ---

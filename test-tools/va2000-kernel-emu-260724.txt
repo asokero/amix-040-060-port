@@ -158,7 +158,7 @@ WHAT THE USER MUST DO ON THE REAL MACHINE
    the existing unix-040/unix-040-dbg kernels.
 2. Boot with the 040-aware loader, exactly like every other 040 kernel in
    this project: `unix_boot040 unix-040-va2000-dbg` (or the non-debug name).
-   Requires the loader with the PC-relative-relocation fix (commit f0ed373 (pre-split kernelsupport hash; published as amix-unix-boot d6439a5))
+   Requires the loader with the PC-relative-relocation fix (commit f0ed373 (pre-split kernelsupport hash; published as amix-unix-boot v1.0-040-060))
    -- the FPSP body carries ~330 PC-relative relocations, same requirement
    as every FPSP-bearing kernel already in the field.
 3. Create the device node once (not persisted across a fresh filesystem):

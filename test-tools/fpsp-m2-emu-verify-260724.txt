@@ -5,7 +5,7 @@ Kernel: build/unix-040-fpsp-dbg  (68040-260724-07) = standard dbg 260724-04
         + build/fpsp040.o (M1) + src/fpsp_glue040.o (M2), M68Kvec[11]
         retargeted nullvect -> fpsp_vec11.
 Loader: build/unix_boot040 REBUILT with the rel.c PC-relative relocation fix
-        (amix-unix-boot commit f0ed373 (pre-split kernelsupport hash; published as amix-unix-boot d6439a5)) -- REQUIRED, see below.
+        (amix-unix-boot commit f0ed373 (pre-split kernelsupport hash; published as amix-unix-boot v1.0-040-060)) -- REQUIRED, see below.
 Emulator: Amiberry a3000ux (68040, Piccolo_Z2), one clean instance.
 
 THE BOOT BLOCKER AND ITS FIX
