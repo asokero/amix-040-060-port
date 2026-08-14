@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # patch_dbgpublish.py -- DBG-TEXT-PUBLISH wiring: retarget the three debugger
 # user-memory write calls to the publishing wrappers in dbgpublish040.o
-# (2026-07-31).  Spec: analyysirepo vm-map/DEBUGGER-TEXT-PUBLICATION-PATCH-SPEC.md
+# (2026-07-31).  Spec: docs/contracts/DEBUGGER-TEXT-PUBLICATION-PATCH-SPEC.md
 # (6c1cb84).  Rationale in src/dbgpublish040.s.
 #
 #   0x47eb8  suword  -> dbg_suword_publish    ptrace POKETEXT, already-writable

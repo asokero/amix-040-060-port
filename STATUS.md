@@ -107,7 +107,7 @@ under which a row that is green in one column and blank in another means anythin
 | Capability | 040 emu | 040 HW | 060 emu | 060 HW | Evidence |
 |---|:--:|:--:|:--:|:--:|---|
 | Boot to multiuser, native userland | EMU | HW | EMU | HW | `docs/REALHW-ACCEPTANCE-260731.md`, `docs/REALHW-260806-06-ACCEPTANCE.md` |
-| MMU / HAT, page-table lifecycle | EMU | HW | EMU | HW | `amix-kernel-analysis/vm-map/`, battery |
+| MMU / HAT, page-table lifecycle | EMU | HW | EMU | HW | `docs/contracts/INDEX.md`, battery |
 | fork / COW (`hat_dup`) | EMU | HW | EMU | HW | `hat_dup_cow` 1/32/256 PASS |
 | Context switch (native `resume`) | EMU | HW | EMU | HW | ISSUE-19 record, battery |
 | Instruction cache | EMU | HW | EMU | HW | `config040.s`, ISSUE-21 |
@@ -127,7 +127,7 @@ under which a row that is green in one column and blank in another means anythin
 | FPU: 68060 context save/restore | — | — | EMU | HW | ISSUE-43; `fpc_*` counters |
 | Graphics: Piccolo / Xsvga (Z2) | — | — | — | HW | `amix-xsvga-driver-feasibility` |
 | Graphics: VA2000 RTG | — | HW | — | HW | `docs/REALHW-ACCEPTANCE-260801.md` |
-| RAM above 32 MB | — | — | — | **not implemented** | `vm-map/RAM-BEYOND-16MB-ANALYSIS.md` |
+| RAM above 32 MB | — | — | — | **not implemented** | §3; private analysis retained outside this repository |
 | Zorro III device aperture | — | — | — | **documented limitation** | `docs/Z3-BUSBENCH-Z2-MEASUREMENT-260810.md` |
 | 68LC060 / EC variants | — | — | — | **untested, unknown** | see §3 FPU |
 
@@ -171,7 +171,7 @@ and all six enabled IEEE classes bit-exact since `-260812-02`. The 060 FP contex
 (`fpu_save`/`fpu_restore`/`fpu_setup`) is CPU-gated and tests the frame discriminator at
 `frame+2`; the 040 bodies are byte-identical to stock and provably not entered.
 ⚠ **68LC060 is not supported and not tested**: the 060 `fpuinit` branch specified in
-`vm-map/FPU-TIER1-ENABLE-SPEC.md` (PCR bit 1 + vector-11 negative probe) was never implemented,
+`docs/contracts/FPU-TIER1-ENABLE-SPEC.md` (PCR bit 1 + vector-11 negative probe) was never implemented,
 so a CPU without a usable FPU would take an untested path.
 
 **RAM > 32 MB.** The machine offers 48 MB in two regions (32 MB @`0x08000000` + 16 MB
@@ -341,9 +341,9 @@ history; read this file for status.
 | 060 baseline before FPSP | `docs/REALHW-260806-06-ACCEPTANCE.md`, `docs/REALHW-F2-ACCEPTANCE-260806.md` |
 | 040 acceptance | `docs/REALHW-ACCEPTANCE-260731.md`, `docs/REALHW-ACCEPTANCE-260801.md`, `test-tools/realhw-verify-260727.txt` |
 | Pending 040 hardware work | `docs/archive/NEXT-040-SESSION-RUNLIST.md` |
-| Static contracts and audits | `../amix-kernel-analysis/vm-map/` (132 documents) |
-| FP contract | `vm-map/FPU-LAZY-CONTRACT-AUDIT.md`, `vm-map/FPU-TIER1-ENABLE-SPEC.md` |
-| RAM expansion | `vm-map/RAM-BEYOND-16MB-ANALYSIS.md` |
+| Static implementation contracts | `docs/contracts/INDEX.md` (34 normative records imported from the private analysis diary) |
+| FP contract | `docs/contracts/FPU-LAZY-CONTRACT-AUDIT.md`, `docs/contracts/FPU-TIER1-ENABLE-SPEC.md` |
+| RAM expansion | §3; the declined private analysis is not an implementation dependency |
 | Zorro III | `docs/Z3-BUSBENCH-Z2-MEASUREMENT-260810.md` |
 | Build and toolchain | `LOCAL-BUILD-NOTES.md`, `relink-040.sh` |
 | Test tooling | `test-tools/README.md` |
@@ -375,13 +375,14 @@ Decided 2026-08-13: **MIT licence · history rewritten rather than truncated · 
 | | State | Check |
 |---|---|---|
 | Licence | MIT + `NOTICE` bounding what is *not* ours | `LICENSE`, `NOTICE` |
-| Redistribution hygiene | 422 tracked files, no AT&T or Commodore source among them | `.gitignore` excludes `amix-src/`, `svr4-src-3b2/`, `usl-svr42/`, `ghindra-unix/`, kernel binaries, the distribution archives |
+| Redistribution hygiene | 462 tracked files after the contract import, no AT&T or Commodore source among them | `.gitignore` excludes `amix-src/`, `svr4-src-3b2/`, `usl-svr42/`, `ghindra-unix/`, kernel binaries, the distribution archives |
 | Root password | **gone from the working tree and from every commit** | `git log --all -S` finds no commit containing it |
 | Hard-coded home paths | 59 → **11, in 8 files, all prose** — none in any build script | `git grep /home/asokero` |
 | One configuration point | `config.sh` (gitignored) from `config.sh.example`; `tools/check-env.sh` verifies every dependency and exits non-zero | phase 2 |
 | Stock-kernel gate | `tools/verify-stock.sh`, positive and negative tested | phase 3 |
 | Build fails loudly | ISSUE-45: a broken patch site now stops the build, measured against the old behaviour | phase 3 |
 | Documentation | `README.md` opens by saying this is not a kernel; `BUILDING.md`; `docs/METHOD.md` | phases 4, 5 |
+| Static evidence chain | 34 implementation-facing contracts imported; all `src/` specification references resolve locally | `docs/contracts/INDEX.md`; `python3 tools/check-verbatim.py` exits 0 |
 | Third-party material | Motorola's 040SP/060SP and NetBSD are **not vendored** — a path in `config.sh`, documented | phase 1 |
 | Clone test, this machine | a clean clone builds to within the build-id stamp, and found three files the working tree was hiding — but `config.sh` was copied and the toolchains already existed, so it does not test the dependency instructions | phase 6a |
 
@@ -392,11 +393,7 @@ Decided 2026-08-13: **MIT licence · history rewritten rather than truncated · 
    the gate that decides whether the instructions are true; everything above is this machine
    testifying about itself.
 2. **Phase 7 — the push**, plus a publication tag.
-3. **The analysis repository.** 98 tracked files here cite `amix-kernel-analysis/vm-map/`,
-   including the `SPECIFICATION` lines of the override units. Published as-is, the evidence chain
-   ends at a path the reader does not have. Either publish that repository too — it needs its own
-   hygiene pass over 132 documents — or import the contracts the override sources name.
-4. **`10.0.10.10` appears in 20 documents.** A private RFC1918 address, not a secret; a decision
+3. **`10.0.10.10` appears in 20 documents.** A private RFC1918 address, not a secret; a decision
    about tidiness rather than a blocker.
-5. **ISSUE-9 and ISSUE-10 are open**, and honestly recorded. They argue for publishing as a
+4. **ISSUE-9 and ISSUE-10 are open**, and honestly recorded. They argue for publishing as a
    technical preview rather than as a finished port — not for waiting.

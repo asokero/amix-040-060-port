@@ -1,7 +1,7 @@
 | segkmem040.s -- CM-campaign B1 group: the direct linear-kptbl segkmem writers +
 | the global flushmmu descriptor-publication lever (2026-07-20).
 |
-| Spec: analyysirepo amix-kernel-analysis/vm-map/CM-PTE-WRITER-MATRIX.md
+| Spec: docs/contracts/CM-PTE-WRITER-MATRIX.md
 | ("Direct segkmem blocker", "Census closure", "B1 implementation group" items
 | 5-6) against kernel 4aad0a9 / build/unix-040 sha256 bc5a43e6...  Companion
 | byte patches (segkmem_checkprot/segkmem_getprot READERS, same 2 KiB geometry

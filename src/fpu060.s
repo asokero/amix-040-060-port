@@ -22,9 +22,9 @@
 | only because their operand exponents happened to be non-zero (-Inf 0x7fff, +2 0x4000, ...),
 | which is not a property anything should depend on.
 |
-| SPECIFICATION.  amix-kernel-analysis/vm-map/FPU-LAZY-CONTRACT-AUDIT.md (Codex, 64b55cf)
+| SPECIFICATION.  docs/contracts/FPU-LAZY-CONTRACT-AUDIT.md (Codex, 64b55cf)
 | section "D. Contract-derived CPU-specific state implementation", with the 060 sequences and
-| the 12-byte reset frame from vm-map/FPU-TIER1-ENABLE-SPEC.md.  Independent confirmation of
+| the 12-byte reset frame from docs/contracts/FPU-TIER1-ENABLE-SPEC.md.  Independent confirmation of
 | the discriminator: NetBSD switch_subr.s tests `2(%a2)` after fsave on the 060 and `(%a2)`
 | otherwise (usr/src/sys/arch/m68k/m68k/switch_subr.s:123-129, 234-243), and frame.h:162-165
 | defines FPF6_FMT_NULL 0x00 / FPF6_FMT_IDLE 0x60 / FPF6_FMT_EXCP 0xe0.
@@ -46,7 +46,7 @@
 |
 | WHY SEPARATE CONTROL-REGISTER MOVES on the 060 (fmovel %fpcr / %fpsr / %fpiar rather than
 | stock's one fmoveml %fpiar/%fpsr/%fpcr): it is what the 060 context reference does, and what
-| FPU-TIER1-ENABLE-SPEC.md specifies.  Measurement says the multi-register form does execute
+| docs/contracts/FPU-TIER1-ENABLE-SPEC.md specifies.  Measurement says the multi-register form does execute
 | in 060 hardware here -- an f60_entry_n delta of exactly +6 over a six-child fpenab060 run
 | would be far larger if each save trapped into the package -- so this is not a bug fix, it is
 | staying on the documented 060 sequence.

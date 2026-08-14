@@ -1,6 +1,6 @@
 | dbgpublish040.s -- DBG-TEXT-PUBLISH: publish debugger writes to user memory so
 | the 68040/68060 instruction fetch can see them under copyback (2026-07-31).
-| Spec: analyysirepo vm-map/DEBUGGER-TEXT-PUBLICATION-PATCH-SPEC.md (6c1cb84),
+| Spec: docs/contracts/DEBUGGER-TEXT-PUBLICATION-PATCH-SPEC.md (6c1cb84),
 | which answers the residual left open when ISSUE-38 closed.
 |
 | WHY.  ISSUE-38 established the rule the hard way: bytes the KERNEL CPU writes

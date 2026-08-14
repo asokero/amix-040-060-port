@@ -13,7 +13,7 @@
 | process's stack page tables from the old AS to the new AS instead of faulting
 | them back in.  On the 040 its body is UNPORTED (only an 8-byte root-load patch;
 | "all section/segment/page/SDE/PTE/ptdat arithmetic is still 030" -- Codex
-| HAT-EXEC-AUDIT.md).  Critically it calls `hat_ptalloc` with flag 0 (steal ALLOWED;
+| docs/contracts/HAT-EXEC-AUDIT.md).  Critically it calls `hat_ptalloc` with flag 0 (steal ALLOWED;
 | verified @0xb7232 clrl %sp@-), and under memory pressure the stock allocator falls
 | into its UNPATCHED-030 STEAL path (8-byte SDE math 0xb6b52/72, 21-bit PFN 0xb6bb2,
 | 2 KiB VA step 0xb6c62).  That steal grabs an unlocked page table from ANY address
@@ -25,7 +25,7 @@
 | Blocking the steal is NOT an option: on hat_ptalloc==NULL hat_exec cmn_err(CE_PANIC)s
 | (0xb7250), so steal is how it dodges the panic under pressure.
 |
-| FIX (Codex HAT-EXEC-POLICY.md-endorsed): make hat_exec a NO-OP returning 0.  The move
+| FIX (policy recorded in docs/contracts/HAT-EXEC-AUDIT.md): make hat_exec a NO-OP returning 0.  The move
 | is a pure optimization -- as_exec already moves the stack SEG object (data ownership is
 | on the seg, not the PTEs), relvm tears down the old AS, and the moved stack's
 | translations rebuild via 040 faults through the ported hat_pteload.  A no-op never

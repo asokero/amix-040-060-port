@@ -2,7 +2,7 @@
 # patch_ufsbmap.py -- ISSUE-31: ufs_bmap VM-page geometry (the UFS provider half of the
 # ISSUE-27 boundary).
 #
-# Authoritative analysis: amix-kernel-analysis/vm-map/PAGECREATE-REACHABILITY-AND-UFSBMAP.md
+# Authoritative analysis: docs/contracts/PAGECREATE-REACHABILITY-AND-UFSBMAP.md
 # Source contract:        svr4-v4/usr/src/uts/i386/fs/ufs/ufs_bmap.c
 #
 # WHY THIS EXISTS

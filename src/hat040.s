@@ -596,7 +596,7 @@ Lrp_flush:
 	bra	Lepi
 
 | --- Lcm_sel: CM-bit class selector (caches campaign B1, 2026-07-20; spec =
-| analyysirepo vm-map/CM-PTE-WRITER-MATRIX.md "Required cache-class selector").
+| docs/contracts/CM-PTE-WRITER-MATRIX.md "Required cache-class selector").
 | Shared by all three complete leaf constructors (Lpfnok / Lwleaf / Lreplace).
 | ORs the 040 CM field (leaf bits 6:5) into the already-computed status word at
 | fp@(-44).  Status is always one of {0,1,5} here (CM bits clear), so a plain OR
@@ -1072,7 +1072,7 @@ Lhl_maybefree:
 	braw	Lhl_maybefree
 Lhl_dofree:
 	orib	&-128,%a4@		| mark page gone
-| ---- caches Step B2 ordering fix (2026-07-23, CB-PAGE-LIFECYCLE-CLOSURE.md
+| ---- caches Step B2 ordering fix (2026-07-23, docs/contracts/CB-PAGE-LIFECYCLE-CLOSURE.md
 | "hat_unload(HAT_RELEPP) ordering"): the stock order freed the page while its
 | resident leaf PTE was still in memory -- the physical page entered a free
 | list with a live translation.  Retire the leaf FIRST, publish the descriptor
@@ -1220,7 +1220,7 @@ Lhae_done:
 	pea	0x1000			| size 4KB (page-aligned, zeroed)
 	jsr	kmem_zalloc
 	addqw	&8,%sp			| a0 = root VA (page-aligned)
-| CM-B1 (2026-07-20, CM-PTE-WRITER-MATRIX.md "Whole-AS allocation/free ordering"):
+| CM-B1 (2026-07-20, docs/contracts/CM-PTE-WRITER-MATRIX.md "Whole-AS allocation/free ordering"):
 | publish the ZEROED root before exposing it via as->hat_root.  kmem_zalloc's
 | zero stores go through the normal kernel mapping (kvseg VA, not the DTT0
 | identity alias); under a copyback DC they could sit dirty while a context
@@ -1313,8 +1313,8 @@ Lhf_nodbg:
 |     (availrmem -1/exec, availrmem + pages_pp_kernel conserved => a REAL page).
 |     The order is the whole risk: the legacy section 2/3 descriptors ARE root
 |     words 0x10..0x1f, i.e. native entries A4..A7, and the walk below both reads
-|     and clears them.  src/legacysdt040.s + analyysirepo vm-map/
-|     ISSUE40-LEGACY-SDT-TEARDOWN-CONTRACT.md carry the full argument.
+|     and clears them.  src/legacysdt040.s plus
+|     docs/contracts/ISSUE40-LEGACY-SDT-TEARDOWN-CONTRACT.md carry the full argument.
 	movel	%fp@(8),%sp@-		| as
 	jsr	hat_legacy_sdt_free
 	addqw	&4,%sp
@@ -1507,7 +1507,7 @@ Lf_nextPTE:
 	cmpl	%a3,%d3			| d3 - a3
 	bhiw	Lf_PTE			| d3 > a3 -> more PTEs in this leaf
 | leaf table fully scanned -> free it (hat_ptfree preserves d4/a4/a5)
-| CM-B1 teardown ordering (2026-07-20, CM-PTE-WRITER-MATRIX.md "replacement or
+| CM-B1 teardown ordering (2026-07-20, docs/contracts/CM-PTE-WRITER-MATRIX.md "replacement or
 | teardown" protocol): DETACH the parent descriptor and PUBLISH the descriptor
 | stores BEFORE the leaf page can reach an allocator.  The stock order freed the
 | leaf first and pushed only once at Lf_done -- under a copyback DC the dirty
@@ -1606,8 +1606,8 @@ hat_ptfree:
 | page ever allocated left a permanent one-unit crumb in an SDT backing page -- and
 | those crumbs are what pinned ISSUE-40's page (part 1 released the legacy SDT and
 | got ZERO pages back on hardware; residual p_sdtbits 0x000e5fff .. 0x5fffffff).
-| The retirement itself is src/ptdatfree040.s (contract: analyysirepo
-| vm-map/ISSUE40-PTDAT-TEARDOWN-CONTRACT.md); this routine keeps the page half.
+| The retirement itself is src/ptdatfree040.s (contract:
+| docs/contracts/ISSUE40-PTDAT-TEARDOWN-CONTRACT.md); this routine keeps the page half.
 |
 | Two changes here beyond the call:
 |   * the early `clrl pp@(32)` is GONE from the decision path.  It destroyed the
@@ -1806,7 +1806,7 @@ Lhfa_msg:
 Lhfa_n:
 	.long	0
 | --- hat_cm_ram: the managed-ordinary-RAM cache-mode class for the caches
-| campaign (CM-PTE-WRITER-MATRIX.md stage table).  B1 = 0x00 (writethrough),
+| campaign (docs/contracts/CM-PTE-WRITER-MATRIX.md stage table).  B1 = 0x00 (writethrough),
 | B2 = 0x20 (copyback).  Read by hat_pteload's Lcm_sel, hat_dup040's private-leaf
 | constructor and bp_map040's alias constructor.  GLOBAL + in .data so the stage
 | is a 4-byte initializer change (or a boot-time poke) without touching the three

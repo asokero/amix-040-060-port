@@ -86,7 +86,7 @@ haltsys:
 Lhs_nomsg:
 	movew	&0x2700,%sr		| interrupts off, supervisor (verbatim original)
 	| ---- caches-on Step B1 (2026-07-23): push+invalidate the DATA cache BEFORE the
-	| MMU/cache teardown below (DTT0-NARROWING-SPEC.md "Shutdown ordering").  In B1
+	| MMU/cache teardown below (docs/contracts/DTT0-NARROWING-SPEC.md "Shutdown ordering").  In B1
 	| writethrough there are no dirty lines, so this is a pure invalidate (harmless);
 	| in a future B2 copyback build the push is MANDATORY -- invalidating dirty lines
 	| at shutdown would lose the last writes.  cpusha dc covers both stages.

@@ -2,8 +2,7 @@
 # patch_pageoutdefs.py -- Model B (4KB page frame) pageout-policy defaults
 # conversion group (2026-07-19).
 #
-# Authoritative specs: amix-kernel-analysis/vm-map/SETUPCLOCK-VMETER-PATCH-SPEC.md
-# + DATA-INITIALIZER-PAGESIZE-CENSUS.md "Pageout boot defaults" (commit cbbf40f).
+# Authoritative spec: docs/contracts/SETUPCLOCK-VMETER-PATCH-SPEC.md.
 #
 # The pageout thresholds lotsfree/desfree/minfree have ZERO .data initializers;
 # setupclock installs the compiled defaults on every normal boot.  Those

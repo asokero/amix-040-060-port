@@ -78,7 +78,7 @@ prumap:
 	movel	%a2@,%d4
 	beqw	Lpm_out			| not filled -> bail (retry later)
 	movel	%d4,%d5
-| CM-B1 (2026-07-20, CM-PTE-WRITER-MATRIX.md prumap row): do NOT inherit the CM
+| CM-B1 (2026-07-20, docs/contracts/CM-PTE-WRITER-MATRIX.md prumap row): do NOT inherit the CM
 | field from the p0init-written flags (p0init is an 030-format shadow producer:
 | its low bits are software values, not an 040 cache policy) -- mask CM out of
 | the inherited flags and FORCE CM=0x60 (noncacheable).  The u-area/segu class

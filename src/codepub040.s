@@ -1,6 +1,6 @@
 | codepub040.s -- USER-CODE-PUBLISH: make mprotect(..., PROT_EXEC) the general
 | user-code cache-publication barrier under 68040/68060 copyback (2026-08-01).
-| Spec: analyysirepo vm-map/USER-CODE-CACHE-ABI-SPEC.md (6c1cb84), the residual
+| Spec: docs/contracts/USER-CODE-CACHE-ABI-SPEC.md (6c1cb84), the residual
 | ISSUE-38 left open and DBG-TEXT-PUBLISH did not cover.
 |
 | WHY.  ISSUE-38's rule generalises: bytes written with the CPU into a page that

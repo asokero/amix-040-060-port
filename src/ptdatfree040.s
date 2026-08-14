@@ -1,6 +1,6 @@
 | ptdatfree040.s -- ISSUE-40 part 2: retire the ptdat metadata a table page owns,
 | the half that actually returns the page (2026-08-02).
-| Contract: analyysirepo vm-map/ISSUE40-PTDAT-TEARDOWN-CONTRACT.md (ac954b3),
+| Contract: docs/contracts/ISSUE40-PTDAT-TEARDOWN-CONTRACT.md (ac954b3),
 | which answers kernelsupport/ISSUE40-PTDAT-CODEX-QUESTIONS.md P1..P5.
 | Part 1 and its measurement: src/legacysdt040.s,
 | docs/REALHW-ISSUE40-PART1-260801.md.

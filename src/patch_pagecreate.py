@@ -2,8 +2,8 @@
 # patch_pagecreate.py -- ISSUE-27: Model B (4KB page frame) conversion of the
 # segmap_pagecreate CONSUMER family (tail-zero bounds + as_iolock page-list geometry).
 #
-# Authoritative spec:  amix-kernel-analysis/vm-map/PAGECREATE-TAILZERO-SPEC.md
-# Authoritative census: amix-kernel-analysis/vm-map/PAGECREATE-TAILZERO-CENSUS.md
+# Authoritative spec:  docs/contracts/PAGECREATE-TAILZERO-SPEC.md
+# Authoritative census: docs/contracts/PAGECREATE-TAILZERO-CENSUS.md
 #
 # ROOT CAUSE
 # segmap_pagecreate (0xa9722) already creates COMPLETE 4 KiB pages and deliberately

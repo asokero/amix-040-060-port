@@ -9,7 +9,7 @@
 # test-tools/realhw-verify-260727.txt section 5, KNOWN-ISSUES.md ISSUE-35.
 #
 # ATTRIBUTION: OURS.  Codex settled it statically rather than by booting the 030 kernel
-# (vm-map/NFS-REALHW-ISSUE35-FOLLOWUP.md): on stock 030 the same code is CORRECT, because
+# (docs/contracts/NFS-REALHW-ISSUE35-FOLLOWUP.md): on stock 030 the same code is CORRECT, because
 # page_t offsets advance by 2048 and io_len advances by 2048 together.  Model B moved the
 # page population to 4 KiB and left io_len at 2 KiB.  This is a Model-B mixed-geometry
 # regression, i.e. our own.

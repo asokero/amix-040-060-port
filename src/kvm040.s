@@ -58,7 +58,7 @@ Lss_loop:
 	addil	&64,%d1			| Model B: 64 4KB-clicks / 256KB pointer entry
 	cmpil	&1023,%d1
 	ble	Lss_loop		| 16 iterations (4 MB / 256 KB)
-| CM-B1 (2026-07-20, CM-PTE-WRITER-MATRIX.md census gap): publish the kptr040
+| CM-B1 (2026-07-20, docs/contracts/CM-PTE-WRITER-MATRIX.md census gap): publish the kptr040
 | pointer-descriptor stores before any first hardware walk of syssegs.  Today
 | the writes land in kernel .data reached through the DTT0 identity window
 | (uncached), so this is redundant -- but the protocol must not silently depend

@@ -63,8 +63,8 @@ PATCHES = [
     # `movec %a0,%urp` (4e7b 8806) -- 040 user-mode root.  The following pflusha (0xb58ca) is
     # already converted by patch_pflusha_040.py.  Same real 030->040 swap as the swtch site.
     (0xb58c6, b"\xf0\x11\x4c\x00", b"\x4e\x7b\x88\x06", "hat_map:pmove crp -> movec a0,urp"),
-    # hat_map (0xb58d2) -- DISABLE the vnode-preload loop (2026-07-07, Codex P-MAPPING-MATRIX.md
-    # + HAT-MAP-AUDIT.md, plan in src/hat-map-040-fix-plan.md).  NOT a PMMU swap -- a
+    # hat_map (0xb58d2) -- DISABLE the vnode-preload loop (2026-07-07, Codex
+    # docs/contracts/P-MAPPING-MATRIX.md; plan in src/hat-map-040-fix-plan.md).  NOT a PMMU swap -- a
     # control-flow neuter, kept here for locality with the hat_map urp patch above (all hat_map
     # byte edits in one place).  The retained stock preload writes LEGACY pfn<<11 "phantom" PTEs
     # into pp->p_mapping chains (shift @0xb5c10, chain link @0xb5c3e) while hat_pteload/hat_dup040

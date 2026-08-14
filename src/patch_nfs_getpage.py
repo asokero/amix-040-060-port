@@ -7,7 +7,7 @@
 # page-in path does not.  Evidence: test-tools/issue36-nfs-mmap-tail-sigbus-260727.txt, minimal
 # repro test-tools/rdmin.c, KNOWN-ISSUES.md ISSUE-36.
 #
-# WHERE IT COMES FROM (Codex, amix-kernel-analysis vm-map/NFS-READSIDE-ISSUE36-SITE.md, c95fd8c)
+# WHERE IT COMES FROM (Codex, docs/contracts/NFS-READSIDE-ISSUE36-SITE.md, c95fd8c)
 # nfs_getpage's EOF allowance still adds the 2 KiB PAGEOFFSET:
 #
 #   0x8b6b6  movel %a2@(184),%d1     d1 = rp->r_size

@@ -107,7 +107,7 @@ Full instructions, including the toolchains and how the override mechanism works
 | `src/patch_*.py` | byte-patchers for what a symbol override cannot express |
 | `tools/` | `check-env.sh`, `status-facts.sh` (generates counter addresses), `verify-stock.sh`, `config-load.sh` |
 | `test-tools/` | the instruments — `protfault`, `fpenab060`, `fp060probe`, `isp61ea`, `kpeek`, the battery |
-| `docs/` | acceptance records, contracts, audits and findings — the evidence behind the table above |
+| `docs/` | acceptance records, contracts, audits and findings — the evidence behind the table above; [`docs/contracts/INDEX.md`](docs/contracts/INDEX.md) maps source units to their normative contracts |
 | `docs/archive/` | session prompts, run-lists and task briefs: working notes, kept deliberately |
 | `STATUS.md` | canonical status: what is proven, on which platform, with links to the evidence |
 | `KNOWN-ISSUES.md` | 45 issues, chronological, corrections in place |
@@ -122,6 +122,8 @@ Full instructions, including the toolchains and how the override mechanism works
 * **[`docs/METHOD.md`](docs/METHOD.md)** — how the work was done: instruments before fixes,
   pre-registered expectations, the invariants that caught what passing tests could not, and an
   honest account of what the AI assistance did and did not do.
+* **[`docs/contracts/INDEX.md`](docs/contracts/INDEX.md)** — the 34 static contracts cited by the
+  implementation, with their original analysis names and source consumers.
 
 The record deliberately keeps the failures: pre-registered expectations that did not happen, fixes
 reverted within the hour, a clock figure that was wrong for months and deleted one finding while

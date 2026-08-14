@@ -2,8 +2,7 @@
 # patch_execstk.py -- Model B (4KB page frame) exec initial-stack conversion
 # group (2026-07-19).
 #
-# Authoritative specs: amix-kernel-analysis/vm-map/EXEC-INITIALSTK-PATCH-SPEC.md
-# + DATA-INITIALIZER-PAGESIZE-CENSUS.md action matrix prio 1 (commit cbbf40f).
+# Authoritative spec: docs/contracts/EXEC-INITIALSTK-PATCH-SPEC.md.
 #
 # Source contract (svr4-src-3b2 os/machdep.c extractarg + os/exec.c), described rather
 # than quoted: exec_initialstk is SSIZE clicks converted to bytes, SSIZE being 1, i.e. one

@@ -4,8 +4,8 @@
 #
 # After the hat_pageunload040 M-harvest fix (260718-03) dirty anon pages DO reach
 # swap, but the swap-IN path was never hot before and still carries the old 2KB
-# page contract.  Authoritative audit: amix-kernel-analysis/vm-map/
-# SPEC-SWAPIN-HOT-PATH-AUDIT.md (commit 7739bf6).  The decisive defect is the
+# page contract.  The exact patch contract is retained below; its cross-family
+# status is in docs/contracts/PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md.  The decisive defect is the
 # compiled DATA initializer `int klustsize = 0x800` (specvnops.c KLUSTSIZE =
 # PAGESIZE): spec_getapage submits a 2KB read into the freshly allocated 4KB page
 # and then EXPLICITLY ZEROES bytes 0x800..0xfff ("destructive tail zero") -> every

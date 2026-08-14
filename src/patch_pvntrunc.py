@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # patch_pvntrunc.py -- pvn_vptrunc final-page tail zeroing (Codex P1 in
-# vm-map/PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md).
+# docs/contracts/PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md).
 #
 # Source contract: svr4-src-3b2/usr/src/uts/3b2/vm/vm_pvn.c, pvn_vptrunc().  Described
 # rather than quoted: it maps the block containing the new end-of-file through segmap,

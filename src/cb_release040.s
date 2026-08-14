@@ -1,5 +1,5 @@
 | cb_release040.s -- caches Step B2: copyback page-lifecycle release barrier
-| (2026-07-23).  Spec: analyysirepo vm-map/CB-PAGE-LIFECYCLE-CLOSURE.md
+| (2026-07-23).  Spec: docs/contracts/CB-PAGE-LIFECYCLE-CLOSURE.md
 | (pinned 5f745d5 / base sha d3e1f80a).
 |
 | WHY: under copyback (hat_cm_ram=0x20) the newest bytes of a mapped page can

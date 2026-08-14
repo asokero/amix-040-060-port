@@ -1,6 +1,6 @@
 | segu_lockfix.s -- override segu_get (orig 0xaa466, GLOBAL T) to RESTORE the
 | SEGU_LOCKED bit in the freshly-allocated slot's su_flags (ISSUE-7 root fix).
-| See amix-kernel-analysis/vm-map/SEGU-AUDIT.md (Codex's audit) and 3b2 seg_u.c:755-760.
+| See docs/contracts/SEGU-AUDIT.md (Codex's audit) and 3b2 seg_u.c:755-760.
 |
 | ROOT CAUSE: segu_get sets the new slot's su_flags at 0xaa6aa (`movel %d5,%a3@(20)`)
 | from %d5 -- the SAME register that is the u-area map-loop bound set at 0xaa6a2.

@@ -2,8 +2,8 @@
 # patch_a3091_dma.py -- caches Step B / B1: retarget the A3091/SDMAC stopdma
 # call sites to the DMA-coherency wrapper (2026-07-20).
 #
-# Spec: amix-kernel-analysis/vm-map/DMA-INITIATOR-CENSUS.md +
-# DMA-PREPARE-COMPLETE-CONTRACT.md (commit 58f1cda).  Companion object is
+# Specs: docs/contracts/DMA-INITIATOR-CENSUS.md and
+# docs/contracts/A3091-B2-PREPARE-PATCH-SPEC.md.  Companion object is
 # src/dma_cache040.s (dma_a3091_stopdma + dma_cache_fromdev_complete).
 #
 # WHY a relocation retarget instead of the usual globalize+weaken override:
@@ -37,7 +37,7 @@ A3091_STOPDMA_VALUE = 0xd4cc          # st_value of the a3091 local stopdma body
 WRAPPER = "dma_a3091_stopdma"
 R_68K_32 = 1
 
-# B2 (2026-07-23, A3091-B2-PREPARE-PATCH-SPEC.md): the TWO a3091 `jsr startdma`
+# B2 (2026-07-23, docs/contracts/A3091-B2-PREPARE-PATCH-SPEC.md): the TWO a3091 `jsr startdma`
 # relocations get prepare wrappers.  0xd0b2 = initial arm from startany;
 # 0xd21a = disconnect/reconnect re-arm (distinct wrapper entry that counts
 # dma_reconn_arm, then shares the prepare body).  The A2090/A2091 startdma

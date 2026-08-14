@@ -29,7 +29,7 @@
 | takes a COUNTED, state-preserving fallback to the existing nullvect/SIGKILL path.  It is
 | never partly decoded and never silently approximated.
 |
-| Specification: amix-kernel-analysis/vm-map/ISP-VECTOR61-UNIT-SPEC.md (Codex, 2026-08-06),
+| Specification: docs/contracts/ISP-VECTOR61-UNIT-SPEC.md (Codex, 2026-08-06),
 | whose five-case product/CCR matrix was recomputed independently before this was written.
 |
 | FRAME (verified against nullvect's own disassembly, which does btst #5,%sp@(60)):

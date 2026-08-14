@@ -6,8 +6,8 @@
 | THIRD_PARTY_NOTICES/MOTOROLA-M68040-FPSP.txt.
 |
 | Provides the 12 OS-callback symbols that build/fpsp040.o (M1, build-fpsp040.sh)
-| leaves unresolved, plus the vector-11 dispatch entry.  Spec: analyysirepo
-| vm-map/FPSP-INTEGRATION-PLAN.md.  MINIMAL M2 scope: get a previously-crashing
+| leaves unresolved, plus the vector-11 dispatch entry.  Spec:
+| docs/contracts/FPSP-INTEGRATION-PLAN.md.  MINIMAL M2 scope: get a previously-crashing
 | unimplemented FP instruction (fmovecr / fintrz / transcendental) emulated and
 | returned to the user.  M4 (2026-07-24) adds the arithmetic-exception vectors
 | 48/51/52/53/54/55; full real_* pending-bit cleanup + copy-fault unwind remain.

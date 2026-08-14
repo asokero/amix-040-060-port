@@ -2,7 +2,7 @@
 # patch_swapgeom.py -- Model B (4KB page frame) swap resource GEOMETRY conversion
 # group (2026-07-19).
 #
-# Authoritative spec: amix-kernel-analysis/vm-map/SWAPADD-MODEL-B-PATCH-SPEC.md
+# Authoritative spec: docs/contracts/SWAPADD-MODEL-B-PATCH-SPEC.md
 # (commit cbbf40f).  swap_xlate (0xb2aea) is already Model B (slot k -> si_soff +
 # (k << 12)), but the resource CONSTRUCTORS/DESTRUCTORS still count and step 2KB
 # slots.  Live-observed symptom: swapadd allocates 51199 swapent slots for a

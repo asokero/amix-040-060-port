@@ -10,7 +10,7 @@
 # swapper) remains disabled in runtime040.s.
 #
 # Authoritative site list + do-not-patch traps:
-#   amix-kernel-analysis/vm-map/PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md
+#   docs/contracts/PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md
 # Task brief: docs/archive/WRITEBACK-TASK.md.  Phase-0 policy ANSWERED 2026-07-15: root fs is UFS,
 # fs_bsize 8192 / fs_fsize 1024 -> keep provider shape, require fs_bsize >= 2048 (the
 # mountfs gate below).  s5 is not mounted anywhere -> s5putpage NOT converted here

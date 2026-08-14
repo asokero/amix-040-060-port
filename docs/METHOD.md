@@ -132,6 +132,11 @@ Two of the three **overturned conclusions this project had already committed**. 
 not more code, but an independent reading of the same sources by something that did not write the
 first version and has no attachment to it.
 
+The implementation-facing subset of those static records is published in
+[`docs/contracts/`](contracts/INDEX.md). Each source unit points to a local contract; the larger
+private analysis diary is not needed to inspect the port's addresses, field offsets, ordering
+constraints, or rejected alternatives.
+
 ---
 
 ## Four cases, with numbers

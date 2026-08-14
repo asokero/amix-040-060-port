@@ -49,7 +49,7 @@ krnxmemflt_orig:
 	moveml	%d2-%d4/%a2-%a3,%sp@-
 
 | --- bounded nested-fault fail-fast, PER PROCESS (must be FIRST: it also guards
-|     our own body).  Spec: analyysirepo vm-map/KRNXMEMFLT-PER-PROC-DEPTH-SPEC.md.
+|     our own body).  Spec: docs/contracts/KRNXMEMFLT-PER-PROC-DEPTH-SPEC.md.
 |     The old gate counted ONE machine-global depth, and as_fault may sleep while
 |     it is elevated -- so five unrelated processes at depth one looked exactly
 |     like one process recursing to depth five, and the fifth was rejected without

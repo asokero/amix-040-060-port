@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # patch_execboundary.py -- ISSUE-32: the live ELF exec page-geometry boundary.
 #
-# Authoritative census: amix-kernel-analysis/vm-map/EXEC-BOUNDARY-CENSUS.md
+# Authoritative census: docs/contracts/EXEC-BOUNDARY-CENSUS.md
 # Source provenance:    svr4-src-3b2/usr/src/uts/3b2/os/exec.c  (exec.c:195-200, 285-287,
 #                       804-846) and .../exec/elf/elf.c (elf.c:211, 352)
 #

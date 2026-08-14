@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # patch_devmmap2.py -- ISSUE-33: the remaining device-mmap page-geometry crossings.
 #
-# Follows vm-map/PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md "P2: device mmap and PFN
+# Follows docs/contracts/PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md "P2: device mmap and PFN
 # boundary", narrowed to the two crossings that are actually reachable and harmful.
 # Source contract: svr4-src-3b2/usr/src/uts/3b2/vm/seg_dev.c.
 #

@@ -1,7 +1,7 @@
 | pvn_probe.s -- the pl[] return-list contract detector Codex asked for (ISSUE-36 follow-on).
 |
 | WHAT CONTRACT, AND WHY A PROBE RATHER THAN A USER-SPACE TEST
-| Codex (vm-map/NFS-READSIDE-ISSUE36-SITE.md): the loop in nfs_getapage that fills the caller's
+| Codex (docs/contracts/NFS-READSIDE-ISSUE36-SITE.md): the loop in nfs_getapage that fills the caller's
 | page-list array is bounded ONLY by a byte countdown, and SVR4 page_t cluster lists are CIRCULAR,
 | so with a stale 2 KiB countdown an 8 KiB cluster of two 4 KiB pages emits
 |

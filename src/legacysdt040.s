@@ -1,8 +1,8 @@
 | legacysdt040.s -- ISSUE-40: restore the address space's LEGACY-SDT lifetime
 | edge, the one hat_free040 never had (2026-08-01).
-| Contract: analyysirepo vm-map/ISSUE40-LEGACY-SDT-TEARDOWN-CONTRACT.md, which
+| Contract: docs/contracts/ISSUE40-LEGACY-SDT-TEARDOWN-CONTRACT.md, which
 | answers docs/archive/ISSUE40-CODEX-FOLLOWUP-QUESTIONS.md; root cause in
-| vm-map/AVAILRMEM-ACCOUNTING-AUDIT.md (d27a303) and
+| docs/contracts/AVAILRMEM-ACCOUNTING-AUDIT.md (d27a303) and
 | kernelsupport/ISSUE40-AVAILRMEM-DECLINE-260801.md.
 |
 | WHAT IS BROKEN.  Every dynamic exec permanently loses one 4 KiB page of real

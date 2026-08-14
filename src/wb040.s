@@ -393,7 +393,7 @@ Lwbs_addr:
 | XPAGE recipe.  Gated on fmt-4: on the 040 the byte-wise replay already covers this.
 | In: a2 = frame, a1 = as (user: curproc->p_as, kernel: &kas).  Preserves d2-d7/a2-a3
 | (as_fault is ABI-conformant); the wrapper's d4 (orig ret) is untouched.
-| XPAGE UNIT 2026-07-28 (Codex vm-map/XPAGE-COVERAGE-AUDIT.md, a61d2ac).  The audit found the
+| XPAGE UNIT 2026-07-28 (Codex docs/contracts/XPAGE-COVERAGE-AUDIT.md, a61d2ac).  The audit found the
 | last-eight-bytes heuristic above is NOT an architecture-complete 060 contract, for three reasons
 | it verified against the 68060 manual and Linux/m68k:
 |   * MA WAS UNREADABLE HERE.  wb060_sswsynth overwrites FSLW bits 31..16 -- which holds MA (27),
@@ -707,7 +707,7 @@ Lwb_fcok:
 |     rte's to Lwb_fail (frame PC := the armed value) with the trap-time registers.
 |     d2 is free here (its data is already copied to d1); it survives the nested trap.
 	movel	u+0x374,%d2		| save the outer u_nofault value
-| ISSUE-42 Q3 (2026-08-12, Codex vm-map/ISSUE42-WBREPLAY-FOLLOWUP-AUDIT.md): u_nofault is ONE
+| ISSUE-42 Q3 (2026-08-12, Codex docs/contracts/ISSUE42-WBREPLAY-FOLLOWUP-AUDIT.md): u_nofault is ONE
 | scalar in the u-area and k_trap only tests it for non-zero.  It does not check the faulting PC,
 | the SP, or any notion of who armed the pad.  Interrupts are not masked here, so an unrelated
 | kernel fault taken while this is armed lands on Lwb_fail too -- with a foreign stack and a
@@ -763,7 +763,7 @@ Lwb_loop:
 | discarded here, and the process resumed holding half a store it believed complete.  A silently
 | torn store, which is worse than a lost one.
 |
-| The contract is Codex's vm-map/ISSUE42-WBREPLAY-PROTECTION-CONTRACT.md (8fd31fd), which read
+| The contract is Codex's docs/contracts/ISSUE42-WBREPLAY-PROTECTION-CONTRACT.md (8fd31fd), which read
 | Motorola, NetBSD and Linux/m68k against this code: every valid write-back is an access that
 | must either complete or report its OWN fault, in WB1/WB2/WB3 order, and a denial stops the
 | replay rather than being dropped.  Item 6 of its behavioural contract is the part that lands

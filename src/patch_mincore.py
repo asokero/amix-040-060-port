@@ -2,7 +2,7 @@
 # patch_mincore.py -- Model B (4KB page frame) mincore(2) vector conversion
 # (2026-07-19).
 #
-# Authoritative spec: amix-kernel-analysis/vm-map/MINCORE-VECTOR-PATCH-SPEC.md
+# Authoritative spec: docs/contracts/MINCORE-VECTOR-PATCH-SPEC.md
 # (= census MODEL-B-TEXT-RESIDUAL, commit cbbf40f).  Source contract: 3b2
 # os/grow.c mincore() --
 #   if (((int)addr & PAGEOFFSET) != 0) return EINVAL;   /* alignment gate */

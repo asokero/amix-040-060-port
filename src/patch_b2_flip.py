@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # patch_b2_flip.py -- set the hat_cm_ram staging global of a linked kernel image
-# (2026-07-23; spec = CM-PTE-WRITER-MATRIX.md stage table + the three B2 docs).
+# (2026-07-23; spec = docs/contracts/CM-PTE-WRITER-MATRIX.md stage table + the three B2 docs).
 #
 #   python3 patch_b2_flip.py <input-image> <output-image> [--wt]
 #   python3 patch_b2_flip.py <image> --check

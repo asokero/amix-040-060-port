@@ -352,8 +352,8 @@ Lkroot:
 	addqw	&4,%sp
 	| ---- caches-on Step B1 (2026-07-23): enable INSTRUCTION + DATA cache, DATA in
 	| WRITETHROUGH.  CACR = 0x80008000: bit31 DE(040)/EDC(060) + bit15 IE(040)/EIC(060)
-	| -- the SAME bits on both CPUs, so no cputype gate is needed.  Spec = analyysirepo
-	| vm-map/DTT0-NARROWING-SPEC.md "B1 CACR enable sequence": DTT0 (0x003fc060) is KEPT
+	| -- the SAME bits on both CPUs, so no cputype gate is needed.  Spec:
+	| docs/contracts/DTT0-NARROWING-SPEC.md "B1 CACR enable sequence": DTT0 (0x003fc060) is KEPT
 	| -- it matches LOGICAL 0-1GB only, so high PTE-backed kvseg/segmap/user mappings
 	| take CM from their leaf PTEs (hat_cm_ram=0x00 WT in B1) while the low identity
 	| window keeps direct phys/page-table/MMIO access NC.  The 040 DC is physically

@@ -20,7 +20,7 @@
 | `jmp nullvect`.
 |
 | The panic's cause was NOT the exits.  Codex's static analysis of the pinned package object
-| (amix-kernel-analysis vm-map/F3-FPSP060-CALLOUT-CONTRACT.md, 1868bdf) located it byte-exactly:
+| (docs/contracts/F3-FPSP060-CALLOUT-CONTRACT.md, 1868bdf) located it byte-exactly:
 |
 |     _fpsp_unimp fetches the faulting opword with `bsr _imem_read_long` and DOES NOT TEST d1.
 |     M2a's decline stub returned d0 = 0, d1 = 1; the package decoded the zero opword, indexed
@@ -297,7 +297,7 @@ Lco_fparith:
 |     tstw %sp@ ; beq -> discard the frame without restoring it
 |
 | on the theory that DZ's fsave produced a NULL frame.  It does not.  Codex's audit
-| (vm-map/FPU-LAZY-CONTRACT-AUDIT.md, 64b55cf) showed the discriminator on a 68060 is at
+| (docs/contracts/FPU-LAZY-CONTRACT-AUDIT.md, 64b55cf) showed the discriminator on a 68060 is at
 | frame+2, not at word zero: word zero is the extended SOURCE OPERAND's exponent.  The three
 | words measured here -- OPERR 0x7fff, INEX 0x4000, DZ 0x0000 -- are exactly the exponents of
 | -Inf, +2 and 0, i.e. of this test's own operands.  So the guard classified a ZERO SOURCE

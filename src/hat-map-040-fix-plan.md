@@ -5,7 +5,7 @@
 > kernels; 0 reloc complaints. The rest of this doc is the original decision record.
 
 Investigation of how to fix the `hat_map` phantom-PTE bug that Codex's
-`amix-kernel-analysis/vm-map/P-MAPPING-MATRIX.md` + `HAT-MAP-AUDIT.md` documented. **This is a
+`docs/contracts/P-MAPPING-MATRIX.md` documented. **This is a
 decision/plan doc, not yet implemented.** All addresses/bytes below independently verified
 against `build/unix-040-dbg` disassembly (not taken from the audit on trust).
 
