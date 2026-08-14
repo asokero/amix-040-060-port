@@ -26,10 +26,26 @@ source tarball you supply; not vendored here.  They carry Motorola's own notice,
 deliberately keeps in the linked object (`copyright.S` is assembled and linked with the package,
 and the build fails if it is missing).
 
-**NetBSD.**  Several sequences in this port were written from NetBSD's m68k support as the
-reference for architectural behaviour -- the 68040 write-back realignment in `wb040.s` and the
-68060 FP context save/restore ordering in `fpu060.s` most directly.  NetBSD is BSD-licensed;
-attribution is given here and in the source-file comments.
+**Motorola's own skeleton files.**  The 060SP kit ships `fskeletn.s`, a skeleton the integrator is
+expected to fill in, and two short sequences in `src/fpsp060_glue.s` follow it exactly because the
+package's contract leaves no freedom there: the three-instruction prelude of the six IEEE
+arithmetic exits (`fsave`, write `0x6000` into the saved status word, `frestore`), and the five
+instructions of the BSUN exit that clear the FPSR NaN condition and discard the saved state.  Only
+the destination differs -- ours dispatches to the stock SVR4 signal policy.  NetBSD's `fnetbsd.S`
+is derived from the same skeleton and is identical in these places, which is why the source
+comments name both; the attribution that matters here is Motorola's, and it travels with the
+package as described above.
+
+**NetBSD** was used as a reference for architectural *behaviour*, not as a source of code:
+
+* `wb040.s` -- the 68040 write-back realignment, where NetBSD's `m68040_writeback` documents how
+  WB1D/WB2D are justified against WB3D;
+* `fpu060.s` -- confirmation of a single fact, that the 68060 frame discriminator is at `frame+2`
+  and not at byte zero (`switch_subr.s` tests `2(%a2)` on the 060, `(%a2)` otherwise). That file
+  deliberately does **not** follow NetBSD's register ordering, and says so in a section written
+  for the purpose.
+
+NetBSD is BSD-licensed; attribution is given here and at each site in the source.
 
 **Linux/m68k** was consulted for behaviour when establishing contracts (notably the 68060 MA
 fault rounding and the write-back propagation model).  No code was copied.

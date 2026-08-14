@@ -103,7 +103,7 @@ Full instructions, including the toolchains and how the override mechanism works
 |---|---|
 | `relink-040.sh` | the build — assembles the override units, rebinds symbols, byte-patches, validates |
 | `relink-040-*.sh` | variants: debug probes, serial mirror, and the RTG graphics kernels |
-| `src/*.s` | the override units: MMU/HAT, fault resolvers, cache and DMA, FPSP/ISP glue, FP context |
+| `src/*.s` | the override units: MMU/HAT, fault resolvers, cache and DMA, FPSP/ISP glue, FP context — [`src/README.md`](src/README.md) explains the two mechanisms and the rules |
 | `src/patch_*.py` | byte-patchers for what a symbol override cannot express |
 | `tools/` | `check-env.sh`, `status-facts.sh` (generates counter addresses), `verify-stock.sh`, `config-load.sh` |
 | `test-tools/` | the instruments — `protfault`, `fpenab060`, `fp060probe`, `isp61ea`, `kpeek`, the battery |

@@ -87,9 +87,14 @@ emulator), runs each command, prints output. `--wait-login` just polls for the
 login prompt. Does minimal telnet option negotiation (the AMIX telnetd waits
 for an IAC answer before printing `login:`, so a bare raw socket hangs).
 Sentinel gotcha handled internally via a quote-split marker.
-NOTE: there is deliberately NO `real.py` here — the real machine needs
-credentials that must NEVER be committed. Recreate it from this file + the creds
-in `~/kehitys/CLAUDE.md` when a real-HW session is needed.
+## hw.py — the same runner, for the real machine
+`python3 hw.py 'cmd1' 'cmd2' ...` — identical telnet handling to `emu.py`, but it
+logs in with a password and reads the host and credentials from
+`../local/secrets.env`, which is gitignored (`local/secrets.env.example` shows the
+shape). **No credential appears anywhere in this repository**, which is the rule
+this split exists to keep; earlier versions of this file said there was
+deliberately no real-machine runner at all, which stopped being true when the
+credentials moved into an untracked file instead of into the script.
 
 ## sendkeys.py — console keystrokes via Amiberry IPC SEND_KEY
 `python3 sendkeys.py 'root' RET 'ping 10.0.2.2' RET` — types on the emulated

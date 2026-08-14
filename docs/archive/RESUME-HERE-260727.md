@@ -1,6 +1,6 @@
 # RESUME HERE — AMIX 68040/68060 port status (2026-07-27, RAUTAHYVÄKSYTTY)
 
-> **⚠ SNAPSHOT OF 2026-07-27, NOT MAINTAINED SINCE.** Canonical status: [`STATUS.md`](STATUS.md).
+> **⚠ SNAPSHOT OF 2026-07-27, NOT MAINTAINED SINCE.** Canonical status: [`STATUS.md`](../../STATUS.md).
 > Some conclusions below have been refuted — STATUS.md §7 lists which.
 
 > ## 🎉🎉 2026-07-27 ILTA — RAUTAHYVÄKSYNTÄ: KOKO 25.–27.7. DELTA LÄPI OIKEALLA PIILLÄ + VIRTAKATKAISU 8/8

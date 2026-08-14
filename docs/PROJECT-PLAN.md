@@ -1,6 +1,6 @@
 # Project Plan — 68040 (then 68060) support for Amiga Unix
 
-> **Canonical status: [`STATUS.md`](STATUS.md).** Where this file and STATUS.md disagree,
+> **Canonical status: [`STATUS.md`](../STATUS.md).** Where this file and STATUS.md disagree,
 > STATUS.md is right and this file is history.
 
 ## ★ CURRENT STATUS (2026-07-09) — ISSUE-7 AND ISSUE-8 RESOLVED; 040 boots to login, survives workload + reboots
