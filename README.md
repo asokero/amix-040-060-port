@@ -21,7 +21,7 @@ and a preservation project, and it can leave a machine unbootable. Keep your ori
 
 Both CPUs are hardware-accepted on the same image, on an Amiga 3000:
 
-| | 68040 (A3640, 25 MHz) | 68060 (Mercury, 66 MHz) |
+| | 68040 | 68060 |
 |---|:--:|:--:|
 | boot to multiuser, native userland | ✅ | ✅ |
 | MMU / HAT, fork + COW, context switch | ✅ | ✅ |
@@ -35,6 +35,26 @@ Both CPUs are hardware-accepted on the same image, on an Amiga 3000:
 
 Measured, not asserted: every claim above has an acceptance document in `docs/` naming the kernel
 build, the instrument and the numbers.
+
+### Three accelerator configurations, not two
+
+The 68040 column is two physically different cards, which matters more than it sounds: they place
+the kernel in different memory and were accepted at different times.
+
+| Accelerator | CPU | Clock | Memory the kernel binds into | What it established |
+|---|---|---|---|---|
+| **Mercury** | 68040 | 35 MHz | its own RAM at `0x08000000` | every 68040 acceptance from 2026-07-27 to 2026-08-02 — the bulk of the 040 record |
+| **Mercury** | 68060 | 66 MHz | its own RAM at `0x08000000` | every 68060 acceptance since 2026-08-05; same card, CPU swapped through an adapter |
+| **A3640** | 68040 | 25 MHz | **A3000 motherboard fast RAM at `0x07000000`** — the card has no RAM of its own | 2026-08-13: ISSUE-42 closed on silicon, plus battery, burst suite, RTG/X11/wolf3d and Dhrystone |
+
+The A3640 run was the first time this port had ever executed with the kernel bound outside
+`0x08000000`, which moves every counter address by −16 MiB and is why `tools/status-facts.sh`
+takes a load base. It is also the configuration in which the folklore "AMIX is limited to 16 MB"
+is literally true *of the machine* — a property of a card with no local RAM, not of AMIX.
+
+The Mercury's 68040 clock is **35 MHz**, from a 70 MHz oscillator at half clock. Every document in
+this project written before 2026-08-13 says 33; those are wrong, and one performance conclusion
+had to be withdrawn because of it (`STATUS.md` §7).
 
 ### Known issues
 
@@ -55,8 +75,9 @@ is loaded into (analysed, declined), and the Zorro III device aperture (measured
 * the patched loader, `unix_boot040`, from the companion project **`amix-unix-boot`**
 * your own AMIX SVR4 2.1c installation
 
-Tested accelerators: A3640 (68040, no local RAM — the kernel binds into motherboard memory) and a
-Mercury 68060 at 66 MHz.
+Tested accelerators: **Mercury with a 68040 (35 MHz)**, **Mercury with a 68060 (66 MHz)** and
+**A3640 (68040, 25 MHz, no local RAM — the kernel binds into motherboard memory)**. See the table
+above for what each one established.
 
 ## Quick start
 

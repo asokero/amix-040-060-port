@@ -39,13 +39,13 @@ a named test on a named platform is.
 
 | Build id | sha256 (prefix) | Platform accepted on | What it established | Evidence |
 |---|---|---|---|---|
-| **`68060-260812-06`** | `955a5be7` | **68060 hardware, 2026-08-12** | **Current baseline.** ISSUE-43 re-confirmed 6/6; ISSUE-42 unit proven INERT on 060 silicon; `ftest060` main+unimp, `fp060probe`, `isp61ea` all pass. **Also accepted on a 68040 (A3640) 2026-08-13 — the first dual-silicon image in this project** | `docs/REALHW-260812-06-ACCEPTANCE.md` |
-| `68060-260812-02` | `bb906e2a` | 68060 hardware, 2026-08-12 | ISSUE-43 + ISSUE-44 closed; six enabled IEEE classes bit-exact | `docs/REALHW-ISSUE43-ACCEPTANCE-260812.md` |
-| `68060-260807-11` | `4962361b` | 68060 hardware, 2026-08-09 | 68060 FPSP (F3 M5) on silicon; `ftest060 unimp` passes; xv/wolf3d SIGSYS attributed | `docs/REALHW-260807-11-ACCEPTANCE.md` |
-| `68060-260806-06` | — | 68060 hardware, 2026-08-07 | ISSUE-41 closed; XPAGE + protfault + power-cut | `docs/REALHW-260806-06-ACCEPTANCE.md` |
-| `68040-260802-01` | `3727e5b4` | 68040 hardware, 2026-08-02 | Last 68040-*only* baseline, superseded on 040 silicon by `-260812-06` on 2026-08-13. ISSUE-40 closed | `docs/REALHW-ISSUE40-ACCEPTANCE-260802.md` |
-| `68040-260731-10` | on NAS | 68040 hardware, 2026-07-31 | Copyback default re-accepted; 9/9 + battery | `docs/REALHW-ACCEPTANCE-260731.md` |
-| `68040-260727-01` | — | 68040 hardware, 2026-07-27 | First full delta acceptance + power-cut 8/8 | `test-tools/realhw-verify-260727.txt` |
+| **`68060-260812-06`** | `955a5be7` | **68060 hardware (Mercury), 2026-08-12** | **Current baseline.** ISSUE-43 re-confirmed 6/6; ISSUE-42 unit proven INERT on 060 silicon; `ftest060` main+unimp, `fp060probe`, `isp61ea` all pass. **Also accepted on a 68040 (A3640) 2026-08-13 — the first dual-silicon image in this project** | `docs/REALHW-260812-06-ACCEPTANCE.md` |
+| `68060-260812-02` | `bb906e2a` | 68060 hardware (Mercury), 2026-08-12 | ISSUE-43 + ISSUE-44 closed; six enabled IEEE classes bit-exact | `docs/REALHW-ISSUE43-ACCEPTANCE-260812.md` |
+| `68060-260807-11` | `4962361b` | 68060 hardware (Mercury), 2026-08-09 | 68060 FPSP (F3 M5) on silicon; `ftest060 unimp` passes; xv/wolf3d SIGSYS attributed | `docs/REALHW-260807-11-ACCEPTANCE.md` |
+| `68060-260806-06` | — | 68060 hardware (Mercury), 2026-08-07 | ISSUE-41 closed; XPAGE + protfault + power-cut | `docs/REALHW-260806-06-ACCEPTANCE.md` |
+| `68040-260802-01` | `3727e5b4` | 68040 hardware (Mercury), 2026-08-02 | Last 68040-*only* baseline, superseded on 040 silicon by `-260812-06` on 2026-08-13. ISSUE-40 closed | `docs/REALHW-ISSUE40-ACCEPTANCE-260802.md` |
+| `68040-260731-10` | on NAS | 68040 hardware (Mercury), 2026-07-31 | Copyback default re-accepted; 9/9 + battery | `docs/REALHW-ACCEPTANCE-260731.md` |
+| `68040-260727-01` | — | 68040 hardware (Mercury), 2026-07-27 | First full delta acceptance + power-cut 8/8 | `test-tools/realhw-verify-260727.txt` |
 
 **One image boots both CPUs.** `cputype` is poked by `unix_boot040` from `AttnFlags`; every
 CPU-specific path is gated on it. The build id says `68040-` because it is stamped at build
@@ -63,8 +63,18 @@ written with their date here for that reason.
 | archive | tag only — **not yet copied to the NAS** | NAS `amix/baseline-68060-260812-02/` — binary, `SHA256SUMS.txt`, `status-facts.txt`, the acceptance document and this file |
 | reproducibility | — | **verified, not assumed**: rebuilding from the tag yields an image differing in exactly **one byte**, the build-id stamp's per-build counter |
 
-⚠ **Archiving the current baseline to the NAS is outstanding**, and it is the one step whose
-omission has already cost this project a binary once.
+⚠ **Archiving the current baseline is outstanding**, and it is the one step whose omission has
+already cost this project a binary once. The NAS is not currently reachable; a second copy of
+kernel images also exists on the Amiga's own hard disk, whose contents are not inventoried here.
+Neither substitutes for the other — the point of the archive is a copy that does not depend on
+the machine under test.
+
+**The 68040 hardware column is two different cards.** Every 040 acceptance up to 2026-08-02 was on
+a **Mercury with a 68040 at 35 MHz**, which carries its own RAM at `0x08000000`; the 2026-08-13
+run was on an **A3640 at 25 MHz**, which has none and binds the kernel into motherboard memory at
+`0x07000000`. The 68060 is the **same Mercury card** with the CPU swapped through an adapter, at
+66 MHz. Three configurations, and the load-base difference is not cosmetic: it moves every counter
+address by −16 MiB, which is why `tools/status-facts.sh` takes a load base.
 
 **The current image has run on 68040 hardware.** `68060/68040-260812-06` was accepted on an
 A3640 on 2026-08-13 — the first dual-silicon image here — which is what closed ISSUE-42. The
