@@ -397,11 +397,30 @@ Decided 2026-08-13: **MIT licence · history rewritten rather than truncated · 
    follow `BUILDING.md` and nothing else, then boot the clone-built kernel on the Amiga. This is
    the gate that decides whether the instructions are true; everything above is this machine
    testifying about itself.
-2. **Phase 7 — the push**, plus a publication tag. Two things can only be done at that point and
-   are easy to forget: the **repository URLs** — `README.md` requires `amix-unix-boot` to boot
-   anything built here and currently names it without linking it, and neither repository has a
-   remote yet — and a decision on the repository **slug**, since `amix-040-060-port` is a working name
-   that says nothing.
+2. **Phase 7 — the push**, plus a publication tag. ~~A repository slug~~ — decided 2026-08-15,
+   `kernelsupport` → `amix-040-060-port`. What remains can only be done once the repositories
+   exist:
+
+   * **the repository URLs.** `README.md` requires `amix-unix-boot` to boot anything built here
+     and names it without linking it, because neither repository has a remote yet.
+   * **the GitHub description**, which for most readers is the only text they will see before
+     deciding whether to click. Use the README's subtitle verbatim, because it carries the one
+     fact a reader must not miss:
+
+     > Binary patch and override layer that runs Amiga UNIX (AMIX SVR4) on 68040 and 68060
+     > processors — applied to the kernel binary from your own installation.
+
+   * **topics**, which are what the search this project refutes will actually match. The Amiga
+     Unix wiki lists the 68040 and 68060 as *incompatible* with AMIX, so someone checking that
+     is the reader to be found by:
+
+     `amiga` `amiga-unix` `amix` `68040` `68060` `m68k` `svr4` `unix` `amiga3000`
+     `reverse-engineering` `binary-patching` `retrocomputing`
+
+   The loader repository takes the same treatment: description *"Patches that make Markus Wild's
+   unix_boot load an Amiga UNIX kernel on a 68040 or 68060 — patches only, you supply the
+   archive"*, topics `amiga` `amiga-unix` `amix` `68040` `68060` `m68k` `bootloader`
+   `retrocomputing`.
 3. **`10.0.10.10` appears in 20 documents.** A private RFC1918 address, not a secret; a decision
    about tidiness rather than a blocker.
 4. **ISSUE-9 and ISSUE-10 are open**, and honestly recorded. They argue for publishing as a

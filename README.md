@@ -1,8 +1,9 @@
 # AMIX 68040/68060 Port
 
-*Amiga UNIX (AMIX) on the 68040 and 68060.*
+*Binary patch and override layer that runs Amiga UNIX (AMIX SVR4) on 68040 and 68060
+processors — applied to the kernel binary from your own installation.*
 
-**This is not a kernel. It is a patch and override layer for the one you already own.**
+**This is not a kernel. It patches the one you already own.**
 
 Amiga UNIX — Commodore's 1991 System V Release 4 for the Amiga 3000 — runs only on a 68030. This
 project makes it run on a **68040** and a **68060**, from a single image, and it does so by
@@ -140,6 +141,24 @@ creating a better one. A reader who cannot see the wrong turns cannot judge the 
 | `va2000-amix` | MNT VA2000 RTG driver |
 | `xrtg-amix` | Xsvga / X11 for Piccolo and Picasso II |
 | [`gcc-cross-amix`](https://github.com/isoriano1968/gcc-cross-amix) | the `m68k-cbm-sysv4` cross toolchain this build needs |
+
+## Repository metadata
+
+Kept here so it is versioned with the thing it describes, rather than living only in a settings
+form. Description, one line, for the repository listing:
+
+> Binary patch and override layer that runs Amiga UNIX (AMIX SVR4) on 68040 and 68060 processors
+> — applied to the kernel binary from your own installation.
+
+Topics:
+
+`amiga` `amiga-unix` `amix` `68040` `68060` `m68k` `svr4` `unix` `amiga3000` `reverse-engineering`
+`binary-patching` `retrocomputing`
+
+Those are chosen for one reader in particular. The Amiga Unix wiki lists the 68040 and 68060 as
+**incompatible** with AMIX, which is the state of public knowledge this project contradicts — so
+the person to be found is the one who just searched for exactly that and was told it cannot be
+done.
 
 ## License
 
