@@ -5,11 +5,11 @@ Copy everything between the lines into the new session.
 ---
 
 Lue ENSIN nämä, äläkä johda mitään niiden ulkopuolelta:
-`kernelsupport/KNOWN-ISSUES.md` **ISSUE-43** (tiedoston lopussa — oire, juurisyy, kaksi
+`amix-040-060-port/KNOWN-ISSUES.md` **ISSUE-43** (tiedoston lopussa — oire, juurisyy, kaksi
 epäonnistunutta korjausyritystä, ja speksattu korjaus),
 `amix-kernel-analysis/vm-map/FPU-LAZY-CONTRACT-AUDIT.md` (Codexin auditti, commit `64b55cf` —
 **tämä on korjauksen spesifikaatio, älä improvisoi sen ohi**),
-`kernelsupport/test-tools/f3-m4-enabled-hw-260811.txt` (kolme mittauskierrosta, myös se missä
+`amix-040-060-port/test-tools/f3-m4-enabled-hw-260811.txt` (kolme mittauskierrosta, myös se missä
 olin väärässä).
 
 **Tilanne yhdellä rivillä:** 68060:n FPSP on valmis ja rautahyväksytty — Motorolan `ftest060

@@ -4,7 +4,7 @@ Copy everything between the lines into the new session.
 
 ---
 
-Lue ENSIN kernelsupport/060-CAMPAIGN-PLAN-260805.md kokonaan äläkä johda mitään sen ulkopuolelta.
+Lue ENSIN amix-040-060-port/060-CAMPAIGN-PLAN-260805.md kokonaan äläkä johda mitään sen ulkopuolelta.
 Taustaksi docs/68060-prestudy.md (§3 ja §7 = mitä 060-tuki jo sisältää) ja Codexin kaksi analyysia
 amix-kernel-analysis/vm-map/M68060-XPAGE-ACCEPTANCE.md ja M68060-SUPPORT-LANDSCAPE.md. 040-portin
 tila on docs/archive/RESUME-HERE-260801.md; se on suljettu eikä sitä avata tässä sessiossa.

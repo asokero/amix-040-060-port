@@ -7,7 +7,7 @@
 ## Scope
 
 This note answers the five implementation questions in
-`kernelsupport/ISSUE40-PTDAT-CODEX-QUESTIONS.md`. It is deliberately narrower
+`amix-040-060-port/ISSUE40-PTDAT-CODEX-QUESTIONS.md`. It is deliberately narrower
 than a new HAT census: the debit, pinning bitmap, and missing credit are already
 measured. The remaining task is to retire one allocator unit without corrupting
 the retained `active_pts` / `free_pts` lists or freeing a table page whose
@@ -20,7 +20,7 @@ kernel.
 
 | Artifact | Identity |
 |---|---|
-| Kernel source tree | `kernelsupport` commit `2b35a653dce1a03b526903d08b0e214371640530` |
+| Kernel source tree | `amix-040-060-port` commit `2b35a653dce1a03b526903d08b0e214371640530` |
 | Kernel | `build/unix-040`, build `68040-260801-12` |
 | Kernel SHA-256 | `d1acde8d3442c348924bf9ab9ffb8639a53394d18f54305a13380fc94822f24b` |
 | Kernel `.text` size | `0x000e46ec` |
@@ -28,8 +28,8 @@ kernel.
 | Retained metadata free | local `hat_sdtfree 0x000b65ca` |
 | Retained stock table free | body at `0x000b6cf4` |
 | Active table free | native `hat_ptfree 0x000d85ce` |
-| Follow-up brief | `kernelsupport` commit `cef651f`, `ISSUE40-PTDAT-CODEX-QUESTIONS.md` |
-| Hardware evidence | `kernelsupport` commit `d9d3b15`, `REALHW-ISSUE40-PART1-260801.md` |
+| Follow-up brief | `amix-040-060-port` commit `cef651f`, `ISSUE40-PTDAT-CODEX-QUESTIONS.md` |
+| Hardware evidence | `amix-040-060-port` commit `d9d3b15`, `REALHW-ISSUE40-PART1-260801.md` |
 | AMIX layout header | `vanilla/usr/include/vm/vm_hat.h:74..96` |
 | Reference implementation | `svr4-src-3b2/usr/src/uts/3b2/vm/vm_hat.c:2437..2719` |
 

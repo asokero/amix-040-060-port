@@ -5,9 +5,9 @@ Copy everything between the lines into the new session.
 ---
 
 Lue ENSIN nämä kolme, äläkä johda mitään niiden ulkopuolelta:
-`kernelsupport/060-F3-FPSP-PLAN-260807.md` (F3:n suunnitelma, M0/M1/M2a-tulokset sisällä),
-`kernelsupport/060-FPU-STATE-260807.md` (miksi F3 on olemassa — mitattu SIGSYS-mekanismi),
-**Codexin vastaus tehtävään `kernelsupport/F3-CALLOUT-CONTRACT-CODEX-TASK.md`** (call-out-kontrakti).
+`amix-040-060-port/060-F3-FPSP-PLAN-260807.md` (F3:n suunnitelma, M0/M1/M2a-tulokset sisällä),
+`amix-040-060-port/060-FPU-STATE-260807.md` (miksi F3 on olemassa — mitattu SIGSYS-mekanismi),
+**Codexin vastaus tehtävään `amix-040-060-port/F3-CALLOUT-CONTRACT-CODEX-TASK.md`** (call-out-kontrakti).
 Taustaksi `docs/060-CAMPAIGN-PLAN-260805.md` ja `docs/REALHW-260806-06-ACCEPTANCE.md`.
 
 **Tilanne yhdellä rivillä:** 68060:llä ei ole FP-tukipakettia, joten `x = 1.0;` riittää tappamaan
@@ -91,7 +91,7 @@ ensin. Älä kanna osoitteita tästä dokumentista — textsize muuttuu joka bui
 
 ```sh
 export PATH=/home/asokero/opt/amix-cross/bin:$PATH   # muuten m68k-cbm-sysv4-gcc ei löydy
-cd ~/kehitys/amix-playground/kernelsupport
+cd ~/kehitys/amix-playground/amix-040-060-port
 sh relink-040.sh                    # oletus, EI 060-pakettia
 FPSP060=1 sh relink-040.sh          # 060-paketti mukaan (emulaattori!)
 ```

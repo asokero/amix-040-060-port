@@ -7,7 +7,7 @@ Kernel: build/unix-040-fpsp-xsvga-dbg  (buildid 68040-260724-09)
         + xsvga_exp.o (Klaus Burkert binary-only Piccolo/Picasso II driver)
         M68Kvec[11] -> fpsp_vec11; M68Kvec[48/51/52/53/54/55] -> fpsp_vec*
         cdevsw[67] -> svga*; svgammap phystopfn >>11 -> >>12 (Model-B).
-Loader: build/unix_boot040 with the rel.c PC-relative relocation fix (f0ed373 (pre-split kernelsupport hash; published as amix-unix-boot v1.0-040-060)).
+Loader: build/unix_boot040 with the rel.c PC-relative relocation fix (f0ed373 (pre-split amix-040-060-port hash; published as amix-unix-boot v1.0-040-060)).
 Emulator: Amiberry a3000ux (68040, gfxcard_type=Piccolo_Z2, gfxcard_size=1).
 NOTE ON PLATFORM: the user reports this disk image + the STOCK XsvgaConfig is
 known-good on UAE and on real hardware; it has NOT previously been exercised on

@@ -5,9 +5,9 @@ Copy everything between the lines into the new session.
 ---
 
 Lue ENSIN nämä kolme, äläkä johda mitään niiden ulkopuolelta:
-`kernelsupport/SEGVN-PAGEPROT-PANIC-260806.md` (ISSUE-41, mitä korjattiin ja miksi),
-`kernelsupport/SIGINFO-TRANSLATION-260806.md` (F4, 060:n far-sivun signaalipolku),
-`kernelsupport/REALHW-F2-ACCEPTANCE-260806.md` (mitä rauta tällä hetkellä takaa).
+`amix-040-060-port/SEGVN-PAGEPROT-PANIC-260806.md` (ISSUE-41, mitä korjattiin ja miksi),
+`amix-040-060-port/SIGINFO-TRANSLATION-260806.md` (F4, 060:n far-sivun signaalipolku),
+`amix-040-060-port/REALHW-F2-ACCEPTANCE-260806.md` (mitä rauta tällä hetkellä takaa).
 Taustaksi `docs/060-CAMPAIGN-PLAN-260805.md` §0b (tilanne F0–F2:n jälkeen) ja Codexin
 `amix-kernel-analysis/vm-map/XPAGE-FPROT-CONTRACT.md`. 040-portti ja ISSUE-40 ovat suljettuja
 eikä niitä avata tässä sessiossa.

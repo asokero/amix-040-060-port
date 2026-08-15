@@ -1,4 +1,6 @@
-# Amiga UNIX (AMIX) on the 68040 and 68060
+# AMIX 68040/68060 Port
+
+*Amiga UNIX (AMIX) on the 68040 and 68060.*
 
 **This is not a kernel. It is a patch and override layer for the one you already own.**
 

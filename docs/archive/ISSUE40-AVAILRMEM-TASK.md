@@ -97,7 +97,7 @@ hat_ptfree (OURS)   0x0d860e  addql #1     <- one credit, on the page_free path 
 ```
 
 The 3b2 contract for the same variable is in
-`kernelsupport/svr4-src-3b2/usr/src/uts/3b2/`: `os/exit.c:215`, `os/lock.c:192-209`,
+`amix-040-060-port/svr4-src-3b2/usr/src/uts/3b2/`: `os/exit.c:215`, `os/lock.c:192-209`,
 `vm/seg_u.c:648-671,839`, `vm/seg_kmem.c:659-692`, `vm/vm_hat.c:2224-2709`,
 `vm/vm_page.c:1233-1725`, `vm/seg_vn.c:947-1332`, `os/kma.c`.
 

@@ -1,7 +1,7 @@
 /* isp61test.c -- pre-registered acceptance test for the 68060 vector-61 multiply unit.
  *
  * Spec: amix-kernel-analysis/vm-map/ISP-VECTOR61-UNIT-SPEC.md §Q6.  Implementation:
- * kernelsupport/src/isp61_060.s.  The five cases and their expected products and
+ * amix-040-060-port/src/isp61_060.s.  The five cases and their expected products and
  * CCR values come from that spec and were recomputed independently before this was written.
  *
  * WHY RAW ENCODINGS.  Every instruction is emitted as `.word 0x4c3c,<ext>` + `.long <imm>`

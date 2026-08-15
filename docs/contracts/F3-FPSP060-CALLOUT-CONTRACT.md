@@ -7,7 +7,7 @@
 ## Scope
 
 This note answers the five static questions in
-`kernelsupport/F3-CALLOUT-CONTRACT-CODEX-TASK.md`. It covers Motorola's full
+`amix-040-060-port/F3-CALLOUT-CONTRACT-CODEX-TASK.md`. It covers Motorola's full
 and partial M68060 FPSP images, the Motorola example call-outs, NetBSD's real
 OS adaptation, and the AMIX trap/return ABI. It does not change kernel code
 and does not claim runtime acceptance.

@@ -1,4 +1,8 @@
-# STATUS — AMIX SVR4 68040/68060 port
+# STATUS — AMIX 68040/68060 Port
+
+*(The repository was called `kernelsupport` until 2026-08-15 — a working name that said nothing
+about what is in it. Same project, same history; only the directory and the references to it
+changed.)*
 
 **This is the canonical status document. When another document in this tree disagrees with it,
 this one is right and the other one is history.**
@@ -396,7 +400,7 @@ Decided 2026-08-13: **MIT licence · history rewritten rather than truncated · 
 2. **Phase 7 — the push**, plus a publication tag. Two things can only be done at that point and
    are easy to forget: the **repository URLs** — `README.md` requires `amix-unix-boot` to boot
    anything built here and currently names it without linking it, and neither repository has a
-   remote yet — and a decision on the repository **slug**, since `kernelsupport` is a working name
+   remote yet — and a decision on the repository **slug**, since `amix-040-060-port` is a working name
    that says nothing.
 3. **`10.0.10.10` appears in 20 documents.** A private RFC1918 address, not a secret; a decision
    about tidiness rather than a blocker.

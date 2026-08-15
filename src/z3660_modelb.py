@@ -70,7 +70,7 @@ def phystopfn_override(text, marker):
     block = (line + "\n"
              "/* Model B (4 KiB pages, PNUMSHFT=12): the stock immu.h inlines phystopfn()\n"
              " * with the 2 KiB shift, which would map (pa>>11)<<12 = 2*pa -- the wrong\n"
-             " * physical page.  Added by kernelsupport/src/z3660_modelb.py. */\n"
+             " * physical page.  Added by amix-040-060-port/src/z3660_modelb.py. */\n"
              "#undef  phystopfn\n"
              "#define phystopfn(paddr)\t" + PNUM + "\n")
     print("  [ok]   %-42s 1 site" % ("phystopfn -> 4 KiB shift (" + marker + ")"))

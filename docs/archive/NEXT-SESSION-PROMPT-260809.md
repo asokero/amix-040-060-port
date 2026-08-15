@@ -5,9 +5,9 @@ Copy everything between the lines into the new session.
 ---
 
 Lue ENSIN nämä, äläkä johda mitään niiden ulkopuolelta:
-`kernelsupport/060-F3-FPSP-PLAN-260807.md` (F3:n suunnitelma, M0–M2b sisällä),
-`kernelsupport/test-tools/f3-m2b-emu-verify-260808.txt` (M2b:n täysi emulaattorihyväksyntä),
-`kernelsupport/REALHW-260806-06-ACCEPTANCE.md` (edellinen rautahyväksyntä = baseline).
+`amix-040-060-port/060-F3-FPSP-PLAN-260807.md` (F3:n suunnitelma, M0–M2b sisällä),
+`amix-040-060-port/test-tools/f3-m2b-emu-verify-260808.txt` (M2b:n täysi emulaattorihyväksyntä),
+`amix-040-060-port/REALHW-260806-06-ACCEPTANCE.md` (edellinen rautahyväksyntä = baseline).
 Taustaksi `docs/060-CAMPAIGN-PLAN-260805.md` ja
 `amix-kernel-analysis/vm-map/F3-FPSP060-CALLOUT-CONTRACT.md` (Codexin kontrakti).
 

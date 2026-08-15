@@ -295,8 +295,8 @@ items above are the ones still visible in the pinned binary.
 
 ## Provenance Index
 
-- Current binary: `kernelsupport/build/unix-040`, SHA-256 above.
-- Task pin and raw candidate list: `kernelsupport/EXEC-BOUNDARY-TASK.md`.
+- Current binary: `amix-040-060-port/build/unix-040`, SHA-256 above.
+- Task pin and raw candidate list: `amix-040-060-port/EXEC-BOUNDARY-TASK.md`.
 - 3B2 control flow: `svr4-src-3b2/usr/src/uts/3b2/os/exec.c`.
 - 3B2 ELF path: `svr4-src-3b2/usr/src/uts/3b2/exec/elf/elf.c`.
 - 3B2 COFF path: `svr4-src-3b2/usr/src/uts/3b2/exec/coff/coff.c`.

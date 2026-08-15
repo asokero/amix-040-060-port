@@ -3,7 +3,7 @@
 | Contract: docs/contracts/ISSUE40-LEGACY-SDT-TEARDOWN-CONTRACT.md, which
 | answers docs/archive/ISSUE40-CODEX-FOLLOWUP-QUESTIONS.md; root cause in
 | docs/contracts/AVAILRMEM-ACCOUNTING-AUDIT.md (d27a303) and
-| kernelsupport/ISSUE40-AVAILRMEM-DECLINE-260801.md.
+| amix-040-060-port/ISSUE40-AVAILRMEM-DECLINE-260801.md.
 |
 | WHAT IS BROKEN.  Every dynamic exec permanently loses one 4 KiB page of real
 | memory.  Measured on hardware with an exact denominator (test-tools/leaktest.c),

@@ -379,7 +379,7 @@
 > matalan saavutettavuuden — ne kasvattaisivat validoimatonta deltaa ilman vastaavaa hyötyä.
 
 > ## ✅✅✅ 2026-07-24 — FPU TIER-2 (FPSP) M1–M4 VALMIS + GRAAFINEN X11 TOIMII PICCOLOLLA + VA2000-KERNELI RAUTATESTIIN
-> **1. LOADER-FIX (f0ed373 (pre-split kernelsupport hash; published as amix-unix-boot v1.0-040-060)) — infrastruktuurivoitto.** FPSP-kerneli ei latautunut: Guru
+> **1. LOADER-FIX (f0ed373 (pre-split amix-040-060-port hash; published as amix-unix-boot v1.0-040-060)) — infrastruktuurivoitto.** FPSP-kerneli ei latautunut: Guru
 > `D245 4C41` EI ollut kaatuminen vaan **loaderin oma virhemakro** (rel.c:53
 > `COMPLAIN = Alert(0x52454C41|AT_DeadEnd)`, 0x52454C41 = ASCII "RELA"). `relocsection()`
 > osasi VAIN `R_68K_32`. Census: standardi 29154×R_68K_32 vs FPSP + **330 PC-suhteellista**
@@ -992,7 +992,7 @@
 
 > **ORIENTATION (2026-07-07): the Codex analysis project MOVED out of this repo.** It is now a
 > SEPARATE sibling git repo at `~/kehitys/amix-playground/amix-kernel-analysis/` (moved to keep
-> copyright-sensitive RE material in its own version control, out of the shareable kernelsupport
+> copyright-sensitive RE material in its own version control, out of the shareable amix-040-060-port
 > repo). Everywhere these docs say `amix-kernel-analysis/vm-map/...` or
 > `amix-kernel-analysis/runtime-tests/...`, that path is relative to `~/kehitys/amix-playground/`
 > (i.e. `../amix-kernel-analysis/...` from this repo root). The `hat_dup_cow` acceptance test and
@@ -1387,12 +1387,12 @@ start-offset, OR ufs_getapage file-offset->block.  Same family as the already-fi
 gen_strategy/pvn_*/segmap stragglers -- this one just never ran before init exercised it.
 
 ### TOOL: instrumented fs-uae (THE breakthrough enabler -- PC-accurate ground truth)
-Source `kernelsupport/fs-uae` (git, **checkout v3.2.35** = SDL2, matches the user's binary; master
+Source `amix-040-060-port/fs-uae` (git, **checkout v3.2.35** = SDL2, matches the user's binary; master
 needs SDL3 -- GITIGNORED, do NOT commit).  Patches (AMIX-DBG comments): `src/include/cpummu.h`
 (mmu_get/put_long/word/byte + mmu_get_iword PC+word trace), `src/cpummu.cpp` (mmu_*_slow = the
-faulting/ATC-miss path), `src/rpc.cpp` (debuggable()->1).  Build: `cd kernelsupport/fs-uae &&
+faulting/ATC-miss path), `src/rpc.cpp` (debuggable()->1).  Build: `cd amix-040-060-port/fs-uae &&
 make -j8` (deps: libtool libsdl2-dev libopenal-dev libmpeg2-4-dev libflac-dev).  User runs it by
-full path from `kernelsupport/fs-uae` with `flush_log = 1` in the config (else the log buffers at
+full path from `amix-040-060-port/fs-uae` with `flush_log = 1` in the config (else the log buffers at
 ~57KB); log = `~/Asiakirjat/FS-UAE/Cache/Logs/fs-uae.log.txt`.  Use a CLEAN disk image (torn-file
 boots corrupt it).  Success criterion for the fix: AMIXPC shows the CORRECT `_rt_boot` words
 (f348=204f, f364=61ff) and C10127B4 (_rt_setup) IS fetched.
@@ -1400,12 +1400,12 @@ boots corrupt it).  Success criterion for the fix: AMIXPC shows the CORRECT `_rt
 ## SOURCE-CONSULTATION ORDER (user rule -- ALWAYS follow before digging into binaries)
 When you need to understand a function or layout, check sources in THIS order:
 1. **Amiga Unix disk-image tree FIRST** -- `~/kehitys/amix-playground/vanilla/usr/sys/` and
-   `vanilla/usr/src/` (the image is ALWAYS mounted there) + extracted `kernelsupport/amix-src/sys/`.
+   `vanilla/usr/src/` (the image is ALWAYS mounted there) + extracted `amix-040-060-port/amix-src/sys/`.
    129 C files exist, but `vm/` is binary-only (just `exp`+Makefile).  Always check here first for
    headers/struct layouts and the fs/exec/os modules that DO ship C.
-2. **Related System V sources SECOND** (full C for VM/pager): `kernelsupport/usl-svr42/common/uts/
-   mem/{vm_pvn.c,seg_vn.c,seg_map.c}` (SVR4.2, closest), `kernelsupport/svr4-src-3b2/`,
-   `kernelsupport/svr4-v4/`.  Not Amiga, but the SVR4 logic is stable.  (gitignored -- copyright.)
+2. **Related System V sources SECOND** (full C for VM/pager): `amix-040-060-port/usl-svr42/common/uts/
+   mem/{vm_pvn.c,seg_vn.c,seg_map.c}` (SVR4.2, closest), `amix-040-060-port/svr4-src-3b2/`,
+   `amix-040-060-port/svr4-v4/`.  Not Amiga, but the SVR4 logic is stable.  (gitignored -- copyright.)
 3. **Ghidra decompilation of the unix kernel THIRD** -- `sh tools/ghidra-decomp.sh func1,func2`
    (headless, MC68030, decompiles named fns of `vanilla/stand/unix`; calls show as `func_0x0` --
    resolve with `m68k-linux-gnu-objdump -d -r`).  GUI project at `ghindra-unix/amix.rep` (gitignored).
@@ -1911,7 +1911,7 @@ all further work (detection vs DMA).
 ### Emulator facts (fs-uae a3000ux config + log, this laptop)
 - Working 030 config: `~/Asiakirjat/FS-UAE/Configurations/a3000ux.fs-uae` (cpu=68030,
   hard_drive_0=amix_hardfileX11R5.hdf, hard_drive_0_controller=**scsi6** = A3000 onboard
-  SCSI unit 6).  Kernel files exposed to Amiga via hard_drive_2 = the kernelsupport dir.
+  SCSI unit 6).  Kernel files exposed to Amiga via hard_drive_2 = the amix-040-060-port dir.
 - For 040 testing: switch cpu to 68040 (the WinUAE screenshots are the 040 runs).
 - Aside (likely unrelated): fs-uae.log shows a `bzero` loop (PC=0x...032c) hitting "Gary
   timeout" writes to unmapped Zorro-III 0x2006xxxx -- some board-struct init, not SCSI.

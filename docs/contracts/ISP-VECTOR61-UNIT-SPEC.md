@@ -575,10 +575,10 @@ shows a vector-61 form outside the measured 103-site set.
 - local Motorola 68060SP source archive:
   `netbsd/syssrc.tgz`, members `usr/src/sys/arch/m68k/060sp/dist/isp.doc`,
   `dist/isp.s`, `netbsd060sp.S`, and `inetbsd.S`;
-- current AMIX source provenance: `kernelsupport/amix-src/sys/amiga/ml/ttrap.s`
+- current AMIX source provenance: `amix-040-060-port/amix-src/sys/amiga/ml/ttrap.s`
   and `vec.s`;
-- current relink provenance: `kernelsupport/relink-040.sh`,
+- current relink provenance: `amix-040-060-port/relink-040.sh`,
   `prototypes/fpsp_glue040.s`, `patch_fpsp_vec11.py`, and
   `patch_fpsp_vectors.py`;
-- runtime/measured scope: `kernelsupport/060-F0-MEASUREMENT-260805.md`,
+- runtime/measured scope: `amix-040-060-port/060-F0-MEASUREMENT-260805.md`,
   `ISP-VECTOR61-TASK.md`, and `test-tools/scan060.py`.

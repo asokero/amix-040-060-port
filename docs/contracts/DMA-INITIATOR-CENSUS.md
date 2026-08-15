@@ -35,7 +35,7 @@ Target:
   `file_offset = text_address + 0x34`
 
 The mounted files under `vanilla/usr/sys/amiga` and the corresponding files
-under `kernelsupport/amix-src/sys/amiga` compare byte-for-byte for every source
+under `amix-040-060-port/amix-src/sys/amiga` compare byte-for-byte for every source
 file cited here. Current linked symbols, relocations, register stores, and
 callback order were checked independently in `build/unix-040`.
 

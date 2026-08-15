@@ -128,9 +128,9 @@ The opposite — a structural ceiling — is equally fine to hear. What is not u
 amix-src/sys/amiga/boot/bootinfo.h        struct bootinfo, NAUTO
 amix-src/sys/amiga/inc/                   amigarom.h, memory.h and friends
 amix-src/sys/amiga/                       the rest of the machine-dependent tree
-kernelsupport/src/                  every override this port has made, incl. the VM ones
-kernelsupport/KNOWN-ISSUES.md              ISSUE-39/40 touch memory accounting
-kernelsupport/Z3-BUSBENCH-Z2-MEASUREMENT-260810.md   DTT0 and the Z3 aperture
+amix-040-060-port/src/                  every override this port has made, incl. the VM ones
+amix-040-060-port/KNOWN-ISSUES.md              ISSUE-39/40 touch memory accounting
+amix-040-060-port/Z3-BUSBENCH-Z2-MEASUREMENT-260810.md   DTT0 and the Z3 aperture
 ~/kehitys/CLAUDE.md                        board addresses on this machine, ConfigDev = 68 bytes
 ```
 

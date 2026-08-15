@@ -109,13 +109,13 @@ of the module lists would tell us what to expect.
 ## Artifacts
 
 ```text
-kernelsupport/060-F3-FPSP-PLAN-260807.md     the plan, with M0/M1/M2a results inline
-kernelsupport/060-FPU-STATE-260807.md        why F3 exists: the measured SIGSYS mechanism
-kernelsupport/build-fpsp060.sh               packaging + the entry-table assertions
-kernelsupport/src/fpsp060_head.s      the 128-byte call-out table
-kernelsupport/src/fpsp060_glue.s      the AMIX call-outs -- the suspect
-kernelsupport/src/fpsp_glue040.s      fpsp_vec11, both CPU branches
-kernelsupport/src/kvecprobe040.s      M0: the vector probe that measured vector 11
+amix-040-060-port/060-F3-FPSP-PLAN-260807.md     the plan, with M0/M1/M2a results inline
+amix-040-060-port/060-FPU-STATE-260807.md        why F3 exists: the measured SIGSYS mechanism
+amix-040-060-port/build-fpsp060.sh               packaging + the entry-table assertions
+amix-040-060-port/src/fpsp060_head.s      the 128-byte call-out table
+amix-040-060-port/src/fpsp060_glue.s      the AMIX call-outs -- the suspect
+amix-040-060-port/src/fpsp_glue040.s      fpsp_vec11, both CPU branches
+amix-040-060-port/src/kvecprobe040.s      M0: the vector probe that measured vector 11
 netbsd/syssrc.tgz  usr/src/sys/arch/m68k/060sp/
     dist/fpsp.doc        entry points, call-out slots; no register contract
     dist/fskeletn.s      Motorola's example call-outs      <- Q1

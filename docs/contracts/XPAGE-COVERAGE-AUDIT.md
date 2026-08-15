@@ -15,7 +15,7 @@
 
 ## Scope
 
-This note answers `kernelsupport/XPAGE-COVERAGE-AUDIT-TASK.md` against the
+This note answers `amix-040-060-port/XPAGE-COVERAGE-AUDIT-TASK.md` against the
 brief-pinned linked 040 image. It enumerates the complete public access-error route
 from the CPU frame to `as_fault`, classifies page-crossing handling by CPU,
 trap origin, access kind, and `u_nofault`, and answers whether ISSUE-37 can
@@ -609,7 +609,7 @@ the preread branch is inactive.
 - NetBSD m68k write-back reference:
   `netbsd/syssrc.tgz:usr/src/sys/arch/m68k/m68k/m68k_trap.c`
 - Current linked sources:
-  `kernelsupport/prototypes/getfault040.s`,
+  `amix-040-060-port/prototypes/getfault040.s`,
   `userspace040.s`, `wb040.s`, `runtime040.s`, and `krnxmemflt040.s`
 - Existing local context:
   `040-FAULT-RESOLVER-AUDIT.md`,

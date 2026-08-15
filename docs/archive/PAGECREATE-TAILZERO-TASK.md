@@ -20,7 +20,7 @@ Requested deliverable: a census + conversion spec in the analysis repo
 (`amix-kernel-analysis/vm-map/`), suggested name
 `PAGECREATE-TAILZERO-CENSUS.md` (+ `PAGECREATE-TAILZERO-SPEC.md` if you prefer the
 census/spec split used by `DTT0-*` and `B2-*`). Implementation will follow in
-`kernelsupport` from your spec; do not patch the kernel yourself.
+`amix-040-060-port` from your spec; do not patch the kernel yourself.
 
 ---
 

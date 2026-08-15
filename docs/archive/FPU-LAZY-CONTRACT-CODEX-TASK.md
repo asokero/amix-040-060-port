@@ -137,9 +137,9 @@ priority considerably.
 ## Sources on disk
 
 ```text
-kernelsupport/build/unix-040                    the pinned kernel (fpu_save 0x132, fpu_restore 0x158)
-kernelsupport/test-tools/f3-m4-enabled-hw-260811.txt   all three measurement rounds, incl. the failure
-kernelsupport/src/fpsp060_glue.s         our call-outs and the null-frame guard
+amix-040-060-port/build/unix-040                    the pinned kernel (fpu_save 0x132, fpu_restore 0x158)
+amix-040-060-port/test-tools/f3-m4-enabled-hw-260811.txt   all three measurement rounds, incl. the failure
+amix-040-060-port/src/fpsp060_glue.s         our call-outs and the null-frame guard
 amix-src/sys/                                   the AMIX machine-dependent tree
 the SVR4 3b2 sources                            where the u-area fields still have names
 build/fpsp060-work/.../dist/fpsp.s              _fpsp_dz at 3749-3813

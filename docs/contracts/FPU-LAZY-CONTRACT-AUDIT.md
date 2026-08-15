@@ -6,9 +6,9 @@
 
 - Status: static audit and implementation recommendation; no kernel change
 - Date: 2026-08-11
-- Task pin: kernelsupport commit `552a0c8de03f04ea045e93b3b133711da8951b65`
+- Task pin: amix-040-060-port commit `552a0c8de03f04ea045e93b3b133711da8951b65`
 - Task SHA-256: `a7ccee26e71acbbf7eeea70be809173d31450ad5351251658ed0d3b915c3ea93`
-- Kernel: `kernelsupport/build/unix-040`
+- Kernel: `amix-040-060-port/build/unix-040`
 - Kernel SHA-256: `f963b1a317a0a469dc4fe5f19ced8463f71c61fa087f15de754c4782ebc63850`
 
 ## Verdict

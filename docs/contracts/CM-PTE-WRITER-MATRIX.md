@@ -44,7 +44,7 @@ The evidence combines:
 
 - the repository's relocation-enriched Ghidra symbol/call mapping;
 - independent ELF relocation and GNU disassembly checks of the linked image;
-- the relinked 040 assembly sources under `kernelsupport/prototypes`;
+- the relinked 040 assembly sources under `amix-040-060-port/prototypes`;
 - the byte-identical AMIX `vm/exp` object where applicable;
 - the 3B2 SVR4 source as semantic reference, not as AMIX byte provenance.
 

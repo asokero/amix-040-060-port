@@ -14,7 +14,7 @@ there. DZ is owed to hardware.
 
 | Item | Value |
 |---|---|
-| file | `kernelsupport/build/unix-040` |
+| file | `amix-040-060-port/build/unix-040` |
 | build id | `68040-260812-01` (the banner reads `68060-` on the 060 — that is the CPU, not the image) |
 | sha256 | `249a54e35374bc677628a7908e9f0483ff125ea7f3f4a432b128a84941ca1fcd` |
 | textsize | `0xf2910` (993 552) |

@@ -4,7 +4,7 @@ Copy everything between the lines into the new session.
 
 ---
 
-Lue ENSIN kernelsupport/RESUME-HERE-260801.md äläkä johda mitään sen ulkopuolelta. Sen jälkeen
+Lue ENSIN amix-040-060-port/RESUME-HERE-260801.md äläkä johda mitään sen ulkopuolelta. Sen jälkeen
 docs/ISSUE40-AVAILRMEM-DECLINE-260801.md ja Codexin analyysi
 amix-kernel-analysis/vm-map/AVAILRMEM-ACCOUNTING-AUDIT.md (commit d27a303).
 

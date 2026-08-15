@@ -9,7 +9,7 @@ can read.
 
 On the 68060 a misaligned access that **crosses a page boundary** reports FA = the access's
 *start* address with FSLW MA set, so the kernel must also resolve the *next* page. Our
-`wb060_xpage` (`kernelsupport/src/wb040.s`) does that. When the far page is present but
+`wb060_xpage` (`amix-040-060-port/src/wb040.s`) does that. When the far page is present but
 **write-protected**, no formulation we have tried terminates the faulting process: the
 instruction restarts forever. The fix is blocked on two contract questions about stock code.
 
@@ -117,10 +117,10 @@ not the machine? A short spec is enough; I will write the code.
 ## Artifacts
 
 ```text
-kernelsupport/XPAGE-FPROT-FINDING-260806.md   the finding + all three refutations, in order
-kernelsupport/src/wb040.s              wb060_xpage, Lwx_callp, Lwx_prot (commit a860adc)
-kernelsupport/test-tools/xpagetest.c          the test, T3 is the unsafe one
-kernelsupport/REALHW-F2-ACCEPTANCE-260806.md  what the hardware currently guarantees
+amix-040-060-port/XPAGE-FPROT-FINDING-260806.md   the finding + all three refutations, in order
+amix-040-060-port/src/wb040.s              wb060_xpage, Lwx_callp, Lwx_prot (commit a860adc)
+amix-040-060-port/test-tools/xpagetest.c          the test, T3 is the unsafe one
+amix-040-060-port/REALHW-F2-ACCEPTANCE-260806.md  what the hardware currently guarantees
 vanilla stand/unix                            u_trap 0x5a586, k_trap 0x5a1ea, usrxmemflt 0x5aede
 amix-kernel-analysis/vm-map/M68060-XPAGE-ACCEPTANCE.md   its test 3 needs splitting: the
                                               protected case is a defect, the unmapped case

@@ -119,13 +119,13 @@ a test plan, only for the boundary between "answerable now" and "needs an 040".
 ## Artifacts
 
 ```text
-kernelsupport/src/wb040.s                  usrxmemflt:65, replay call :87, wb040_replay:520,
+amix-040-060-port/src/wb040.s                  usrxmemflt:65, replay call :87, wb040_replay:520,
                                                   Lwb_do:603, Lwb_fail landing pad
-kernelsupport/src/segvn_prot040.s          ISSUE-41's restored per-page check (case b passes)
-kernelsupport/test-tools/protfault.c              the three cases; c is the one that fails on 040
-kernelsupport/KNOWN-ISSUES.md                     ISSUE-42 entry (line ~3767)
-kernelsupport/SIGINFO-TRANSLATION-260806.md       F4, and the "Still open" section that named this
-kernelsupport/REALHW-260806-06-ACCEPTANCE.md      what the hardware now guarantees, incl. c on 060
+amix-040-060-port/src/segvn_prot040.s          ISSUE-41's restored per-page check (case b passes)
+amix-040-060-port/test-tools/protfault.c              the three cases; c is the one that fails on 040
+amix-040-060-port/KNOWN-ISSUES.md                     ISSUE-42 entry (line ~3767)
+amix-040-060-port/SIGINFO-TRANSLATION-260806.md       F4, and the "Still open" section that named this
+amix-040-060-port/REALHW-260806-06-ACCEPTANCE.md      what the hardware now guarantees, incl. c on 060
 amix-kernel-analysis/vm-map/XPAGE-FPROT-CONTRACT.md   the contract that produced protfault
 vanilla stand/unix                                usrxmemflt 0x5aede, u_trap 0x5a586, k_trap 0x5a1ea
 ```

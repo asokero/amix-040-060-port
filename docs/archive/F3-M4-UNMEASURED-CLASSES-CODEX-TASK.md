@@ -113,13 +113,13 @@ a precise experiment is a good deliverable.
 ## Sources on disk
 
 ```text
-kernelsupport/src/fpsp060_glue.s        our call-outs, the six Lco_* exits, the trampolines
-kernelsupport/src/fpsp060_head.s        the 128-byte call-out table and its order
-kernelsupport/src/fpsp_glue040.s        the 68040 equivalent -- hardware-accepted
-kernelsupport/test-tools/f3-m4-verify-260811.txt   what M4 measured, and what it did not
-kernelsupport/test-tools/f3-m3-verify-260810.txt   vectors 55 and 60
-kernelsupport/REALHW-260807-11-ACCEPTANCE.md   M5; section 4c is the first sighting of this gap
-kernelsupport/060-F3-FPSP-PLAN-260807.md       the campaign plan and the entry-point table
+amix-040-060-port/src/fpsp060_glue.s        our call-outs, the six Lco_* exits, the trampolines
+amix-040-060-port/src/fpsp060_head.s        the 128-byte call-out table and its order
+amix-040-060-port/src/fpsp_glue040.s        the 68040 equivalent -- hardware-accepted
+amix-040-060-port/test-tools/f3-m4-verify-260811.txt   what M4 measured, and what it did not
+amix-040-060-port/test-tools/f3-m3-verify-260810.txt   vectors 55 and 60
+amix-040-060-port/REALHW-260807-11-ACCEPTANCE.md   M5; section 4c is the first sighting of this gap
+amix-040-060-port/060-F3-FPSP-PLAN-260807.md       the campaign plan and the entry-point table
 amix-kernel-analysis/vm-map/F3-FPSP060-CALLOUT-CONTRACT.md   your own earlier contract answer
 Motorola 060SP sources + NetBSD's fnetbsd.S / fskeletn.S     as used by build-fpsp060.sh
 ```
