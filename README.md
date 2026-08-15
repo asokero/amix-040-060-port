@@ -145,7 +145,12 @@ creating a better one. A reader who cannot see the wrong turns cannot judge the 
 ## Repository metadata
 
 Kept here so it is versioned with the thing it describes, rather than living only in a settings
-form. Description, one line, for the repository listing:
+form.
+
+* Repository: `amix-040-060-port`
+* Project: **AMIX 68040/68060 Port**
+
+Description, one line, for the repository listing:
 
 > Binary patch and override layer that runs Amiga UNIX (AMIX SVR4) on 68040 and 68060 processors
 > — applied to the kernel binary from your own installation.
@@ -164,8 +169,15 @@ done.
 
 New code and modifications: **MIT** — see `LICENSE`.
 
-No Commodore or AT&T material is distributed here. The Motorola 68040/68060 support packages are
-fetched from a NetBSD source tarball at build time and retain their own terms; some algorithms are
-derived from NetBSD's m68k support, which is BSD-licensed. See `NOTICE`.
+**No AMIX kernel binary and no Commodore or AT&T source tree is distributed here** — that is the
+claim, and it is the one that matters. It is not the same as "no third-party text at all", and
+`NOTICE` is precise about the exception: eleven one-line page-geometry macros in
+`include-modelb/`, identical to the vendor's because they are the kernel's compile-time ABI and
+there is no second way to write them that still interoperates. `tools/check-verbatim.py` reports
+them on every run rather than letting them pass unmentioned.
+
+The Motorola 68040/68060 support packages are fetched from a NetBSD source tarball at build time
+and retain their own terms; their notices are reproduced unaltered in `THIRD_PARTY_NOTICES/`.
+Some algorithms are derived from NetBSD's m68k support, which is BSD-licensed. See `NOTICE`.
 
 -Antti Sokero 2026

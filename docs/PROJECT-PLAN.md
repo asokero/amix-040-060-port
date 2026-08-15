@@ -1,4 +1,4 @@
-# Project Plan — 68040 (then 68060) support for Amiga Unix
+# Project Plan — AMIX 68040/68060 Port
 
 > **Canonical status: [`STATUS.md`](../STATUS.md).** Where this file and STATUS.md disagree,
 > STATUS.md is right and this file is history.

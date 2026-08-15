@@ -1,4 +1,4 @@
-# How this port was made
+# How the AMIX 68040/68060 Port was made
 
 *A working method for changing a proprietary binary you cannot read, on hardware you can rarely
 touch, with an AI assistant that is confidently wrong often enough to matter.*

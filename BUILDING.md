@@ -1,4 +1,4 @@
-# Building the AMIX 68040/68060 kernel
+# Building the AMIX 68040/68060 Port
 
 This is the generic build guide. It assumes nothing about your machine except Linux and a shell.
 

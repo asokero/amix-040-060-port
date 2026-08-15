@@ -1,4 +1,4 @@
-# Release plan — publishing the AMIX 68040/68060 port
+# Release plan — publishing the AMIX 68040/68060 Port
 
 **Decided 2026-08-13**, revised the same day after four checks that changed it. Publication is the
 main track ahead of further feature work; Zorro III remains the one substantial development item;
@@ -114,7 +114,7 @@ before phase 6 needs the Amiga.
 | Third-party attribution | — | a `NOTICE` file: NetBSD-derived algorithms (BSD-2), Motorola packages fetched under their own terms, AMIX/Commodore material never redistributed |
 | Git history | rewrite vs fresh start | **rewrite** — the commit-by-commit record including the failures is a substantial part of the value |
 | Credentials | where they live | a gitignored local file the tooling reads; never a tracked file |
-| Repo split | one repo vs kernel + loader | **two**: `amix-040-port` and `amix-unix-boot` |
+| Repo split | one repo vs kernel + loader | **two**: `amix-040-060-port` and `amix-unix-boot` |
 
 ### Phase 1 — licence hygiene ✅ **DONE 2026-08-13**
 
