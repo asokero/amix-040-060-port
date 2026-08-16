@@ -3,15 +3,26 @@
 </p>
 
 # AMIX 68040/68060 Port
-2500
-Amiga UNIX — Commodore's 1991 System V Release 4 for the Amiga 2500UX/3000UX originally runs
-only on a 68030. This project makes it run on a **68040** and a **68060**, from a single image,
-and it does so by patching the stock kernel binary rather than by rebuilding it from
-sources...which nobody has?
 
-You supply your own licensed AMIX 2.1c installation. Nothing here is redistributable
-Commodore or AT&T material, and kernel binary is available here.
+Amiga UNIX, commonly known as AMIX, is Commodore's port of AT&T System V Release 4 for the
+Amiga 2500UX and 3000UX. Stock AMIX is notoriously particular about hardware: it expects a
+complete 68020/68030 system with an MMU and FPU, and its stock driver set supports only a narrow
+range of hardware. This port does not yet provide a safe general mapping path for the high-address
+Zorro III apertures of modern RTG cards.
 
+There is little surviving evidence showing whether Commodore ever had an in-house 68040
+development version. Maybe one day we will find out, but while waiting we can play around with
+this toy.
+
+This project continues my AI-assisted adventure into this obscure and commercially abandoned
+operating system. It makes AMIX run on a **68040** and a **68060** by patching the stock kernel
+binary rather than rebuilding it from a complete source tree, which is not publicly available.
+
+You supply your own licensed AMIX 2.1c installation. This repository distributes neither the
+stock nor a patched AMIX kernel image, and it does not contain the Commodore or AT&T source trees.
+
+**This repository is not a kernel distribution. It is a patch and override layer for the kernel
+you already own.**
 
 ```
    your AMIX install          this repository          what you boot
@@ -22,23 +33,33 @@ Commodore or AT&T material, and kernel binary is available here.
       left untouched
 ```
 
-Your AMIX partition is never written to. If anything goes wrong, boot the machine with a 68030
-and it starts the original system from the boot partition as before.
+## Foreword and disclaimer
 
+This is hobbyist work on an early-1990s proprietary operating system. The motivation came from
+an interest in using modern AI tools and curiosity about an old, obscure operating system. This
+project is meant to be fun, not production infrastructure, so please treat it accordingly.
 
-## Forewords and disclaimer
+This repository is both a build system and a record of my AI-assisted work with Claude Code and
+Codex. It deliberately keeps the errors, corrected conclusions, findings and history. It may not
+be the smallest or neatest possible tree. As I myself am not an experienced developer nor do I 
+decerve a true UNIX beard or have the deep understanding of the actual code, the intention therefore 
+is to make the process visible and auditable. This approach should also support further examination
+of this project with your own AI-asissistant.
 
-This Project is a hobbyist work on a 34-year-old proprietary operating system. The
-motivation for this work is born purely out of curiosity on using modern AI tools and
-curiosity to an old, obscure and dead operating system. This project is meant to be fun 
-and nothing serious. So please do not take this too seriously.
+This work is not affiliated with Commodore, AT&T, Amiga Corporation or anyone else. It is not
+supported and not for production use. This is a technical exercise and a preservation project,
+so please have fun.
 
-This work is not affiliated with Commodore, AT&T, Hyperion or anyone else. Not supported.
-Not for production use — this is a technical exercise and a preservation project, so
-please.... have fun!
+For more concrete user information, visit the
+[EAB forum thread](https://eab.abime.net/showthread.php?t=123245).
 
+This project builds on groundwork by:
 
-For more concrete user related info, visit the [EAB forum thread](https://eab.abime.net/showthread.php?t=123245).
+- Markus Wild - thank you for the `unix_boot` utility and its source code
+- `isoriano1968` - the AMIX GCC cross-toolchain
+- `jusii` and the wider AMIX community
+- Commodore's original Amiga UNIX team
+
 
 ## What works
 
@@ -49,13 +70,18 @@ unless it says otherwise.
 * **Caches on** — instruction cache and data cache, in copyback mode, by default
 * **X11R5 on real RTG hardware**, with two different cards and drivers: Xsvga on a Piccolo, and
   the Xrtg server on a Zorro II VA2000. The twm desktop works
-* **Console and telnet login**, A2065 ethernet
-* **SCSI root filesystem**, init/rc, fsck, reboot, shutdown
+* **Console and telnet login**, A2065 Ethernet
+* **SCSI root filesystem**, `init`/`rc`, `fsck`, reboot and shutdown
 * **NFS client**, read and write
-* **Floating point is correct** — Motorola's FPSP for the 68040, and the full 68060 package
-* **68060 64-bit integer instructions** the CPU does not implement are emulated
-* **Nethack runs.** So does the native C compiler
+* **Floating-point support is hardware-accepted** — Motorola's FPSP for the 68040 and the full
+  68060 package, including all six enabled IEEE exception classes on 68060 hardware
+* **The measured 68060 64-bit multiply forms used by the installed userland are emulated**;
+  unrecognized forms take a counted fallback instead of being silently mis-executed
+* **NetHack runs.** So does the native C compiler
 * A memory leak that used to force a reboot every few hours is fixed
+
+Every claim above has an acceptance document in `docs/` naming the build, platform, test and
+result. A listed capability means measured coverage, not a claim that every possible input is proven.
 
 ### What works less well
 
@@ -63,60 +89,69 @@ unless it says otherwise.
 * Two ways to crash it are known and captured, but not explained (`ISSUE-9`, `ISSUE-10`)
 * `shutdown -i0` crashes on the halt path — the system survives it, and `reboot` works
 * `init 6` hangs, but that one turned out to be userland (`rc6`), not the kernel
-* The s5 filesystem is untested and probably does not work
+* The s5 filesystem is unsupported; its remaining 2 KiB/4 KiB problem is structural rather than
+  merely untested
 * Booting needs the patched `unix_boot040` loader; the native boot-partition path is still
   68030-only
 * Zorro III is not available yet — see below
-* 68LC060 has never been tried
-
-Every claim above has an acceptance document in `docs/` naming the build, the test and the
-numbers. Where a code path has never been exercised, it is listed as such rather than assumed
-correct.
+* 68LC060 is unsupported and untested; the FPU-absent initialization path is not implemented
 
 ### Next
 
 * Zorro III RTG cards
-* The halt path, and the rc6 reboot sequence
-* Reconstructing the kernel sources from the SVR4 3B2 tree — maybe
+* Reconstructing the kernel sources from the SVR4 3B2 tree — maybe?
 
-## Two things people ask about
+## Some things people ask about
 
 ### "AMIX can only see 16 MB"
 
-It cannot see only 16 MB, and there is no 16 MB limit anywhere in the kernel. The story has a
-real root, though, and it is worth knowing which part is true.
+The evidence does not support a 16 MB kernel ceiling. A 32 MB accelerator-memory region has booted
+and passed sustained hardware stress tests on both CPUs. That proves more than 16 MB works; it does
+not prove that every larger or fragmented memory configuration works.
+
+- **Kernel ceiling?** No 16 MB ceiling has been observed in static analysis or hardware tests.
+- **A3000 motherboard ceiling?** Yes: the standard motherboard provides at most 16 MB of Fast RAM.
+- **Must memory be contiguous?** The current boot path selects one contiguous non-chip region and
+  does not combine the separate 32 MB accelerator and 16 MB motherboard regions.
+- **Does 32 MB accelerator RAM cause trouble?** Not in the tested Mercury configurations; it has
+  passed the project's hardware acceptance and stress workloads.
+- **What about older SCSI controllers?** A2090/A2091 have their own DMA-address and bounce-buffer
+  constraints, but they were not part of this port's hardware acceptance and are not a kernel
+  RAM limit.
 
 On an **A3640** the accelerator has no RAM of its own, so the kernel runs from the A3000
-motherboard's fast RAM — and that tops out at 16 MB. On that card the machine really does have
-about 16 MB of usable memory. It is a property of the card, not of Amiga UNIX. Put the same
-kernel on an accelerator with its own RAM and it uses that instead.
+motherboard's Fast RAM, whose standard maximum is 16 MB before the kernel and other reservations.
+That is a property of the hardware configuration, not an AMIX 16 MB ceiling. With a Mercury, the
+loader instead places the same kernel in the accelerator's larger local-memory region.
 
 What *is* a real limitation, and was measured here: this machine offers **48 MB in two separate
 regions** — 32 MB at `0x08000000` and another 16 MB at `0x07000000`, the second one *below* the
-first — and AMIX counts only the region the kernel happened to be loaded into. So you can lose
-16 MB to the arrangement of your memory rather than to any ceiling.
-
-We went looking for the ceiling and did not find one. The blocker is that the boot-time algorithm
-does not recognise two separate regions as one pool; teaching it to is bounded work, not a
-counter that needs widening. It was analysed and then **deliberately not done** — the machines
-this port serves do not need it enough to justify touching the startup path.
+first — and the current boot/kernel path counts only the region containing the kernel. The other
+16 MB is therefore left unused because of the region-selection algorithm, not a 16 MB ceiling.
 
 ### Zorro III
 
-Not supported, and this is the next thing to be attempted.
+The current port does not yet provide a supported kernel mapping for high-address Zorro III
+device apertures. The loader can record Zorro III AutoConfig entries, but recognizing a card is
+different from safely mapping its MMIO and framebuffer with the correct cache policy.
 
-The reason is specific rather than vague: a Zorro III card's memory window lives at `0x40000000`,
-and on this kernel a driver cannot reach it. The transparent translation register that makes
-physical memory directly addressable covers only the first gigabyte, and `0x40000000` is inside a
-kernel segment that faults on access instead.
+This wording is deliberate: historical AMIX-specific Zorro III hardware existed, so the blanket
+claim that "AMIX does not support Zorro III" is too broad. Modern Zorro III RTG support is the
+next substantial feature being considered here.
 
-It is worth doing because the Zorro II ceiling is real and measured. On 2026-08-10 the Zorro II
-graphics aperture sustained **3.09 MB/s against 28.66 MB/s** for local memory, and a width test
-showed the bus is **saturated rather than serialised** — meaning a wider path would actually help,
-which is exactly what Zorro III is.
+### Is it possible to compile the Amiga UNIX kernel from source?
 
-The plan, in order: fix the VA2000 driver's addressing, test it in Zorro II mode first, then the
-framebuffer mapping class, then the card firmware.
+Not from the files currently available as a complete, original source tree.
+
+The AMIX installation includes substantial source code, but many generic kernel subsystems and
+some machine-dependent components are present only as relocatable `exp` objects. Available SVR4
+3B2 sources are a valuable reference for much of the generic code, but they are not a drop-in AMIX
+source tree. The remaining work includes both adapting that generic code to the measured AMIX ABI
+and reconstructing machine-specific pieces for which no equivalent source is available.
+
+In principle those modules can be replaced incrementally until a source-buildable kernel exists.
+That is a separate and much larger project, not the goal of this binary port.
+
 
 ## Where it runs
 
@@ -144,9 +179,9 @@ set up, so it is worth reading this list before starting.
 
 | | | Where |
 |---|---|---|
-| **AMIX cross compiler** | `m68k-cbm-sysv4-gcc` and `-ld`. This is the one that takes time: you build it yourself | [gcc-cross-amix](https://github.com/isoriano1968/gcc-cross-amix) |
-| **GNU m68k tools** | for symbol surgery and the ELF checks | `apt install binutils-m68k-linux-gnu gcc-m68k-linux-gnu` |
-| **Your AMIX 2.1c installation** | mounted or unpacked somewhere readable — the build needs the file `stand/unix` from it | your own disk or disk image |
+| **AMIX cross compiler** | `m68k-cbm-sysv4-gcc` and `m68k-cbm-sysv4-ld`; build this first | [gcc-cross-amix](https://github.com/isoriano1968/gcc-cross-amix) |
+| **GNU m68k tools** | for symbol surgery and the ELF checks | on Debian `apt install binutils-m68k-linux-gnu gcc-m68k-linux-gnu` |
+| **Your AMIX 2.1c full installation** | mounted or unpacked somewhere readable — the build needs the vanilla kernel file `stand/unix` from it | your own disk or disk image |
 | **A NetBSD source tarball** | Motorola's floating-point packages are taken out of it at build time; they are not shipped here | any recent `syssrc.tgz` |
 | Python 3, `patch`, coreutils | | your distribution |
 
@@ -170,7 +205,7 @@ Ubuntu install is enough.
 ```sh
 cp config.sh.example config.sh    # tell it where your toolchains and your AMIX install are
 $EDITOR config.sh                 # every variable is documented in the file
-sh tools/check-env.sh             # checks every dependency, and your kernel's sha256
+sh tools/check-env.sh             # checks every dependency and your kernel's SHA-256
 sh relink-040.sh                  # -> build/unix-040
 ```
 
@@ -184,33 +219,44 @@ Full instructions and the toolchains: **[`BUILDING.md`](BUILDING.md)**.
 
 ## How it works
 
-There are only two kinds of change. Whole routines are **replaced** — the MMU and cache handling,
-the fault paths, the floating-point glue — by assembling new versions and linking them over the
-stock ones. Everything smaller is an **edit in place**: a shift count, a page size, a vector
-entry. Both kinds check what they expect to find before they touch anything, and the build stops
-if the kernel is not the one they were measured against.
+The build uses two primary mechanisms. Whole routines — MMU and cache handling, fault paths and
+floating-point glue — are **replaced** by exposing selected stock symbols, weakening their original
+definitions and linking stronger implementations over them. The original body can remain reachable
+through a `*_orig` alias when an override still needs part of the stock behavior.
+
+Smaller changes are asserted **edits in place**: instructions, shift counts, page-size constants,
+relocation targets and vector entries. The build rejects an unexpected input or patch site.
 
 ```mermaid
 flowchart TD
-    A["stand/unix — your own 68030 kernel"] --> B{"exactly the kernel<br/>this was measured against?"}
-    B -- no --> X["build stops, nothing written"]
-    B -- yes --> C["REPLACE whole routines<br/>69 units: MMU, caches, faults, FPU"]
-    C --> D["EDIT individual numbers<br/>43 scripts: 2 KiB to 4 KiB pages, vectors"]
-    D --> E["add Motorola's floating-point package"]
-    E --> F{"did every change take?"}
-    F -- no --> X
+    A["stand/unix — your own stock kernel"] --> B{"exact SHA-256?"}
+    B -- no --> X1["stop before producing a kernel"]
+    B -- yes --> C["prepare symbols<br/>globalize, weaken, add *_orig aliases"]
+    O["assemble src/*.s overrides"] --> D["ld -r<br/>stock kernel + strong overrides"]
+    C --> D
+    D --> E["assert and apply byte/relocation patches<br/>030 PMMU, 2 KiB to 4 KiB, vectors, VM"]
+    E --> P["link Motorola 040/060 support packages"]
+    P --> F{"bindings, geometry and relocations valid?"}
+    F -- no --> X2["reject build artifact<br/>stock kernel remains untouched"]
     F -- yes --> G["build/unix-040"]
-    G --> H["unix_boot040<br/>tells the kernel which CPU it is on"]
+    G --> H["unix_boot040<br/>safe MMU handoff, correct relocations, CPU type"]
     H --> I["AMIX on a 68040 or 68060"]
 ```
 
-That last step is why one image serves both CPUs: the loader detects the processor and writes it
-into the kernel before starting it, and every CPU-specific path checks that value at runtime.
+The loader-provided CPU type is why one image serves both processors: every CPU-specific path
+checks that value at runtime. The patched loader is also mandatory because it avoids the stock
+loader's 68030-only MMU shutdown and applies the PC-relative relocations used by the support
+packages correctly.
 
 ## If it does not boot
 
-Nothing you can do here damages the AMIX installation, so the recovery is just to boot the
-machine with a 68030 again.
+The build never modifies the source `stand/unix`; it works on a copy under `build/`. Booting an
+experimental kernel is different: a kernel defect can still panic the machine or damage a mounted,
+writable filesystem.
+
+Keep backups and retain a known-good kernel and boot path. If the new image does not start, boot
+the original AMIX kernel with a 68030-capable configuration; do not overwrite your only known-good
+image with the relinked one.
 
 To find out *why*, build a debug kernel instead and watch it over a serial line:
 
@@ -230,7 +276,7 @@ got.
 |---|---|
 | `relink-040.sh` | the build: assembles the replacements, links them in, applies the byte patches, validates |
 | `relink-040-*.sh` | variants: debug probes, serial mirror, and the RTG graphics kernels |
-| `src/*.s` | the replacement routines — see [`src/README.md`](src/README.md) |
+| `src/*.s` | replacement routines, wrappers, support-package glue and diagnostic probes — see [`src/README.md`](src/README.md) |
 | `src/patch_*.py` | the in-place edits, one script per group of changes |
 | `tools/` | environment check, kernel verification, and the script that generates the live counter addresses |
 | `test-tools/` | the test programs used for acceptance on hardware |
