@@ -5,8 +5,8 @@
 # their sources into build/ and rewrites the page-geometry sites there, so the
 # resulting object's bytes stay traceable to a source line.
 #
-#   ~/kehitys/amix-z3660scsi/src/z3660.c      -> build/z3660_040.c
-#   ~/kehitys/amix-z3660net/src/z3660eth.c    -> build/z3660eth_040.c   (+ .h copies)
+#   $Z3660_SCSI_SRC                           -> build/z3660_040.c
+#   $Z3660_NET_SRC/z3660eth.c                 -> build/z3660eth_040.c   (+ .h copies)
 #
 # WHY (measured, not assumed): both drivers were written for the stock 68030
 # kernel, whose page is 2 KiB.  Compiled against the vanilla headers, they carry
@@ -38,9 +38,15 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.join(os.path.dirname(HERE), "build")
-HOME = os.path.expanduser("~")
-SCSI_SRC = os.path.join(HOME, "kehitys/amix-z3660scsi/src/z3660.c")
-NET_DIR = os.path.join(HOME, "kehitys/amix-z3660net/src")
+# Both driver trees come from config.sh -- see the note in va2000_modelb.py for why these are
+# not hard-coded paths any more.
+SCSI_SRC = os.environ.get("Z3660_SCSI_SRC")
+NET_DIR = os.environ.get("Z3660_NET_SRC")
+if not SCSI_SRC or not NET_DIR:
+    sys.exit("Z3660_SCSI_SRC and Z3660_NET_SRC must be set (config.sh).  They point at the\n"
+             "amix-z3660scsi and amix-z3660net source trees; only relink-040-z3660.sh needs them.")
+SCSI_SRC = os.path.expanduser(SCSI_SRC)
+NET_DIR = os.path.expanduser(NET_DIR)
 
 PNUM = "((u_int)(paddr) >> 12)"
 

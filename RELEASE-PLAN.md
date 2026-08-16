@@ -132,7 +132,7 @@ Result, with the verifications that were actually run:
   tag re-verified building from hw-68060-260812-02 in a clean worktree AFTER the rewrite
                   still reproduces the hardware-accepted binary: 2 bytes differ, both
                   inside the build-id stamp (date + per-day counter)
-  backups         pre-rewrite bundle in ~/kehitys/amix-backups and on the NAS
+  backups         pre-rewrite bundle kept outside the repository, and on the NAS
 ```
 
 Two corrections were needed along the way and are recorded in the commit: the patch baseline

@@ -3,7 +3,7 @@
 # va2000_040.o has been ld -r'd into the 040 kernel (2026-07-24).
 #
 # EXPERIMENTAL third-party driver test -- NOT part of the standard vanilla
-# kernel.  Driver source: ~/kehitys/va2000-amix/src/va2000.c (separate repo,
+# kernel.  Driver source: $VA2000_SRC (separate repo,
 # NOT modified by this script -- see va2000_modelb.py for the Model-B copy it
 # is compiled from).
 #

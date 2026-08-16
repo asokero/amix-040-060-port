@@ -35,4 +35,9 @@ _CFG_ROOT=$(_cfg_find) || {
 . "$_CFG_ROOT/config.sh"
 
 PATH="$AMIX_CROSS/bin:${M68K_GNU_BIN:-/usr/bin}:$PATH"
+# Exported because the Python helpers read them from the environment rather than re-parsing
+# config.sh.  VA2000_SRC and the Z3660 pair were added 2026-08-16: until then the scripts that
+# use them held a hard-coded path under one developer's home directory, so the variables were
+# checked by check-env.sh and then ignored by the build.
 export PATH AMIX_ROOT AMIX_CROSS NETBSD_SYSSRC
+export XSVGA_EXP VA2000_SRC Z3660_SCSI_SRC Z3660_NET_SRC

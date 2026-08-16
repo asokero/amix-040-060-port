@@ -48,7 +48,7 @@ Every assertion is a negative array size, which this gcc reports as
 
 ## Proof on the driver that motivated the work
 
-The **same unmodified upstream** `~/kehitys/amix-z3660scsi/src/z3660.c`:
+The **same unmodified upstream** `$Z3660_SCSI_SRC`:
 
 ```text
 stock sysroot :   9e: 720b  moveq #11,%d1     c6: 720b  moveq #11,%d1

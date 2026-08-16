@@ -11,7 +11,7 @@
 # emulator smoke test can only prove "boots clean, no board found, FPU intact".
 # Real hardware validation is the user's job on the A3000.
 #
-# Driver source: ~/kehitys/va2000-amix/src/va2000.c (SEPARATE repo, untouched
+# Driver source: $VA2000_SRC (SEPARATE repo, untouched
 # by this script). va2000_modelb.py copies it into build/ and converts the
 # ONE 2 KiB-page phystopfn shift (va2000mmap, >>11) to the 4 KiB Model-B shift
 # (>>12) that this kernel's device-mmap handlers all use (see

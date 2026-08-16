@@ -388,5 +388,5 @@ se on laillista thrashia, älä tulkitse jumiksi ennen ~15 min.
 - Vikojen yksityiskohdat: `KNOWN-ISSUES.md` (ISSUE-15/16/17/18/27/28/29/30/31/32/33)
 - Rautalinjan historia ja koneen fysiikka: `archive/RESUME-HERE-040-HARDWARE.md`
 - Cache-linjan protokolla: `CACHES-ON-PLAYBOOK.md`
-- Yhteydet ja creds: `~/kehitys/CLAUDE.md` (**ei koskaan repoon**);
+- Yhteydet ja creds: `a sibling working directory` (**ei koskaan repoon**);
   telnet 10.0.10.10, TFTP-host 10.0.10.182:1069, NAS nasu = 10.0.10.52

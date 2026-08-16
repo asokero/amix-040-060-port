@@ -140,12 +140,12 @@ Make the AMIX SVR4 kernel boot and run on 68040, then 68060, on an Amiga 3000.
 - **fs-uae** with the AMIX disk image — primary fast-iteration dev target
   (accurate CPU emulation with MMU; **not** JIT).
 - Host dev tools: `m68k-linux-gnu-{objdump,gcc,as,ld,readelf,nm}` installed (analysis/RE).
-- **AmigaOS cross-toolchain** (bebbo amiga-gcc) at `~/kehitys/amiga-gcc-bin`
-  (`m68k-amigaos-gcc`, GCC 6.5; the source tree `~/kehitys/amiga-gcc` is a failed 2020
+- **AmigaOS cross-toolchain** (bebbo amiga-gcc), installed wherever you built it
+  (`m68k-amigaos-gcc`, GCC 6.5; a source tree from the failed 2020
   build — use the `-bin` one). Builds `unix_boot` (the AmigaOS-side bootstrap). Its `as`
   knows 040/060 MMU ops natively. **This is the toolchain for `unix_boot`, distinct from
   the AMIX kernel toolchain below.**
-- **AMIX cross-toolchain** at `/home/asokero/kehitys/amix-playground/gcc-cross-amix`
+- **AMIX cross-toolchain**, built from the `gcc-cross-amix` tree (`GCC_CROSS_ENV` in `config.sh`)
   (acquaintance's, new): target `m68k-cbm-sysv4`, GCC 2.7.2.3 + binutils 2.8.1.
   C/as/ld work; produces `ELF MSB relocatable M68000` objects matching native AMIX
   kernel objects. **This is the relink/replacement-object toolchain for Approach A.**
@@ -175,7 +175,7 @@ Motorola M68040 FPSP / MC68060 SP — the originals. AmigaOS `68040.library`/`68
       Confirms: ELF load, bootinfo build, MMU handoff, multiuser — the whole loop. DONE
       (fs-uae A3000, KS 3.2). The 040-aware `unix_boot` also boots cleanly on 030.
 - [x] Build `unix_boot` from `unix_boot/src` — DONE with bebbo amiga-gcc
-      (`~/kehitys/amiga-gcc-bin`, m68k-amigaos GCC 6.5). Now contains the 040/060-aware
+      (m68k-amigaos GCC 6.5). Now contains the 040/060-aware
       `copyit.s`. Reproduce with `unix_boot/build.sh`. Verified the 040 opcodes
       (movec tc/itt/dtt, pflusha f518, cpusha f4f8) + the 030 pmove fallback are all in
       the final binary. Required small NDK modernizations (execname.h, Alert arity,

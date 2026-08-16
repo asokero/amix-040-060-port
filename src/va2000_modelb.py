@@ -2,7 +2,7 @@
 # va2000_modelb.py -- Model B (4 KiB page frame) adaptation of the MNT VA2000
 # driver source for the EXPERIMENTAL 040 va2000 kernel (2026-07-24).
 #
-# The upstream driver at ~/kehitys/va2000-amix/src/va2000.c targets the
+# The upstream driver (VA2000_SRC, repo va2000-amix) targets the
 # vanilla 68030/2 KiB kernel (that repo is a SEPARATE project -- DO NOT MODIFY
 # IT).  It has exactly ONE page-size dependency: va2000mmap() returns
 # phystopfn(pa) with the stock 2 KiB shift `>> 11` (PNUMSHFT=11).  Our 040
@@ -19,7 +19,7 @@
 # upstream) or an over-match is never possible.
 #
 # Usage: python3 src/va2000_modelb.py
-#   reads:  ~/kehitys/va2000-amix/src/va2000.c
+#   reads:  $VA2000_SRC
 #   writes: build/va2000_040.c   (copy, patched)
 #   also copies va2000.h unmodified alongside it (va2000.c does
 #   #include "va2000.h" and needs it in the same directory to compile).
@@ -29,9 +29,22 @@ import sys
 import os
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC_DIR = os.path.expanduser("~/kehitys/va2000-amix/src")
-SRC_C = os.path.join(SRC_DIR, "va2000.c")
+
+# The driver source comes from VA2000_SRC in config.sh, which is where check-env.sh looks and
+# where BUILDING.md tells you to put it.  Until 2026-08-16 this line held a path under one
+# developer's home directory instead, so the configuration variable was decoration: check-env.sh
+# reported it green, and the build then read a directory that exists on exactly one machine.
+SRC_C = os.environ.get("VA2000_SRC")
+if not SRC_C:
+    sys.exit("VA2000_SRC is not set.  Point it at your va2000-amix src/va2000.c in config.sh\n"
+             "(the graphics kernels are the only thing that needs it; see BUILDING.md).")
+SRC_C = os.path.expanduser(SRC_C)
+SRC_DIR = os.path.dirname(SRC_C)
 SRC_H = os.path.join(SRC_DIR, "va2000.h")
+for _p in (SRC_C, SRC_H):
+    if not os.path.exists(_p):
+        sys.exit("VA2000_SRC points at a tree without %s\n  VA2000_SRC=%s"
+                 % (os.path.basename(_p), os.environ.get("VA2000_SRC")))
 OUT_C = os.path.join(HERE, "build", "va2000_040.c")
 OUT_H = os.path.join(HERE, "build", "va2000.h")
 
@@ -47,7 +60,7 @@ NEW = ("        /* Model-B (4 KiB page, PNUMSHFT=12) adaptation of the vanilla\n
 # mode support in the kernel driver, or is it still only on its own branch?"
 #
 # It was in -- but only because that branch happened to be the checked-out one.  This script reads
-# whatever ~/kehitys/va2000-amix/src/va2000.c currently is, with no branch and no revision pinned,
+# whatever VA2000_SRC currently points at, with no branch and no revision pinned,
 # so `git checkout main` in that repo would silently produce a kernel WITHOUT the 8-bit support and
 # no build-time signal at all.  wolf3d needs 8-bit: the branch adds VA2CLR_8BIT, the /2 pitch for
 # two pixels per 16-bit word, 2x pixel doubling for small modes, and cur_bpp = 8.  On main the
@@ -73,7 +86,7 @@ def check_provenance():
         "       got      sha256 %s\n"
         "       %s\n"
         "       If the va2000-amix checkout moved, restore it:\n"
-        "           cd ~/kehitys/va2000-amix && git checkout %s\n"
+        "           cd <your va2000-amix> && git checkout %s\n"
         "       If the driver genuinely changed, re-check the diff and update EXPECT_SHA256 here\n"
         "       ON PURPOSE -- silently building a different driver into the kernel is exactly the\n"
         "       failure this pin exists to prevent."

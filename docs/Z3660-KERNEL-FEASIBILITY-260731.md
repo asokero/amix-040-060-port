@@ -4,8 +4,8 @@
 040+FPU+MMU core ported into the card), the drivers have to be in the kernel that runs there. This
 records what was checked, what was fixed, and exactly where the remaining wiring goes.
 
-Upstream repos are separate projects and are **never modified**: `~/kehitys/amix-z3660scsi`
-(PISCSI mailbox SCSI, `z3660queue`) and `~/kehitys/amix-z3660net` (STREAMS/DLPI ethernet `zen0`,
+Upstream repos are separate projects and are **never modified**: `the amix-z3660scsi repository`
+(PISCSI mailbox SCSI, `z3660queue`) and `the amix-z3660net repository` (STREAMS/DLPI ethernet `zen0`,
 `z3660ethinfo`). Both are proven on a real A4000 + Z3660 against a **68030** kernel.
 
 ## 1. They cross-compile for us as they stand

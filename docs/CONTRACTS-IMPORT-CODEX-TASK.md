@@ -25,7 +25,7 @@ size of the 34                          11 903 lines / ~76 000 words
 ```
 
 All 34 exist; none is missing. The analysis repository is at
-`~/kehitys/amix-playground/amix-kernel-analysis`, and it stays private after this work.
+`a sibling working directory/amix-kernel-analysis`, and it stays private after this work.
 
 **The provenance gate already exists and passes.** `python3 tools/check-verbatim.py` normalises
 every tracked line and compares it against the local reference source trees — 34 818 distinct

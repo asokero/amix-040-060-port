@@ -2,8 +2,8 @@
 # relink-040-z3660.sh -- a 68040 kernel carrying the two Z3660 drivers, for a
 # bench where the Z3660's own 68040 emulation is being developed (2026-07-31).
 #
-#   ~/kehitys/amix-z3660scsi   PISCSI mailbox SCSI   (z3660queue)
-#   ~/kehitys/amix-z3660net    STREAMS/DLPI ethernet (z3660ethinfo -> zen0)
+#   the amix-z3660scsi repository   PISCSI mailbox SCSI   (z3660queue)
+#   the amix-z3660net repository    STREAMS/DLPI ethernet (z3660ethinfo -> zen0)
 #
 # Both upstream repos are SEPARATE PROJECTS and are never modified: their sources
 # are copied into build/ by z3660_modelb.py, which converts the ONE thing that is

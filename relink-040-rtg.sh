@@ -2,7 +2,7 @@
 # relink-040-rtg.sh -- ONE graphics kernel carrying BOTH RTG drivers (2026-07-26):
 #   * Xsvga        Klaus Burckert, Piccolo / Picasso II Zorro-II -- binary `exp` object,
 #                  registered on cdevsw[67] by relocation retarget (patch_xsvga.py)
-#   * MNT VA2000   our own driver, cross-compiled from ~/kehitys/va2000-amix/src/va2000.c,
+#   * MNT VA2000   our own driver, cross-compiled from $VA2000_SRC,
 #                  registered on cdevsw[68] (patch_va2000_cdevsw.py)
 #
 # WHY ONE KERNEL
