@@ -5,10 +5,9 @@
 # AMIX 68040/68060 Port
 
 Amiga UNIX, commonly known as AMIX, is Commodore's port of AT&T System V Release 4 for the
-Amiga 2500UX and 3000UX. Stock AMIX is notoriously particular about hardware: it expects a
+Amiga 2500UX and 3000UX. Stock AMIX is notoriously picky about hardware: it expects a
 complete 68020/68030 system with an MMU and FPU, and its stock driver set supports only a narrow
-range of hardware. This port does not yet provide a safe general mapping path for the high-address
-Zorro III apertures of modern RTG cards.
+range of hardware.
 
 There is little surviving evidence showing whether Commodore ever had an in-house 68040
 development version. Maybe one day we will find out, but while waiting we can play around with
@@ -100,58 +99,6 @@ result. A listed capability means measured coverage, not a claim that every poss
 
 * Zorro III RTG cards
 * Reconstructing the kernel sources from the SVR4 3B2 tree — maybe?
-
-## Some things people ask about
-
-### "AMIX can only see 16 MB"
-
-The evidence does not support a 16 MB kernel ceiling. A 32 MB accelerator-memory region has booted
-and passed sustained hardware stress tests on both CPUs. That proves more than 16 MB works; it does
-not prove that every larger or fragmented memory configuration works.
-
-- **Kernel ceiling?** No 16 MB ceiling has been observed in static analysis or hardware tests.
-- **A3000 motherboard ceiling?** Yes: the standard motherboard provides at most 16 MB of Fast RAM.
-- **Must memory be contiguous?** The current boot path selects one contiguous non-chip region and
-  does not combine the separate 32 MB accelerator and 16 MB motherboard regions.
-- **Does 32 MB accelerator RAM cause trouble?** Not in the tested Mercury configurations; it has
-  passed the project's hardware acceptance and stress workloads.
-- **What about older SCSI controllers?** A2090/A2091 have their own DMA-address and bounce-buffer
-  constraints, but they were not part of this port's hardware acceptance and are not a kernel
-  RAM limit.
-
-On an **A3640** the accelerator has no RAM of its own, so the kernel runs from the A3000
-motherboard's Fast RAM, whose standard maximum is 16 MB before the kernel and other reservations.
-That is a property of the hardware configuration, not an AMIX 16 MB ceiling. With a Mercury, the
-loader instead places the same kernel in the accelerator's larger local-memory region.
-
-What *is* a real limitation, and was measured here: this machine offers **48 MB in two separate
-regions** — 32 MB at `0x08000000` and another 16 MB at `0x07000000`, the second one *below* the
-first — and the current boot/kernel path counts only the region containing the kernel. The other
-16 MB is therefore left unused because of the region-selection algorithm, not a 16 MB ceiling.
-
-### Zorro III
-
-The current port does not yet provide a supported kernel mapping for high-address Zorro III
-device apertures. The loader can record Zorro III AutoConfig entries, but recognizing a card is
-different from safely mapping its MMIO and framebuffer with the correct cache policy.
-
-This wording is deliberate: historical AMIX-specific Zorro III hardware existed, so the blanket
-claim that "AMIX does not support Zorro III" is too broad. Modern Zorro III RTG support is the
-next substantial feature being considered here.
-
-### Is it possible to compile the Amiga UNIX kernel from source?
-
-Not from the files currently available as a complete, original source tree.
-
-The AMIX installation includes substantial source code, but many generic kernel subsystems and
-some machine-dependent components are present only as relocatable `exp` objects. Available SVR4
-3B2 sources are a valuable reference for much of the generic code, but they are not a drop-in AMIX
-source tree. The remaining work includes both adapting that generic code to the measured AMIX ABI
-and reconstructing machine-specific pieces for which no equivalent source is available.
-
-In principle those modules can be replaced incrementally until a source-buildable kernel exists.
-That is a separate and much larger project, not the goal of this binary port.
-
 
 ## Where it runs
 
@@ -269,6 +216,59 @@ On real hardware that is a serial-to-USB adapter on the A3000's serial port; und
 a TCP port in the configuration. The loader also prints to serial, so one capture holds the
 loader's output and the kernel's on the same timeline. This is usually enough to see how far it
 got.
+
+## Some things people ask about
+
+### "AMIX can only see 16 MB"
+
+The evidence does not support a 16 MB kernel ceiling. A 32 MB accelerator-memory region has booted
+and passed sustained hardware stress tests on both CPUs. That proves more than 16 MB works; it does
+not prove that every larger or fragmented memory configuration works.
+
+- **Kernel ceiling?** No 16 MB ceiling has been observed in static analysis or hardware tests.
+- **A3000 motherboard ceiling?** Yes: the standard motherboard provides at most 16 MB of Fast RAM.
+- **Must memory be contiguous?** The current boot path selects one contiguous non-chip region and
+  does not combine the separate 32 MB accelerator and 16 MB motherboard regions.
+- **Does 32 MB accelerator RAM cause trouble?** Not in the tested Mercury configurations; it has
+  passed the project's hardware acceptance and stress workloads.
+- **What about older SCSI controllers?** A2090/A2091 have their own DMA-address and bounce-buffer
+  constraints, but they were not part of this port's hardware acceptance and are not a kernel
+  RAM limit.
+
+On an **A3640** the accelerator has no RAM of its own, so the kernel runs from the A3000
+motherboard's Fast RAM, whose standard maximum is 16 MB before the kernel and other reservations.
+That is a property of the hardware configuration, not an AMIX 16 MB ceiling. With a Mercury, the
+loader instead places the same kernel in the accelerator's larger local-memory region.
+
+What *is* a real limitation, and was measured here: this machine offers **48 MB in two separate
+regions** — 32 MB at `0x08000000` and another 16 MB at `0x07000000`, the second one *below* the
+first — and the current boot/kernel path counts only the region containing the kernel. The other
+16 MB is therefore left unused because of the region-selection algorithm, not a 16 MB ceiling.
+
+### Zorro III
+
+The current port does not yet provide a supported kernel mapping for high-address Zorro III
+device apertures. The loader can record Zorro III AutoConfig entries, but recognizing a card is
+different from safely mapping its MMIO and framebuffer with the correct cache policy.
+
+There seems to be for example at least one Zorro III only hardware existed (the [Ameristar
+1600GX](https://bigbookofamigahardware.com/bboah/product.aspx?id=474)). Therefore the claim
+that "AMIX does not support Zorro III" might be too broad. Modern Zorro III RTG support is the
+next substantial feature being considered here.
+
+### Is it possible to compile the Amiga UNIX kernel from source?
+
+Not from the files currently available as a complete, original source tree.
+
+The AMIX installation includes substantial source code, but many generic kernel subsystems and
+some machine-dependent components are present only as relocatable `exp` objects. Available SVR4
+3B2 sources are a valuable reference for much of the generic code, but they are not a drop-in AMIX
+source tree. The remaining work includes both adapting that generic code to the measured AMIX ABI
+and reconstructing machine-specific pieces for which no equivalent source is available.
+
+In principle those modules can be replaced incrementally until a source-buildable kernel exists.
+That is a separate and much larger project, not the goal of this binary port.
+
 
 ## Files
 
