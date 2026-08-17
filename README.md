@@ -60,6 +60,24 @@ This project builds on groundwork by:
 - Commodore's original Amiga UNIX team
 
 
+## The first problem was not the kernel
+
+If you have ever tried to boot Amiga UNIX on a 68040 or 68060, you probably never reached the
+kernel. The boot chain stops first: `boot2`, the second-stage loader on the boot partition,
+enables the MMU with 68030 `pmove` instructions that do not exist on these CPUs. It gurus with
+`8000 000B`, an illegal instruction, before the kernel is given control — so whatever the kernel
+might have done was never the thing you were seeing.
+
+Its sources are not missing; they ship with AMIX in `/usr/sys/amiga/boot`. The catch is how they
+are built. The `Makefile` wants a compiler and AmigaDOS headers **on a running AMIX machine** —
+and to run AMIX on a 68040 you need the fixed loader. That circle is where this project started.
+
+Markus Wild's **`unix_boot`** breaks it. It is an AmigaDOS program that loads a kernel from a file
+instead of from the boot partition, and its assembly was already converted so that GCC can build
+it — so it cross-compiles on Linux, outside the loop. The native boot path can be fixed too, and
+one day it may be; it is deferred because loading a development kernel straight from a file under
+AmigaOS has simply been the more convenient way to work.
+
 ## What works
 
 One kernel image boots both processors. Everything below has been done on a real Amiga 3000,
