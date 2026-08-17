@@ -26,7 +26,10 @@ Rules that are not optional:
   `fpsp060_head.s`, which is *concatenated* rather than linked and has to be exactly 128 bytes).
   A misaligned `.data` total shifts the whole kernel `.bss` at runtime, and the SDMAC DMA engine
   has no `A[1:0]` — the symptom is a root mount that fails, nowhere near the cause;
-* **`ld -r` runs last**, after every byte patch, or a later relink supersedes the retarget;
+* **the link and patch phases must not be reordered.** There are two `ld -r` runs: the core
+  override link, then the byte patches against stock offsets, then the FPSP link, then the FPSP
+  and ISP vector retargets. Never move the FPSP link ahead of the stock-offset patches, and
+  never run another `ld -r` after the final retargets — it would supersede them;
 * CPU-specific code gates on `cputype` (40 or 60, poked in by the loader) with a memory-immediate
   compare that touches no register.
 

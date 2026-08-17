@@ -26,8 +26,11 @@ powered on by a human, sometimes needs a CPU card swapped, and is available for 
 A hardware session that discovers "we forgot to measure X" costs a day.
 
 **The emulator lies in specific, discoverable ways.** Amiberry boots the kernel and runs the
-userland, but it raises no enabled IEEE floating-point exceptions and never sets the 68040's WB1S
-write-back valid bit. Two entire code paths cannot execute there. A green emulator run is
+userland, but it raises no enabled IEEE floating-point exceptions, never sets the 68040's WB1S
+write-back valid bit, does not model the 68040's copyback data cache, and cannot be trusted for
+which instructions a 68060 traps as unimplemented. Whole code paths cannot execute there, and one
+of them — the cache — was found only because a defect surfaced on silicon that the emulator had
+been quietly hiding. A green emulator run is
 necessary and not sufficient, and knowing *exactly* where it stops being evidence took
 measurement.
 

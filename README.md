@@ -108,10 +108,11 @@ of its own and the kernel ends up in a different place in memory. On a 68060, ru
 before booting; it is a precondition, not a tweak.
 
 **Emulators.** It also boots under UAE, and most of the development happened there — principally
-**Amiberry**, on both emulated CPUs. You can try the whole thing without an accelerator card. Two
-things the emulator cannot do, so a few paths are only ever exercised on real silicon: it raises
-no enabled IEEE floating-point exceptions, and it never produces a 68040 write-back in the first
-slot.
+**Amiberry**, on both emulated CPUs. You can try the whole thing without an accelerator card.
+Some things it cannot decide, though, so those paths are only ever exercised on real silicon: it
+raises no enabled IEEE floating-point exceptions, it never produces a 68040 write-back in the
+first slot, it does not model the 68040's copyback data cache, and it is not evidence for which
+instructions a 68060 traps as unimplemented.
 
 You also need:
 
@@ -251,10 +252,12 @@ The current port does not yet provide a supported kernel mapping for high-addres
 device apertures. The loader can record Zorro III AutoConfig entries, but recognizing a card is
 different from safely mapping its MMIO and framebuffer with the correct cache policy.
 
-There seems to be for example at least one Zorro III only hardware existed (the [Ameristar
-1600GX](https://bigbookofamigahardware.com/bboah/product.aspx?id=474)). Therefore the claim
-that "AMIX does not support Zorro III" might be too broad. Modern Zorro III RTG support is the
-next substantial feature being considered here.
+At least one Zorro III-only card existed, and it is a telling one: the [Ameristar
+1600GX](https://bigbookofamigahardware.com/bboah/product.aspx?id=474) was a Zorro III graphics
+card designed specifically for the X Window System under Amiga UNIX. So AMIX was expected to
+drive Zorro III graphics at the time, and the claim that "AMIX does not support Zorro III" might
+be too broad. Modern Zorro III RTG support is the next substantial feature being considered here
+— which makes it less a new feature than a restoration.
 
 ### Is it possible to compile the Amiga UNIX kernel from source?
 

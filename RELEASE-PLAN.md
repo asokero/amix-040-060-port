@@ -325,7 +325,7 @@ hard-coded paths are in it).
 
 * The **generic half** — three toolchains and what each is for, the `ld -r` override mechanism, the
   `--weaken-symbol` / `--add-symbol` pattern, the relink hazards (`ld -r` links cleanly when an
-  override definition is missing), the reloc validator, the "`ld -r` last" ordering rule — is
+  override definition is missing), the reloc validator, the link/patch phase ordering — is
   genuinely valuable and belongs
   in `BUILDING.md`. This is knowledge nobody can rediscover cheaply.
 * The **machine-specific half** — where the toolchains live on this laptop, NAS mounts, emulator

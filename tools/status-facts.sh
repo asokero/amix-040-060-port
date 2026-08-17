@@ -221,4 +221,9 @@ for s in ("fpsp_vec11", "fpsp060_vec11", "fpsp060_top", "fpsp_fline", "isp61_vec
     v, t = one(s)
     print("  %-16s %s" % (s, ("%08x %s" % (v, t)) if v is not None else "ABSENT"))
 print('```')
+
+# Exit non-zero when a binding failed.  Until 2026-08-17 this script printed "bindings failing: N"
+# and exited 0 regardless, so a caller that trusted the exit status was told nothing -- the same
+# shape as ISSUE-45, in the tool whose whole job is to say whether the overrides took.
+sys.exit(1 if bad else 0)
 PY

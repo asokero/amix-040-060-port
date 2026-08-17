@@ -241,8 +241,11 @@ The stock kernel is a **binary**, so a replacement routine cannot simply be link
 
 Rules learned the hard way, all of them enforced by the script:
 
-* **`ld -r` goes LAST.** It places our `.text` first, so every byte-patch address stays valid —
-  but only in that order.
+* **Do not reorder the link and patch phases.** There are two `ld -r` runs, not one. The order is:
+  core override link → byte patches against stock offsets → the FPSP link → the FPSP and ISP
+  vector retargets. The first link places our `.text` first, which is what keeps every byte-patch
+  address valid; the second must not be moved ahead of those patches, and nothing may relink
+  after the final retargets, because that supersedes them.
 * **Every override object's section ends with `.balign 4`.** The loader places `.bss` at
   `data_end` *unaligned*.
 * **`--weaken-symbol`, never `--redefine-sym`** for replacing a routine.
@@ -290,11 +293,15 @@ sh emu-reset-boot.sh 060 /tmp/emu.log build/unix-040   # 040 | 060
 The guest's disk is reset from a golden image every run, so test binaries have to be transferred
 each time (`test-tools/tftp_onesock.py` on the host, `tftp` on the guest).
 
-**Two things the emulator cannot decide**, both learned by measurement:
+**What the emulator cannot decide**, each learned by measurement, and the list is not closed:
 
 * it raises **no enabled IEEE FP exceptions**, so those tests are *unexercised* there rather than
   passing — and its FPU does not preserve the extended NaN Motorola's fixtures need;
-* it never sets **WB1S valid**, so one third of the 68040 write-back replay path cannot run.
+* it never sets **WB1S valid**, so one third of the 68040 write-back replay path cannot run;
+* it **does not model the 68040's copyback data cache**, so a cache or DMA-coherency result from
+  the emulator is not a result at all — ISSUE-38 could only be found on silicon for that reason;
+* it is not evidence for **FSLW.MA** behaviour, or for which instructions the CPU traps as
+  unimplemented: a UAE core may execute what real silicon refuses.
 
 A green emulator run is necessary and not sufficient. Anything CPU-exception-shaped needs
 hardware.
