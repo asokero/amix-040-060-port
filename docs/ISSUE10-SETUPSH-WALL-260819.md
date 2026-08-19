@@ -11,6 +11,9 @@ Guest drivers: [`test-tools/i10bench.sh`](../test-tools/i10bench.sh),
 [`test-tools/i10probe.sh`](../test-tools/i10probe.sh),
 [`test-tools/i10w.sh`](../test-tools/i10w.sh). Probe:
 [`test-tools/shmband.c`](../test-tools/shmband.c).
+**Sections 14 and 15 are the current state of this document**; sections 2, 6, 11 and 12 record
+readings that §14 has since overturned, and are kept because each of them is how the next one was
+reached. Resolution audit: [`test-tools/i10r.sh`](../test-tools/i10r.sh).
 
 ## Summary
 
@@ -40,11 +43,24 @@ write-back path differs) does not reproduce it. Two limits are stated in §11: t
 `wb040_replay`, and none of this has run on real 040 silicon — so the wall may be a 68040 **emulation**
 defect that does not occur on hardware.
 
+**That verdict is overturned, the same day, by §14.** An emulator-side watch — which perturbs the
+guest not at all — traced the chain end to end. `0x4AFC0000` is **not fabricated by anything**: it is
+the kernel's own `ILLEGAL`-at-null sentinel, read *legally* through user VA 0 after `sh`'s free-list
+walk followed a **NULL** link. The NULL is there because the arena's end-of-arena marker store
+**vanished** — a user write-class first-touch fault on a freshly `brk`'d anon page for which the
+68040 pushed a **valid pending write-back** and the kernel returned **as-if-resolved**: nothing
+mapped, nothing zero-filled, no store replayed, no signal posted. The genesis is therefore
+**kernel-side, on the 040 lane**, the emulator is exonerated by both its source and a NetBSD
+cross-check, and the confound §12 and §13 spent two instruments on dissolves — there was no
+fabrication for the write-protect to be an artifact of. §15 is the instrument built to name the
+branch inside `usrxmemflt` that swallows the fault.
+
 | | Candidate | Verdict |
 |---|---|---|
 | **A** | One of the bounded-256 reverse-map unlink paths gives up on exhaustion, leaving a stale `p_mapping` after the PTE is removed | **REFUTED** — all three give-up counters are 0 across every reproduction, and no search ever walked half its budget |
 | **B** | The eight-site SysV shm 2 KiB anon-map mismatch | **CONFIRMED as a live defect, but a different bug** — it panics, deterministically, in its predicted band; `sh` never calls `shmget` |
-| **C** | Amiberry 68040 format-$7 write-back infidelity | **MEASURED — §11.** The genesis store lands `0x4AFC0000` while every operand it could have copied from holds a valid `sh` token, the value is in no register and is no immediate: the write-back value has no source, so it is fabricated by the 040 store/write-back mechanism. 040-specific (the 68060 does not reproduce), constant (`0x4AFC` = `ILLEGAL`). Confounds stated in §11: the WP capture routes through `wb040_replay`, and it has never run on 040 silicon — it may be an emulation defect |
+| **C** | Amiberry 68040 format-$7 write-back infidelity | **OVERTURNED — §14.** The value has a source and it is the kernel's own `ILLEGAL`-at-null sentinel, read through user VA 0; nothing fabricates it. The emulator arms the write-back correctly (its own source, plus NetBSD/amiga 9.2 running byte-perfectly on the same rig). §11's "no source" was an instrument artifact: `i10g`'s pointer chase never chased VA 0 through the user map. What is 040-specific is the **kernel's** handling of the fault, not the CPU's arming of it |
+| **F** | The 040 lane's user fault path returns **as-if-resolved** for a first-touch WRITE on a freshly `brk`'d anon page — mapping nothing, signalling nothing, and never replaying the valid pending write-back the CPU handed it | **CONFIRMED (measured) — §14.** Three arena grows, three format-7 write faults, every one with `wb3v=1 wb3s=81 wb3d=800114b5`; for the fatal one the physical frame backing the address shows no mapping, no zero-fill, no replayed store on any chain, no nested fault and no signal, and `sh` runs on. The page is mapped and zero-filled five ticks later by the *read* fault that follows — so the marker is overwritten by zeros that arrive after it |
 | **D** | The page holding the corrupt word is a frame that is, or recently was, a kernel u-area page — the phys double-use / page-lifetime family | **REFUTED** — §4. The page is an ordinary, correctly-mapped, singly-mapped anon heap page of `sh`'s own arena with an intact reverse map, holding **one** wrong longword |
 | **E** | The frame was handed to the anon page with its upper 2 KiB uncleaned — a fill that stopped at `0x800`, so `0x4AFC0000` is a prior owner's content (the Model-B tail-zero family) | **REFUTED** — §9. A frame census shows the upper half is 80% zero with a 343-long contiguous zero run, and the bad word sits in valid `sh` arena among ASCII tokens; the frame was zero-filled correctly. The named 2 KiB tail-zero sites are all already `0x1000` in this kernel. What remains is **H2**: a mis-addressed single-longword write |
 
@@ -672,3 +688,234 @@ bench half of **confound #2**: `0x4AFC` is the UAE core's own `ILLEGAL` marker c
 emulators that reproduce this wall are UAE-derived, so a common-mode emulator defect is a live
 hypothesis such a watch can name rather than merely suspect. For the port-level claim — does the wall
 happen on a real 68040 — **silicon remains the sole decider**.
+
+## 14. The emulator-side watch — the poison has a source, and the bug is a store that vanishes
+
+**2026-08-19 evening · EMU (Amiberry, 68040+MMU, 16 MB, load base `0x07000000`) · deterministic,
+every reading below reproduced on demand.** The probe §13 asked for was built: an env-gated watch in
+the bench emulator's own 68040 MMU data path (a five-commit `i10-watch` branch of the Amiberry build
+this project benches on), with four capture modes — VALUE (every data access carrying `0x4AFC0000`),
+PCWIN (a PC window), ADDR (a virtual address), PADDR (a *physical* frame) — plus decoding of every
+68040 format-7 frame the core pushes. It changes no guest byte: no trace bit, no protected page, no
+kernel change, so the guest runs exactly the code the uninstrumented wall runs.
+
+The log it produces is the emulator's own output and is not tracked in this repository; the lines
+quoted below are from that run. **Measurement and reading are kept apart throughout: what the watch
+observed at run time is marked as measured; what was established by reading an image, a symbol table
+or source is marked as read.**
+
+### 14.1 `0x4AFC0000` is the kernel's own sentinel, read through a NULL pointer
+
+The one thing §2 through §13 could never explain — *why this constant* — has a plain answer.
+
+* **READ (static, four images).** The byte string `33 fc 4a fc` — `MOVE.W #$4AFC,(0).L`, i.e. *store
+  the `ILLEGAL` opcode word at absolute address 0* — sits at file offset `0x73CC` of stock AMIX 2.1,
+  of our 2.1c, and of both `unix-040` and `unix-060`. It is stock kernel code, present on every CPU
+  lane, and it is why a longword read at address 0 returns `0x4AFC0000`: the sentinel word followed
+  by the zeros after it.
+* **MEASURED.** The watch caught the read itself. `/bin/sh`'s `alloc()` free-block **coalescing walk**
+  (`blok.c`; the loop at user VA `0x800023C8..0x8000245C`, rover `blokp` at `0x80010F08`) followed a
+  link that was **NULL** and read the longword at user VA 0 — legally, no fault — getting
+  `0x4AFC0000`. That value is then carried forward as a free-list link exactly as §10 measured, and
+  dereferenced at `q+3` = `0x4AFC0003`, which is the wall.
+
+**So §11's central claim — "the value has no source" — was an instrument artifact, and naming the
+artifact matters more than retracting the claim.** `i10g` scanned the store's address registers and
+what each pointed at, and concluded that nothing the store could have copied held the poison. It was
+right about the registers and wrong about the conclusion, because the source it never considered was
+**user VA 0**: its pointer chase resolved candidates through the process's own page map and a NULL
+pointer is not a candidate any such chase produces. An instrument that cannot see the one source that
+matters reports "no source" with perfect internal consistency.
+
+### 14.2 The NULL comes from a store that never happened
+
+`sh`'s `addblok` grows the arena and then writes the **end-of-arena marker** — the value `_end+1` —
+to the new `bloktop`, which is what terminates the coalescing walk.
+
+* **READ.** From the miniroot `sh`'s own symbol table: `_end` = `0x8000F6F8 + 0x1DBC` = `0x800114B4`,
+  so the marker value is `0x800114B5`.
+* **MEASURED.** For the fatal grow the marker's destination is user VA `0x800152A0`. **That store
+  vanishes.** The longword at `0x800152A0` never becomes `0x800114B5`; it becomes zero, and a walk
+  that reads zero where its terminator should be follows a NULL link into §14.1.
+
+### 14.3 The CPU handed the kernel a valid write-back, three times
+
+Every format-7 frame the core pushed was decoded. The marker store faults on **each** arena grow —
+first touch of a fresh page — and the three of them are identical in everything that matters:
+
+```
+grow 1  fa=80012688   grow 2  fa=80014530   grow 3  fa=800152a0   <- the fatal one
+all three:  ssw=0401   fc=1 (user data)  rw=W  sz=L  atc=1
+            wb3v=1  wb3s=81  wb3d=800114b5
+            stacked pc = ipc = 8000250e        (deferred write-back: PC is past the store)
+```
+
+This is the architectural contract working exactly as `wb040.s` was written for: the 68040 does not
+re-run a faulted write on `rte`, it hands the operating system the pending store in WB3 and expects
+it back. `wb3s=81` is *valid, size long, TM 1*; `wb3d=800114b5` is the marker; `wb3a` is the
+destination. Nothing here is ambiguous or empty.
+
+### 14.4 The emulator is exonerated — twice, and by two different kinds of evidence
+
+* **READ (emulator source).** The path that produces these frames is a table-walk fault →
+  `mmu_bus_error(write=true, val)` → `wb3_status = 0x80 | ssw`. The write-back is armed with the
+  store's own data, on the same code path for every write fault; there is no branch on which it is
+  armed empty.
+* **MEASURED (cross-check).** NetBSD/amiga 9.2 boots and runs on **the same emulated 040+MMU rig**
+  and completes a 200 000-entry `awk` heap-hash **byte-perfectly**. NetBSD does its own format-7
+  write-back replay, from the same frames, and its heap survives a workload far heavier than `sh -n`.
+  An emulator that dropped write-backs could not produce that result.
+
+So the write-back arrives, correctly armed, and something on the AMIX side does not land it. The
+"world A vs world B" question §12 built an instrument for, and §13 failed to answer, **dissolves**:
+both worlds presupposed a fabricated value, and there is none.
+
+### 14.5 What the kernel did with the fatal fault: nothing, in five distinct ways
+
+The physical frame backing `0x800152A0` for the fatal grow is `07E8E2A0` (deterministic across runs).
+Watching that **frame** rather than the VA removes every question about which mapping is being
+observed. In order, all measured:
+
+1. **tick ~153** — the write fault is pushed (the frame of §14.3).
+2. Then, for that fault: **no mapping** is established, **no zero-fill** runs, **no replayed store**
+   lands — user or supervisor, on any chain, including `MOVES` under any DFC — **no nested replay
+   fault** is taken, and **no signal** is delivered: `sh` simply continues.
+3. **five ticks later** the *walk's own read* — `btst #0,3(a1)` — faults on the same page: format 7,
+   `rw=R`, `sz=B`, `fa=800152a3`, `ssw=0521`, `wb3v=0`.
+4. **That** fault maps the page and zero-fills it (the kernel fill loop at `pc=0700032c`, opcode
+   `20c9`; an earlier, unrelated fill of the same recycled frame ran at `pc=070002e8`).
+5. The walk then reads the zeros that arrived *after* its marker should have been written, copies the
+   NULL, dereferences it, reads `0x4AFC0000` from VA 0, and walls on `btst` at `0x4AFC0003`.
+
+Point 2 is the defect and point 4 is why it is invisible from inside the guest: the page *does* get
+mapped and zero-filled, just by the wrong fault, five ticks too late and with the marker's slot
+zeroed rather than written. Every post-mortem probe in §4 through §11 was looking at a page that had
+been correctly zero-filled — because it had been, by the read fault.
+
+### 14.6 Cross-CPU, same disk, same script
+
+| lane | result |
+|---|---|
+| **68040** (`unix-040`) | the wall, onset **< 35 s** — the fatal grow happens early in the parse |
+| **68060** (`unix-060`, the same sentinel bytes in its image) | **no wall**, and no completion in ≥ 5.5 min |
+| **68030** (stock golden) | **no wall**, and no completion in ≥ 50 min |
+
+Two things follow, and they are different claims. First, the whole-file `sh -n` parse is
+**quadratically pathological on every CPU** — neither the 030 nor the 060 finished it — so "the 030
+handles this script fine" was never true and is not the contrast that matters. Second, **only the 040
+lane corrupts**: the other two are slow, not wrong. The wall is not about parsing cost; it is about
+what the 040 fault path does with a first-touch write.
+
+### 14.7 The conclusion, and how far it reaches
+
+**The genesis is kernel-side, on the 040 lane.** A **user write-class first-touch fault on a freshly
+`brk`'d anon page** returns as-if-resolved while mapping nothing, signalling nothing, and never
+replaying the valid pending write-back the CPU handed over. That is one mechanism, and it is not
+specific to `sh`, to `setup.sh`, or to the arena:
+
+* **Every first-touch WRITE to a fresh anon page on the 040 line can silently vanish.** The setup.sh
+  wall is a *tripwire*, not the bug — it is merely the shortest path from a lost store to a visible
+  death, because the lost store happens to be a data structure's terminator.
+* It **plausibly explains the historical `amixadm` avalanche** (`KNOWN-ISSUES.md`, ISSUE-10's original
+  trigger): the same fault address and the same constant, produced by the same lost-store mechanism
+  in a different program. That is a reading, not a measurement — the avalanche has not been re-run
+  under this watch.
+* It is **silicon-relevant**. Nothing emulator-specific remains anywhere in the chain: the CPU
+  behaviour (deferred write-back on a write fault) is the architecture, the emulator arms it
+  correctly, and the part that fails is our own kernel's fault path. §11's "this may be an emulation
+  defect that does not occur on hardware" no longer applies — if anything the risk is the reverse,
+  since real silicon fills the write-back slots more aggressively than the emulator does — the
+  ISSUE-11 note in `src/wb040.s` records that WinUAE and Amiberry never set WB1S valid at all, and
+  the first real-hardware `Lwb_fail` landing came from a WB aimed at a page `as_fault` never touched.
+
+**What is still not established.** *Which* branch of `usrxmemflt` returns the as-if-resolved verdict,
+and therefore what the fix is. The watch can see that the kernel did nothing; it cannot see where
+inside the kernel the doing-nothing happens, because it observes memory and frames, not control flow.
+That is exactly one instrument's worth of work, and §15 is that instrument.
+
+## 15. PART SIX — `i10r`, the resolution audit
+
+**Purpose.** Latch **one** watched fault from inside the fault path and record what each stage of it
+decided, so the swallowing branch is *named* rather than inferred. Instrument:
+[`src/i10rev040.s`](../src/i10rev040.s) PART SIX; guest driver:
+[`test-tools/i10r.sh`](../test-tools/i10r.sh). It ships **dormant** (`i10r_watchva = 0`) and is armed
+with a single `kpoke` of the address to audit — `0x800152A0` for the fault of §14.3.
+
+**Where it hooks, and why both ends.** `usrxmemflt` only, at two sites in `src/wb040.s`: `i10r_pre`
+just before the wrapper calls `usrxmemflt_orig`, and `i10r_post` at the wrapper's single exit join.
+Two ends are necessary because the question is *what the wrapper did*. The resolved tail where
+`i10w_hook` and `i10g_hook` ride is reached only by faults that resolved, so a fault returning
+nonzero would leave the whole block at its ship-time zeros — and §13 is this document's own record of
+how easily a ship-time default gets read back as a measurement. The exit join is downstream of every
+path the wrapper has. `krnxmemflt` is deliberately not hooked: the measured frame carries `fc=1`, a
+user-data access.
+
+**What it records** (79 longs, magic `I1R!`, `kpeek <i10r_magic> 79`):
+
+| field | what it answers |
+|---|---|
+| `i10r_frame` | the frame **pointer value** `%fp@(8)` the wrapper received |
+| `i10r_pre_w1s/w2s/w3s`, `…_w?a`, `…_w?d` | the write-back status **words** at `+78/+80/+82` and the address/data longs at `+88/+92/+96/+100/+104/+108` — read from that pointer at exactly the offsets and widths `wb040_replay` uses. These are the fields the emulator's WB7 line prints, so *kernel reads ≠ CPU pushed* is directly visible |
+| `i10r_post_*` | the same fields at the wrapper's exit — any difference is a rewrite between the two |
+| `i10r_ret` | the verdict `usrxmemflt` returns (the wrapper's `d4`) |
+| `i10r_sisig/sicode/siaddr` | the `k_siginfo_t` it returns it in — `si_signo` is the field `u_trap` selects its fault class from and `trapsig` queues nothing while it is 0, so "no signal was delivered" becomes a reading of the field that actually decides it |
+| `i10r_pt_pre` / `i10r_pt_post` | `ptest` — *the same routine the stock classifier branches on* — for the fault address before and after the resolver. `0x400` both times means the resolution mapped nothing |
+| `i10r_mmusr_pre/post` | the raw 68040 MMUSR for the same VA (R, W, M, B), which the 030-form result throws away |
+| `i10r_pte_pre/post`, `i10r_tv_pre/post` | the leaf PTE and the longword at the address, before and after: *did anything get mapped* and *did the store land*, as two numbers each |
+| `i10r_wb_d` | `wb_replay_n` across the fault = write-back slots actually re-issued. **0 while `i10r_dec3 = 1` is the finding in two numbers** |
+| `i10r_wbfail_d`, `i10r_wbsig_d`, `i10r_x60sig_d`, `i10r_wbf_addr/wbs` | whether a write-back was permanently **denied** rather than never attempted, and whether the wrapper replaced `d4` with a signal number (both zero ⇒ `i10r_ret` *is* `usrxmemflt_orig`'s own return) |
+| `i10r_r0..r15` | the 16 saved registers of the faulting instruction |
+| `i10r_seen_n / match_n / nest_n / alien_n / post_n / pend / latched` | the arming and nesting accounting; **read `i10r_latched` first** — with it 0 every field above is ship-time state |
+
+**Derived is kept separate from measured.** Exactly four fields are computed rather than observed:
+`i10r_dec1..3` decode each write-back slot the way `wb040_replay`'s own gating would (bit 7 valid;
+a WB2 with `SIZE = LINE` skipped by name), and `i10r_branch` decodes the stock classifier's branch
+from `i10r_pt_pre` and the SSW exactly as [`src/usrxmemflt040-design.md`](../src/usrxmemflt040-design.md)
+maps them for this kernel:
+
+```
+1 = 030 B  (0x8000)          -> 5af6e, SIGSEGV err 9
+2 = 030 S  (0x2000)          -> 5af8c, err 11
+3 = 030 L|I (0x4400)         -> 5afb2 SET -> the F_INVAL demand path at 5aff6
+4 = 030 W  (0x0800) + WRITE  -> 5b040/5b050 -> as_fault(F_PROT)
+5 = 030 W  (0x0800) + READ   -> 5b0f2 hardbus
+6 = no fault bits at all     -> 5b0f2 hardbus, with nothing to resolve
+```
+
+The decode has to be separate from `i10r_wb_d` precisely so the two can **disagree**: "the frame said
+there was a store to land" and "a store was landed" are different claims, and a unit that merged them
+could not report the defect §14 measured.
+
+**What it does not do, stated rather than hidden.** `as_fault`'s own `(addr, type, rw)` triple is
+**not** captured. The call site is inside the stock resolver's body, so reaching it means either a
+byte patch of stock code or wrapping `as_fault` for every caller in the kernel, and neither is
+proportionate to one measurement. What is captured is the branch that *chooses* those arguments —
+`ptest`'s result and the SSW jointly determine it — so if the audit lands on branch 3 (the `F_INVAL`
+demand path) then `as_fault`'s arguments become worth the intrusion, and not before. Two smaller
+limits: the audit calls `ptest` twice, and a 68040 `PTEST` loads the ATC entry it walks — the stock
+classifier's own `ptest` does the same microseconds later, and `i10r_ptest_on = 0` turns both calls
+off in one `.data` long if that is ever suspected of perturbing what it measures; and the audit is
+one-shot per boot by construction.
+
+**How to run it.** `i10r.sh` stages `kpeek`/`kpoke` out of the raw slice, verifies the load base by
+reading `i10r_magic` at both candidates, dumps the block before and after, arms `i10r_watchva` (the
+only poke it makes — `i10g_on` and `i10w_on` stay 0, so **nothing is write-protected** and the audited
+fault is the ordinary one), mounts the payload slice read-only, runs `sh -n /cdrom/install/bin/setup.sh`,
+and publishes its log at slice-5 block 25728. If the exact address never presents — a run whose arena
+grows differently would not produce it — a second pass in the same boot widens `i10r_famask` to
+`0xFFFFF000` and re-aims at the whole page, which is the same event with a coarser aim.
+
+**Expected reading, if §14 is right.** `i10r_pre_w3s = 0081`, `i10r_pre_w3a = 800152a0`,
+`i10r_pre_w3d = 800114b5`, `i10r_dec3 = 1` — and `i10r_wb_d = 0`, `i10r_ret = 0`, `i10r_sisig = 0`,
+`i10r_pte_post = 0`. `i10r_branch` then names the branch that produced that verdict, and the fix
+follows from which one it is. Any other shape is more interesting still: `i10r_pre_w3s = 0` with the
+emulator's WB7 line showing `wb3v=1` would mean the kernel's *read* of the frame is the defect, which
+is a different bug in a different file.
+
+**Build state.** The audit kernel is `68040-260819-41`: it links with `TOTAL complaints: 0` and
+`bindings failing: 0`, only `i10rev040.o` (the instrument) and `wb040.o` (its two `jsr` sites) differ
+from a build of the same tree without it, all 404 pre-existing symbols in `i10rev040.o` keep their
+offsets, and a control rebuild (`-42`) is byte-identical to it except the single build-id sequence
+byte. `relink-040.sh` refuses a build whose user-fault path would call an unbound `i10r_pre` or
+`i10r_post`, in the shape the `i10w_hook`/`i10g_hook` guards already use. **It has not been run on the
+bench yet** — the block ships all-zero and dormant, and no reading in §15 is a measurement.
