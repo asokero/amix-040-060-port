@@ -632,6 +632,12 @@ Lhd_cnodbg:
 	movel	%a1@(32),%a0@		| newpte.next = newpp->p_mapping
 	moveal	%fp@(-100),%a0
 	movel	%fp@(-68),%a0@(32)	| newpp->p_mapping = &newpte
+| ISSUE-10 instrument (2026-08-19, src/i10rev040.s).  hat_dup040 has no bounded
+| unlink loop to check, because it never searches a chain -- it only pushes onto
+| one.  It is the PRODUCER whose rate decides whether hat_pteload's, hat_unload's
+| and hat_free's 256-node search bounds can ever be reached, so what it can
+| usefully contribute is that rate.  The `movel` below does not read the CCs.
+	addql	&1,i10_dupreg_n
 	movel	%fp@(-76),%d0
 	moveal	%d0,%a0
 	addqb	&1,%a0@(6)		| ptdat in-use++
@@ -735,6 +741,10 @@ Lhd_share:
 	moveal	%fp@(-60),%a0
 	addaw	&256,%a0
 	movel	%fp@(-68),%a0@		| oldpte.next = &newpte
+| ISSUE-10 instrument: the share path splices mid-chain rather than pushing at
+| the head, but it lengthens the chain by one just the same.  Same counter, same
+| reasoning as the private-copy path above.
+	addql	&1,i10_dupreg_n
 	movel	%fp@(-76),%d0
 	moveal	%d0,%a0
 	addqb	&1,%a0@(6)		| ptdat in-use++

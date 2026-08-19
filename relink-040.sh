@@ -189,6 +189,19 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/codepub040.s" -o "$HERE/build/codepub04
 # kpeek can follow; (2) hat_sdtfail_count now also latches the memory state at
 # the first and last failure, so the warning stops being just a count.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/issue39_040.s" -o "$HERE/build/issue39_040.o"
+# i10rev040 (2026-08-19): ISSUE-10 reverse-map instrumentation.  The three HAT
+# routines that UNLINK a leaf PTE from a page's p_mapping chain all walk it with
+# a 256-node safety bound, and all three give up quietly when the bound runs out
+# -- hat_pteload's replacement path completely silently, hat_unload's and
+# hat_free's behind a 4-print cap that goes dark for the rest of the uptime.  A
+# give-up removes or overwrites the PTE without unlinking its chain node, which
+# is the exact shape of the corruption ISSUE-10 keeps producing, so "how often"
+# needs to be a number rather than a cap.  This is a data-only island: uncapped
+# counters in the shape of kdbg040.s's hat_pfnmiss_n, incremented from the sites
+# themselves, plus i10_deep_n -- the how-close-did-a-search-get reading that
+# makes a zero fail count mean something.  hat_dup040 is counted too, as the
+# chain-growth PRODUCER: it has no bound of its own because it never searches.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/i10rev040.s" -o "$HERE/build/i10rev040.o"
 # legacysdt040 (2026-08-01, ISSUE-40 fix): hat_free040 tore down only the native
 # 040 A/B/C tree and never released the LEGACY SDT allocations that the retained
 # stock hat_map -> hat_growsdt -> hat_sdtalloc path still makes on every exec --
@@ -366,12 +379,14 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
 	"$HERE/build/config040.o" "$HERE/build/cb_icode040.o" "$HERE/build/kdbg040.o" \
 	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o" \
-	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o"
+	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o" \
+	"$HERE/build/i10rev040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
 for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig segvn_faultpage segvn_faultpage_orig segvn_prot_magic segvn_prot_pp_n segvn_prot_n x60_far_addr x60_siginfo_n krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem \
          hat_growsdt hat_legacy_sdt_free i40_magic i40_on i40_calls i40_sec2_n i40_sec3_n i40_empty_n i40_bad_n i40_err_n i40_pgfreed_n i40_held_n i40_last_n i40_last_base i40_last_bits \
+         i10_magic i10_rpfail_n i10_hlfail_n i10_hffail_n i10_dupreg_n i10_deep_n \
          hat_sdtfree hat_ptdat_retire ptd_magic ptd_on ptd_calls ptd_retired_n ptd_pgfreed_n \
          ptd_keep0_n ptd_keepn_n ptd_meta_n ptd_badlink_n ptd_wake_n ptd_tblfreed_n \
          nullvect nullvect_orig kvp_magic kvp_on kvp_n kvp_user_n kvp_super_n kvp_over_n \

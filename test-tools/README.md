@@ -57,6 +57,7 @@ Older, still useful:
 | `swapls.c` | `swapctl(SC_LIST)` slot count (proved PAGES 25600, not the 51199 double) |
 | `fputest.c` | FPU/FPSP: `fmovecr`+`fintrz` emulation, fork FP context |
 | `mincoretst.c` | generic `mincore` vector |
+| `shmband.c` | whether SysV `shmget` still builds its anon map in 2 KiB units while every consumer counts in 4 KiB. The signal is a **band, not a threshold**: sizes with `sz mod 4096` in 1..2048 should reach `segvn_create`'s `amp->size >= seg->s_size` check and **PANIC**, the rest survive. Prints each size and flushes *before* the attach, so on a kernel with the mismatch the last console line names the size that did it. `-n` gets + `IPC_STAT` only and never attaches, which is the safe half |
 | `b2verify.c` | B2 copyback counters |
 | `svgaprobe.c`, `va2000probe.c` | RTG board probes (VA2000 is **not** emulatable — expect a clean ENXIO) |
 
