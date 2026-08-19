@@ -91,12 +91,38 @@ is between. In Zorro II that region answered anyway. In Zorro III it does not, a
 dies — which is ISSUE-47, an unresponsive access being retried rather than signalled. It cost two
 tool runs today and is the reason `busbench` now takes an offset.
 
+## The graphics stack, run on Zorro III the same evening
+
+**X11 ran.** And the counters prove it used the new path rather than merely starting: `cmf_fb_n`
+rose by **900 events — 450 pages, 1.8 MB of framebuffer, every one classified `NC`** — while
+`cmf_ncs_n` rose by 2, one register page. Classification held across 450 consecutive pages, not
+just the three that were probed.
+
+**wolf3d ran, with no corruption.** `cmf_fb_n` rose by 38 events, 19 pages, 76 KiB — which is
+exactly a 320×200 8-bit buffer plus change. That is the measure a structural census cannot give:
+a cache-class mistake does not crash, it puts intermittent garbage on screen, and sustained
+drawing is the only thing that shows it.
+
+So changes A/B/C/D are now proven on Zorro III **both ways** — the bits read out of the live page
+table, and the behaviour under a real client.
+
+## One thing broke, and it is the driver, not the kernel
+
+**`va2_restore_passthrough()` does not restore passthrough on the Zorro III firmware.** When X11
+exited, the VA2000's output froze rather than returning to the Amiga's native picture. The card
+was **not** crashed: `open()` still succeeded and the firmware register still read `0x005a` through
+the Zorro III kernel mapping, and each subsequent open/close made the display flicker — so the
+register writes reach the card and change its state. They simply do not land it in passthrough.
+
+The routine writes a hardcoded 640×480 timing set and `CAPTURE_MODE = 1`, tuned against the
+Zorro II firmware's state machine. Recovery is a full mode set: starting wolf3d woke the display
+immediately. Recorded as **ISSUE-48**.
+
+This is exactly the class of thing the firmware swap existed to find, and it is worth noting where
+it is *not*: not the mapping, not the cache class, not the bus.
+
 ## What is still owed
 
-X11, wolf3d and Quake have not been run on Zorro III. They ran on the Zorro II image with the
-framebuffer NC, so the cache class itself is exercised, but the graphics stack has not been driven
-through a Zorro III aperture. That is the next run, and it is the only remaining measure of a
-cache-mode mistake — a structural census cannot show intermittent corruption.
-
-No long pressure run either. And ISSUE-47 is now on the critical path for usability rather than
-being a curiosity: any access to an unbacked part of the aperture hangs a process.
+No long pressure run. And two defects are now on the usability path rather than being curiosities:
+ISSUE-47 (an access to an unbacked part of the aperture is killed with `SIGKILL` rather than
+signalled with `SIGBUS`, or in another case retried forever) and ISSUE-48 above.

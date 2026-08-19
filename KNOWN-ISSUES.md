@@ -4459,7 +4459,32 @@ than being folded into unrelated work.
 
 ---
 
-## ⚠ ISSUE-47 (2026-08-19, OPEN): a user-mode bus error is retried forever instead of signalling the process
+## ⚠ ISSUE-47 (2026-08-19, OPEN): a user-mode bus error is mishandled — two different ways
+
+> **CORRECTED THE SAME DAY.** This entry first said "retried forever instead of signalling". That
+> is one of the two behaviours, not the whole of it. With a Zorro III card present, the serial
+> console showed the other:
+>
+> ```
+> DBG as_fault FAIL pid=277 addr=4200F000 type=0 rw=1 ret=505
+> Hardware Bus Error @ C1033000, (4200F000 physical)
+> NOTICE: User BUS ERROR at C1033000, PC:8000095E FAULT:1 PID:277
+> DBG SIG sig=9 pid=277
+> ```
+>
+> The kernel **does** recognise the bus error and report it — and then kills the process with
+> **`SIGKILL`**, not `SIGBUS`. Reproduced twice, on `cmfcensus` at `0x4200F000` and on `busbench`
+> at `0x42001000`, both in the VA2000's undecoded gap.
+>
+> That explains a failure that looked like an instrument bug: `z3probe` had handlers armed for
+> `SIGBUS` and `SIGSEGV` and neither fired. They were waiting for the wrong signal, and `SIGKILL`
+> cannot be caught at all.
+>
+> **So there are two distinct faults, and they need separate fixes.** Which one occurs is not yet
+> attributed — the retry-forever case was an uninitialised Piccolo aperture at `0x40000000`, the
+> `SIGKILL` case an undecoded gap inside a live board's aperture. The original text follows.
+
+## ⚠ ISSUE-47 (2026-08-19, OPEN): original text: a user-mode bus error is retried forever instead of signalling the process
 
 > **Ledger: OPEN** — found while probing a Zorro III aperture; no fix attempted. Canonical:
 > [`STATUS.md`](STATUS.md) §4.
@@ -4499,3 +4524,41 @@ Both are readable from the handler; neither was chased during a hardware session
 for something else.
 
 Full context: `docs/REALHW-Z3-APERTURE-PROBE-260819.md`.
+
+
+---
+
+## ⚠ ISSUE-48 (2026-08-19, OPEN): `va2_restore_passthrough()` does not restore passthrough on Zorro III firmware
+
+> **Ledger: OPEN** — driver defect in `va2000-amix`, found the evening the Zorro III firmware went
+> in. Canonical: [`STATUS.md`](STATUS.md) §4.
+
+When X11 exits, the VA2000 driver's `close` path calls `va2_restore_passthrough()` to hand the
+display back to the Amiga's native output. On the Zorro III firmware the display **freezes**
+instead — it keeps showing a stale image rather than the passthrough picture.
+
+### The card is not crashed, and that is the point
+
+Measured immediately afterwards, without rebooting:
+
+* `open("/dev/va2000")` still succeeds, which requires `va2000_present()` to read a sane firmware
+  version **through the Zorro III kernel mapping**;
+* the register window still reads `0x005a` — firmware 90 — the same as before;
+* every subsequent open/close makes the display **flicker**, so the register writes are reaching
+  the card and changing its state.
+
+So the routine is not ineffective. It is doing the **wrong thing**: it writes a hardcoded 640×480
+timing set (`H_SS 840`, `H_SE 968`, `H_MAX 1056`, `V_*`, `PIX_CLK 40 MHz`, `ROW_PITCH 320`) plus
+`CAPTURE_MODE = 1`, all tuned against the Zorro II firmware's state machine.
+
+**Recovery is a full mode set**: starting wolf3d, which issues `SVGAIOCSetScreenMode`, woke the
+display immediately.
+
+### Scope
+
+Cosmetic-but-annoying rather than dangerous: nothing is corrupted, the machine is unaffected, and
+any client that sets a mode restores the display. It matters because leaving X should not leave the
+screen dead.
+
+The fix belongs in the driver and needs the Zorro III firmware's own passthrough contract, which is
+readable in `va2000.v` — not guessable from the Zorro II values that are there now.
