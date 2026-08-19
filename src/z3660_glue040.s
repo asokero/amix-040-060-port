@@ -19,11 +19,26 @@
 |    table pointed at (a3091queue 0xcf70, a2090queue 0xc200, a2091queue 0xc714 --
 |    asserted by the patcher).
 |
-| 2. Ethernet -- cdevsw[48].d_str = &z3660ethinfo.
-|    cdevsw is a global at .data 0x9dd4, entry 52 bytes, d_str at +44, so slot 48's
-|    d_str is 0x9dd4 + 48*52 + 44.  Unlike the VA2000/Xsvga entry points, that field
-|    carries NO relocation to retarget (it is a plain NULL), so the pointer is
-|    stored at RUNTIME from the parinit hook below -- one store, no ELF surgery.
+| 2. Ethernet -- cdevsw[51].d_str = &z3660ethinfo.
+|    cdevsw is a global at .data 0x9dd4, entry 52 bytes (struct cdevsw is 13
+|    pointers), d_str at +44, so the byte offset of slot N's d_str is N*52 + 44.
+|    Unlike the VA2000/Xsvga entry points, that field carries NO relocation to
+|    retarget (it is a plain NULL word), so the pointer is stored at RUNTIME from
+|    the parinit hook below -- one store, no ELF surgery.
+|
+|    THE SLOT IS 51, NOT 48.  The driver was renumbered 48 -> 51 on 2026-07-30
+|    because 48 is not free across the wider Amix driver family, and 51 is the
+|    lowest slot of the range that is: 51*52 + 44 = 2696.  Measured in the base
+|    image before changing this, because an offset is not a thing to arithmetic
+|    one's way into and hope:
+|      cdevsw .data 0x9dd4 .. cdevcnt .data 0xac0c = 3640 bytes = 70 * 52 exactly,
+|      so slot 51 is in range (CDEVSIZE is 70);
+|      slot 51 has the same shape as slot 48 did -- ten d_* function pointers
+|      relocated to `nodev`, d_ttys and d_str plain NULL words carrying NO
+|      relocation, d_flag relocated to `nullflag`.
+|    So the runtime store transfers to the new slot unchanged; only the constant
+|    moves.  The device node must be created with the matching major:
+|    `mknod /dev/zen0 c 51 0`.
 |
 | 3. dd.c completion ordering -- their src/kernel-patches/dd.c.patch.
 |    In dd.c's completion tail, `iodone(bp)` must run AFTER `startio(FIRST, dp)`:
@@ -48,7 +63,7 @@
 | unchanged.  parinit takes no arguments and its return value is unused.
 	.globl	parinit
 parinit:
-	movel	&z3660ethinfo,cdevsw+2540	| cdevsw[48].d_str  (48*52 + 44)
+	movel	&z3660ethinfo,cdevsw+2696	| cdevsw[51].d_str  (51*52 + 44)
 	jmp	parinit_orig			| stock parallel-port init, untouched
 
 | ---------------------------------------------------------------------------
