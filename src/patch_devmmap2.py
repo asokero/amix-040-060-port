@@ -27,11 +27,16 @@
 #   getprot, and spec_segmap's 0x6766a loop step) keeps its 2 KiB geometry.  It is
 #   INTERNALLY CONSISTENT -- the vpage array is sized and indexed with the same
 #   seg_page() shift throughout -- and its two external crossings are benign:
-#     * hat_devload: a 2 KiB fault-loop step calls hat_devload twice per 4 KiB page,
-#       and because d_mmap now returns a 4 KiB PFN both calls carry the SAME pfn and
-#       hat_devload rounds the address down to the page.  The duplicate load is
+#     * hat_devload: a 2 KiB fault-loop step calls hat_devload twice per 4 KiB page.
+#       When d_mmap TRUNCATES, both calls carry the same pfn and the duplicate load is
 #       idempotent -- wasteful, not wrong.  (This is why the already-landed
 #       scrmmap/ammmap/timmap fix worked with an unconverted segdev.)
+#       ** CORRECTED 2026-08-19, ISSUE-46. ** That reasoning is sound only for a
+#       truncating producer, and this file's own mmmmap entry was a ROUNDING one, so
+#       the second call returned n+1 and overwrote the first call's leaf.  Every
+#       /dev/mem mapping was one page high, measured against the kernel image.  The
+#       generalisation from three truncating sites to all of them was the defect; the
+#       duplicate call is only idempotent when the producer makes it so.
 #     * segdev_getprot's vector fill is only exercised for len > 0, and its only
 #       caller as_getprot (0xaecfc, vm_as.c:945) passes len = 0 and the address of a
 #       single int, so no vector is ever over-filled through that path.
@@ -60,8 +65,16 @@ def sections(b):
     return out
 
 TEXT = [
- ("pfn",    0x20688, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x0f\xff",
-  "mmmmap:btop(vtop(off)) round -- /dev/mem PFN"),
+ # ISSUE-46 (2026-08-19): this used to convert the ROUND-UP constant 0x7ff -> 0xfff,
+ # which is 4 KiB-correct in isolation and wrong in place.  d_mmap's contract is btop
+ # -- truncate -- and a round-up is only harmless when d_mmap is called once per page.
+ # The retained 2 KiB segdev stepping calls it twice, at X and X+0x800, and the second
+ # call rounds to n+1 and overwrites the first call's leaf, so every /dev/mem mapping
+ # landed one page high.  Measured: mapping phys 08000000 returned the longword the
+ # image holds at .text+0x1000.  The add is now +0 -- i.e. removed -- which makes
+ # mmmmap truncate like scrmmap/ammmap/timmap/va2000mmap/resmmap all already do.
+ ("pfn",    0x20688, b"\x06\x80\x00\x00\x07\xff", b"\x06\x80\x00\x00\x00\x00",
+  "mmmmap:btop round-up REMOVED (ISSUE-46) -- /dev/mem PFN truncates"),
  ("pfn",    0x2068e, b"\x72\x0b", b"\x72\x0c",
   "mmmmap:btop shift -- /dev/mem PFN"),
  ("pfn",    0xd7186, b"\x72\x0b", b"\x72\x0c",
