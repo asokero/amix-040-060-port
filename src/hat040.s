@@ -663,9 +663,13 @@ Lcm_d1:
 	bcs	Lcm_fb
 Lcm_dncs:
 	oril	&0x40,%fp@(-44)		| unmanaged PFN -> NCS (unchanged default)
+	addql	&1,cmf_ncs_n
+	movel	%a4,cmf_ncs_leaf	| a4 = &leaf, live in all three constructors
 	rts
 Lcm_fb:
 	oril	&0x60,%fp@(-44)		| registered framebuffer -> NC, not serialised
+	addql	&1,cmf_fb_n
+	movel	%a4,cmf_fb_leaf
 	rts
 
 | ===========================================================================
@@ -1927,10 +1931,80 @@ Lhfa_n:
 | instruction fetch does not snoop (docs/ISSUE38-ICODE-CACHE-FINDING-260730.md,
 | src/cb_icode040.s).  The WRITE-THROUGH control is now the derived image:
 |   python3 src/patch_b2_flip.py build/unix-040 build/unix-040-wt --wt
+| ===========================================================================
+| cmf_* -- the framebuffer cache-class census block (change D, 2026-08-19).
+|
+| WHY IT RECORDS AN ADDRESS RATHER THAN A VALUE.  What has to be proved is what
+| ended up IN THE PAGE TABLE, not what the selector decided; those differ if any
+| later modifier rewrites the CM field.  So each branch stores the LEAF ADDRESS
+| it classified, and the census reads the live PTE from that address afterwards
+| through /dev/mem (kernel .data and the leaf tables both sit below 1 GB and are
+| identity-mapped, which is what kpeek already relies on).  The counters say the
+| branch ran at all; the address says where to look.
+|
+| a4 holds &leaf at all three Lcm_sel call sites (Lpfnok, Lwleaf, Lreplace) --
+| each one stores through it immediately after returning.  INDEPENDENTLY VERIFIED
+| against the linked image: the three calls are the only ones in the image, they
+| are at 0xd7b10 / 0xd7b84 / 0xd7c80, the callee does not modify a4, and a4 is
+| still the leaf at each store.  fp@(20) is the pfn argument at all three, which
+| is the other invariant change D rests on.
+|
+| Unconditional rather than kdbg_on-gated: two instructions on the pp==NULL path
+| only, no effect on managed-RAM loads, no live register or condition code
+| disturbed, and every hat_pteload exit already pays for cpusha bc + pflusha.
+| A gate would weaken the acceptance evidence rather than protect anything.
+| hat_pfnmiss_n a few hundred lines up is the precedent for an uncapped counter
+| here.  It is an INSTRUMENT: keeping it is a decision to take deliberately, not
+| something that should become permanent telemetry by drifting.
+|
+| WHAT IT DOES AND DOES NOT SUPPORT -- state these before trusting a reading:
+|   * cmf_*_n count SELECTOR EVENTS, not unique pages.  The retained 2 KiB segdev
+|     stepping can classify the same 4 KiB leaf twice, so require a positive
+|     delta, never exactly one.
+|   * cmf_magic is an IMAGE SIGNATURE, not a consistency guard: it says the
+|     addresses belong to this build, not that the latch is fresh.
+|   * the latch is valid only after the faulting access has returned and before
+|     the mapping is torn down.
+|   * it is a SAMPLER.  Fault ONE page at a time with everything else quiescent,
+|     or the most recent leaf belongs to somebody else.
+|   * a leaf address masked to its table base describes 64 pages = 256 KiB ONLY.
+|     A 4 MB aperture spans at least 16 such tables and a 32 MB one at least 128,
+|     so this cannot seed a whole-aperture walk.  Minimum and maximum leaf
+|     addresses do not repair that, because page-table allocation order is not VA
+|     order.
+| A complete per-VA census would need the test process's root.  The cheap way to
+| get it, if it is ever wanted, is to latch it at the same event: fp@(8) is the
+| seg, seg@(12) its address space, as@(20) the root hat_pteload already uses.
+| Deliberately NOT added: nothing uses it yet, and unexercised code is not code
+| that works.
+| ===========================================================================
+	.globl	cmf_magic
+	.balign 4
+cmf_magic:
+	.long	0x434d4642		| "CMFB"
+	.globl	cmf_fb_n
+cmf_fb_n:
+	.long	0			| leaves classified as registered framebuffer (0x60)
+	.globl	cmf_fb_leaf
+cmf_fb_leaf:
+	.long	0			| address of the most recent such leaf
+	.globl	cmf_ncs_n
+cmf_ncs_n:
+	.long	0			| leaves classified as unmanaged/MMIO (0x40)
+	.globl	cmf_ncs_leaf
+cmf_ncs_leaf:
+	.long	0			| address of the most recent such leaf
+
 | --- hat_cm_fb: the registered framebuffer PFN intervals, two slots of
 | {lo, hi} half-open PFNs, all zero = none registered = pre-change-D behaviour.
 | Two slots because the VA2000 driver supports two boards; written only by
 | hat_cm_fb_add, read only by Lcm_dev.  GLOBAL so a census probe can read it.
+|
+| LAYOUT CONTRACT: this table must stay IMMEDIATELY AFTER the cmf_* block above,
+| i.e. at cmf_magic+20, because test-tools/cmfcensus.c reads the intervals at
+| that fixed offset from the one address it is given.  Moving it apart is
+| allowed, but then the tool needs a second address -- do not let them drift
+| silently, which is the whole failure mode the magic word exists for.
 	.globl	hat_cm_fb
 	.balign 4
 hat_cm_fb:
