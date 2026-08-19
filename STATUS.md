@@ -189,7 +189,13 @@ into. Codex's analysis found **no technical ceiling**; the blocker is that the b
 algorithm does not recognise A and B as one pool. Bounded boot/startup work, not a counter bump.
 
 **Zorro III.** The Z3 device aperture is not reachable by a driver (DTT0 covers 0–1 GB;
-`0x40000000` is a fill-on-fault kvseg). Measured 2026-08-10: the Z2 aperture sustains
+`0x40000000` is a fill-on-fault kvseg). **The pattern is Commodore's own, not something a
+third-party driver invented**: their TIGA driver dereferences the `autocon()` board address
+directly as a kernel pointer (`amix-src` `sys/amiga/driver/tiga.c:45`, in its read/write path)
+and returns `phystopfn(board + offset)` from `timmap` (`:104`). So this is a stock limitation
+with a source citation rather than an inference. Note also that AMIX ships **no source at all**
+for the layer that would have to change — `sys/vm/` and `sys/ml/` contain only `exp` objects —
+which is why the work there is disassembly-led by necessity. Measured 2026-08-10: the Z2 aperture sustains
 3.09 MB/s against 28.66 MB/s local, and a width test says the **bus is saturated**, not
 serialised. Order if resumed: VA2000 driver address fix → test in Z2 mode → `Lcm_sel`
 framebuffer class → firmware.
