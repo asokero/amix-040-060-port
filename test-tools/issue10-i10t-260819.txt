@@ -1,0 +1,303 @@
+ISSUE-10 ORDINARY-STORE TRACE-WATCH (i10t) capture -- 2026-08-19 -- EMU (Amiberry,
+68040+MMU, 16 MB, load base 0x07000000).  Kernel 68040-260819-39 (src/i10rev040.s
+PART FIVE) -- the byte-audited control rebuild of 68040-260819-38, identical to it
+except the build-id byte.  Guest driver test-tools/i10t.sh.  The raw log at the end of
+this file is the guest's own /i10t.log, read back byte for byte out of slice-5 1 KiB
+block 25696 (sha256 6fa6f3edd1487e7daa647646ed5b3e9061f046d5af7ce32f56e295bdac845047).
+
+WHAT THIS IS.  Every i10g/i10w capture of the store that lands 0x4AFC0000 at 0x80014AA0
+forced that store to FAULT (write-protect), routing its completion through the 68040
+deferred-write-back replay in src/wb040.s.  So the record could not separate world A
+(the ordinary, non-faulting store already fabricates the value -- the 040 write-back
+core) from world B (the value appears only because the write-protect forced the
+deferred/replay path -- an artifact of the method).  i10t watches the same store on the
+ORDINARY path: on the resolved tail of the demand-zero that first brings in the poison
+page it sets T1 in the returning user frame, installs its own vector-9 handler (saving
+the stock one to chain and restore), and single-steps that process with NO page
+protected, latching the first transition of 0x80014AA0 into the poison.
+
+RESULT: NULL, PLUS AN INSTRUMENT FINDING.  The staging was clean, the arm worked and the
+stepping worked -- but the traced process died of SIGTRAP 159 steps in, at the first
+syscall boundary after the arm, so the poison transition was never reached.  World A vs
+world B is NOT measured by this run.
+
+i10t block (kpeek 0710CD7C 50), decoded:
+
+  --- staging: clean ---
+  i10t_magic     49315421   "I1T!" at base 0x07; base 0x08 reads 00000000, so the
+                            A3000-motherboard base is the live one (this rig)
+  i10t_want      00000001   armed by kpoke at 0710CD80
+  i10t_armpage   80014000   arm on the first fault into the poison page
+  i10t_tgtva     80014aa0   the watched longword
+  i10t_stepmax   007a1200   8000000 -- the runaway guard, never reached
+                            All three base-0x07 pokes reported OK: i10g_plo 80014000 -> 0
+                            (0710CD10, so PART P protects nothing), i10g_on 0 -> 1
+                            (0710CB70, so i10g_hook runs and reaches i10t_maybe_arm), and
+                            i10t_want 0 -> 1.  Their base-0x08 twins declined -- plo
+                            "REFUSED: holds 00000000, expected 80014000", the other two
+                            "READBACK-MISMATCH" -- which is the base pick confirming
+                            itself.  The rc=5 / rc=8 in the log are those dead-base
+                            pokes, not the live ones.  The BEFORE dump is pristine:
+                            want/on/armed_t/latched 0, srcr at its -1 preset.
+  --- the arm: it WORKED ---
+  i10t_on        00000001   watch live: our vector-9 handler installed, T1 set
+  i10t_armed_t   00000001   the one-shot fired on the first fault into 0x80014
+  i10t_proc      4013be00   the traced process -- the same value the genesis run recorded
+                            as i10g_armproc, and the process that then died (T1 was set
+                            on it alone, and it is the wall's own sh that took SIGTRAP)
+  i10t_oldvec    070da704   the stock vector-9 handler, saved for chain + restore
+  i10t_seeded    00000001   i10t_prev holds a real read of the target
+  --- the stepping ---
+  i10t_step_n    0000009f   159 traced instructions for that process
+  i10t_res_n     0000009f   159 -- EVERY step's read of the target resolved through the
+                            resident-or-abandon walk; not one step was abandoned, so the
+                            watch really was reading the longword on every step
+  i10t_prev      00000000   the target's value at the last of those 159 reads
+  i10t_wbrep_arm 000000e4   228 wb040 replays counted at the arm
+  i10t_wbrep_prev 000000e4
+  i10t_wbrep_now  000000e4  FLAT.  wb_replay_n is monotonic and ends where it armed, so
+                            it never advanced across the traced window: no store in those
+                            159 instructions faulted, and none entered wb040_replay.
+                            The stepping was on the ordinary path, exactly as designed.
+  --- the latch: never fired ---
+  i10t_latched   00000000   the transition into the poison was NEVER observed
+  i10t_lseq / before / after / culpc / nextpc / lsr / wbdelta / wbrep_latch / srcv / usp
+                 all 00000000, and i10t_r0..r14 / i10t_pv0..pv6 all 00000000: nothing
+                 downstream of the latch was ever written
+  i10t_srcr      ffffffff   THE SHIP-TIME PRESET (-1), NOT A MEASUREMENT.  With
+                            i10t_latched = 0 this field says nothing about sources;
+                            reading it as "no non-destination register held the poison"
+                            would be reading the instrument's own default value.
+
+THE DEATH.  The armed `sh -n /cdrom/install/bin/setup.sh` died with
+
+  Trace/Breakpoint Trap - core dumped
+  WALL rc=133                          (128 + SIGTRAP)
+
+and printed no `User BUS ERROR` line at all: the parse died far short of the 34 KiB /
+38 KiB threshold at which the wall fires.  159 instructions is a handful of a parse that
+needs millions.
+
+THE READING (analysis, not measurement).  159 steps past the arm the process reached a
+syscall boundary.  On m68k a TRAP instruction executed with T1 set processes the trap
+exception and THEN a trace exception; that trace arrives from the syscall boundary and
+is handled on the stock path (kernel syscall handling / stock vector-9 semantics), which
+posts SIGTRAP to the process -- sh has no handler for it, so it cores.  The counters are
+consistent with that: i10t_step_n stopped at 159 while i10t_on was still 1 and i10t_proc
+unchanged, so the final trace never reached i10t_trace at all -- had it done so for this
+process it would have incremented the counter.  i10t's handler covers straight-line USER
+stepping only.  Single-stepping ACROSS syscalls needs kernel-side work PART FIVE does not
+have: clear T in the trap-entry frame, and re-arm it at syscall exit for the armed
+process alone.  That is the instrument's gap, and it is why this run is a null result
+rather than a verdict.
+
+CONTROL, SAME BOOT.  Immediately afterwards, with the instruments disarmed by kpoke
+(i10t_want 1 -> 0 at 0710CD80, i10g_on 1 -> 0 at 0710CB70; the write-protect band was
+already 0 for this run), the same command was run again on the same booted kernel:
+
+  NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:43 CMD:sh -n /cdrom/install/bin/setup.sh
+  ... (the full flood) ...
+  /cdrom/install/bin/setup.sh: no space
+
+So under this exact kernel, on this exact boot, the corruption fires on the FULLY
+ordinary path -- no write-protect, no trace bit, no instrument armed.  The null result is
+the instrument's gap; the bug did not go anywhere.
+
+WHAT THIS DOES NOT SAY.  It does not favour world A or world B.  Nothing was latched, so
+there is no measured before/after, no culprit PC, and no source-register evidence for the
+ordinary store.  The genesis verdict (docs/ISSUE10-SETUPSH-WALL-260819.md section 11)
+stands exactly as it stood, with confound #1 still open.
+
+NEXT.  The guest-side portable instrument is PARKED -- closing its gap means kernel
+syscall-path surgery, a large change to make for one measurement.  The next confound-#1
+probe moves EMULATOR-SIDE: an env-gated value watch in the bench Amiberry's 68040 MMU
+data path that logs every data read returning 0x4AFC0000 and every data write landing it,
+with PC, SR and the register file, and perturbs the guest not at all.  It also has a shot
+at the bench half of confound #2: 0x4AFC is the UAE core's own ILLEGAL marker constant,
+and both emulators that reproduce this wall are UAE-derived, so a common-mode emulator
+defect is a live hypothesis such a watch can name.  For the port-level claim, 68040
+SILICON remains the sole decider.
+
+--- the guest's log, byte for byte as it was published ---
+I10T-START
+--- reclaim what earlier runs left on this miniroot ---
+--- stage kpeek + kpoke out of the raw slice tail ---
+32+0 records in
+32+0 records out
+32+0 records in
+32+0 records out
+--- BASE PICK: i10t_magic must read 49315421 (I1T!) at the live base ---
+base 0x07:
+KPEEK 0710cd7c = 49315421  (/dev/mem)
+base 0x08:
+KPEEK 0810cd7c = 00000000  (/dev/mem)
+--- BEFORE: the i10t block (magic first; want/on/armed/latched must be 0) ---
+KPEEK 0710cd7c = 49315421  (/dev/mem)
+KPEEK 0710cd80 = 00000000  (/dev/mem)
+KPEEK 0710cd84 = 80014000  (/dev/mem)
+KPEEK 0710cd88 = 80014aa0  (/dev/mem)
+KPEEK 0710cd8c = 007a1200  (/dev/mem)
+KPEEK 0710cd90 = 00000000  (/dev/mem)
+KPEEK 0710cd94 = 00000000  (/dev/mem)
+KPEEK 0710cd98 = 00000000  (/dev/mem)
+KPEEK 0710cd9c = 00000000  (/dev/mem)
+KPEEK 0710cda0 = 00000000  (/dev/mem)
+KPEEK 0710cda4 = 00000000  (/dev/mem)
+KPEEK 0710cda8 = 00000000  (/dev/mem)
+KPEEK 0710cdac = 00000000  (/dev/mem)
+KPEEK 0710cdb0 = 00000000  (/dev/mem)
+KPEEK 0710cdb4 = 00000000  (/dev/mem)
+KPEEK 0710cdb8 = 00000000  (/dev/mem)
+KPEEK 0710cdbc = 00000000  (/dev/mem)
+KPEEK 0710cdc0 = 00000000  (/dev/mem)
+KPEEK 0710cdc4 = 00000000  (/dev/mem)
+KPEEK 0710cdc8 = 00000000  (/dev/mem)
+KPEEK 0710cdcc = 00000000  (/dev/mem)
+KPEEK 0710cdd0 = 00000000  (/dev/mem)
+KPEEK 0710cdd4 = 00000000  (/dev/mem)
+KPEEK 0710cdd8 = 00000000  (/dev/mem)
+KPEEK 0710cddc = 00000000  (/dev/mem)
+KPEEK 0710cde0 = ffffffff  (/dev/mem)
+KPEEK 0710cde4 = 00000000  (/dev/mem)
+KPEEK 0710cde8 = 00000000  (/dev/mem)
+KPEEK 0710cdec = 00000000  (/dev/mem)
+KPEEK 0710cdf0 = 00000000  (/dev/mem)
+KPEEK 0710cdf4 = 00000000  (/dev/mem)
+KPEEK 0710cdf8 = 00000000  (/dev/mem)
+KPEEK 0710cdfc = 00000000  (/dev/mem)
+KPEEK 0710ce00 = 00000000  (/dev/mem)
+KPEEK 0710ce04 = 00000000  (/dev/mem)
+KPEEK 0710ce08 = 00000000  (/dev/mem)
+KPEEK 0710ce0c = 00000000  (/dev/mem)
+KPEEK 0710ce10 = 00000000  (/dev/mem)
+KPEEK 0710ce14 = 00000000  (/dev/mem)
+KPEEK 0710ce18 = 00000000  (/dev/mem)
+KPEEK 0710ce1c = 00000000  (/dev/mem)
+KPEEK 0710ce20 = 00000000  (/dev/mem)
+KPEEK 0710ce24 = 00000000  (/dev/mem)
+KPEEK 0710ce28 = 00000000  (/dev/mem)
+KPEEK 0710ce2c = 00000000  (/dev/mem)
+KPEEK 0710ce30 = 00000000  (/dev/mem)
+KPEEK 0710ce34 = 00000000  (/dev/mem)
+KPEEK 0710ce38 = 00000000  (/dev/mem)
+KPEEK 0710ce3c = 00000000  (/dev/mem)
+KPEEK 0710ce40 = 00000000  (/dev/mem)
+--- DISABLE the write-protect band: i10g_plo 0x80014000 -> 0 (both bases) ---
+KPOKE 0710cd10 = 00000000 (was 80014000) OK
+KPOKE 0810cd10 REFUSED: holds 00000000, expected 80014000
+KPOKE plo rc=5
+--- ARM i10g so i10g_hook runs (it calls i10t_maybe_arm): i10g_on 0 -> 1 ---
+KPOKE 0710cb70 = 00000001 (was 00000000) OK
+KPOKE 0810cb70 = 00000000 (was 00000000) READBACK-MISMATCH
+KPOKE i10g_on rc=8
+--- ARM the trace-watch: i10t_want 0 -> 1 ---
+KPOKE 0710cd80 = 00000001 (was 00000000) OK
+KPOKE 0810cd80 = 00000000 (was 00000000) READBACK-MISMATCH
+KPOKE i10t_want rc=8
+KPEEK 0710cd7c = 49315421  (/dev/mem)
+KPEEK 0710cd80 = 00000001  (/dev/mem)
+KPEEK 0710cd84 = 80014000  (/dev/mem)
+KPEEK 0710cd88 = 80014aa0  (/dev/mem)
+KPEEK 0710cd8c = 007a1200  (/dev/mem)
+KPEEK 0710cd90 = 00000000  (/dev/mem)
+KPEEK 0710cd94 = 00000000  (/dev/mem)
+KPEEK 0710cd98 = 00000000  (/dev/mem)
+KPEEK 0710cd9c = 00000000  (/dev/mem)
+KPEEK 0710cda0 = 00000000  (/dev/mem)
+KPEEK 0710cda4 = 00000000  (/dev/mem)
+KPEEK 0710cda8 = 00000000  (/dev/mem)
+KPEEK 0710cdac = 00000000  (/dev/mem)
+KPEEK 0710cdb0 = 00000000  (/dev/mem)
+KPEEK 0710cdb4 = 00000000  (/dev/mem)
+KPEEK 0710cdb8 = 00000000  (/dev/mem)
+KPEEK 0710cdbc = 00000000  (/dev/mem)
+KPEEK 0710cdc0 = 00000000  (/dev/mem)
+KPEEK 0710cdc4 = 00000000  (/dev/mem)
+KPEEK 0710cdc8 = 00000000  (/dev/mem)
+KPEEK 0710cdcc = 00000000  (/dev/mem)
+KPEEK 0710cdd0 = 00000000  (/dev/mem)
+KPEEK 0710cdd4 = 00000000  (/dev/mem)
+KPEEK 0710cdd8 = 00000000  (/dev/mem)
+KPEEK 0710cddc = 00000000  (/dev/mem)
+KPEEK 0710cde0 = ffffffff  (/dev/mem)
+KPEEK 0710cde4 = 00000000  (/dev/mem)
+KPEEK 0710cde8 = 00000000  (/dev/mem)
+KPEEK 0710cdec = 00000000  (/dev/mem)
+KPEEK 0710cdf0 = 00000000  (/dev/mem)
+KPEEK 0710cdf4 = 00000000  (/dev/mem)
+KPEEK 0710cdf8 = 00000000  (/dev/mem)
+KPEEK 0710cdfc = 00000000  (/dev/mem)
+KPEEK 0710ce00 = 00000000  (/dev/mem)
+KPEEK 0710ce04 = 00000000  (/dev/mem)
+KPEEK 0710ce08 = 00000000  (/dev/mem)
+KPEEK 0710ce0c = 00000000  (/dev/mem)
+KPEEK 0710ce10 = 00000000  (/dev/mem)
+KPEEK 0710ce14 = 00000000  (/dev/mem)
+KPEEK 0710ce18 = 00000000  (/dev/mem)
+KPEEK 0710ce1c = 00000000  (/dev/mem)
+KPEEK 0710ce20 = 00000000  (/dev/mem)
+KPEEK 0710ce24 = 00000000  (/dev/mem)
+KPEEK 0710ce28 = 00000000  (/dev/mem)
+KPEEK 0710ce2c = 00000000  (/dev/mem)
+KPEEK 0710ce30 = 00000000  (/dev/mem)
+KPEEK 0710ce34 = 00000000  (/dev/mem)
+KPEEK 0710ce38 = 00000000  (/dev/mem)
+KPEEK 0710ce3c = 00000000  (/dev/mem)
+KPEEK 0710ce40 = 00000000  (/dev/mem)
+--- mount the install source (slice 4, s5) at /cdrom, READ-ONLY ---
+MOUNT rc=0
+--- THE WALL: sh -n parses the whole script and executes none of it ---
+Trace/Breakpoint Trap - core dumped
+WALL rc=133
+--- AFTER: the trace-watch capture (i10t, 50 longs) ---
+KPEEK 0710cd7c = 49315421  (/dev/mem)
+KPEEK 0710cd80 = 00000001  (/dev/mem)
+KPEEK 0710cd84 = 80014000  (/dev/mem)
+KPEEK 0710cd88 = 80014aa0  (/dev/mem)
+KPEEK 0710cd8c = 007a1200  (/dev/mem)
+KPEEK 0710cd90 = 00000001  (/dev/mem)
+KPEEK 0710cd94 = 00000001  (/dev/mem)
+KPEEK 0710cd98 = 4013be00  (/dev/mem)
+KPEEK 0710cd9c = 070da704  (/dev/mem)
+KPEEK 0710cda0 = 00000001  (/dev/mem)
+KPEEK 0710cda4 = 00000000  (/dev/mem)
+KPEEK 0710cda8 = 0000009f  (/dev/mem)
+KPEEK 0710cdac = 0000009f  (/dev/mem)
+KPEEK 0710cdb0 = 000000e4  (/dev/mem)
+KPEEK 0710cdb4 = 000000e4  (/dev/mem)
+KPEEK 0710cdb8 = 000000e4  (/dev/mem)
+KPEEK 0710cdbc = 00000000  (/dev/mem)
+KPEEK 0710cdc0 = 00000000  (/dev/mem)
+KPEEK 0710cdc4 = 00000000  (/dev/mem)
+KPEEK 0710cdc8 = 00000000  (/dev/mem)
+KPEEK 0710cdcc = 00000000  (/dev/mem)
+KPEEK 0710cdd0 = 00000000  (/dev/mem)
+KPEEK 0710cdd4 = 00000000  (/dev/mem)
+KPEEK 0710cdd8 = 00000000  (/dev/mem)
+KPEEK 0710cddc = 00000000  (/dev/mem)
+KPEEK 0710cde0 = ffffffff  (/dev/mem)
+KPEEK 0710cde4 = 00000000  (/dev/mem)
+KPEEK 0710cde8 = 00000000  (/dev/mem)
+KPEEK 0710cdec = 00000000  (/dev/mem)
+KPEEK 0710cdf0 = 00000000  (/dev/mem)
+KPEEK 0710cdf4 = 00000000  (/dev/mem)
+KPEEK 0710cdf8 = 00000000  (/dev/mem)
+KPEEK 0710cdfc = 00000000  (/dev/mem)
+KPEEK 0710ce00 = 00000000  (/dev/mem)
+KPEEK 0710ce04 = 00000000  (/dev/mem)
+KPEEK 0710ce08 = 00000000  (/dev/mem)
+KPEEK 0710ce0c = 00000000  (/dev/mem)
+KPEEK 0710ce10 = 00000000  (/dev/mem)
+KPEEK 0710ce14 = 00000000  (/dev/mem)
+KPEEK 0710ce18 = 00000000  (/dev/mem)
+KPEEK 0710ce1c = 00000000  (/dev/mem)
+KPEEK 0710ce20 = 00000000  (/dev/mem)
+KPEEK 0710ce24 = 00000000  (/dev/mem)
+KPEEK 0710ce28 = 00000000  (/dev/mem)
+KPEEK 0710ce2c = 00000000  (/dev/mem)
+KPEEK 0710ce30 = 00000000  (/dev/mem)
+KPEEK 0710ce34 = 00000000  (/dev/mem)
+KPEEK 0710ce38 = 00000000  (/dev/mem)
+KPEEK 0710ce3c = 00000000  (/dev/mem)
+KPEEK 0710ce40 = 00000000  (/dev/mem)
+I10T-END

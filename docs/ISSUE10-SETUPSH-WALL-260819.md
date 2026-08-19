@@ -566,13 +566,109 @@ resident-or-abandon walk i10g uses, and latches the first transition into the po
   `0x800023F8` was the method artifact, and §11's "explains the `amixadm` avalanche" claim must be
   re-examined, since it rested on that attribution.
 
-**Status — the instrument is built and byte-audited; the empirical A/B run has not been performed.**
+**Status — the instrument is built, byte-audited and has now been run; the A/B is a null result (§13).**
 The trace-watch kernel is `68040-260819-38`: it links with `TOTAL complaints: 0`, a control rebuild is
 byte-identical to it except the single build-id sequence byte, and the only source change from the
-genesis kernel is `src/i10rev040.s` (PART FIVE) — every other object is unchanged. Running it means
-staging that kernel into the source-disk boot image, booting the install-miniroot rig at load base
-`0x07000000`, driving the console to `sh /i10t.sh`, and reading the published block back from slice-5
-block 25696 — none of which has happened yet. Until it does, **world A vs world B is not measured**;
-what is settled is (a): this port's `wb040_replay` is not the fabricator, so the remaining question is
-purely whether the emulated 040 store core mis-produces the write-back value on the ordinary path or
-only under the forced deferred path.
+genesis kernel is `src/i10rev040.s` (PART FIVE) — every other object is unchanged. That control
+rebuild, `68040-260819-39`, is the kernel the run booted. **§13 records it: the arm and the stepping
+both worked, the latch never fired, and neither branch of the decision rule above was reached — so
+world A vs world B is still not measured.** What is settled without it remains (a): this port's
+`wb040_replay` is not the fabricator, so the remaining question is purely whether the emulated 040
+store core mis-produces the write-back value on the ordinary path or only under the forced deferred
+path.
+
+## 13. The run — a null result, and the instrument's gap
+
+**2026-08-19 · EMU (Amiberry, 68040+MMU, 16 MB, load base `0x07000000`) · kernel `68040-260819-39`**,
+the byte-audited control rebuild of `-38` (identical except the build-id byte). Raw capture:
+[`test-tools/issue10-i10t-260819.txt`](../test-tools/issue10-i10t-260819.txt) — the decode plus the
+guest's own log, byte for byte as `test-tools/i10t.sh` published it into slice-5 block 25696.
+
+**The staging was clean, which is what makes the null worth writing down.** `i10t_magic` read
+`49315421` at `0x0710CD7C` and `00000000` at the `0x08` twin, so the live base is the A3000
+motherboard one and the block addresses are the right ones. All three base-`0x07` pokes reported `OK`
+— `i10g_plo` `0x80014000 → 0` (so PART P write-protects nothing), `i10g_on` `0 → 1` (so `i10g_hook`
+runs and reaches `i10t_maybe_arm`), `i10t_want` `0 → 1` — while their `0x08` twins declined (`REFUSED`
+for `plo`, `READBACK-MISMATCH` for the other two), which is the base pick confirming itself; the
+`rc=5`/`rc=8` in the log are those dead-base pokes, not the live ones. The BEFORE dump is pristine:
+`want`/`on`/`armed_t`/`latched` all `0`, `srcr` at its `-1` preset, `stepmax` `0x007A1200`. The
+read-only `s5` mount returned `rc=0`.
+
+**The arm worked.** Every field the arm path writes is set:
+
+```
+i10t_on        00000001  the watch went live: vector-9 handler installed, T1 set
+i10t_armed_t   00000001  the one-shot fired on the first fault into page 0x80014
+i10t_proc      4013be00  the traced process -- the same value the genesis run recorded
+                         as i10g_armproc, and the process that then died: T1 was set
+                         on it alone, and it is the wall's own sh that took SIGTRAP
+i10t_oldvec    070da704  the stock vector-9 handler, saved to chain and to restore
+i10t_seeded    00000001  i10t_prev holds a real read of 0x80014AA0
+```
+
+**The stepping worked too — and saw nothing.**
+
+```
+i10t_step_n     0000009f  159 traced instructions for that process
+i10t_res_n      0000009f  159 -- every step's read of the target resolved through the
+                          resident-or-abandon walk; not one step was abandoned
+i10t_prev       00000000  the target's value at the last of those 159 reads
+i10t_wbrep_arm  000000e4  228 wb040 replays at the arm
+i10t_wbrep_prev 000000e4
+i10t_wbrep_now  000000e4  FLAT: wb_replay_n is monotonic and ends where it armed, so it
+                          never advanced across the traced window -- no store in those
+                          159 instructions faulted, none entered wb040_replay
+i10t_latched    00000000  the transition into the poison was NEVER observed
+```
+
+Everything downstream of the latch — `before`, `after`, `culpc`, `nextpc`, `lsr`, `wbdelta`,
+`wbrep_latch`, `srcv`, `usp`, `r0..r14`, `pv0..pv6` — is still zero. **`i10t_srcr` reads `FFFFFFFF`,
+and that is the ship-time preset, not a measurement**: with `i10t_latched = 0` it says nothing about
+sources, and reading it as "no non-destination register held the poison" would be reading the
+instrument's own default back as evidence.
+
+**Then `sh` died.** The armed `sh -n /cdrom/install/bin/setup.sh` ended with `Trace/Breakpoint Trap -
+core dumped` and `WALL rc=133` (128 + `SIGTRAP`), and printed **no `User BUS ERROR` line at all** — the
+parse died far short of §3's 34 KiB/38 KiB threshold. 159 instructions is a handful of a parse that
+needs millions of them.
+
+**The reading — analysis, not measurement.** 159 steps past the arm the process reached a syscall
+boundary. On m68k a `TRAP` executed with `T1` set processes the trap exception and *then* a trace
+exception; that trace arrives from the syscall boundary and is handled on the stock path (kernel
+syscall handling, stock vector-9 semantics), which posts `SIGTRAP` to the process — `sh` has no
+handler, so it cores. The counters are consistent with that route and with no other: `i10t_step_n`
+stopped at 159 while `i10t_on` was still `1` and `i10t_proc` unchanged, so the final trace never
+reached `i10t_trace` at all — had it done so for this process it would have incremented the counter.
+`i10t`'s handler covers **straight-line user stepping** only. Stepping *across* syscalls needs
+kernel-side work PART FIVE does not have: clear `T` in the trap-entry frame, and re-arm it at syscall
+exit for the armed process alone. That is the instrument's gap.
+
+**The control, same boot.** Immediately afterwards, with the instruments disarmed by `kpoke`
+(`i10t_want` `1 → 0` at `0x0710CD80`, `i10g_on` `1 → 0` at `0x0710CB70`; the write-protect band was
+already `0` for this run), the same command was run again on the same booted kernel:
+
+```
+NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:43 CMD:sh -n /cdrom/install/bin/setup.sh
+... (the full flood) ...
+/cdrom/install/bin/setup.sh: no space
+```
+
+So under this exact kernel, on this exact boot, the corruption fires on the **fully ordinary path** —
+no write-protect, no trace bit, no instrument armed. The null result is the instrument's gap; the bug
+did not go anywhere, and the kernel that carries `i10t` is not one that masks it.
+
+**Verdict — null on world A vs world B.** Neither branch of §12's decision rule was reached, because
+the latch that both branches read never fired. §11's genesis verdict stands exactly as it stood and
+confound #1 stays open: it is still unmeasured whether the emulated 040 store core fabricates
+`0x4AFC0000` on the ordinary store or only under the write-protect-forced deferred path.
+
+**Where confound #1 goes next.** The guest-side portable instrument is **parked** — closing its gap
+means kernel syscall-path surgery, a large and intrusive change to make for one measurement. The next
+probe moves **emulator-side**: an env-gated value watch in the bench Amiberry's 68040 MMU data path
+that logs every data read returning `0x4AFC0000` and every data write landing it, with `PC`, `SR` and
+the register file, and perturbs the guest not at all — no trace bit, no protected page, no kernel
+change, so the guest runs exactly the code the uninstrumented wall runs. It also has a shot at the
+bench half of **confound #2**: `0x4AFC` is the UAE core's own `ILLEGAL` marker constant, and both
+emulators that reproduce this wall are UAE-derived, so a common-mode emulator defect is a live
+hypothesis such a watch can name rather than merely suspect. For the port-level claim — does the wall
+happen on a real 68040 — **silicon remains the sole decider**.
