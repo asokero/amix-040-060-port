@@ -508,3 +508,71 @@ avalanche carried — so it explains that avalanche rather than being trigger-sp
   real 040 hardware. The follow-up that separates the emulator core from `wb040_replay`, and both from
   silicon, is a **non-write-protect single-step** capture of the ordinary store, plus a real-hardware
   run of the same `sh -n setup.sh`.
+
+## 12. Confound #1 — the ordinary-store trace-watch (`i10t`)
+
+§11's first limit is that **every** i10g capture forced the store to fault (write-protect), routing
+its completion through the 68040 deferred-write-back replay in `src/wb040.s`. So the record could not
+separate two worlds:
+
+* **world A** — the ordinary, non-faulting store on the emulated 040 already fabricates `0x4AFC0000`
+  → the 040 write-back core (the emulator's, possibly silicon's);
+* **world B** — the value appears **only** because the write-protect forced the deferred/replay path
+  → an artifact of the method, not of the store the wall actually runs.
+
+**Two things narrow this before any new run.**
+
+* **(a) `wb040_replay` is a faithful courier — world B *as a defect in this port's replay code* is
+  refuted by inspection.** `wb040_replay` → `Lwb_do` → `Lwb_loop` (`src/wb040.s`) reads the write-back
+  **data** from the CPU-pushed access-error frame (`WB3D` at frame `+92`) into `d2`, derives `d1` from
+  `d2` alone for the store size, and writes `d1` to the frame's `WB3A` (`+88`) byte-wise. It never
+  recomputes the value and never re-reads the store's source operand. So whatever `0x4AFC0000` is, it
+  is what the **68040 core pushed** into `WB3D` when the write-protected store faulted — the replay
+  only lands it. The genesis is therefore not an arithmetic bug in this port's replay; that reading of
+  world B is dead.
+* **(b) The live question is ordinary-vs-deferred, and only the ordinary path settles it.** Even with a
+  faithful courier, the core could mis-push `WB3D` *only* in the deferred-write-back regime that the
+  write-protect forces, and write the correct value on an ordinary immediate store. That is a runtime
+  property of the emulated 040 in two regimes; static reading cannot decide it. §9 established that the
+  poison *reaches* `0x80014AA0` on a run with no write-protect (`i10cen`, post-mortem) — but not
+  *which* store put it there, nor whether that store's source held a valid link.
+
+**The instrument.** `i10t` (`src/i10rev040.s`, PART FIVE; driver `test-tools/i10t.sh`) observes the
+store on the path the uninstrumented wall takes. The write into `0x80014AA0` is a **user** store
+(§10/§11: `SR` S-bit clear, `PC` in `/bin/sh`'s own text), so the 68040 trace bit is live for it — the
+reason the write-watch header (§10) rejected a trace watch, that a kernel store runs with `T` clear,
+does not apply here. On the resolved tail of the **ordinary** demand-zero that first brings in the
+poison page, `i10t_maybe_arm` sets `T1` in the returning user frame, installs its own vector-9 handler
+(saving the stock one to chain and to restore), and records the process. `/bin/sh` then single-steps
+with **no page protected**; the handler re-reads `0x80014AA0` each step through the same
+resident-or-abandon walk i10g uses, and latches the first transition into the poison, recording:
+
+* `i10t_wbdelta` — `wb_replay_n` across that one step. **Zero proves the store neither faulted nor
+  entered `wb040_replay`** — the ordinary path, the replay off it.
+* `i10t_srcr` — the address register (a0–a6) that held the poison as a **non-destination** source, or
+  `-1` if none did.
+* `i10t_before`/`i10t_after`, `i10t_culpc`, and the register file `i10t_r0..r14` with `i10t_pv0..6`
+  (what each address register points at) — the raw evidence, instruction-agnostic so the verdict does
+  not turn on decoding source-vs-dest from the frame.
+
+**The decision rule** (with `i10t_wbdelta = 0` proving the ordinary path):
+
+* `i10t_after = 0x4AFC0000` and `i10t_srcr = -1` → the ordinary store **fabricated** the value while
+  its source held a valid link → **world A**: candidate C stands as an *emulator-measured* effect.
+  Silicon — `sh -n setup.sh` on a real 68040 — is then the only remaining decider; nothing on the
+  emulator proves a real-hardware bug.
+* `i10t_srcr ≥ 0` (a non-destination register already held the poison) → the ordinary store **copied**
+  it → **world B**: the genesis is one hop upstream, i10g's write-protected attribution to the store at
+  `0x800023F8` was the method artifact, and §11's "explains the `amixadm` avalanche" claim must be
+  re-examined, since it rested on that attribution.
+
+**Status — the instrument is built and byte-audited; the empirical A/B run has not been performed.**
+The trace-watch kernel is `68040-260819-38`: it links with `TOTAL complaints: 0`, a control rebuild is
+byte-identical to it except the single build-id sequence byte, and the only source change from the
+genesis kernel is `src/i10rev040.s` (PART FIVE) — every other object is unchanged. Running it means
+staging that kernel into the source-disk boot image, booting the install-miniroot rig at load base
+`0x07000000`, driving the console to `sh /i10t.sh`, and reading the published block back from slice-5
+block 25696 — none of which has happened yet. Until it does, **world A vs world B is not measured**;
+what is settled is (a): this port's `wb040_replay` is not the fabricator, so the remaining question is
+purely whether the emulated 040 store core mis-produces the write-back value on the ordinary path or
+only under the forced deferred path.

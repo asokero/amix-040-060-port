@@ -1687,6 +1687,12 @@ Lig_pinit_n:
 	.word	0xf518			| pflusha
 Lig_seq:
 	addql	&1,i10g_seq		| resolved faults seen since arming
+| PART FIVE arm hook (2026-08-19): if the trace-watch knob i10t_want is set, and this
+| resolved fault first brings in the poison page (FA in [i10t_armpage, +4K)), install a
+| single-step watch on the ORDINARY store path -- no write-protect, so wb040_replay is
+| NOT forced.  i10t_maybe_arm is a one-shot; it clobbers only d0/d1/a0/a1 (all restored
+| at Lig_out) and reads %a2 (the frame).  See i10t_trace below for the confound this cuts.
+	bsrw	i10t_maybe_arm
 | ===== PART P: force stores in the heap band [plo,phi) to fault, so PART W sees
 |       them.  The first genesis run found the poison is neither inherited (PART I
 |       scanned every arena frame at hand-out and found none) nor caught as a
@@ -2254,3 +2260,399 @@ i10g_wpv5:
 i10g_wpv6:
 	.long	0
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
+
+| ===========================================================================
+| PART FIVE -- i10t: the ORDINARY-STORE trace-watch (2026-08-19).
+|
+| WHAT CONFOUND THIS CUTS.  PART FOUR (i10g) caught the store that lands
+| 0x4AFC0000 at 0x80014AA0 by WRITE-PROTECTING the page, which forces the store
+| to fault and routes its completion through the 68040 deferred-write-back replay
+| in wb040.s.  That capture cannot separate two worlds:
+|   A. the ordinary, non-faulting store on the emulated 040 already fabricates the
+|      value -> the 040 write-back core (emulator's, possibly silicon's);
+|   B. the value appears only because the write-protect forced the deferred/replay
+|      path -> an artifact of the method, not of the ordinary store the real wall
+|      takes.
+| i10g cannot tell them apart because every store it sees has been forced to fault.
+| This part observes the SAME store on the path the uninstrumented wall actually
+| takes: no write-protect, no fault, no replay.
+|
+| HOW.  A user store single-steps under the 68040 trace bit (T1), which the write-
+| watch header rejected for KERNEL stores (T is clear inside a syscall) -- but this
+| store is a USER store (i10g/i10w both measured SR S-bit clear, PC in /bin/sh's own
+| text), so T1 is live for it.  On the resolved tail of the fault that FIRST brings
+| in the poison page (FA in [i10t_armpage,+4K)) -- an ORDINARY demand-zero, the same
+| event i10w armed on -- i10t_maybe_arm sets T1 in the returning user frame, installs
+| its own vector-9 handler (saving the stock one to chain), and records the process.
+| From there /bin/sh single-steps ON THE ORDINARY PATH; i10t_trace re-reads the
+| target longword each step and latches the first transition INTO the poison, with:
+|   * i10t_before / i10t_after  -- the destination longword just before and after;
+|   * i10t_culpc                -- the instruction that did it (format-2 frame's
+|                                  instruction-address field = the store just run);
+|   * i10t_wbdelta              -- wb_replay_n across that one step.  ZERO proves the
+|                                  store did NOT fault and did NOT go through
+|                                  wb040_replay: the ordinary path, replay off it;
+|   * i10t_r0..r14, i10t_pv0..6, i10t_srcr/srcv -- the register file after the store
+|                                  and the value each address register points at.  If
+|                                  no NON-destination register holds the poison
+|                                  (srcr = -1) yet after==poison, the ordinary store
+|                                  FABRICATED it (world A).  If some non-dest source
+|                                  already holds the poison (srcr >= 0), the ordinary
+|                                  store faithfully COPIED it and the genesis is one
+|                                  hop upstream -- i10g's write-protected attribution
+|                                  was the artifact (world B).
+| No page is protected and i10g_plo must be kpoked 0 for this run, so PART P of i10g
+| never fires; the only faults are /bin/sh's own demand faults.
+|
+| SAFETY.  Ships dormant: i10t_want = 0, so i10t_maybe_arm is one memory test per
+| resolved fault and the stock vector-9 handler is never touched.  Once armed, only
+| the recorded process traces (T1 set on it alone); every other trace chains to the
+| saved stock handler.  A runaway (poison never seen) auto-disarms after i10t_stepmax
+| steps, restoring the stock vector and clearing T1, so the boot always completes.
+| The handler saves/restores d0-d7/a0-a6 and reads user memory through i10g_ckframe
+| (the same resident-or-abandon walk i10g uses), never a raw user dereference.
+| ===========================================================================
+
+	.text
+	.balign 4
+
+| i10t_maybe_arm -- called from i10g_hook (a2 = frame) once per resolved fault while
+| i10g is armed.  One-shot; arms the trace-watch on the first fault into the poison
+| page.  Clobbers d0/d1/a0/a1 only (i10g_hook has saved the full register file).
+	.globl	i10t_maybe_arm
+i10t_maybe_arm:
+	tstl	i10t_want
+	beqw	Lit_ma_ret		| dormant knob: nothing armed, stock vector intact
+	tstl	i10t_armed_t
+	bnew	Lit_ma_ret		| one-shot: already armed
+	movel	%a2@(84),%d0		| FA
+	andil	&0xfffff000,%d0
+	cmpl	i10t_armpage,%d0
+	bnew	Lit_ma_ret		| not the poison page's first fault yet
+	movel	&1,i10t_armed_t
+	movel	curproc,i10t_proc	| the process we single-step (post-hoc: must be sh)
+	movel	wb_replay_n,i10t_wbrep_arm
+	movel	wb_replay_n,i10t_wbrep_now
+	movel	wb_replay_n,i10t_wbrep_prev
+| seed i10t_prev from the target (the page was just resolved, so it is resident)
+	movel	i10t_tgtva,%d0
+	bsrw	i10g_ckframe		| a1 = frame base or 0
+	movel	%a1,%d0
+	beqs	Lit_ma_noseed
+	movel	i10t_tgtva,%d0
+	andil	&0xfff,%d0
+	addal	%d0,%a1
+	movel	%a1@,%d0
+	movel	%d0,i10t_prev
+	movel	&1,i10t_seeded
+Lit_ma_noseed:
+| install our vector-9 (trace) handler, saving the stock one to chain/restore
+	.word	0x4e7a,0x0801		| movec %vbr,%d0
+	moveal	%d0,%a0
+	movel	%a0@(0x24),i10t_oldvec	| vector 9 = 0x24
+	movel	&i10t_trace,%a0@(0x24)
+| set T1 (bit 15) in the returning user frame SR, so /bin/sh single-steps from here
+	orw	&0x8000,%a2@(64)
+	movel	&1,i10t_on
+Lit_ma_ret:
+	rts
+
+| i10t_trace -- vector-9 (trace) handler.  Entry: sp -> 68040 format-2 trace frame
+| (SR@0, PC-of-next@2, fmt/vec@6, instruction-address@8).  For the watched process
+| it re-reads the target and latches the first transition into the poison; every
+| other trace chains to the saved stock handler.
+	.globl	i10t_trace
+i10t_trace:
+	moveml	%d0-%d7/%a0-%a6,%sp@-	| save the user register file (60 bytes)
+	lea	%sp@(60),%a2		| a2 = format-2 frame base (survives i10g_ckframe)
+	tstl	i10t_on
+	beqw	Lit_chain
+	movel	curproc,%d0
+	cmpl	i10t_proc,%d0
+	bnew	Lit_chain		| a different process tracing: not ours
+	addql	&1,i10t_step_n
+	movel	i10t_step_n,%d0
+	cmpl	i10t_stepmax,%d0
+	bccw	Lit_stop		| runaway guard: disarm, let the boot finish
+	movel	i10t_wbrep_now,i10t_wbrep_prev
+	movel	wb_replay_n,i10t_wbrep_now
+	movel	i10t_tgtva,%d0
+	bsrw	i10g_ckframe		| a1 = frame base or 0 (a2/d3-d7 survive)
+	movel	%a1,%d0
+	beqw	Lit_keep		| target not resident this step
+	movel	i10t_tgtva,%d0
+	andil	&0xfff,%d0
+	addal	%d0,%a1
+	movel	%a1@,%d7		| d7 = w (target value now)
+	addql	&1,i10t_res_n
+	tstl	i10t_seeded
+	bnew	Lit_haveprev
+	movel	%d7,i10t_prev		| first resident read: establish prev, no compare
+	movel	&1,i10t_seeded
+	braw	Lit_keep
+Lit_haveprev:
+	tstl	i10t_latched
+	bnew	Lit_keep		| already caught the first transition
+	movel	i10t_prev,%d6
+	cmpl	i10g_wantval,%d6
+	beqw	Lit_updprev		| prev already poison: not a fresh transition
+	cmpl	i10g_wantval,%d7
+	bnew	Lit_updprev		| w not poison
+	bsrw	i10t_do_latch		| *** ORDINARY-PATH transition into the poison ***
+	braw	Lit_stop		| caught it: disarm; the wall follows in a few insns
+Lit_updprev:
+	movel	%d7,i10t_prev
+Lit_keep:
+	orw	&0x8000,%a2@(0)		| keep T1 set in the returning frame SR
+	moveml	%sp@+,%d0-%d7/%a0-%a6
+	rte
+Lit_stop:
+	clrl	i10t_on
+	.word	0x4e7a,0x0801		| movec %vbr,%d0
+	moveal	%d0,%a0
+	movel	i10t_oldvec,%a0@(0x24)	| restore the stock vector-9 handler
+	andw	&0x7fff,%a2@(0)		| clear T1: /bin/sh resumes at full speed
+	moveml	%sp@+,%d0-%d7/%a0-%a6
+	rte
+Lit_chain:
+	moveml	%sp@+,%d0-%d7/%a0-%a6
+	tstl	i10t_oldvec
+	bnes	Lit_chain1
+	rte				| no saved handler: just discard the trace
+Lit_chain1:
+	movel	i10t_oldvec,%sp@-	| chain to the stock trace handler, frame intact
+	rts
+
+| i10t_do_latch -- a2 = format-2 frame base, d7 = w (the poison just landed).  Capture
+| the whole transition: before/after, the culprit PC, the replay delta (0 = no replay),
+| the register file after the store, and what each address register points at.
+i10t_do_latch:
+	movel	&1,i10t_latched
+	movel	i10t_step_n,i10t_lseq
+	movel	i10t_prev,i10t_before
+	movel	%d7,i10t_after
+	movel	i10t_wbrep_now,%d0
+	subl	i10t_wbrep_prev,%d0
+	movel	%d0,i10t_wbdelta	| wb_replay_n across the culprit step: 0 = ordinary
+	movel	wb_replay_n,i10t_wbrep_latch
+	moveq	&0,%d0
+	movew	%a2@(0),%d0		| SR (bit 13 = 0x2000 = S: set would mean a kernel store)
+	movel	%d0,i10t_lsr
+	movel	%a2@(2),i10t_nextpc	| PC of the next instruction
+	movel	%a2@(8),i10t_culpc	| instruction address = the store just executed
+| copy the 15 saved user registers (d0-d7, a0-a6) from the stack save block
+	lea	%a2@(-60),%a0		| a0 = &saved d0 (frame base - the 60-byte moveml)
+	lea	i10t_r0,%a1
+	moveq	&14,%d1
+Lit_cpr:
+	movel	%a0@+,%a1@+
+	dbra	%d1,Lit_cpr
+	.word	0x4e68			| move %usp,%a0
+	movel	%a0,i10t_usp
+| identify a genuine COPY SOURCE: for a move.l (aSrc),(aDst) the destination is
+| i10t_tgtva; scan a0-a6 (i10t_r8..r14) for one that is NOT the destination and whose
+| target longword holds the poison.  None found (srcr = -1) with after == poison means
+| the ordinary store FABRICATED the value; one found means it copied it.
+	movel	&-1,i10t_srcr
+	clrl	i10t_srcv
+	moveq	&8,%d6			| d6 = reg index: 8 = a0 .. 14 = a6
+Lit_pv:
+	movel	%d6,%d0
+	asll	&2,%d0
+	lea	i10t_r0,%a0
+	movel	%a0@(0,%d0:l),%d5	| d5 = aN value (survives i10g_ckframe)
+	movel	%d6,%d0
+	subql	&8,%d0
+	asll	&2,%d0
+	lea	i10t_pv0,%a0
+	clrl	%a0@(0,%d0:l)		| default: not a readable user pointer
+	cmpil	&0x80000000,%d5
+	bcss	Lit_pv_n		| not a user address
+	movel	%d5,%d0
+	bsrw	i10g_ckframe		| a1 = frame base or 0 (d5/d6 survive)
+	movel	%a1,%d0
+	beqs	Lit_pv_n		| that frame not resident
+	movel	%d5,%d0
+	andil	&0xfff,%d0
+	addal	%d0,%a1
+	movel	%a1@,%d4		| d4 = *(aN)
+	movel	%d6,%d0
+	subql	&8,%d0
+	asll	&2,%d0
+	lea	i10t_pv0,%a0
+	movel	%d4,%a0@(0,%d0:l)	| i10t_pv<N> = *(aN)
+	cmpl	i10g_wantval,%d4
+	bnes	Lit_pv_n		| this register does not point at the poison
+	cmpl	i10t_tgtva,%d5
+	beqs	Lit_pv_n		| it IS the destination just written -- not a source
+	movel	%d6,%d0
+	subql	&8,%d0
+	movel	%d0,i10t_srcr		| 0..6 = a0..a6: a genuine non-dest source
+	movel	%d4,i10t_srcv
+Lit_pv_n:
+	addql	&1,%d6
+	cmpil	&15,%d6
+	bcss	Lit_pv
+	rts
+
+	.balign 4
+
+	.data
+	.balign 4
+| ---------------------------------------------------------------------------
+| The i10t block -- read i10t_magic FIRST (a stale address does not fail, it returns
+| a plausible number).  Knobs: kpoke i10t_want 1 to enable, and (for this run) kpoke
+| i10g_plo 0 so no page is write-protected.  kpeek i10t_magic 50 dumps the whole block.
+	.globl	i10t_magic
+i10t_magic:
+	.long	0x49315421		| "I1T!"
+	.globl	i10t_want
+i10t_want:
+	.long	0			| 0 = dormant (ships this way).  kpoke 1 to arm the watch.
+	.globl	i10t_armpage
+i10t_armpage:
+	.long	0x80014000		| arm on the first fault into this page (the poison page)
+	.globl	i10t_tgtva
+i10t_tgtva:
+	.long	0x80014aa0		| the watched destination longword
+	.globl	i10t_stepmax
+i10t_stepmax:
+	.long	8000000			| runaway guard: auto-disarm after this many traced steps
+	.globl	i10t_on
+i10t_on:
+	.long	0			| 1 while the watch is live (handler installed, T1 set)
+	.globl	i10t_armed_t
+i10t_armed_t:
+	.long	0			| one-shot arm latch
+	.globl	i10t_proc
+i10t_proc:
+	.long	0			| the process being single-stepped (compare to i10g_armproc)
+	.globl	i10t_oldvec
+i10t_oldvec:
+	.long	0			| saved stock vector-9 handler (chain + restore)
+	.globl	i10t_seeded
+i10t_seeded:
+	.long	0			| 1 once i10t_prev holds a real read of the target
+	.globl	i10t_prev
+i10t_prev:
+	.long	0			| the target's value at the previous step
+	.globl	i10t_step_n
+i10t_step_n:
+	.long	0			| traced instructions seen for i10t_proc
+	.globl	i10t_res_n
+i10t_res_n:
+	.long	0			| steps where the target was resident (read ok)
+	.globl	i10t_wbrep_arm
+i10t_wbrep_arm:
+	.long	0			| wb_replay_n at arm (context)
+	.globl	i10t_wbrep_prev
+i10t_wbrep_prev:
+	.long	0			| wb_replay_n at the previous step
+	.globl	i10t_wbrep_now
+i10t_wbrep_now:
+	.long	0			| wb_replay_n at the current step
+	.globl	i10t_latched
+i10t_latched:
+	.long	0			| 1 once the first transition into the poison is caught
+	.globl	i10t_lseq
+i10t_lseq:
+	.long	0			| i10t_step_n at the latch
+	.globl	i10t_before
+i10t_before:
+	.long	0			| the target longword BEFORE the culprit store
+	.globl	i10t_after
+i10t_after:
+	.long	0			| the target longword AFTER it (must be the poison)
+	.globl	i10t_culpc
+i10t_culpc:
+	.long	0			| the instruction that landed it (format-2 instr address)
+	.globl	i10t_nextpc
+i10t_nextpc:
+	.long	0			| the next instruction's PC (format-2 PC)
+	.globl	i10t_lsr
+i10t_lsr:
+	.long	0			| SR at the latch (S bit says user vs kernel store)
+	.globl	i10t_wbdelta
+i10t_wbdelta:
+	.long	0			| wb_replay_n delta across the culprit step: 0 = NO replay
+	.globl	i10t_wbrep_latch
+i10t_wbrep_latch:
+	.long	0			| wb_replay_n at the latch (absolute)
+	.globl	i10t_srcr
+i10t_srcr:
+	.long	-1			| which address reg held the poison as a non-dest source; -1 = none
+	.globl	i10t_srcv
+i10t_srcv:
+	.long	0			| that source's value
+	.globl	i10t_usp
+i10t_usp:
+	.long	0			| the user stack pointer at the latch
+| the register file after the culprit store: d0-d7 then a0-a6 (15 longs)
+	.globl	i10t_r0
+i10t_r0:
+	.long	0
+	.globl	i10t_r1
+i10t_r1:
+	.long	0
+	.globl	i10t_r2
+i10t_r2:
+	.long	0
+	.globl	i10t_r3
+i10t_r3:
+	.long	0
+	.globl	i10t_r4
+i10t_r4:
+	.long	0
+	.globl	i10t_r5
+i10t_r5:
+	.long	0
+	.globl	i10t_r6
+i10t_r6:
+	.long	0
+	.globl	i10t_r7
+i10t_r7:
+	.long	0
+	.globl	i10t_r8
+i10t_r8:
+	.long	0
+	.globl	i10t_r9
+i10t_r9:
+	.long	0
+	.globl	i10t_r10
+i10t_r10:
+	.long	0
+	.globl	i10t_r11
+i10t_r11:
+	.long	0
+	.globl	i10t_r12
+i10t_r12:
+	.long	0
+	.globl	i10t_r13
+i10t_r13:
+	.long	0
+	.globl	i10t_r14
+i10t_r14:
+	.long	0
+| *(a0)..*(a6): the value each address register points at, after the store
+	.globl	i10t_pv0
+i10t_pv0:
+	.long	0
+	.globl	i10t_pv1
+i10t_pv1:
+	.long	0
+	.globl	i10t_pv2
+i10t_pv2:
+	.long	0
+	.globl	i10t_pv3
+i10t_pv3:
+	.long	0
+	.globl	i10t_pv4
+i10t_pv4:
+	.long	0
+	.globl	i10t_pv5
+i10t_pv5:
+	.long	0
+	.globl	i10t_pv6
+i10t_pv6:
+	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement)
