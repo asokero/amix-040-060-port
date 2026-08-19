@@ -75,7 +75,7 @@ NEW = ("        /* Model-B (4 KiB page, PNUMSHFT=12) adaptation of the vanilla\n
 # takes its aperture size from AutoConfig instead of a 4 MB constant.  That work sits
 # on wip/zorro3, which BRANCHED FROM the 8-bit branch -- so the wolf3d 8-bit support
 # is still in, and this pin still fails closed if the checkout moves back to main.
-EXPECT_SHA256 = "69dbb9beb76b5190f640040075ba5e5aed310626cf86c17f307f5ce6c6d2b837"
+EXPECT_SHA256 = "7d69a6fbcc1f58bc6e90fc44c09454683d6a36416a6c8c016779228806dad8c9"
 EXPECT_BRANCH = "wip/zorro3"              # va2000-amix, branched from va2000-8bit-support
 EXPECT_NOTE = ("the 8-bit display mode support wolf3d needs, plus the Zorro III "
                "address-agnostic work; main is 16-bit only and Zorro II only")
