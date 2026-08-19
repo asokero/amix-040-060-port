@@ -98,9 +98,12 @@ every page-aligned probe produced.
   word, `docs/Z3-BUSBENCH-VA2000-Z2-260819.md`), so removing serialisation cannot show up in a
   throughput number here and none was expected. The class matters once the bus stops being the
   bottleneck.
-* **No long-run corruption evidence.** This is a per-page structural census, not a soak. X11,
-  wolf3d and Quake ran on the *previous* image (`-02`, changes A/B/C only); they have not been
-  exercised on an image where the framebuffer is `NC`.
+* ~~**No long-run corruption evidence.**~~ **Closed the same day**: X11, wolf3d and Quake were
+  all run on **this** image, i.e. with the framebuffer mapped `NC`, and all three worked with no
+  visible corruption. That is the functional evidence the structural census cannot give, and it is
+  the only measure a cache-class mistake would show up in. It is still not a *measured* soak with
+  a corruption metric — three graphics applications running correctly is strong, and it is not the
+  same as a long pressure run with a byte-comparison at the end.
 * **A page above the interval was not probed**, because the interval ends at the aperture end and
   `mmap` past it is refused. On a Zorro III aperture that probe becomes available.
 
