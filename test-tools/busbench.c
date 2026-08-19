@@ -52,8 +52,16 @@
  * tick.  Each measurement therefore repeats until at least MINTICKS have elapsed; do not
  * shorten that.
  *
- * usage: busbench <device> [bytes]      map a device aperture and measure
- *        busbench -r [bytes]            local malloc'd RAM reference
+ * usage: busbench <device> [bytes] [hex-offset]   map a device aperture and measure
+ *        busbench -r [bytes]                      local malloc'd RAM reference
+ *
+ * THE OFFSET MATTERS AND DEFAULTS TO 0 FOR HISTORY, NOT FOR SENSE.  A graphics
+ * board's aperture starts with its REGISTER window, and on the VA2000 the region
+ * between the registers and the framebuffer is decoded by nothing at all.  In
+ * Zorro II that region answered anyway and measuring from 0 was merely impure;
+ * in Zorro III it does not answer, and hammering it kills the process (see
+ * ISSUE-47 -- an unresponsive access is retried rather than signalled).  So
+ * measure the FRAMEBUFFER: pass its offset.  For the VA2000 that is 10000.
  *
  * K&R C for the AMIX native cc.  cc -o busbench busbench.c
  */
@@ -223,15 +231,18 @@ char **argv;
 {
 	char *p;
 	long sz;
+	long mapoff;
 	int fd, isram;
 
 	hz = gethz();
 	isram = 0;
 	sz = DFLTSZ;
+	mapoff = 0;
 	fd = -1;
 
 	if (argc < 2) {
-		printf("usage: busbench <device> [bytes] | busbench -r [bytes]\n");
+		printf("usage: busbench <device> [bytes] [hex-offset] | busbench -r [bytes]\n");
+		printf("       offset = the FRAMEBUFFER's offset in the aperture; VA2000: 10000\n");
 		exit(2);
 	}
 	if (argv[1][0] == '-' && argv[1][1] == 'r') {
@@ -241,12 +252,18 @@ char **argv;
 	} else {
 		if (argc > 2)
 			sz = atol(argv[2]);
+		if (argc > 3)
+			sscanf(argv[3], "%lx", &mapoff);
 	}
 	if (sz < 65536L)
 		sz = 65536L;
 
-	printf("BUSBENCH hz=%ld size=%ld bytes target=%s\n",
-	       hz, sz, isram ? "local RAM (cached, reference ceiling)" : argv[1]);
+	if (isram)
+		printf("BUSBENCH hz=%ld size=%ld bytes target=local RAM (cached, reference ceiling)\n",
+		       hz, sz);
+	else
+		printf("BUSBENCH hz=%ld size=%ld bytes target=%s offset=%lx\n",
+		       hz, sz, argv[1], mapoff);
 
 	if (isram) {
 		p = (char *) malloc((unsigned) sz);
@@ -262,7 +279,7 @@ char **argv;
 			exit(1);
 		}
 		p = (char *) mmap((caddr_t) 0, (size_t) sz, PROT_READ | PROT_WRITE,
-				  MAP_SHARED, fd, (off_t) 0);
+				  MAP_SHARED, fd, (off_t) mapoff);
 		if (p == (char *) -1) {
 			printf("BUSBENCH ERR mmap %s (%ld bytes) failed (errno=%d)\n",
 			       argv[1], sz, errno);
