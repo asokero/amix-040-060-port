@@ -94,8 +94,8 @@ echo "[*] VA2000: assemble the parinit wrapper"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/parinit_va2000.s" -o "$HERE/build/parinit_va2000.o"
 
 echo "[*] checking va2000_040.o has no surprise unresolved refs:"
-LEAK0=$(m68k-linux-gnu-nm "$HERE/build/va2000_040.o" | grep ' U ' | grep -vE '^\s*U (autocon|printf|uiomove|copyin|copyout|dev_kvmap|dev_kvunmap)$' || true)
-[ -z "$LEAK0" ] && echo "      only expected kernel imports (autocon/printf/uiomove/copyin/copyout/dev_kv*)" \
+LEAK0=$(m68k-linux-gnu-nm "$HERE/build/va2000_040.o" | grep ' U ' | grep -vE '^\s*U (autocon|printf|uiomove|copyin|copyout|dev_kvmap|dev_kvunmap|hat_cm_fb_add)$' || true)
+[ -z "$LEAK0" ] && echo "      only expected kernel imports (autocon/printf/uiomove/copyin/copyout/dev_kv*/hat_cm_fb_add)" \
 	|| { echo "[FAIL] unexpected unresolved refs in va2000_040.o:"; echo "$LEAK0"; exit 1; }
 
 echo "[*] weaken base parinit + expose parinit_orig -> build/unix-stage-va2000"
@@ -120,8 +120,8 @@ done
 echo "      fpsp_vec11/done/fline/unimp + va2000* + dev_kv* + parinit/parinit_orig OK"
 # dev_kvmap's own imports must all be satisfied by the base image.  A missing one
 # would leave `ld -r` perfectly happy and the kernel would jump to 0 at boot.
-LEAK1=$(m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -E 'sptalloc|sptfree|vatosde|vatopte|flushmmu' || true)
-[ -z "$LEAK1" ] && echo "      dev_kvmap imports (sptalloc/sptfree/vatosde/vatopte/flushmmu) all resolved" \
+LEAK1=$(m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -E 'sptalloc|sptfree|vatosde|vatopte|flushmmu|hat_cm_fb_add' || true)
+[ -z "$LEAK1" ] && echo "      dev_kvmap + hat_cm_fb_add imports all resolved" \
 	|| { echo "[FAIL] dev_kvmap has unresolved imports:"; echo "$LEAK1"; exit 1; }
 LEAK=$(m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'fpsp_|mem_read|mem_write|real_|va2000' || true)
 [ -z "$LEAK" ] && echo "      no unresolved FPSP/va2000 symbols" || { echo "[FAIL] unresolved:"; echo "$LEAK"; exit 1; }
