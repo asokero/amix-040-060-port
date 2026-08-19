@@ -41,11 +41,25 @@ export AMIX_SYSROOT
 echo "[*] Model-B source copies (phystopfn 2 KiB -> 4 KiB; page counts halved, bytes unchanged)"
 python3 "$HERE/src/z3660_modelb.py"
 
+# z3660.c includes the alien SCSI headers by bare name (`#include "rico.h"`,
+# `"sd.h"`), so they have to arrive on an -I.  They live in a full AMIX tree at
+# usr/sys/amiga/alien -- but an AMIX_ROOT that is a STAGING directory holding
+# only stand/unix (which is all a relink needs, and all config.sh is required to
+# provide) does not have them, and the -I then silently points at nothing until
+# the compile fails on a missing header.  The cross sysroot ships the same
+# headers and the Model-B mirror re-exports them through its usr/sys symlink, so
+# resolve the directory instead of assuming it, and say which one was used.
+ALIEN="$V/usr/sys/amiga/alien"
+[ -f "$ALIEN/rico.h" ] || ALIEN="$AMIX_SYSROOT/usr/sys/amiga/alien"
+[ -f "$ALIEN/rico.h" ] || { echo "ERROR: rico.h/sd.h not found under $V/usr/sys/amiga/alien"; \
+	echo "       nor under $AMIX_SYSROOT/usr/sys/amiga/alien"; exit 1; }
+echo "[*] alien SCSI headers (rico.h, sd.h): $ALIEN"
+
 echo "[*] cross-compiling both drivers"
 CF=$(echo "$AMIX_KERNEL_CFLAGS" | sed 's/-m68020/-m68040/')
-m68k-cbm-sysv4-gcc $CF -I"$V/usr/sys/amiga/alien" -I"$HERE/build" \
+m68k-cbm-sysv4-gcc $CF -I"$ALIEN" -I"$HERE/build" \
 	-c "$HERE/build/z3660_040.c"    -o "$HERE/build/z3660_040.o"
-m68k-cbm-sysv4-gcc $CF -I"$V/usr/sys/amiga/alien" -I"$HERE/build" \
+m68k-cbm-sysv4-gcc $CF -I"$ALIEN" -I"$HERE/build" \
 	-c "$HERE/build/z3660eth_040.c" -o "$HERE/build/z3660eth_040.o"
 
 # Guard the conversion at the OBJECT level, not at the source level: the whole
