@@ -1,10 +1,14 @@
-# ISSUE-10 has a reliable trigger again — and it is not the bounded reverse-map unlinks
+# ISSUE-10 has a reliable trigger again — and the page under it is not what we thought
 
-**2026-08-19 · EMU (Amiberry, 68040+MMU, 16 MB, load base `0x07000000`) · kernel `68040-260819-05`**
+**2026-08-19 · EMU (Amiberry, 68040+MMU, 16 MB, load base `0x07000000`)**
 
-Raw readings: [`test-tools/issue10-revmap-counters-260819.txt`](../test-tools/issue10-revmap-counters-260819.txt).
-Instrument: [`src/i10rev040.s`](../src/i10rev040.s). Guest driver:
-[`test-tools/i10bench.sh`](../test-tools/i10bench.sh). Probe: [`test-tools/shmband.c`](../test-tools/shmband.c).
+Raw readings: [`test-tools/issue10-revmap-counters-260819.txt`](../test-tools/issue10-revmap-counters-260819.txt)
+(counters) and [`test-tools/issue10-page-identity-260819.txt`](../test-tools/issue10-page-identity-260819.txt)
+(the page-identity capture).
+Instrument: [`src/i10rev040.s`](../src/i10rev040.s) — the counters, and `i10p_probe`.
+Guest drivers: [`test-tools/i10bench.sh`](../test-tools/i10bench.sh),
+[`test-tools/i10probe.sh`](../test-tools/i10probe.sh). Probe:
+[`test-tools/shmband.c`](../test-tools/shmband.c).
 
 ## Summary
 
@@ -12,25 +16,23 @@ Running a 68040 install miniroot, `/bin/sh` dies while reading a ~77 KB shell sc
 of
 
 ```
-NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:35 CMD:sh /cdrom/install/bin/setup.sh
+NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:20 CMD:sh -n /cdrom/install/bin/setup.sh
 ```
 
 and then `no space`. That is byte-for-byte the signature `KNOWN-ISSUES.md` records for ISSUE-10's
 **`amixadm` trigger, which was retired on 2026-07-15 as no longer firing** — same fault address,
-same PC, same fault class. It fires again here, and this time it is **deterministic**: eight
-consecutive reproductions, no memory pressure, no fork storm, one command.
+same PC, same fault class. It fires again here, and it is **deterministic**: one command, no
+memory pressure, no fork storm.
 
-Three mechanisms were on the table. The measurements settle two of them and re-aim the third.
+Three mechanisms were on the table; the counters settled two of them and re-aimed the third. A
+second instrument then went after the re-aimed one and **did not find what was expected**:
 
 | | Candidate | Verdict |
 |---|---|---|
 | **A** | One of the bounded-256 reverse-map unlink paths gives up on exhaustion, leaving a stale `p_mapping` after the PTE is removed | **REFUTED** — all three give-up counters are 0 across every reproduction, and no search ever walked half its budget |
-| **B** | The eight-site SysV shm 2 KiB anon-map mismatch | **CONFIRMED as a live defect, but it is a different bug** — it panics, deterministically, in its predicted band; `sh` never calls `shmget` |
-| **C** | Amiberry 68040 format-$7 write-back infidelity | **Not supported as stated** — the write-back replay path recorded no event at all while the fault fired |
-
-What the evidence points at instead is named in §4, and it is the same conclusion the 2026-07-16
-`SEGVCHAIN` probe reached from the other side: a **user heap page that holds kernel u-area
-content**.
+| **B** | The eight-site SysV shm 2 KiB anon-map mismatch | **CONFIRMED as a live defect, but a different bug** — it panics, deterministically, in its predicted band; `sh` never calls `shmget` |
+| **C** | Amiberry 68040 format-$7 write-back infidelity | **NOT TESTED after all** — see §6; the run that produced the "all zero" reading is one in which the wall never fired |
+| **D** | The page holding the corrupt word is a frame that is, or recently was, a kernel u-area page — the phys double-use / page-lifetime family | **REFUTED** — §4. The page is an ordinary, correctly-mapped, singly-mapped anon heap page of `sh`'s own arena with an intact reverse map, holding **one** wrong longword |
 
 ## 1. Candidate A — refuted, with the reading that makes zero mean something
 
@@ -40,9 +42,9 @@ bound runs out: `hat_pteload`'s replacement path (which was **completely silent*
 and `hat_free` (which print through a cap of 4 and then go dark for the rest of the uptime).
 
 The fourth site on the list, `hat_dup040`, turned out to have no bounded unlink loop to
-instrument: it never *searches* a chain, it only pushes onto one, on both its private-copy and its
-share path. It is therefore not a consumer that can give up — it is the **producer** that makes
-chains long enough for the other three bounds to matter, so what it contributes is that rate.
+instrument: it never *searches* a chain, it only pushes onto one. It is therefore not a consumer
+that can give up — it is the **producer** that makes chains long enough for the other three bounds
+to matter, so what it contributes is that rate.
 
 ```
 sample                 rpfail  hlfail  hffail   dupreg   deep
@@ -53,23 +55,23 @@ after sh -n install.sh      0       0       0     1129      0   <- wall fired
 after sh setup.sh #1        0       0       0     1364      0   <- wall fired
 after sh setup.sh #2        0       0       0     1599      0   <- wall fired
 after sh setup.sh #3        0       0       0     1834      0   <- wall fired
-second boot, independent    0       0       0      466      0   <- wall fired
 ```
 
 Three things make this a result rather than an absence:
 
 * **The counters are demonstrably live.** `i10_dupreg_n` moves by **exactly +235** across each of
   the three identical full runs. A dead link or an unlinked island reads zero too; this one does
-  not.
-* **`i10_deep_n` is 0.** No successful reverse-map search anywhere in the run walked even 128 of
-  its 256-node budget. So the give-up counters are not zero because the workload got lucky — the
-  bounds were never within reach of being exhausted. "Did not happen" and "could not have
-  happened" are different claims, and this is the second one.
-* **The address was verified before the numbers were believed.** `i10_magic` reads `49313021`
-  (`I10!`) at `0x0710B8F8` and the same offset at the `0x08000000` base reads zeros throughout —
-  which is also how the load base was established, this rig having no accelerator RAM.
+  not. Four further independent boots on 08-19 reproduced the same shape (`dupreg` 0x21d, 0x33a,
+  0x5e7, 0x653; the three fail counters 0 and `deep` 0 in every one).
+* **`i10_deep_n` is 0.** No successful reverse-map search anywhere walked even 128 of its 256-node
+  budget. So the give-up counters are not zero because the workload got lucky — the bounds were
+  never within reach of being exhausted. "Did not happen" and "could not have happened" are
+  different claims, and this is the second one.
+* **The address was verified before the numbers were believed.** `i10_magic` reads `I10!`, and the
+  same offset at the other candidate load base reads zeros throughout — which is also how the load
+  base was established, this rig having no accelerator RAM.
 
-## 2. What the wall actually is
+## 2. What the wall is at the instruction level — and the one claim in it that was wrong
 
 `PC:800023FC` sits in `/bin/sh`'s own allocator. Disassembling the miniroot's `sh` at that address
 gives the free-block coalescing loop:
@@ -82,21 +84,36 @@ gives the free-block coalescing loop:
 ```
 
 So the fault address `4AFC0003` is `q + 3`, and the free-list link `q` read out of `sh`'s arena is
-**`0x4AFC0000`**. On this image `kvsegu` is the absolute symbol `0x48440000`, so that value is
-`kvsegu + 0x2B80000` — **a pointer into the kernel's u-area virtual segment**. `FAULT:6` is
-FLTBOUNDS: the kernel is correctly refusing a user access to a kernel VA. The 11–20 repeats and
-the closing `no space` are Bourne `sh`'s own catch-and-retry-after-`sbrk` behaviour giving up, not
-a kernel fault loop. Every part of that matches the decode `KNOWN-ISSUES.md` already carries for
-the amixadm trigger, independently re-derived here.
+**`0x4AFC0000`**. `FAULT:6` is FLTBOUNDS: the kernel is correctly refusing a user access to an
+address that is not in the process's address space. The repeats and the closing `no space` are
+Bourne `sh`'s own catch-and-retry-after-`sbrk` behaviour giving up, not a kernel fault loop.
 
-The value is not random dirt. It is the **same constant, `0x4AFC0000`, in every fault, in every
-process, in both boots, and in the 2026-07-10 amixadm captures**. A race would not produce a
-constant.
+**What was wrong.** The 08-19 morning reading of this document said `0x4AFC0000` is
+`kvsegu + 0x2B80000` and therefore "a pointer into the kernel's u-area virtual segment". The
+arithmetic is right and the conclusion does not follow: `kvsegu` is `[0x48440000, 0x48480000)`,
+256 KiB, so `0x4AFC0000` lies about 45 MB **past its end**. It was a distance from the nearest
+named symbol below it, not a containment.
 
-## 3. Characterising the new trigger
+The live kernel now says so directly. `i10p_probe` resolves the value through the kernel's own
+region-1 tree, exactly as `vatosde`/`vatopte` would:
 
-The trigger is worth writing down carefully, because ISSUE-10 has been without a reliable one
-since 2026-07-15.
+```
+i10p_kdesca  07105cfc     &kptr040[((0x4AFC0000>>18) - 4096) * 4]
+i10p_kdesc   00000000     UDT 0 -- there is no pointer table for that VA at all
+```
+
+reproduced in every capture run. **`0x4AFC0000` is not a kernel address of any kind** — not
+`kvsegu`, not `kvsegmap`, not `kvseg`, not mapped anywhere in region 1. It is a value with no
+kernel meaning, and the whole "u-area alias" line of reasoning built on it goes with it.
+
+What it *is*, as a bit pattern, is the 68k `ILLEGAL` opcode word `0x4AFC` followed by zeros. That
+is a coincidence worth naming rather than a lead: the exact byte string `4A FC 00 00` occurs
+**zero** times in the 60 KB of `/bin/sh`, so the value was not copied out of the program's own
+text (see §4, where the loose version of that mask did find sh's text and was thrown away).
+
+## 3. The trigger
+
+Worth writing down carefully, because ISSUE-10 has been without a reliable one since 2026-07-15.
 
 * **It is parse-time.** `sh -n`, which parses the whole file and executes none of it, reproduces
   the fault identically. Nothing in the script runs.
@@ -109,28 +126,78 @@ since 2026-07-15.
 * **The threshold is sharp.** Truncated to 34 KiB the script parses clean; at 38 KiB and beyond it
   walls, every time. (36 KiB lands on a truncation syntax error and aborts the parse early, so it
   says nothing.)
+* **The flood is thousands of faults deep, not the "11–20" recorded this morning.** That figure
+  was the number of `NOTICE` lines a console page holds. `i10p_n` counts them: **8048** in the
+  capture run, and 16096 in another. Every one is at the same address — `i10p_fa` and
+  `i10p_lastfa` both read `4afc0003`.
 
-That combination — deterministic, arena-growth-driven, a constant stale u-area pointer — is a
-far better instrument than a fork storm, and it costs one command.
+## 4. What the page actually is
 
-## 4. Where this points
+This is the probe the morning's document asked for, and the answer is not the one it predicted.
 
-`sh`'s heap contains a kernel u-area *virtual address* where a free-list link belongs. Not
-zeros, not file data — a value of the kind the kernel writes into a u-area page. The reverse map
-is intact (measured above, and the 2026-07-16 `SEGVCHAIN` probe measured `in=1` on all eight
-hits), so this is the **phys double-use / page-lifetime family (ISSUE-5/6)**, and specifically the
-`segu`/`kvsegu` corner of it: a frame that is, or recently was, a u-area page and is now backing
-user anon memory.
+`i10p_probe` hooks `usrxmemflt`'s unresolved-fault tail — the moment the resolver has given up, the
+process is about to be told, and the word it tripped over is still sitting in its own memory in its
+own context. It then walks the victim's page tree and looks for the value the fault died on. That
+hook was chosen over the mapping side (`hat_pteload`) deliberately: a mapping-time scan can only
+see corruption that was already in the frame when the frame was mapped, which is one hypothesis out
+of several, and an instrument must not be built so that it can only confirm one of them.
 
-The obvious ZFOD half-zero explanation is already excluded: the `pagezero(pp, 0, 0x800)` family was
-converted in `bc68e1b` and `src/patch_modelb.py` covers `anon_zero`, `s5getapage`, `ufs_getapage`
-and `spec_getapage`. So the residual is elsewhere, and the constant offset `kvsegu + 0x2B80000` is
-the thread to pull: the same u-area slot is reachable every time.
+The capture, with the mask set to the free-list **link** the allocator loaded (`0x4AFC0000`, i.e.
+the fault address with the `q+3` busy-bit displacement taken back off):
 
-**Recommended next probe**, in the spirit of the free-time invariant spec: at the point `sh`'s
-`brk` growth hands back the page that later reads `0x4AFC0000`, dump `{pfn, p_vnode, p_mapping,
-the frame's first words}` and compare the pfn against the live `segu`/`kvsegu` mappings. The
-trigger is now cheap enough to make that a single run rather than a grind.
+```
+i10p_have   1          a page was found, on the FIRST walk (i10p_tries 1)
+i10p_pgs    51         resident user pages scanned
+i10p_hits   1          exactly ONE of them holds the value
+i10p_uva    80014000   its user VA -- sh's heap, past the end of its file image
+i10p_hoff   00000aa0   -> the corrupt word is at user address 0x80014AA0
+i10p_hitv   4afc0000
+i10p_pfn    00007623   i10p_pte 07623039   i10p_ptea 0764c050
+i10p_pp     40051058   i10p_pflags 06000000
+i10p_vnode  40078704   i10p_off 00036000   i10p_hash 00000000
+i10p_map    0764c050   i10p_map0 07623039  i10p_mapn 1   i10p_min 1
+w0..w7      6e745f6d 62000000 8001401d 80013ff8 02000000 80011414 00000000 80014031
+```
+
+Reading it:
+
+* **It is `sh`'s own arena, and the content says so.** `w0`/`w1` are ASCII (`"nt_m"`, `"b\0\0\0"`);
+  `w2`, `w3`, `w5` and `w7` are `0x8001xxxx` pointers back into the same heap, several with bit 0
+  set. That is Bourne `sh`'s allocator exactly: block headers holding `next|busy`, interleaved with
+  string data. The neighbouring links are intact.
+* **The page is anon, not a file page.** `p_vnode` is non-zero, but so is the *stack* page's in a
+  second capture — same vnode `0x40078704`, different `p_offset` — which is what one anon/swap
+  vnode covering a process's anon pages looks like. There is no file identity here.
+* **The reverse map is perfectly intact.** `p_mapping` equals `i10p_ptea`, the address of this
+  page's own live leaf PTE; the chain is **one** node long and `i10p_min = 1` says that node is
+  this mapping. Nothing stale, nothing missing, nothing doubled. This is the 2026-07-16 `SEGVCHAIN`
+  `in=1` result again — now measured on the page that actually holds the corruption rather than on
+  a page adjacent to the crash.
+* **One word, not a region.** One page out of 51, one longword out of 1024 in it.
+
+So the page is **not** a frame that is or was a u-area, **not** a double-registered file page,
+**not** a stale or replaced mapping. It is a healthy, correctly-mapped, singly-mapped anon heap
+page with one wrong longword in the middle of it.
+
+That re-aims ISSUE-10 for this trigger. A whole page handed out twice, or a mapping pointing at
+the wrong frame, would show as a page whose *identity* is wrong; this shows as a page whose
+identity is right and whose *content* has one bad word. The next thing to chase is therefore a
+**write that landed at the wrong address**, or a store that was lost and left the slot holding
+something else — not a page-lifetime bug. The `p_mapping`/page-reuse family is measured innocent
+here, twice, by two different instruments.
+
+**Two masks were tried and thrown away before this one, and both are kept in the record** because
+each refutes a reading of the third:
+
+* A 64 KiB **band** mask (`0xFFFF0000`) found 8 pages, and latched `sh`'s own **text** at
+  `0x80006000` — whose word at frame offset `0x92C` is `0x4AFC0055`. Verified host-side: the
+  frame's first eight longs are that file at offset `0x6000` byte for byte, and `0x4AFC0055` is
+  that file at offset `0x692C`. `0x4AFC` is the `ILLEGAL` opcode and occurs at four places in that
+  binary. The page was not corrupt; the instrument was. (It also proves the probe reads the right
+  frame and reports it accurately, which is why that run is evidence and not just a mistake.)
+* An **exact fault-address** mask (`0xFFFFFFFF`) found exactly one word — `0x4AFC0003`, on the
+  user **stack**, in a page whose first eight longs are all zero. That is the kernel's own residue
+  from an earlier fault in a flood thousands deep, not the corruption.
 
 ## 5. Candidate B — the SysV shm band, measured
 
@@ -153,8 +220,7 @@ Separately queued, and settled while the rig was up. `test-tools/shmband.c` walk
 Six survivors, three panics, no exception. Both edges of two consecutive bands are pinned —
 4096 survives and 4097 panics; 6144 panics and 6145 survives — so the failing set is a **band**,
 not a threshold, which is the specific claim that distinguishes this mechanism from "large sizes
-fail". Sizes 1, 2047 and 8193 were not attached; 1 and 8193 sit in bands whose behaviour is
-already measured, and each panic costs a boot.
+fail". Sizes 1, 2047 and 8193 were not attached; each panic costs a boot.
 
 `IPC_STAT` reports the original byte count for every size including the fatal ones, and every
 successful attach is 4 KiB-aligned, so the API-visible contract is intact right up to the point
@@ -165,38 +231,66 @@ caller. It is **not** the setup.sh wall: it panics rather than faulting, and `sh
 `shmget`. The two share a family — a 2 KiB constant surviving the 4 KiB conversion — but not a
 site.
 
-## 6. Candidate C — not supported as stated
+## 6. Candidate C — retracted as a measurement
 
-The `wbf_*` counters were read across the wall on a second boot:
+This morning's document said the `wbf_*` write-back counters read all-zero "while the fault was
+firing", and concluded the 68040 write-back replay path is not producing the corrupt link.
 
-```
-wbf_magic 57424621 ("WBF!")   wbf_prop_on 1   wbf_sup_fatal 1   wbf_slot 3
-wbf_fail_n  wbf_user_n  wbf_sup_n  wbf_signal_n  wbf_nosig_n  wbf_krn_n
-wbf_swallow_n  wbf_afb_n  wbf_alien_n  ...  ALL ZERO, before and after
-```
+**The counters were read, but not across a wall.** In that run the payload slice failed to mount
+(`No space left on device`, the read-write mount problem of §7), `setup.sh` could not be opened
+(`cannot open`, `rc=1`), and the console for that boot carries **no `User BUS ERROR` line at all**.
+An all-zero counter block from a boot in which the trigger never fired says nothing about the
+trigger. The summary row that read `(second boot, block F) … <- wall fired` was wrong.
 
-The 68040 write-back replay path recorded **no event of any kind** while the fault was firing, so
-a mis-replayed or dropped write-back is not producing the corrupt link. That agrees with what
-`wb040.s:613` already states from reading the emulator's source — the emulator never sets WB1S
-valid, so those paths have never executed there — and with the ISSUE-10 progress log's own
-conclusion on 2026-07-10 that the write-back replay is "not the corruptor".
+Candidate C is therefore **untested**, not refuted. What remains true, and is from the existing
+record rather than from that run, is: `wb040.s:613` states from reading the emulator's source that
+it never sets WB1S valid, so those paths have never executed there; the ISSUE-10 progress log
+reached the same conclusion on 2026-07-10; the same fault reproduces on **two different emulators**
+at the same address; and the **68060 does not reproduce it on the same emulator**. Re-reading the
+`wbf_*` block across a wall that actually fires is cheap now and should be done before anyone
+quotes this section.
 
-Two further points argue against an emulator-only artefact, and both are from the existing record
-rather than from this run: the same fault reproduces on **two different emulators** (fs-uae and
-Amiberry) at the same address, and the **68060 does not reproduce it on the same emulator**. A
-divergence that is CPU-model-specific within one emulator is more easily explained by the 040 code
-path than by the emulator's memory model.
+## 7. Reproducing the rig — two staging facts that are not in the kernel or the script
 
-This does not clear the emulator. `AGENTS.md` is right that Amiberry is not evidence for
-cache/DMA-coherency behaviour, and the wall has never been tried on 68040 silicon. But (C) as
-stated — the format-$7 write-back frame — is measured inert here, and it should not be the next
-thing tested.
+Both cost a run to relearn, and neither is visible in any artifact this repository tracks.
 
-## 7. What was not established
+**The kernel needs a two-byte swap-device edit before it will boot this medium.** Built straight
+from the tree, it names `/dev/dsk/c6d0s2` as its swap device; on a rig whose install *source* is
+the id-0 disk that is the wrong controller, and the boot dies with
+`PANIC: swapconf lookupname /dev/dsk/c6d0s2 failed - error 2`. The two fields sit at fixed offsets
+from the anchor string `/dev/dsk/c`, which occurs exactly once in the image:
+`anchor-0x24` is the `dev_t` (`0x00480016` → `0x00480010`, i.e. `makedevice(18, 22→16)`) and
+`anchor+0x0a` is the id digit in the name. The generic host-side rootdev patcher refuses this image
+— its contract wants an sd-major root and this miniroot kernel has `rootdev` major 0 — so the edit
+is made by anchor and verified by re-reading both fields.
 
-* The wall has **not** been run on hardware. Everything above is EMU.
-* Sizes 1, 2047 and 8193 were predicted, not attached (§5).
-* The three reproductions asked for were taken **within one boot**, plus one independent
-  reproduction on a second boot. Cumulative counter deltas across a single boot are the stronger
-  reading for this question, but they are not five independent boots.
-* Nothing here explains *why* `0x4AFC0000` is always the same value. That is the next probe.
+**This presents as a size effect, convincingly.** Adding four bytes of `.data` to the tree
+"reproduced" the panic; so did 944 bytes of `.text` and 200 of `.data` of pure padding with no code
+change anywhere. Every one of those variants was rebuilt from source and therefore carried the
+unpatched `c6d0s2`, while the only kernel that booted was a previously staged one that already had
+the edit. Six boots went into that before the two kernels were diffed against each other, which
+would have shown it in one step. **The control that was missing was booting one's own rebuild of
+HEAD**, and it is the cheapest control there is.
+
+**The payload slice must be mounted read-only.** On any image whose slice 4 was previously mounted
+read-write and never unmounted — which is every image a crashed or killed bench run leaves behind
+— a read-write mount returns `No space left on device` while the root filesystem is very nearly
+empty (154 blocks used). The same slice mounts read-only on the same image immediately, and the
+probe only ever reads. A run that cannot mount its source disk still produces a full log of zeroes,
+which is indistinguishable from a measurement that found nothing.
+
+## 8. What was not established
+
+* Everything above is **EMU**. The wall has never been run on 68040 silicon.
+* Candidate C is untested, not refuted (§6).
+* `i10p_comm0..3` (the `u+0x1C0` u_comm read) came back zero in every capture even though
+  `i10p_curproc` and `u.u_procp` agree, so the u-area window is the victim's. The offset is
+  unconfirmed for this kernel; it is not load-bearing for anything above.
+* **Why the word is `0x4AFC0000` specifically is still unexplained.** It is not a kernel address
+  (§2), not a copy of `sh`'s own text (§4), and it is the same constant in every fault, every
+  process, both of today's boots and the 2026-07-10 `amixadm` captures. A constant that survives a
+  reboot and a different program is the sharpest remaining thread.
+* The obvious next probe follows from §4 rather than from §2: the page is healthy and one word in
+  it is not, so watch the **word**, not the page — trap the write. `sh`'s arena address is known
+  (`0x80014AA0` in this run), the trigger is one command, and a write-watch on that longword would
+  name the store that puts `0x4AFC0000` there.
