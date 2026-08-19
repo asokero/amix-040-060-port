@@ -1,0 +1,441 @@
+ISSUE-10 reverse-map exhaustion counters + SysV shm anon-map band -- raw bench evidence
+=======================================================================================
+Date        2026-08-19            Platform  EMU (Amiberry, local build off the 8.3.0 line)
+Kernel      68040-260819-05       sha256    7aed1fa16668b00b21ce6b92b489c933f92b2541081fdc89e8c0fe475bd82596
+            = the 68040-260818-02 tree (byte-identical apart from the build-id stamp,
+              verified) plus src/i10rev040.s and its four instrument sites.
+Rig         a3000mem 16 MB, mbresmem 0 -> LOAD BASE 0x07000000 (not 0x08000000);
+            68040 CPU+FPU+MMU, cycle_exact=false, cpu/fpu_no_unimplemented=true,
+            no a2065 (console-driven; the raw slice is the evidence channel).
+            Derived from the 68040 install-acceptance rig config with only the two disk
+            paths repointed at scratch copies and the a2065 lines removed.
+Medium      a COPY of a 68040 install-source disk (crc32 215F8FE1) -- a self-booting
+            image whose slice 1 is a UFS install miniroot, slice 3 the boot chain, slice 4
+            the installer payload and slice 5 a raw distribution area -- with the
+            instrumented kernel installed into the boot slice, and kpeek/shmband/
+            i10bench.sh parked in the ZERO TAIL of slice 5 (1 KiB blocks 25600/25632/
+            25664), dd'd out on the guest.  The miniroot has dd and chmod and no package
+            manager, which is why the probes arrive that way.
+
+`i10` block at load base 0x07000000:
+    0710B8F8 i10_magic     (must read 49313021 "I10!")
+    0710B8FC i10_rpfail_n  hat_pteload Lreplace revmap unlink gave up after 256 nodes
+    0710B900 i10_hlfail_n  hat_unload  Lhl_findfail
+    0710B904 i10_hffail_n  hat_free    Lf_findfail
+    0710B908 i10_dupreg_n  hat_dup040 chain registrations (the producer; no bound)
+    0710B90C i10_deep_n    a successful search that walked >= 128 of its 256 budget
+
+CONSOLE TRANSCRIPT OF THE WALL (identical in every reproduction, transcribed from the
+screenshots; 11-20 repeats per run, then the shell prints "no space" and exits 1):
+
+    NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:35 CMD:sh /cdrom/install/bin/setup.sh
+    NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:90 CMD:sh -n /t.sh
+    NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:209 CMD:sh -n /t.sh
+    /cdrom/install/bin/setup.sh: no space
+
+  -- byte-identical to the signature KNOWN-ISSUES.md records for ISSUE-10's retired
+     amixadm trigger: same fault address, same PC, same FAULT class.
+
+SUMMARY TABLE (from block A below)
+
+  sample                 rpfail  hlfail  hffail   dupreg   deep
+  baseline                    0       0       0      478      0
+  after-mount                 0       0       0      663      0
+  after sh -n setup.sh        0       0       0      944      0   <- wall fired
+  after sh -n install.sh      0       0       0     1129      0   <- wall fired
+  after sh setup.sh #1        0       0       0     1364      0   <- wall fired
+  after sh setup.sh #2        0       0       0     1599      0   <- wall fired
+  after sh setup.sh #3        0       0       0     1834      0   <- wall fired
+  (second boot, block F)      0       0       0      466      0   <- wall fired
+
+  i10_dupreg_n moves +235 across each of the three identical full runs, exactly, which
+  is what says the counters are live and the zeros are readings rather than a dead link.
+
+SHM BAND (block E + the three panic screenshots)
+
+  size   mod 4096  in [1,2048]?  measured
+     1          1      yes       (not run: same band as 2048)
+  2047       2047      no        SURVIVE (shmget/IPC_STAT only)
+  2048       2048      yes       PANIC: segvn_create anon_map size
+  2049       2049      no        SURVIVE   at=c1001000
+  4095       4095      no        SURVIVE   at=c1001000
+  4096          0      no        SURVIVE   at=c1001000
+  4097          1      yes       PANIC: segvn_create anon_map size
+  6144       2048      yes       PANIC: segvn_create anon_map size
+  6145       2049      no        SURVIVE   at=c1001000
+  8191       4095      no        SURVIVE   at=c1001000
+  8192          0      no        SURVIVE   at=c1001000
+  8193          1      yes       (not run: same band as 4097/6144)
+
+  Six survivors, three panics, no exception.  Both edges of two consecutive bands are
+  pinned (4096 survives / 4097 panics; 6144 panics / 6145 survives), so the failing set
+  is a BAND and not a threshold.  Every successful attach is 4 KiB-aligned, and IPC_STAT
+  reports the ORIGINAL byte count for every size including the fatal ones.
+
+  Panic screenshot text (identical in all three):
+
+    PANIC: segvn_create anon_map size
+    4.0 2.1c 0800430 Backtrace:
+    40001D74: 703E6CC->70359544      40001DE4: 70AE535->1indir
+    40001D94: 703E848->703E668       40001E4C: 7055444->70AE3FA
+    40001DA0: 703EFC->703E71E        40001E88: 7055B5A->705532B8
+    40001DB0: 70AAF18->703EBE0       40001ECC: 705AA88->1indir
+    40001DE4: 70AE535->1indir        40001F24: 705A54E->705A92E
+                                     40001F70: 78011EE->705A47E
+    C07FFEA0:
+
+PARSE-SIZE FACTS (blocks B, C, D)
+
+  setup.sh truncated to N KiB, `sh -n` (parse, execute nothing):
+     2  4  8 16 32 KiB -> rc=0, clean
+    34 KiB              -> rc=0, clean
+    36 KiB              -> rc=2, truncation syntax error (parse aborted early)
+    38 40 42 44 46 48 64 76 KiB -> "no space", rc=1, with the BUS ERROR flood
+
+  So the wall sits between 34 and 38 KiB of setup.sh text.  It is not raw size: a
+  synthetic 64 KiB script built by concatenating the SAME syntactically-complete 4 KiB
+  chunk 16 times parses clean at every step from 8 to 64 KiB (block C), because each
+  repeat redefines rather than grows the parse tree.  The wall tracks the size of the
+  unique parse tree, i.e. how far sh's arena has to grow.
+
+  install.sh (118500 bytes) fails identically under `sh -n`, so the wall is not a
+  property of setup.sh.
+
+WRITE-BACK COUNTERS ACROSS THE WALL (block F)
+
+  wbf_magic     57424621 ("WBF!")   wbf_prop_on  1   wbf_sup_fatal 1   wbf_slot 3
+  wbf_fail_n / wbf_user_n / wbf_sup_n / wbf_signal_n / wbf_nosig_n / wbf_krn_n /
+  wbf_swallow_n / wbf_afb_n / wbf_alien_n : ALL ZERO, before and after the wall.
+
+  The 68040 write-back replay path recorded no event of any kind while the fault fired.
+
+
+===== A. counter run (5 reproductions in one boot) =====
+I10BENCH-START
+--- stage the probes out of the raw slice tail ---
+32+0 records in
+32+0 records out
+32+0 records in
+32+0 records out
+I10SAMPLE baseline base08
+KPEEK 0810b8f8 = 00000000  (/dev/mem)
+KPEEK 0810b8fc = 00000000  (/dev/mem)
+KPEEK 0810b900 = 00000000  (/dev/mem)
+KPEEK 0810b904 = 00000000  (/dev/mem)
+KPEEK 0810b908 = 00000000  (/dev/mem)
+KPEEK 0810b90c = 00000000  (/dev/mem)
+I10SAMPLE baseline base07
+KPEEK 0710b8f8 = 49313021  (/dev/mem)
+KPEEK 0710b8fc = 00000000  (/dev/mem)
+KPEEK 0710b900 = 00000000  (/dev/mem)
+KPEEK 0710b904 = 00000000  (/dev/mem)
+KPEEK 0710b908 = 000001de  (/dev/mem)
+KPEEK 0710b90c = 00000000  (/dev/mem)
+--- mount the install source (slice 4, s5) at /cdrom ---
+I10SAMPLE after-mount base08
+KPEEK 0810b8f8 = 00000000  (/dev/mem)
+KPEEK 0810b8fc = 00000000  (/dev/mem)
+KPEEK 0810b900 = 00000000  (/dev/mem)
+KPEEK 0810b904 = 00000000  (/dev/mem)
+KPEEK 0810b908 = 00000000  (/dev/mem)
+KPEEK 0810b90c = 00000000  (/dev/mem)
+I10SAMPLE after-mount base07
+KPEEK 0710b8f8 = 49313021  (/dev/mem)
+KPEEK 0710b8fc = 00000000  (/dev/mem)
+KPEEK 0710b900 = 00000000  (/dev/mem)
+KPEEK 0710b904 = 00000000  (/dev/mem)
+KPEEK 0710b908 = 00000297  (/dev/mem)
+KPEEK 0710b90c = 00000000  (/dev/mem)
+--- PARSE-ONLY 1: sh -n setup.sh (parses everything, runs nothing) ---
+/cdrom/install/bin/setup.sh: no space
+PARSE-ONLY setup.sh exit=1
+I10SAMPLE after-parse-setup base08
+KPEEK 0810b8f8 = 00000000  (/dev/mem)
+KPEEK 0810b8fc = 00000000  (/dev/mem)
+KPEEK 0810b900 = 00000000  (/dev/mem)
+KPEEK 0810b904 = 00000000  (/dev/mem)
+KPEEK 0810b908 = 00000000  (/dev/mem)
+KPEEK 0810b90c = 00000000  (/dev/mem)
+I10SAMPLE after-parse-setup base07
+KPEEK 0710b8f8 = 49313021  (/dev/mem)
+KPEEK 0710b8fc = 00000000  (/dev/mem)
+KPEEK 0710b900 = 00000000  (/dev/mem)
+KPEEK 0710b904 = 00000000  (/dev/mem)
+KPEEK 0710b908 = 000003b0  (/dev/mem)
+KPEEK 0710b90c = 00000000  (/dev/mem)
+--- PARSE-ONLY 2: sh -n install.sh (bigger file, same shell) ---
+/cdrom/install/bin/install.sh: no space
+PARSE-ONLY install.sh exit=1
+I10SAMPLE after-parse-install base08
+KPEEK 0810b8f8 = 00000000  (/dev/mem)
+KPEEK 0810b8fc = 00000000  (/dev/mem)
+KPEEK 0810b900 = 00000000  (/dev/mem)
+KPEEK 0810b904 = 00000000  (/dev/mem)
+KPEEK 0810b908 = 00000000  (/dev/mem)
+KPEEK 0810b90c = 00000000  (/dev/mem)
+I10SAMPLE after-parse-install base07
+KPEEK 0710b8f8 = 49313021  (/dev/mem)
+KPEEK 0710b8fc = 00000000  (/dev/mem)
+KPEEK 0710b900 = 00000000  (/dev/mem)
+KPEEK 0710b904 = 00000000  (/dev/mem)
+KPEEK 0710b908 = 00000469  (/dev/mem)
+KPEEK 0710b90c = 00000000  (/dev/mem)
+--- REPRO 1: sh setup.sh ---
+/cdrom/install/bin/setup.sh: no space
+REPRO 1 exit=1
+I10SAMPLE after-repro-1 base08
+KPEEK 0810b8f8 = 00000000  (/dev/mem)
+KPEEK 0810b8fc = 00000000  (/dev/mem)
+KPEEK 0810b900 = 00000000  (/dev/mem)
+KPEEK 0810b904 = 00000000  (/dev/mem)
+KPEEK 0810b908 = 00000000  (/dev/mem)
+KPEEK 0810b90c = 00000000  (/dev/mem)
+I10SAMPLE after-repro-1 base07
+KPEEK 0710b8f8 = 49313021  (/dev/mem)
+KPEEK 0710b8fc = 00000000  (/dev/mem)
+KPEEK 0710b900 = 00000000  (/dev/mem)
+KPEEK 0710b904 = 00000000  (/dev/mem)
+KPEEK 0710b908 = 00000554  (/dev/mem)
+KPEEK 0710b90c = 00000000  (/dev/mem)
+--- REPRO 2 ---
+/cdrom/install/bin/setup.sh: no space
+REPRO 2 exit=1
+I10SAMPLE after-repro-2 base08
+KPEEK 0810b8f8 = 00000000  (/dev/mem)
+KPEEK 0810b8fc = 00000000  (/dev/mem)
+KPEEK 0810b900 = 00000000  (/dev/mem)
+KPEEK 0810b904 = 00000000  (/dev/mem)
+KPEEK 0810b908 = 00000000  (/dev/mem)
+KPEEK 0810b90c = 00000000  (/dev/mem)
+I10SAMPLE after-repro-2 base07
+KPEEK 0710b8f8 = 49313021  (/dev/mem)
+KPEEK 0710b8fc = 00000000  (/dev/mem)
+KPEEK 0710b900 = 00000000  (/dev/mem)
+KPEEK 0710b904 = 00000000  (/dev/mem)
+KPEEK 0710b908 = 0000063f  (/dev/mem)
+KPEEK 0710b90c = 00000000  (/dev/mem)
+--- REPRO 3 ---
+/cdrom/install/bin/setup.sh: no space
+REPRO 3 exit=1
+I10SAMPLE after-repro-3 base08
+KPEEK 0810b8f8 = 00000000  (/dev/mem)
+KPEEK 0810b8fc = 00000000  (/dev/mem)
+KPEEK 0810b900 = 00000000  (/dev/mem)
+KPEEK 0810b904 = 00000000  (/dev/mem)
+KPEEK 0810b908 = 00000000  (/dev/mem)
+KPEEK 0810b90c = 00000000  (/dev/mem)
+I10SAMPLE after-repro-3 base07
+KPEEK 0710b8f8 = 49313021  (/dev/mem)
+KPEEK 0710b8fc = 00000000  (/dev/mem)
+KPEEK 0710b900 = 00000000  (/dev/mem)
+KPEEK 0710b904 = 00000000  (/dev/mem)
+KPEEK 0710b908 = 0000072a  (/dev/mem)
+KPEEK 0710b90c = 00000000  (/dev/mem)
+I10BENCH-END
+
+===== B. coarse parse-size sweep on setup.sh =====
+SZKB 2
+rc=0
+4+0 records in
+4+0 records out
+SZKB 4
+rc=0
+8+0 records in
+8+0 records out
+SZKB 8
+rc=0
+16+0 records in
+16+0 records out
+SZKB 16
+rc=0
+24+0 records in
+24+0 records out
+SZKB 24
+/t.sh: syntax error at line 467: `end of file' unexpected
+rc=2
+32+0 records in
+32+0 records out
+SZKB 32
+rc=0
+48+0 records in
+48+0 records out
+SZKB 48
+/t.sh: no space
+rc=1
+64+0 records in
+64+0 records out
+SZKB 64
+/t.sh: no space
+rc=1
+75+1 records in
+75+1 records out
+SZKB 76
+/t.sh: no space
+rc=1
+SZSWEEP-END
+
+===== C. synthetic ladder (16 x 4 KiB of the same chunk) =====
+XKB 8
+rc=0
+XKB 12
+rc=0
+XKB 16
+rc=0
+XKB 20
+rc=0
+XKB 24
+rc=0
+XKB 28
+rc=0
+XKB 32
+rc=0
+XKB 36
+rc=0
+XKB 40
+rc=0
+XKB 44
+rc=0
+XKB 48
+rc=0
+XKB 52
+rc=0
+XKB 56
+rc=0
+XKB 60
+rc=0
+XKB 64
+rc=0
+XSWEEP-END
+
+===== D. threshold sweep on setup.sh =====
+TKB 33
+/t.sh: syntax error at line 728: `i' unexpected
+rc=2
+TKB 34
+rc=0
+TKB 36
+/t.sh: syntax error at line 801: `end of file' unexpected
+rc=2
+TKB 38
+/t.sh: no space
+rc=1
+TKB 40
+/t.sh: no space
+rc=1
+TKB 42
+/t.sh: no space
+rc=1
+TKB 44
+/t.sh: no space
+rc=1
+TKB 46
+/t.sh: no space
+rc=1
+TSWEEP-END
+
+===== E. shmget/shmat band probe =====
+SHMBAND size=1 mod4096=1 id=0 segsz=1 NO-ATTACH
+SHMBAND size=2047 mod4096=2047 id=100 segsz=2047 NO-ATTACH
+SHMBAND size=2048 mod4096=2048 id=200 segsz=2048 NO-ATTACH
+SHMBAND size=2049 mod4096=2049 id=300 segsz=2049 NO-ATTACH
+SHMBAND size=4095 mod4096=4095 id=400 segsz=4095 NO-ATTACH
+SHMBAND size=4096 mod4096=0 id=500 segsz=4096 NO-ATTACH
+SHMBAND size=4097 mod4096=1 id=600 segsz=4097 NO-ATTACH
+SHMBAND size=6144 mod4096=2048 id=700 segsz=6144 NO-ATTACH
+SHMBAND size=6145 mod4096=2049 id=800 segsz=6145 NO-ATTACH
+SHMBAND size=8191 mod4096=4095 id=900 segsz=8191 NO-ATTACH
+SHMBAND size=8192 mod4096=0 id=1000 segsz=8192 NO-ATTACH
+SHMBAND size=8193 mod4096=1 id=1100 segsz=8193 NO-ATTACH
+SHMBAND-DONE
+# SHMBAND size=2049 mod4096=2049 id=1200 segsz=2049 ATTACH...
+
+===== F. write-back counters across the wall (second boot) =====
+WBF-BEFORE
+KPEEK 0710b178 = 57424621  (/dev/mem)
+KPEEK 0710b17c = 00000001  (/dev/mem)
+KPEEK 0710b180 = 00000001  (/dev/mem)
+KPEEK 0710b184 = 00000000  (/dev/mem)
+KPEEK 0710b188 = 00000000  (/dev/mem)
+KPEEK 0710b18c = 00000000  (/dev/mem)
+KPEEK 0710b190 = 00000000  (/dev/mem)
+KPEEK 0710b194 = 00000003  (/dev/mem)
+KPEEK 0710b198 = 00000000  (/dev/mem)
+KPEEK 0710b19c = 00000000  (/dev/mem)
+KPEEK 0710b1a0 = 00000000  (/dev/mem)
+KPEEK 0710b1a4 = 00000000  (/dev/mem)
+KPEEK 0710b1a8 = 00000000  (/dev/mem)
+KPEEK 0710b1ac = 00000000  (/dev/mem)
+KPEEK 0710b1b0 = 00000000  (/dev/mem)
+KPEEK 0710b1b4 = 00000000  (/dev/mem)
+KPEEK 0710b1b8 = 00000000  (/dev/mem)
+KPEEK 0710b1bc = 00000000  (/dev/mem)
+KPEEK 0710b1c0 = 00000000  (/dev/mem)
+KPEEK 0710b1c4 = 00000000  (/dev/mem)
+KPEEK 0710b1c8 = 00000000  (/dev/mem)
+KPEEK 0710b1cc = 00000000  (/dev/mem)
+KPEEK 0710b1d0 = 00000000  (/dev/mem)
+KPEEK 0710b1d4 = 00000000  (/dev/mem)
+KPEEK 0710b1d8 = 00000000  (/dev/mem)
+mount: mount of /dev/dsk/c0d0s4 as /cdrom failed: No space left on device
+WBF-PREWALL
+KPEEK 0710b178 = 57424621  (/dev/mem)
+KPEEK 0710b17c = 00000001  (/dev/mem)
+KPEEK 0710b180 = 00000001  (/dev/mem)
+KPEEK 0710b184 = 00000000  (/dev/mem)
+KPEEK 0710b188 = 00000000  (/dev/mem)
+KPEEK 0710b18c = 00000000  (/dev/mem)
+KPEEK 0710b190 = 00000000  (/dev/mem)
+KPEEK 0710b194 = 00000003  (/dev/mem)
+KPEEK 0710b198 = 00000000  (/dev/mem)
+KPEEK 0710b19c = 00000000  (/dev/mem)
+KPEEK 0710b1a0 = 00000000  (/dev/mem)
+KPEEK 0710b1a4 = 00000000  (/dev/mem)
+KPEEK 0710b1a8 = 00000000  (/dev/mem)
+KPEEK 0710b1ac = 00000000  (/dev/mem)
+KPEEK 0710b1b0 = 00000000  (/dev/mem)
+KPEEK 0710b1b4 = 00000000  (/dev/mem)
+KPEEK 0710b1b8 = 00000000  (/dev/mem)
+KPEEK 0710b1bc = 00000000  (/dev/mem)
+KPEEK 0710b1c0 = 00000000  (/dev/mem)
+KPEEK 0710b1c4 = 00000000  (/dev/mem)
+KPEEK 0710b1c8 = 00000000  (/dev/mem)
+KPEEK 0710b1cc = 00000000  (/dev/mem)
+KPEEK 0710b1d0 = 00000000  (/dev/mem)
+KPEEK 0710b1d4 = 00000000  (/dev/mem)
+KPEEK 0710b1d8 = 00000000  (/dev/mem)
+# /cdrom/install/bin/setup.sh: /cdrom/install/bin/setup.sh: cannot open
+rc=1
+WBF-POSTWALL
+KPEEK 0710b178 = 57424621  (/dev/mem)
+KPEEK 0710b17c = 00000001  (/dev/mem)
+KPEEK 0710b180 = 00000001  (/dev/mem)
+KPEEK 0710b184 = 00000000  (/dev/mem)
+KPEEK 0710b188 = 00000000  (/dev/mem)
+KPEEK 0710b18c = 00000000  (/dev/mem)
+KPEEK 0710b190 = 00000000  (/dev/mem)
+KPEEK 0710b194 = 00000003  (/dev/mem)
+KPEEK 0710b198 = 00000000  (/dev/mem)
+KPEEK 0710b19c = 00000000  (/dev/mem)
+KPEEK 0710b1a0 = 00000000  (/dev/mem)
+KPEEK 0710b1a4 = 00000000  (/dev/mem)
+KPEEK 0710b1a8 = 00000000  (/dev/mem)
+KPEEK 0710b1ac = 00000000  (/dev/mem)
+KPEEK 0710b1b0 = 00000000  (/dev/mem)
+KPEEK 0710b1b4 = 00000000  (/dev/mem)
+KPEEK 0710b1b8 = 00000000  (/dev/mem)
+KPEEK 0710b1bc = 00000000  (/dev/mem)
+KPEEK 0710b1c0 = 00000000  (/dev/mem)
+KPEEK 0710b1c4 = 00000000  (/dev/mem)
+KPEEK 0710b1c8 = 00000000  (/dev/mem)
+KPEEK 0710b1cc = 00000000  (/dev/mem)
+KPEEK 0710b1d0 = 00000000  (/dev/mem)
+KPEEK 0710b1d4 = 00000000  (/dev/mem)
+KPEEK 0710b1d8 = 00000000  (/dev/mem)
+WBF-I10
+KPEEK 0710b8f8 = 49313021  (/dev/mem)
+KPEEK 0710b8fc = 00000000  (/dev/mem)
+KPEEK 0710b900 = 00000000  (/dev/mem)
+KPEEK 0710b904 = 00000000  (/dev/mem)
+KPEEK 0710b908 = 000001d2  (/dev/mem)
+KPEEK 0710b90c = 00000000  (/dev/mem)
+WBF-END
