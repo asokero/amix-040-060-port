@@ -4382,3 +4382,77 @@ say something falsifiable, or it is decoration.
 **Byte-exact regression:** rebuilding the base after all of this yields an image differing from
 the pre-change build in exactly **two bytes**, both inside the build-id string (`260813-09` →
 `260814-01`). All six variant kernels build; all reloc checks pass against their own image.
+
+---
+
+## ⚠ ISSUE-46 (2026-08-19, OPEN): `/dev/mem` mmap lands one page high, and the test written to catch this class of bug cannot see it
+
+> **Ledger: OPEN** — one 6-byte fix, not yet applied. Canonical: [`STATUS.md`](STATUS.md) §4.
+
+Found by accident, while building a Zorro III probe that mapped `/dev/mem` and checked itself
+against an independent path before trusting the result. The self-check failed:
+
+```
+Z3 selftest phys 08000000: lseek=46fc2700 mmap=2f004eb9  DISAGREE
+```
+
+`46fc 2700` is `movew #0x2700,%sr`, the kernel's first instruction, and it is what the image
+holds at `.text+0`. So `lseek`+`read` is right and the **mapping is not where it was asked for**.
+The value it did return, `2f00 4eb9`, is at `.text+0x1000` in the same image. The mapping is
+**exactly one 4 KiB page high**.
+
+### Mechanism
+
+`mmmmap` (`0x2062c`) computes its page frame number with a **round-up**:
+
+```
+20688:  addil #4095,%d0
+2068e:  moveq #12,%d1
+20690:  lsrl  %d1,%d0            pfn = (offset + 0xfff) >> 12
+```
+
+and the retained 2 KiB `segdev` stepping calls `d_mmap` **twice per 4 KiB page**, at `X` and
+`X+0x800`:
+
+```
+call 1:  (X + 0xfff) >> 12         = n      correct
+call 2:  (X + 0x800 + 0xfff) >> 12 = n + 1  wrong
+```
+
+Both calls write the **same** 4 KiB leaf, so the second overwrites the first and the whole page
+maps `n+1`. The double call is not speculation: the cache-class census measured exactly `+2`
+classification events for every single-page probe (`docs/REALHW-Z3-CHANGE-D-260819.md`).
+
+### It was introduced by the Model-B conversion, not inherited
+
+With the stock 2 KiB geometry the round-up was harmless: each call covered its own 2 KiB page and
+an aligned offset rounded to itself. `patch_devmmap2.py` converted the constant (`0x7ff` →
+`0xfff`) and the shift (`11` → `12`), which makes the site 4 KiB-correct **in isolation** — but a
+round-up is only correct when `d_mmap` is called once per page, and under Model B it is called
+twice. Converting the constant preserved the bug instead of removing it.
+
+### Scope: exactly one producer
+
+Checked in the linked image, all of them: `scrmmap`, `ammmap`, `timmap`, `va2000mmap` and
+`resmmap` contain **no** `addil #4095` — they truncate, which is the correct `btop` contract for
+`d_mmap`. `mmmmap` is the only site with the round-up and therefore the only affected path.
+Nothing in the kernel uses `/dev/mem`; the blast radius is userspace tools that map it.
+
+### Why the existing test could not catch it
+
+`test-tools/devmaptest.c` T1 exists to check exactly this — `/dev/mem` mmap PFN correctness — and
+it passes. Its own header explains why it cannot help here: it is deliberately
+*provenance-independent*, checking that offset `P` and `P+4096` differ and that `P` twice is
+identical. **A uniform one-page offset satisfies both.** A self-consistency test cannot detect a
+systematic displacement; only a comparison against an independent path can, which is what the
+Zorro III probe happened to do.
+
+That is the reusable lesson, and it is worth more than the bug: an instrument that only checks
+itself will agree with itself while being wrong.
+
+### Fix
+
+Remove the round-up at `0x20688` so `mmmmap` truncates like every other producer. Six bytes, and
+it belongs in `patch_devmmap2.py`, which already owns and asserts that site. Not applied yet: it
+was found during a Zorro III hardware session and lands with its own before/after evidence rather
+than being folded into unrelated work.
