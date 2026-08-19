@@ -9,15 +9,17 @@
  *
  * *** READ THIS BEFORE BELIEVING ANY NUMBER IT PRINTS ***
  *
- * 1. THE TWO CARDS DO NOT GET THE SAME CACHE TREATMENT, and the Z3 one gets the slower class.
- *    DTT0 = 0x003fc060 covers 0x00000000-0x3FFFFFFF with CM = 0x60 = noncacheable, NOT
- *    serialised.  The VA2000 at 0x00200000 is inside that.  The Piccolo at 0x40000000 is
- *    OUTSIDE it, so its mapping takes CM from the leaf PTE, and hat040.s's Lcm_sel gives every
- *    pp==NULL device mapping 0x40 = noncacheable-SERIALISED.  Serialisation forces each access
- *    to complete before the next starts: no write combining, no CPU-side bursts.
- *    => A raw Piccolo-vs-VA2000 comparison compares Z3-serialised against Z2-unserialised and
- *       can make the Z3 card look SLOWER for a reason that has nothing to do with the bus.
- *       If the Piccolo measures slow, the FIRST hypothesis is NCS, not Zorro III.
+ * 1. BOTH CARDS GET THE SAME CACHE CLASS HERE, AND IT IS THE SLOWER ONE.  This paragraph used
+ *    to say otherwise, and the correction is the point: DTT0 = 0x003fc060 does cover
+ *    0x00000000-0x3FFFFFFF with CM = 0x60 (noncacheable, NOT serialised), and a Zorro II board
+ *    IS inside it -- but only for a KERNEL dereference of cd_BoardAddr.  This program uses
+ *    mmap, and the mapping lands in the c1xxxxxx region, far outside DTT0, so the class comes
+ *    from the leaf PTE.  hat040.s's Lcm_sel gives every pp==NULL device mapping 0x40 =
+ *    noncacheable-SERIALISED.  Measured both ways: Piccolo (Z3 address) 2026-08-10 and VA2000
+ *    (Z2 address) 2026-08-19 both mapped at c103xxxx.
+ *    => So Z2 and Z3 apertures ARE comparable to each other through this tool: both are
+ *       serialised.  What is NOT comparable is either of them against a kernel-side
+ *       cd_BoardAddr access, which on Zorro II gets the friendlier 0x60.
  *    (Serialisation exists to stop MMIO register accesses being reordered.  A framebuffer is
  *    memory-like and does not need it; Lcm_sel already has a three-way selector, so adding a
  *    framebuffer class is the same shape of change.)
@@ -42,7 +44,7 @@
  *        whether /dev/svga0 opens, whether the Z3 aperture maps, and the reported size.
  *    1.  busbench -r                              local RAM ceiling on this CPU
  *    2.  busbench /dev/svga0   1048576            Piccolo   (Z3 address, CM 0x40 NCS)
- *    3.  busbench /dev/va2000  1048576            VA2000    (Z2 address, CM 0x60 NC via DTT0)
+ *    3.  busbench /dev/va2000  1048576            VA2000    (Z2 address; NCS, see note below)
  *    4.  only if 2 is slow: retest with the Piccolo mapping given 0x60 instead of 0x40 before
  *        concluding anything about Zorro III.
  *
@@ -278,8 +280,10 @@ char **argv;
 
 	printf("BUSBENCH-DONE %s\n", isram ? "-r" : argv[1]);
 	printf("BUSBENCH note: compare against the -r reference before drawing any conclusion,\n");
-	printf("BUSBENCH       and remember 0x40000000 maps CM=0x40 NCS while 0x00200000 is\n");
-	printf("BUSBENCH       DTT0 CM=0x60 NC -- the Z3 target is handicapped, not the bus.\n");
+	printf("BUSBENCH       and note the mapping VA above: mmap lands OUTSIDE DTT0, so the\n");
+	printf("BUSBENCH       class comes from the leaf PTE -- CM=0x40 NCS for EVERY device\n");
+	printf("BUSBENCH       aperture here, Zorro II and Zorro III alike.  Both are measured\n");
+	printf("BUSBENCH       serialised, which makes them comparable to each other.\n");
 
 	if (!isram) {
 		(void) munmap(p, (size_t) sz);
