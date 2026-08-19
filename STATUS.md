@@ -84,7 +84,11 @@ address by −16 MiB, which is why `tools/status-facts.sh` takes a load base.
 
 **The current image has run on 68040 hardware.** `68060/68040-260812-06` was accepted on an
 A3640 on 2026-08-13 — the first dual-silicon image here — which is what closed ISSUE-42. The
-machine carries whichever CPU card is physically installed; as of 2026-08-13 that is the A3640.
+machine carries whichever CPU card is physically installed. **As of 2026-08-19 that is the Mercury
+with the 68060 again** — the A3640 went back out after the 2026-08-13 session, so any measurement
+compared against an 060-era number (the `busbench` Zorro II baseline among them) is comparable
+today. This line is dated deliberately: it was read as current on 2026-08-19 and was wrong by six
+days, which cost an argument.
 
 The 040 run-list `docs/archive/NEXT-040-SESSION-RUNLIST.md` is **partly** discharged by that
 session: items 1 and 2 (ISSUE-42, and a 040 hardware baseline) are done, and the battery, burst
