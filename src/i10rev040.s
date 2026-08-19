@@ -919,3 +919,447 @@ i10p_h14:
 i10p_h15:
 	.long	0
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
+
+| ===========================================================================
+| PART THREE -- i10w_hook: the WRITE-WATCH that names the store.
+|
+| i10p_probe (part two) answered "whose page, and is the frame clean" with: a
+| healthy, singly-mapped anon heap page of sh's arena, correctly zero-filled,
+| holding ONE wrong longword (0x4AFC0000 at user 0x80014AA0).  So the word did
+| not arrive by a page-lifetime defect or an uncleaned fill -- it was STORED
+| there, at the wrong place or with the wrong value, by a deterministic writer
+| (the value and the address are constant across processes and boots).  A store
+| of one longword into an otherwise clean, valid page need not pass through
+| copyout and cannot be found by scanning frames; it has to be caught AS IT
+| LANDS.  This is that catch.
+|
+| HOW IT CATCHES A STORE WITHOUT SINGLE-STEPPING.  On the 68040 a write to a
+| write-protected page raises a format-7 access error whose frame already
+| carries everything the question needs -- the faulting PC (frame+66), the SR
+| whose S bit says user or kernel (frame+64), the fault address (frame+84), the
+| pending write's own address and DATA (WB3A@+88 / WB3D@+92, WB2/WB1 likewise),
+| and, ahead of the CPU frame, the 16 user registers k_trap saved (frame+0..+60)
+| = the register file of the instruction that is about to store.  wb040.s already
+| decodes this frame and completes the write-back; this unit rides that path.
+|
+| THE MECHANISM.  Once armed (see below) the target page's leaf PTE has its
+| write-protect bit (bit 2, the same bit hat_chgprot040 flips) SET, so every
+| store into that page faults.  The stock resolver treats it as an ordinary
+| protection fault, upgrades the page to writable, and wb040_replay lands the
+| store -- all correct, reused, not reimplemented.  i10w_hook then runs at the
+| resolved tail of BOTH usrxmemflt (a user store) and krnxmemflt (a KERNEL store
+| through the user mapping -- copyout / bcopy / uiomove), reads the target
+| longword now that the store has landed, and if it has just become 0x4AFC0000
+| latches the whole frame.  Then it RE-PROTECTS the page, so the next store
+| faults too, and the watch holds until the poisoning store is seen.  A kernel
+| writer is named with its exact PC in one shot, which is the discrimination the
+| whole question turns on; a user writer likewise.
+|
+| WHY THIS AND NOT A TRACE-BIT SINGLE-STEP.  A trace watch never touches the VM,
+| but a kernel store during a syscall runs with T cleared, so a trace could only
+| point at the syscall boundary, not the store.  The write-protect fires on the
+| kernel store itself.  It also cannot perturb a boot: i10w_on ships 0, so the
+| whole hook is one `tstl`+`beq` on every fault until it is armed on purpose.
+|
+| ARMING.  i10w_on is kpoked to 1 immediately before the wall.  The FIRST fault
+| that DEMAND-ZEROES the target page (0x80014000) for whichever process is
+| growing its arena into it -- the wall's sh, since an already-resident page
+| does not fault -- protects that page and records the process, so a stray other
+| owner of the same VA cannot be armed on by accident.  i10w_armproc is latched
+| for the post-hoc check that it was indeed the wall.
+|
+| SAFETY.  The hook saves and restores d0-d7/a0-a6 across itself, so neither
+| wrapper's live state (d4 = the resolver verdict, d5 = the preserved FSLW) is
+| disturbed.  The PTE walk is the same curproc->p_as->root040 A/B/C walk
+| i10p_probe documents; a non-resident leaf abandons the operation rather than
+| following a garbage pointer.  Re-issuing cpusha bc + pflusha after each PTE
+| edit is the same publish-then-flush every PTE writer in hat040.s ends with.
+
+	.text
+	.balign 4
+
+| ---------------------------------------------------------------------------
+| i10w_leafpte -- %d0 = user VA -> %a0 = address of its leaf PTE, or 0 if the
+| VA is not resident in the current process.  Clobbers d0/d1/a0/a1; preserves
+| d2 (used for the VA across the walk) by saving it.  Same A/B/C split as
+| uvatosde040.s and i10p_probe: A = va>>25 & 0x7F, B = va>>18 & 0x7F,
+| C = va>>12 & 0x3F.
+i10w_leafpte:
+	movel	%d2,%sp@-
+	movel	%d0,%d2			| d2 = va, live for the whole walk
+	moveal	curproc,%a0
+	movel	%a0,%d0
+	beqw	Liw_lpno
+	moveal	%a0@(124),%a0		| p_as
+	movel	%a0,%d0
+	beqw	Liw_lpno
+	moveal	%a0@(20),%a1		| root040 (per-proc root table)
+	movel	%a1,%d0
+	beqw	Liw_lpno
+	movel	%d2,%d0			| A = (va>>25)&0x7F
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&1,%d0
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	movel	%a1@(0,%d0:l),%d1	| Adesc
+	moveq	&3,%d0
+	andl	%d1,%d0
+	cmpil	&2,%d0
+	bcsw	Liw_lpno		| UDT 0/1: no table under this root slot
+	andil	&0xfffffe00,%d1
+	moveal	%d1,%a1			| A table (the B descriptors)
+	movel	%d2,%d0			| B = (va>>18)&0x7F
+	lsrl	&8,%d0
+	lsrl	&8,%d0
+	lsrl	&2,%d0
+	andil	&0x7f,%d0
+	asll	&2,%d0
+	movel	%a1@(0,%d0:l),%d1	| Bdesc
+	moveq	&3,%d0
+	andl	%d1,%d0
+	cmpil	&2,%d0
+	bcsw	Liw_lpno
+	andil	&0xffffff00,%d1
+	moveal	%d1,%a1			| B table (the leaf PTEs)
+	movel	%d2,%d0			| C = (va>>12)&0x3F
+	lsrl	&8,%d0
+	lsrl	&4,%d0
+	andil	&0x3f,%d0
+	asll	&2,%d0
+	moveal	%a1,%a0
+	addal	%d0,%a0			| a0 = &leafPTE
+	movel	%a0@,%d1
+	andil	&3,%d1
+	beqw	Liw_lpno		| PDT 00: not resident, do not touch it
+	movel	%sp@+,%d2
+	rts
+Liw_lpno:
+	suba	%a0,%a0			| a0 = 0
+	movel	%sp@+,%d2
+	rts
+
+| ---------------------------------------------------------------------------
+| i10w_latch -- copy the format-7 frame in %a2 into the i10w capture block.
+| Uses i10w_ptea (already set by the caller) to reach the frame's physical
+| base for the content read.  Clobbers d0/d1/a0/a1.
+i10w_latch:
+	addql	&1,i10w_latch_n
+	moveq	&0,%d0
+	movew	%a2@(64),%d0		| SR (word) -- S bit = user vs kernel
+	movel	%d0,i10w_sr
+	movel	%a2@(66),i10w_pc	| the faulting instruction's PC
+	movel	%a2@(84),i10w_fa	| the fault address
+	moveq	&0,%d0
+	movew	%a2@(76),%d0		| SSW
+	movel	%d0,i10w_ssw
+	moveq	&0,%d0			| WB3: status / address / data
+	moveb	%a2@(78),%d0
+	movel	%d0,i10w_w3s
+	movel	%a2@(88),i10w_w3a
+	movel	%a2@(92),i10w_w3d
+	moveq	&0,%d0			| WB2
+	moveb	%a2@(80),%d0
+	movel	%d0,i10w_w2s
+	movel	%a2@(96),i10w_w2a
+	movel	%a2@(100),i10w_w2d
+	moveq	&0,%d0			| WB1
+	moveb	%a2@(82),%d0
+	movel	%d0,i10w_w1s
+	movel	%a2@(104),i10w_w1a
+	movel	%a2@(108),i10w_w1d
+	moveal	%a2,%a0			| the 16 saved registers, frame+0..+60
+	lea	i10w_r0,%a1		| d0-d7 then a0-a6 then supervisor a7
+	moveq	&15,%d1
+Liw_lr:
+	movel	%a0@+,%a1@+
+	dbra	%d1,Liw_lr
+	moveal	i10w_ptea,%a0		| frame physical base = *ptea & 0xFFFFF000
+	movel	%a0@,%d0
+	andil	&0xfffff000,%d0
+	movel	i10w_target,%d1		| the target longword itself
+	andil	&0xfff,%d1
+	orl	%d0,%d1
+	moveal	%d1,%a0
+	movel	%a0@,i10w_hitval
+	movel	i10w_target,%d1		| the 64-byte block that contains it
+	andil	&0xfc0,%d1
+	orl	%d0,%d1
+	moveal	%d1,%a0
+	lea	i10w_c0,%a1
+	moveq	&15,%d1
+Liw_lc:
+	movel	%a0@+,%a1@+
+	dbra	%d1,Liw_lc
+	rts
+
+| ---------------------------------------------------------------------------
+| i10w_hook(frame, ctx) -- called from usrxmemflt (ctx=1) and krnxmemflt
+| (ctx=2), at the resolved tail, AFTER wb040_replay has landed the faulting
+| store.  Dormant until i10w_on; then it arms the target page on its first
+| demand-zero fault and, once armed, latches the store that leaves the target
+| longword holding i10w_wantval and re-protects for the next one.
+	.globl	i10w_hook
+i10w_hook:
+	tstl	i10w_on
+	beqw	Liw_h_ret		| dormant: one memory test, nothing saved
+	linkw	%fp,&0
+	moveml	%d0-%d7/%a0-%a6,%sp@-	| preserve the caller's d4 (verdict) and d5 (FSLW)
+	moveal	%fp@(8),%a2		| a2 = frame
+	movel	%a2@(84),%d0		| FA
+	andil	&0xfffff000,%d0
+	cmpl	i10w_armva,%d0
+	bnew	Liw_h_out		| this fault is not on the watched page
+	tstl	i10w_armed
+	bnew	Liw_h_armed
+| --- ARM: the first fault that maps the target page.  Record the process, set
+|     the write-protect bit, seed prevtval with the value the page starts at. ---
+	movel	i10w_armva,%d0
+	bsrw	i10w_leafpte
+	movel	%a0,%d0
+	beqw	Liw_h_out		| not resident yet (should not happen post-resolve)
+	movel	%a0,i10w_ptea
+	movel	curproc,i10w_armproc
+	moveal	%a0,%a1			| seed prevtval from the target longword
+	movel	%a1@,%d0
+	andil	&0xfffff000,%d0
+	movel	i10w_target,%d1
+	andil	&0xfff,%d1
+	orl	%d0,%d1
+	moveal	%d1,%a1
+	movel	%a1@,i10w_prevtval
+	moveal	i10w_ptea,%a0		| set bit 2 = write-protect, then publish + flush
+	orl	&4,%a0@
+	.word	0xf4f8			| cpusha bc
+	.word	0xf518			| pflusha
+	movel	&1,i10w_armed
+	addql	&1,i10w_arm_n
+	braw	Liw_h_out
+| --- ARMED: a store into the protected page just landed.  Did it leave the
+|     target longword == wantval, having not been wantval before?  If so, THIS
+|     frame is the writer.  Then re-protect for the next store. ---
+Liw_h_armed:
+	addql	&1,i10w_fault_n
+	movel	i10w_armva,%d0
+	bsrw	i10w_leafpte		| re-find the leaf (the resolver may have reloaded it)
+	movel	%a0,%d0
+	beqw	Liw_h_out		| the page is gone: stop
+	movel	%a0,i10w_ptea
+	movel	%a0@,%d0		| framebase = *leaf & 0xFFFFF000
+	andil	&0xfffff000,%d0
+	movel	i10w_target,%d1
+	andil	&0xfff,%d1
+	orl	%d0,%d1
+	moveal	%d1,%a1
+	movel	%a1@,%d7		| d7 = current target longword
+	cmpl	i10w_wantval,%d7
+	bnes	Liw_h_reprot		| not the poison value
+	cmpl	i10w_prevtval,%d7
+	beqs	Liw_h_reprot		| already was the poison: not a fresh transition
+	bsrw	i10w_latch		| a fresh transition INTO the poison: this is the writer
+Liw_h_reprot:
+	movel	%d7,i10w_prevtval
+	moveal	i10w_ptea,%a0		| re-set the write-protect bit + publish + flush
+	orl	&4,%a0@
+	.word	0xf4f8			| cpusha bc
+	.word	0xf518			| pflusha
+Liw_h_out:
+	moveml	%sp@+,%d0-%d7/%a0-%a6
+	unlk	%fp
+Liw_h_ret:
+	rts
+
+	.balign 4
+
+	.data
+	.even
+| ---------------------------------------------------------------------------
+| The i10w block -- read i10w_magic FIRST (a stale address does not fail, it
+| lies), then 58 longs after it.  Knobs are kpoke-able so the watched VA and
+| value can move without a rebuild, the i10p_vmask lesson.
+	.globl	i10w_magic
+i10w_magic:
+	.long	0x49315721		| "I1W!"
+| --- knobs ---
+	.globl	i10w_on
+i10w_on:
+	.long	0			| 0 = dormant (ships this way).  kpoke 1 to arm.
+	.globl	i10w_armva
+i10w_armva:
+	.long	0x80014000		| the page whose first demand-zero fault arms the watch
+	.globl	i10w_target
+i10w_target:
+	.long	0x80014aa0		| the longword watched for the poison transition
+	.globl	i10w_wantval
+i10w_wantval:
+	.long	0x4afc0000		| the poison value
+| --- state ---
+	.globl	i10w_armed
+i10w_armed:
+	.long	0
+	.globl	i10w_ptea
+i10w_ptea:
+	.long	0			| address of the target page's leaf PTE
+	.globl	i10w_prevtval
+i10w_prevtval:
+	.long	0			| the target longword before the current store
+	.globl	i10w_arm_n
+i10w_arm_n:
+	.long	0
+	.globl	i10w_fault_n
+i10w_fault_n:
+	.long	0			| write faults handled on the armed page
+	.globl	i10w_latch_n
+i10w_latch_n:
+	.long	0			| transitions INTO the poison value (1 = unambiguous)
+	.globl	i10w_armproc
+i10w_armproc:
+	.long	0			| curproc at arm -- must be the wall's process
+| --- the capture: the frame of the store that poisoned the longword ---
+	.globl	i10w_ctx
+i10w_ctx:
+	.long	0			| 1 = caught in usrxmemflt (user), 2 = krnxmemflt (kernel)
+	.globl	i10w_pc
+i10w_pc:
+	.long	0			| the faulting instruction's PC -- THE STORE
+	.globl	i10w_sr
+i10w_sr:
+	.long	0			| SR; bit 13 (0x2000) = S: set => kernel store
+	.globl	i10w_fa
+i10w_fa:
+	.long	0			| fault address -- the effective address of the store
+	.globl	i10w_ssw
+i10w_ssw:
+	.long	0			| special status word
+	.globl	i10w_w3s
+i10w_w3s:
+	.long	0			| WB3 status (bit7 valid, bits6-5 size, bits2-0 FC)
+	.globl	i10w_w3a
+i10w_w3a:
+	.long	0			| WB3 address = the store's effective address
+	.globl	i10w_w3d
+i10w_w3d:
+	.long	0			| WB3 data = the value being stored
+	.globl	i10w_w2s
+i10w_w2s:
+	.long	0
+	.globl	i10w_w2a
+i10w_w2a:
+	.long	0
+	.globl	i10w_w2d
+i10w_w2d:
+	.long	0
+	.globl	i10w_w1s
+i10w_w1s:
+	.long	0
+	.globl	i10w_w1a
+i10w_w1a:
+	.long	0
+	.globl	i10w_w1d
+i10w_w1d:
+	.long	0
+	.globl	i10w_hitval
+i10w_hitval:
+	.long	0			| the target longword as latched (must read the poison)
+| the 16 saved user registers of the faulting instruction, frame+0..+60:
+| d0-d7 (r0..r7), a0-a6 (r8..r14), supervisor a7 (r15).  The address register
+| holding the effective address exposes the base/index the store computed.
+	.globl	i10w_r0
+i10w_r0:
+	.long	0
+	.globl	i10w_r1
+i10w_r1:
+	.long	0
+	.globl	i10w_r2
+i10w_r2:
+	.long	0
+	.globl	i10w_r3
+i10w_r3:
+	.long	0
+	.globl	i10w_r4
+i10w_r4:
+	.long	0
+	.globl	i10w_r5
+i10w_r5:
+	.long	0
+	.globl	i10w_r6
+i10w_r6:
+	.long	0
+	.globl	i10w_r7
+i10w_r7:
+	.long	0
+	.globl	i10w_r8
+i10w_r8:
+	.long	0
+	.globl	i10w_r9
+i10w_r9:
+	.long	0
+	.globl	i10w_r10
+i10w_r10:
+	.long	0
+	.globl	i10w_r11
+i10w_r11:
+	.long	0
+	.globl	i10w_r12
+i10w_r12:
+	.long	0
+	.globl	i10w_r13
+i10w_r13:
+	.long	0
+	.globl	i10w_r14
+i10w_r14:
+	.long	0
+	.globl	i10w_r15
+i10w_r15:
+	.long	0
+| the 64-byte block that contains the target longword, low address first:
+	.globl	i10w_c0
+i10w_c0:
+	.long	0
+	.globl	i10w_c1
+i10w_c1:
+	.long	0
+	.globl	i10w_c2
+i10w_c2:
+	.long	0
+	.globl	i10w_c3
+i10w_c3:
+	.long	0
+	.globl	i10w_c4
+i10w_c4:
+	.long	0
+	.globl	i10w_c5
+i10w_c5:
+	.long	0
+	.globl	i10w_c6
+i10w_c6:
+	.long	0
+	.globl	i10w_c7
+i10w_c7:
+	.long	0
+	.globl	i10w_c8
+i10w_c8:
+	.long	0
+	.globl	i10w_c9
+i10w_c9:
+	.long	0
+	.globl	i10w_c10
+i10w_c10:
+	.long	0
+	.globl	i10w_c11
+i10w_c11:
+	.long	0
+	.globl	i10w_c12
+i10w_c12:
+	.long	0
+	.globl	i10w_c13
+i10w_c13:
+	.long	0
+	.globl	i10w_c14
+i10w_c14:
+	.long	0
+	.globl	i10w_c15
+i10w_c15:
+	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

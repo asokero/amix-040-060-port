@@ -1,0 +1,101 @@
+ISSUE-10 write-watch capture -- 2026-08-19 -- EMU (Amiberry, 68040+MMU, 16 MB,
+load base 0x07000000).  Kernel 68040-260819-29 (src/i10rev040.s + i10w_hook,
+src/wb040.s resolved-tail hooks).  Guest driver test-tools/i10w.sh.
+
+WHAT THIS IS.  i10p_probe (part two) and the frame census (part three of the
+document) had established that the poisoned longword 0x4AFC0000 at user
+0x80014AA0 arrived by a STORE into a cleanly zero-filled page, not by a fill-tail
+or a page-lifetime defect.  i10w_hook write-protects that page and reads the
+68040 format-7 access-error frame of every store into it, so the store that
+poisons the longword is caught AS IT LANDS -- PC, privilege, effective address,
+value and register file.
+
+THE WALL STILL REPRODUCES UNDER THE WATCH.  Console during the run:
+  NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:23 CMD:sh -n /cdrom/install/bin/setup.sh
+  ... (the full flood) ...
+  I10W-PUBLISHED
+So the instrument does not mask the trigger.
+
+i10w block (kpeek 0710C264 59), decoded:
+
+  i10w_magic    49315721   "I1W!"
+  i10w_on       00000001   armed on for the run
+  i10w_armva    80014000   the page whose first demand-zero fault armed the watch
+  i10w_target   80014aa0   the longword watched for the poison transition
+  i10w_wantval  4afc0000   the poison value
+  --- state ---
+  i10w_armed    00000001   armed
+  i10w_ptea     07a32050   the target page's leaf PTE address (identity phys)
+  i10w_prevtval 4afc0000   the target longword's final value (== the poison)
+  i10w_arm_n    00000001   armed exactly once
+  i10w_fault_n  0000074d   1869 write faults handled on the armed page
+  i10w_latch_n  00000001   ONE transition into the poison -- unambiguous
+  i10w_armproc  4013be00   curproc at arm
+  --- the capture: the frame of the store that poisoned the longword ---
+  i10w_ctx      00000000   (unwired in this build; SR below is authoritative)
+  i10w_pc       800023fa   the frame PC (see below: the store's WB deferred one insn)
+  i10w_sr       00000000   S bit (0x2000) CLEAR -> a USER store
+  i10w_fa       80014aa0   fault address = the store's effective address
+  i10w_ssw      00000401
+  i10w_w3s      00000000   WB3 status: valid bit already cleared by wb040_replay
+  i10w_w3a      80014aa0   WB3 address = the store's effective address
+  i10w_w3d      4afc0000   WB3 data    = the value the store wrote
+  i10w_w2s/a/d  0 / 0 / 0
+  i10w_w1s/a/d  0 / 0 / 0
+  i10w_hitval   4afc0000   the target longword, read after the store landed
+  --- the 16 saved registers (frame+0..+60): d0-d7, a0-a6, supervisor a7 ---
+  d0 c07ffcb4  d1 fffff800  d2 00000000  d3 0000000c
+  d4 00000001  d5 00000000  d6 00000000  d7 0000ffff
+  a0 80013d2c  a1 80014aa0  a2 00000000  a3 80013d14
+  a4 80013d14  a5 80013d28  a6 00000000  a7 c07ffcc0
+  (0x4AFC0000 is in NO register -- so the store's value is not a register value
+   and, since the byte string 4AFC0000 occurs zero times in /bin/sh, not an
+   immediate either.  It was copied from memory.)
+  --- the 64-byte block that contains the hit (base 0x80014A80), low addr first ---
+  0xA80 22000000   0xA84 00000000   0xA88 69660000 "if"   0xA8C 00000000
+  0xA90 5b000000 "[" 0xA94 00000000  0xA98 2d730000 "-s"  0xA9C 00000000
+  0xAA0 4afc0000 <-- the hit   0xAA4..0xABC all zero
+
+CROSS-CHECK with i10p (read-side page identity, same run, kpeek 0710C130 77):
+  i10p_n        00001f70   8048 band faults (the flood; matches the census)
+  i10p_curproc  4013be00   == i10w_armproc: the watch armed on the wall's OWN sh
+  i10p_uprocp   4013be00   == curproc (the u-area window is this process's)
+  i10p_uva      80014000   i10p_hoff 00000aa0   i10p_hitv 4afc0000
+  (identical page/offset/value to i10cen.sh's census -- the write-watch and the
+   read-side probe are describing the same corruption in the same process.)
+
+THE INSTRUCTION.  Verified against /bin/sh in the source image at file offset
+0x23F8 (VA 0x800023F8; sh's text VA base is 0x80000000), byte for byte:
+  800023f8:  2091               move.l  (a1),(a0)    ; the STORE: (a0) := *(a1)
+  800023fa:  2250               movea.l (a0),a1      ; a1 := (a0)
+  800023fc:  0829 0000 0003     btst    #0,3(a1)     ; the flood read -> 4AFC0003
+  80002402:  6700 fff4          beq.w   0x800023f8   ; loop
+This is /bin/sh's own free-block coalescing loop (`p->word = q->word`).  The
+format-7 frame's PC is 0x800023FA -- one instruction past the store -- because
+the 68040 defers the store's write-back (WB3), which is the entire reason wb040.s
+exists; WB3A/WB3D carry the store's true target and data.
+
+VERDICT.
+  * The write into user 0x80014AA0 is a USER store (SR S=0, PC in /bin/sh's own
+    text), NOT a kernel copyout/bcopy/pagezero and NOT a mis-addressed store.
+  * The store is CORRECTLY addressed: (a0) = 0x80014AA0 is exactly where sh's
+    coalescing loop means to write the link.  There is no off-by-N, no wrong
+    base -- "intended == actual" for the address.
+  * The store is `move.l (a1),(a0)`, a memory-to-memory COPY.  Its value
+    0x4AFC0000 is *(a1) -- read from another slot of sh's own arena that ALREADY
+    held the poison.  So this store PROPAGATES a corrupt free-list link; it does
+    not originate it.
+  * Therefore the "mis-addressed single store into a clean page" reading (H2, and
+    the kernel-store corner of it) is REFUTED for the 0x80014AA0 site.  The
+    corruption is a free-list LINK that became 0x4AFC0000 upstream, and /bin/sh
+    faithfully carries it forward until it dereferences it and walls.
+
+NEXT.  The genesis -- what first wrote 0x4AFC0000 into a free-list link -- is the
+remaining thread, and it is a DIFFERENT address (the source *(a1), on page
+0x80013000 in this run, judging by the a0/a3/a4/a5 = 0x80013xxx free-list cursors
+in the capture) that this watch, pinned to page 0x80014000, did not cover.  The
+follow-up probe is a value-triggered watch: protect the arena and latch the FIRST
+store whose WB3 data is 0x4AFC0000, wherever it lands.  That capture will say
+whether the genesis is a kernel store (the still-open question) or sh's own
+allocator computing a bad link -- and only then is the "kernel vs user" question
+closed for the genesis rather than for this one propagation.

@@ -5,9 +5,11 @@
 Raw readings: [`test-tools/issue10-revmap-counters-260819.txt`](../test-tools/issue10-revmap-counters-260819.txt)
 (counters) and [`test-tools/issue10-page-identity-260819.txt`](../test-tools/issue10-page-identity-260819.txt)
 (the page-identity capture).
-Instrument: [`src/i10rev040.s`](../src/i10rev040.s) — the counters, and `i10p_probe`.
+Write-watch capture (§10): [`test-tools/issue10-writewatch-260819.txt`](../test-tools/issue10-writewatch-260819.txt).
+Instrument: [`src/i10rev040.s`](../src/i10rev040.s) — the counters, `i10p_probe`, and `i10w_hook`.
 Guest drivers: [`test-tools/i10bench.sh`](../test-tools/i10bench.sh),
-[`test-tools/i10probe.sh`](../test-tools/i10probe.sh). Probe:
+[`test-tools/i10probe.sh`](../test-tools/i10probe.sh),
+[`test-tools/i10w.sh`](../test-tools/i10w.sh). Probe:
 [`test-tools/shmband.c`](../test-tools/shmband.c).
 
 ## Summary
@@ -26,7 +28,10 @@ memory pressure, no fork storm.
 
 Three mechanisms were on the table; the counters settled two of them and re-aimed the third. A
 second instrument found the page (candidate D); a third — a frame census (§9) — then refuted the
-stale-fill reading of it (candidate E) and left one mechanism standing, a mis-addressed write:
+stale-fill reading of it (candidate E) and left a mis-addressed write standing; a fourth — a
+write-watch (§10) — then caught that store and **refuted the mis-addressing** too: it is `/bin/sh`'s
+own correctly-addressed allocator copying a corrupt free-list **link**, so the genesis is one hop
+upstream, on a different page, and the "kernel or user" question is still open for it:
 
 | | Candidate | Verdict |
 |---|---|---|
@@ -355,3 +360,74 @@ and cannot be found by scanning frames — it has to be caught at the moment it 
 `0x80014AA0` across kernel entry/exit and name the PC of the good→bad transition. `0x4AFC0000` is a
 constant across processes, both of today's boots, and the July `amixadm` captures, so the writer is
 deterministic and a bracketed checkpoint will find it.
+
+## 10. The write-watch — the store named, and the hypothesis overturned
+
+The store was caught as it landed. `i10w_hook` (`src/i10rev040.s`) write-protects the target page's
+leaf PTE (bit 2, the write-protect bit `hat_chgprot040` flips) so every store into it faults; the
+stock resolver upgrades the page and `wb040_replay` lands the store; the hook then reads the 68040
+format-7 access-error frame and, when the watched longword transitions to `0x4AFC0000`, latches the
+whole frame — PC, SR, effective address, the write-back's own address and data, and the 16 saved
+registers of the faulting instruction. It hooks the resolved tail of **both** `usrxmemflt` and
+`krnxmemflt`, so a kernel store into the user page is named with its exact PC just as a user store
+is. It ships dormant (`i10w_on = 0`, one `tstl` per fault) and is armed with a `kpoke` immediately
+before the wall. Guest driver: [`test-tools/i10w.sh`](../test-tools/i10w.sh); raw capture:
+[`test-tools/issue10-writewatch-260819.txt`](../test-tools/issue10-writewatch-260819.txt).
+
+The wall reproduces byte-for-byte under the watch (`4AFC0003`, `PC:800023FC`, `FAULT:6`, `PID:23`),
+so the instrument does not mask the trigger. `i10w_latch_n` is **1** — one unambiguous transition —
+after `i10w_fault_n` = **1869** write faults on the page. And the capture is of the wall's own `sh`:
+`i10w_armproc` = `0x4013BE00` equals `i10p_curproc` = `0x4013BE00` in the same run.
+
+```
+i10w_pc    800023fa     the frame PC (one past the store; the 040 defers the write-back)
+i10w_sr    00000000     S bit CLEAR -> a USER store
+i10w_w3a   80014aa0     the store's effective address
+i10w_w3d   4afc0000     the value the store wrote
+i10w_hitval 4afc0000    the target longword after the store landed
+regs: a0 80013d2c  a1 80014aa0  a3/a4 80013d14  a5 80013d28   (all sh arena; 0x4AFC0000 in NONE)
+```
+
+Verified against `/bin/sh` in the source image at file offset `0x23F8` (VA base `0x80000000`), byte
+for byte, this is `sh`'s own free-block coalescing loop:
+
+```
+800023f8:  2091            move.l  (a1),(a0)     the STORE: (a0) := *(a1)
+800023fa:  2250            movea.l (a0),a1
+800023fc:  0829 0000 0003  btst    #0,3(a1)      the flood read -> 4AFC0003
+80002402:  6700 fff4       beq.w   0x800023f8
+```
+
+**The verdict, and it overturns candidate H2 for this site.**
+
+* The write into `0x80014AA0` is a **USER store** — `SR` S-bit clear, `PC` in `/bin/sh`'s own text —
+  not a kernel `copyout`/`bcopy`/`pagezero` and not a mis-addressed store. The `PC` is `0x800023FA`,
+  one instruction past the store, because the 68040 defers the store's write-back (`WB3`), which is
+  the whole reason `wb040.s` exists; `WB3A`/`WB3D` carry the store's true target and data.
+* The store is **correctly addressed**: `(a0)` = `0x80014AA0` is exactly where the coalescing loop
+  means to write the link. There is no off-by-N and no wrong base — *intended equals actual* for the
+  address. What is wrong is the **value**, not the address, so the "mis-addressed single store" shape
+  the morning's H2 assumed does not hold here.
+* The instruction is `move.l (a1),(a0)`, a **memory-to-memory copy**, so `WB3D` = `*(a1)`. The poison
+  is not an immediate (the byte string `4AFC0000` occurs zero times in `/bin/sh`, §2) and it is in no
+  register (see the capture), so it was **copied from another slot of `sh`'s own arena that already
+  held it**. This store **propagates** a corrupt free-list link; it does not originate it.
+
+So the corrupting write at `0x80014AA0` is `sh` faithfully carrying a bad free-list link forward until
+it dereferences it (`btst #0,3(a1)` with `a1` = `0x4AFC0000`) and walls. The kernel-mis-addressed-store
+reading of H2 is **refuted for this site**, and the question moves one hop upstream — but it is now a
+*different* question (a corrupt free-list **link**, on a *different* page) than the one §4–§9 framed.
+
+| | Candidate | Verdict |
+|---|---|---|
+| **H2** | A mis-addressed single-longword store (off-by-N / wrong-base), possibly kernel, poisons `0x80014AA0` | **REFUTED for this site** — §10. The store there is `sh`'s own correctly-addressed coalescing `move.l (a1),(a0)`; the anomaly is the copied *value*, a pre-existing corrupt free-list link |
+
+**Next — the genesis.** The remaining thread is what first wrote `0x4AFC0000` into a free-list link.
+That is a *different* address — the copy's source `*(a1)`, which the `a0`/`a3`/`a4`/`a5` = `0x80013xxx`
+free-list cursors in the capture place on page `0x80013000`, one this watch (pinned to `0x80014000`)
+did not cover. The follow-up is a **value-triggered** watch: protect the arena and latch the first
+store whose `WB3` data is `0x4AFC0000`, wherever it lands, and read its PC and SR. Only that capture
+closes "kernel or user" for the **genesis** — this one closed it for the propagation. If the genesis
+store is itself another `move.l (a1),(a0)`, the chain is walked one hop at a time back to the store
+that computes or is handed `0x4AFC0000` from outside the arena; if it is a supervisor store, the
+kernel corner of ISSUE-10 is back on the table, now with an exact PC to name.

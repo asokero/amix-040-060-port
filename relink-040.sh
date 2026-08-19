@@ -473,6 +473,20 @@ if m68k-linux-gnu-nm "$OUT" | grep -E ' U i10p_probe$' >/dev/null 2>&1; then
 fi
 echo "[OK] ISSUE-10 capture edge bound: usrxmemflt -> i10p_probe @0x$IPADDR."
 
+# HARD CHECK (2026-08-19, ISSUE-10 write-watch): both usrxmemflt and krnxmemflt now
+# `jsr` i10w_hook (i10rev040.o) at their RESOLVED tails.  Same trap as the probe edge
+# above: `ld -r` does not fail on an unresolved symbol, so a dropped object or a renamed
+# entry would leave a call to address 0 on the resolved-fault path -- taken by every
+# memory fault the moment the watch is armed.  Shaped like the i10p_probe guard.
+IWADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="i10w_hook" && $2=="T" {print $1}')
+if [ -z "$IWADDR" ]; then
+	echo "[FAIL] i10w_hook is not a global T -> the write-watch capture edge is unbound"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U i10w_hook$' >/dev/null 2>&1; then
+	echo "[FAIL] i10w_hook still UND -> the resolved-fault path would call address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 write-watch edge bound: usrxmemflt/krnxmemflt -> i10w_hook @0x$IWADDR."
+
 # HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
 # remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired
 # 030 ublksde and never updates the live uarea_pt, so a kernel whose strong `resume`

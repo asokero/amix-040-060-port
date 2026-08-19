@@ -87,6 +87,14 @@ usrxmemflt:
 	bsrw	wb040_replay
 	tstl	%d0			| ISSUE-42: 0 = every valid WB completed;
 	bnew	Lu_wbdenied		| nonzero = one was permanently DENIED
+| --- ISSUE-10 write-watch (2026-08-19, src/i10rev040.s).  The store this fault
+|     completed has now landed; i10w_hook watches the poisoned longword and, when
+|     it appears, latches THIS frame -- the writer's PC, privilege and registers.
+|     Dormant (one tstl) until i10w_on; preserves d4/d5 and every other register. ---
+	movel	&1,%sp@-		| ctx = 1: a USER store
+	movel	%fp@(8),%sp@-		| the frame
+	jsr	i10w_hook
+	addqw	&8,%sp
 	moveal	u+0x730,%a0		| 060-B: fmt-4 page-crossing completion
 	moveal	%a0@(124),%a1		| a1 = as = curproc->p_as
 	bsrw	wb060_xpage
@@ -170,6 +178,12 @@ krnxmemflt:
 	beqs	Lk_wbok			| the same reason the user path does -- a later WB must
 	addql	&1,wbf_krn_n		| not run as though a failed earlier one completed --
 Lk_wbok:				| but it has no infop and must NOT enter the signal ABI.
+| --- ISSUE-10 write-watch: a KERNEL store into the write-protected user page --
+|     copyout / bcopy / uiomove -- faults here.  i10w_hook names its exact PC. ---
+	movel	&2,%sp@-		| ctx = 2: a KERNEL store
+	movel	%fp@(8),%sp@-		| the frame
+	jsr	i10w_hook
+	addqw	&8,%sp
 	lea	kas,%a1			| 060-B: fmt-4 page-crossing completion, as = &kas
 	bsrw	wb060_xpage
 	tstl	%d0			| item 4: propagate a permanent far-page failure
