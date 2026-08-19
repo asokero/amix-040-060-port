@@ -76,6 +76,16 @@ usrxmemflt:
 					| synthesis above has just destroyed in the frame.
 					| It must live in a register wb040_replay preserves
 					| (it clobbers d0-d3/a3), hence d5 rather than d3.
+| --- ISSUE-10 resolution audit (2026-08-19, src/i10rev040.s PART SIX).  The FIRST of
+|     its two hooks: the frame as this wrapper RECEIVED it, before the stock resolver
+|     has looked at it -- the write-back fields the CPU pushed, and what ptest says
+|     about the fault address.  The second hook is at the exit join below, and the
+|     pair is what makes "the fault returned as-if-resolved and landed nothing" a
+|     measurement rather than an inference.  Dormant (one tstl) until i10r_watchva;
+|     preserves d4/d5, every other register, and both function-code registers. ---
+	movel	%fp@(8),%sp@-		| the frame
+	jsr	i10r_pre
+	addqw	&4,%sp
 	movel	%fp@(12),%sp@-		| arg2 (fault info)
 	movel	%fp@(8),%sp@-		| arg1 = trap frame
 	jsr	usrxmemflt_orig
@@ -157,6 +167,19 @@ Lu_norec:
 	.word	0x4e7b,0x0000		| movec %d0,%sfc  -- same contract for the source side
 	addql	&1,wb_dfc_n
 Lu_nodfc:
+| --- ISSUE-10 resolution audit, second hook.  EVERY path this wrapper has joins
+|     here -- resolved, unresolved, write-back denied, far-page failed -- which is
+|     why the audit completes here and not at the resolved tail where i10w_hook and
+|     i10g_hook ride: a fault that returned NONZERO would otherwise leave the whole
+|     block at its ship-time zeros, and reading those back as a measurement is the
+|     error section 13 of the ISSUE-10 document had to record.  Placed AFTER the
+|     DFC/SFC restore so it cannot perturb Lwb_dfccheck's count; it saves and
+|     restores both registers itself.  Dormant (one tstl) until a latch is pending. ---
+	movel	%d4,%sp@-		| arg3 = the verdict this wrapper is about to return
+	movel	%fp@(12),%sp@-		| arg2 = infop, the k_siginfo_t the resolver writes
+	movel	%fp@(8),%sp@-		| arg1 = the frame
+	jsr	i10r_post
+	lea	%sp@(12),%sp
 	movel	%d4,%d0			| restore usrxmemflt's return value
 	moveml	%fp@(-32),%d2-%d5/%a2-%a3
 	unlk	%fp

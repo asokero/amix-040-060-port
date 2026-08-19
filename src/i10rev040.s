@@ -2656,3 +2656,740 @@ i10t_pv5:
 i10t_pv6:
 	.long	0
 	.balign 4			| pad section to a 4-byte multiple (bss placement)
+
+| ===========================================================================
+| PART SIX -- i10r: the RESOLUTION AUDIT (2026-08-19).
+|
+| WHAT CHANGED UNDER THIS UNIT'S FEET.  Parts THREE to FIVE were built to answer
+| "who stores 0x4AFC0000", on the reading that the value was fabricated by the
+| 68040 store/write-back mechanism.  An emulator-side watch has since read the
+| whole chain end to end and that reading is wrong: 0x4AFC0000 is the KERNEL's own
+| ILLEGAL-at-null sentinel (`MOVE.W #$4AFC,(0).L`, bytes 33 fc 4a fc, at file
+| offset 0x73CC of stock 2.1, of our 2.1c, and of both unix-040 and unix-060),
+| read LEGALLY through user VA 0 by /bin/sh's allocator after its free-list walk
+| followed a NULL link.  Nothing fabricates it; sh dereferences a null pointer and
+| the kernel's own sentinel word is what lies there.
+|
+| The NULL is the real defect, and it is one page earlier: sh's addblok writes the
+| end-of-arena marker (_end+1 = 0x800114B5) to the newly grown bloktop -- and for
+| the fatal grow THAT STORE VANISHES.  The 68040 pushed a format-7 access-error
+| frame for it with a VALID pending write-back (measured: ssw=0401, fc=1, rw=W,
+| sz=L, atc=1, wb3v=1, wb3s=81, wb3d=800114b5, stacked pc = 8000250E), the kernel
+| returned as-if-resolved, and NOTHING happened: no mapping, no zero-fill, no
+| replayed store, no signal.  Five ticks later the WALK's byte read faults on the
+| same page, and THAT fault maps and zero-fills it -- so the walk reads the zeros
+| where its marker should have been, follows the NULL, and walls.
+|
+| WHAT THIS UNIT MEASURES.  The emulator watch can see that the kernel did nothing;
+| it cannot see WHERE in the kernel the doing-nothing happens.  This audit latches
+| ONE watched fault from inside the fault path and records what each stage of it
+| decided, so the swallowing branch can be named rather than inferred:
+|
+|   * the frame POINTER the wrapper received (%fp@(8)) and the WB1/WB2/WB3 status,
+|     address and data longs AS READ FROM THAT POINTER, at the very offsets
+|     wb040_replay reads them.  If the kernel's read of the frame disagrees with
+|     what the CPU pushed -- the emulator's own WB7 line prints the same fields --
+|     the fault never had a write-back to replay in the first place, and that is a
+|     different bug from one that had one and dropped it;
+|   * usrxmemflt_orig's verdict (the wrapper's d4), and the k_siginfo_t the wrapper
+|     is about to return in, so "no signal was delivered" is a reading of the field
+|     u_trap actually consumes rather than an inference from the console;
+|   * ptest -- the SAME routine the stock classifier branches on -- called for the
+|     watched VA BEFORE the resolver runs and again AFTER it, plus the raw 68040
+|     MMUSR both times.  The stock classifier's choice is a pure function of that
+|     result and the SSW (src/usrxmemflt040-design.md), so the pair pins the branch
+|     from the outside without patching a stock call site;
+|   * the leaf PTE and the watched longword before and after, which is "did the
+|     resolution map anything, and did the store land" as two numbers;
+|   * wb_replay_n across the fault (how many write-back slots were actually
+|     re-issued), the write-back denial counters, and a per-slot DECODE of the
+|     frame's own valid/skip bits.
+|
+| DERIVED IS NOT MEASURED, and the block keeps them apart.  i10r_dec1..3 and
+| i10r_branch are DECODES of fields recorded here, computed by this code; every
+| other field is a value read out of the frame, the u-area or a counter.  A decode
+| that disagrees with the measured wb_replay_n delta is the finding, which is only
+| possible because the two are not the same number.
+|
+| WHAT IT DOES NOT DO.  as_fault's own (addr, type, rw) triple is NOT captured: the
+| call site is inside the stock resolver's body and reaching it means either a byte
+| patch of stock code or wrapping as_fault for every caller in the kernel, neither
+| of which is proportionate to one measurement.  The ptest pair plus the SSW gives
+| the branch that CHOOSES those arguments, which is the question; if the branch
+| turns out to be the F_INVAL demand path after all, as_fault's arguments become
+| worth the intrusion and not before.
+|
+| WHERE IT HOOKS, AND WHY BOTH ENDS.  usrxmemflt only, at two sites: i10r_pre just
+| before the wrapper calls usrxmemflt_orig, and i10r_post at the wrapper's single
+| exit join.  Both ends are needed because the whole question is what the wrapper
+| DID: one hook at the resolved tail (where i10w/i10g ride) can only ever see the
+| faults that resolved, so a fault that returned nonzero would leave the block at
+| its ship-time zeros -- and reading an instrument's own default back as evidence
+| is the exact error section 13 of the ISSUE-10 document had to write down.  The
+| exit join is downstream of every path the wrapper has, so the audit fires whatever
+| the verdict was.  The kernel wrapper (krnxmemflt) is deliberately NOT hooked: the
+| measured frame carries fc = 1, a user-data access, and a narrower instrument is a
+| cheaper one to trust.
+|
+| NESTING.  A fault taken INSIDE the audited fault -- the replay's own byte store is
+| the live case -- runs the same wrapper and reaches both hooks.  The pre hook takes
+| the latch only if none is pending, so the nested match is counted (i10r_nest_n)
+| and ignored; the post hook completes only for the frame pointer the pending latch
+| recorded, so a nested exit is counted (i10r_alien_n) and ignored.  The outer fault
+| therefore always owns its own audit.
+|
+| SAFETY AND COST.  Ships dormant: i10r_watchva = 0, so the pre hook is one memory
+| test per user fault and the post hook one more, with nothing saved and no call
+| made.  Armed, both hooks save and restore d0-d7/a0-a6, so the wrapper's d4 (the
+| verdict) and d5 (the preserved FSLW) are untouched, and they save and restore DFC
+| and SFC around everything they do -- ptest writes both, and handing ISSUE-22 back
+| its victim from a diagnostic would be a poor way to measure a fault path.  User
+| memory is read only through i10w_leafpte's resident-or-abandon walk, never by
+| dereferencing a user VA.  The raw PTEST is gated on the frame being format 7, so
+| it cannot execute on a 68060 (which has no PTEST at all), and i10r_ptest_on = 0
+| turns both ptest calls off in one .data long if the extra table search is ever
+| suspected of perturbing what it measures -- a 68040 PTEST does load the ATC entry
+| it walks, which the stock classifier's own ptest does microseconds later anyway.
+|
+| ONE READING TRAP, for anyone comparing this block with the i10w one: PART THREE's
+| latch records WBxS with `moveb %a2@(78)`, which takes the UPPER byte of the status
+| WORD at +78 -- all the status bits (valid, size, TM) live in the lower byte, so
+| that field reads 0 whatever the CPU pushed.  This unit reads the WORD, which is
+| what wb040_replay's own validity test consumes.  i10w_w3s and i10r_pre_w3s are
+| therefore not comparable, and only the second one answers "was there a pending
+| write-back".
+| ===========================================================================
+
+	.text
+	.balign 4
+
+| ---------------------------------------------------------------------------
+| i10r_readtgt -- %d0 = a user VA.  Returns %d0 = its leaf PTE (0 = not resident,
+| in which case %d1 = 0 too) and %d1 = the longword living at that VA, read
+| through the frame rather than by dereferencing the VA.  Clobbers d0/d1/d2/a0/a1
+| (i10w_leafpte preserves d2 across itself, which is why the VA can live there).
+i10r_readtgt:
+	movel	%d0,%d2			| d2 = the VA, live across the walk
+	bsrw	i10w_leafpte		| d0 = VA -> a0 = &leafPTE, or a0 = 0
+	movel	%a0,%d0
+	beqs	Lir_rt_no
+	movel	%a0@,%d0		| d0 = the leaf PTE -- the return value
+	movel	%d0,%d1
+	andil	&0xfffff000,%d1		| its frame's physical base (low RAM is identity-mapped)
+	andil	&0xfff,%d2
+	addl	%d2,%d1			| + the VA's offset in the page
+	moveal	%d1,%a1
+	movel	%a1@,%d1		| d1 = the longword itself
+	rts
+Lir_rt_no:
+	moveq	&0,%d0
+	moveq	&0,%d1
+	rts
+
+| ---------------------------------------------------------------------------
+| i10r_doptest -- %d0 = a user VA.  Returns %d0 = ptest's 030-form PSR (the exact
+| value the stock classifier branches on, from the exact routine it calls) and
+| %d1 = the RAW 68040 MMUSR for the same VA.  Both read 0 when i10r_ptest_on is 0.
+| Clobbers d0/d1/d2/a0/a1.  DFC/SFC are saved and restored by the CALLING hook.
+i10r_doptest:
+	tstl	i10r_ptest_on
+	beqs	Lir_pt_off
+	movel	%d0,%sp@-		| ptest(va) -- the argument slot doubles as the
+	jsr	ptest			| VA's storage across the call, so no register
+	movel	%d0,%d1			| d1 = the 030-form PSR
+	movel	%sp@+,%d0		| d0 = the VA again
+| The raw 040 MMUSR carries what the 030-form result throws away: R (resident),
+| W (write-protected), M (modified) and B (bus error on the table search).  A
+| 68060 has no PTEST instruction, so this is reached only through the format-7
+| gate in the hooks; the cputype test is the same belt-and-braces ptest040.s uses.
+	movel	cputype,%d2
+	cmpil	&60,%d2
+	beqs	Lir_pt_no60
+	moveal	%d0,%a0			| a0 = the VA
+	moveq	&1,%d0
+	.word	0x4e7b,0x0001		| movec %d0,%dfc -- the 040 PTEST takes its FC from DFC
+	.word	0xf568			| ptestr (%a0)
+	.word	0x4e7a,0x0805		| movec %mmusr,%d0
+	movel	%d0,%d2			| d2 = the raw MMUSR
+	movel	%d1,%d0			| d0 = the 030-form PSR
+	movel	%d2,%d1			| d1 = the raw MMUSR
+	rts
+Lir_pt_no60:
+	movel	%d1,%d0			| 68060: the 030-form result only
+	moveq	&0,%d1
+	rts
+Lir_pt_off:
+	moveq	&0,%d0
+	moveq	&0,%d1
+	rts
+
+| ---------------------------------------------------------------------------
+| i10r_decode -- DERIVED, and labelled as such everywhere it is read.
+|
+| Per write-back slot, what wb040_replay's own gating would make of the frame this
+| audit latched: bit 7 of the status WORD is the valid bit, and a WB2 whose SIZE
+| field is 3 (LINE, a MOVE16 residue) is skipped by name.
+|     0 = not valid           -> the replay passes the slot over
+|     1 = valid               -> the replay would re-issue this store
+|     2 = valid, SIZE = LINE  -> the replay skips it by rule (WB2 only)
+| What the replay ACTUALLY did is i10r_wb_d, measured from wb_replay_n.  Keeping
+| the two apart is the whole point: "the frame said there was a store to land" and
+| "a store was landed" are different claims and this unit must not merge them.
+|
+| i10r_branch is the stock classifier's own choice, decoded from the ptest result
+| and the SSW exactly as src/usrxmemflt040-design.md maps them for THIS kernel
+| (with the 5af14 and 5b050 byte patches, which read the 040 SSW bit 8: 1 = read):
+|     1 = 030 B  (0x8000) -> 5af6e, SIGSEGV err 9
+|     2 = 030 S  (0x2000) -> 5af8c, err 11
+|     3 = 030 L|I(0x4400) -> 5afb2 SET -> the F_INVAL demand path at 5aff6
+|     4 = 030 W  (0x0800) + a WRITE -> 5b040/5b050 -> as_fault(F_PROT)
+|     5 = 030 W  (0x0800) + a READ  -> 5b0f2 hardbus
+|     6 = no fault bits at all      -> 5b0f2 hardbus, with nothing to resolve
+| Clobbers d0/d1.
+i10r_decode:
+	clrl	i10r_dec1
+	clrl	i10r_dec2
+	clrl	i10r_dec3
+	movel	i10r_pre_w1s,%d0
+	btst	&7,%d0
+	beqs	Lir_dc2
+	movel	&1,i10r_dec1
+Lir_dc2:
+	movel	i10r_pre_w2s,%d0
+	btst	&7,%d0
+	beqs	Lir_dc3
+	movel	%d0,%d1
+	lsrl	&5,%d1
+	andil	&3,%d1			| SIZE: 0 = long, 1 = byte, 2 = word, 3 = line
+	cmpil	&3,%d1
+	bnes	Lir_dc2v
+	movel	&2,i10r_dec2
+	bras	Lir_dc3
+Lir_dc2v:
+	movel	&1,i10r_dec2
+Lir_dc3:
+	movel	i10r_pre_w3s,%d0
+	btst	&7,%d0
+	beqs	Lir_dcb
+	movel	&1,i10r_dec3
+Lir_dcb:
+	clrl	i10r_branch
+	movel	i10r_pt_pre,%d0
+	movel	%d0,%d1
+	andil	&0x8000,%d1
+	beqs	Lir_db_s
+	movel	&1,i10r_branch
+	rts
+Lir_db_s:
+	movel	%d0,%d1
+	andil	&0x2000,%d1
+	beqs	Lir_db_li
+	movel	&2,i10r_branch
+	rts
+Lir_db_li:
+	movel	%d0,%d1
+	andil	&0x4400,%d1
+	beqs	Lir_db_w
+	movel	&3,i10r_branch
+	rts
+Lir_db_w:
+	movel	%d0,%d1
+	andil	&0x0800,%d1
+	beqs	Lir_db_hb
+	movel	i10r_pre_ssw,%d1
+	btst	&8,%d1			| SSW bit 8: 1 = a READ access
+	bnes	Lir_db_hbr
+	movel	&4,i10r_branch
+	rts
+Lir_db_hbr:
+	movel	&5,i10r_branch
+	rts
+Lir_db_hb:
+	movel	&6,i10r_branch
+	rts
+
+| ---------------------------------------------------------------------------
+| i10r_pre(frame) -- called from usrxmemflt AFTER the DFC/SFC save and the fmt-4
+| SSW synthesis, BEFORE usrxmemflt_orig runs.  Dormant until i10r_watchva is
+| kpoked to the address to audit.  Takes the latch for the first user fault on
+| that address whose access class matches i10r_rwsel.
+	.globl	i10r_pre
+i10r_pre:
+	tstl	i10r_watchva
+	beqw	Lir_pre_ret		| dormant: one memory test, nothing saved
+	linkw	%fp,&0
+	moveml	%d0-%d7/%a0-%a6,%sp@-	| preserve the wrapper's d4/d5 and everything else
+	.word	0x4e7a,0x0001		| movec %dfc,%d0
+	movel	%d0,%d6			| d6 = the caller's DFC, restored at the exit
+	.word	0x4e7a,0x0000		| movec %sfc,%d0
+	movel	%d0,%d7			| d7 = the caller's SFC
+	moveal	%fp@(8),%a2		| a2 = the frame, as the WRAPPER received it
+	moveq	&0,%d0
+	moveb	%a2@(70),%d0
+	lsrb	&4,%d0
+	cmpiw	&7,%d0
+	bnew	Lir_pre_out		| not a 68040 format-7 access-error frame: no WBs
+	addql	&1,i10r_seen_n		| UNCAPPED: format-7 user faults seen while armed
+	tstl	i10r_latched
+	bnew	Lir_pre_out		| the audit is complete: one fault, once
+	movel	%a2@(84),%d0		| FA, as the CPU reported it
+	andl	i10r_famask,%d0
+	cmpl	i10r_watchva,%d0
+	bnew	Lir_pre_out		| not the address under audit
+	moveq	&0,%d1
+	movew	%a2@(76),%d1		| SSW: bit 8 set = a READ access
+	movel	i10r_rwsel,%d0
+	cmpil	&2,%d0
+	bccs	Lir_pre_cls		| 2 = either class will do
+	btst	&8,%d1
+	bnes	Lir_pre_rd
+	tstl	%d0			| a WRITE: wanted only when rwsel = 0
+	bnew	Lir_pre_out
+	bras	Lir_pre_cls
+Lir_pre_rd:
+	cmpil	&1,%d0			| a READ: wanted only when rwsel = 1
+	bnew	Lir_pre_out
+Lir_pre_cls:
+	addql	&1,i10r_match_n
+	tstl	i10r_pend
+	beqs	Lir_pre_take
+	addql	&1,i10r_nest_n		| a fault nested inside the audited one (the replay's
+	braw	Lir_pre_out		| own byte store is the live case): the outer owns it
+Lir_pre_take:
+	movel	%fp@(8),i10r_frame	| the frame POINTER value, not its contents
+	moveq	&0,%d0
+	movew	%a2@(70),%d0
+	movel	%d0,i10r_fmtvec
+	moveq	&0,%d0
+	movew	%a2@(64),%d0		| SR: bit 13 (0x2000) = S -> a supervisor fault
+	movel	%d0,i10r_pre_sr
+	movel	%a2@(66),i10r_pre_pc
+	movel	%a2@(84),i10r_pre_fa
+	moveq	&0,%d0
+	movew	%a2@(76),%d0
+	movel	%d0,i10r_pre_ssw
+| The write-back fields, read at the offsets and in the WIDTHS wb040_replay uses:
+| the status is a WORD (its valid bit is bit 7 of the low byte), the address and
+| data are longs.  These are the fields the emulator's own WB7 line prints, so a
+| disagreement between the two is directly visible.
+	moveq	&0,%d0
+	movew	%a2@(78),%d0
+	movel	%d0,i10r_pre_w3s
+	movel	%a2@(88),i10r_pre_w3a
+	movel	%a2@(92),i10r_pre_w3d
+	moveq	&0,%d0
+	movew	%a2@(80),%d0
+	movel	%d0,i10r_pre_w2s
+	movel	%a2@(96),i10r_pre_w2a
+	movel	%a2@(100),i10r_pre_w2d
+	moveq	&0,%d0
+	movew	%a2@(82),%d0
+	movel	%d0,i10r_pre_w1s
+	movel	%a2@(104),i10r_pre_w1a
+	movel	%a2@(108),i10r_pre_w1d
+	moveal	%a2,%a0			| the 16 saved registers, frame+0..+60:
+	lea	i10r_r0,%a1		| d0-d7, a0-a6, supervisor a7 -- the register file
+	moveq	&15,%d1			| of the instruction that faulted
+Lir_pre_lr:
+	movel	%a0@+,%a1@+
+	dbra	%d1,Lir_pre_lr
+	movel	curproc,i10r_proc
+	movel	wb_replay_n,i10r_wbrep_pre	| the counters this fault is measured against
+	movel	wbf_fail_n,i10r_wbfail_pre
+	movel	wbf_signal_n,i10r_wbsig_pre
+	movel	x60_siginfo_n,i10r_x60sig_pre
+	movel	%a2@(84),%d0		| the target, BEFORE the resolver has run
+	bsrw	i10r_readtgt
+	movel	%d0,i10r_pte_pre
+	movel	%d1,i10r_tv_pre
+	movel	%a2@(84),%d0		| and what ptest says about it -- the classifier's
+	bsrw	i10r_doptest		| own input, from the classifier's own routine
+	movel	%d0,i10r_pt_pre
+	movel	%d1,i10r_mmusr_pre
+	movel	%fp@(8),i10r_pendfp	| the frame pointer the completing exit must match
+	movel	&1,i10r_pend
+Lir_pre_out:
+	movel	%d6,%d0
+	.word	0x4e7b,0x0001		| movec %d0,%dfc -- ptest writes both function-code
+	movel	%d7,%d0			| registers and this file does not get to leave
+	.word	0x4e7b,0x0000		| movec %d0,%sfc -- them changed (ISSUE-22)
+	moveml	%sp@+,%d0-%d7/%a0-%a6
+	unlk	%fp
+Lir_pre_ret:
+	rts
+
+| ---------------------------------------------------------------------------
+| i10r_post(frame, infop, ret) -- called from usrxmemflt's single exit join, after
+| the DFC/SFC restore and before the return value is loaded.  Every path the
+| wrapper has passes through here, resolved or not, which is the reason the audit
+| hooks the exit rather than the resolved tail.
+	.globl	i10r_post
+i10r_post:
+	tstl	i10r_pend
+	beqw	Lir_post_ret		| no latch pending: one memory test, nothing saved
+	linkw	%fp,&0
+	moveml	%d0-%d7/%a0-%a6,%sp@-
+	movel	%fp@(8),%d0
+	cmpl	i10r_pendfp,%d0
+	bnew	Lir_post_alien		| a NESTED wrapper's exit: not the audited fault
+	addql	&1,i10r_post_n
+	.word	0x4e7a,0x0001		| movec %dfc,%d0
+	movel	%d0,%d6
+	.word	0x4e7a,0x0000		| movec %sfc,%d0
+	movel	%d0,%d7
+	moveal	%fp@(8),%a2		| a2 = the same frame the pre hook recorded
+| --- the frame as it reads NOW.  Equal to the pre-hook fields unless something
+|     between the two rewrote it, which would itself be the finding. ---
+	moveq	&0,%d0
+	movew	%a2@(76),%d0
+	movel	%d0,i10r_post_ssw
+	moveq	&0,%d0
+	movew	%a2@(78),%d0
+	movel	%d0,i10r_post_w3s
+	movel	%a2@(88),i10r_post_w3a
+	movel	%a2@(92),i10r_post_w3d
+	moveq	&0,%d0
+	movew	%a2@(80),%d0
+	movel	%d0,i10r_post_w2s
+	moveq	&0,%d0
+	movew	%a2@(82),%d0
+	movel	%d0,i10r_post_w1s
+| --- the verdict, and what the process will actually be told.  si_signo is the
+|     field u_trap selects its fault class from and trapsig queues nothing while
+|     it is zero (wb040.s Lu_siginfo documents both), so reading it here is what
+|     "no signal was delivered" means mechanically. ---
+	movel	%fp@(16),i10r_ret	| d4: the value usrxmemflt is about to return
+	moveal	%fp@(12),%a0		| infop, the k_siginfo_t the resolver writes
+	movel	%a0@,i10r_sisig
+	movel	%a0@(4),i10r_sicode
+	movel	%a0@(12),i10r_siaddr
+| --- what the write-back replay did.  wb_replay_n counts Lwb_do entries, i.e. one
+|     per write-back slot actually re-issued, so the delta across this fault is the
+|     number of pending stores the kernel landed -- including any a nested fault's
+|     own replay landed, which i10r_nest_n makes visible. ---
+	movel	wb_replay_n,i10r_wbrep_post
+	movel	wb_replay_n,%d0
+	subl	i10r_wbrep_pre,%d0
+	movel	%d0,i10r_wb_d
+	movel	wbf_fail_n,%d0
+	subl	i10r_wbfail_pre,%d0
+	movel	%d0,i10r_wbfail_d
+	movel	wbf_signal_n,%d0
+	subl	i10r_wbsig_pre,%d0
+	movel	%d0,i10r_wbsig_d
+	movel	x60_siginfo_n,%d0
+	subl	i10r_x60sig_pre,%d0
+	movel	%d0,i10r_x60sig_d	| nonzero here or in wbsig_d means the wrapper
+	movel	wbf_slot,i10r_wbslot	| REPLACED d4 with a signal number, so i10r_ret is
+	movel	wbf_addr,i10r_wbf_addr	| then the wrapper's verdict and not the stock
+	movel	wbf_wbs,i10r_wbf_wbs	| resolver's; both zero means they are the same
+	bsrw	i10r_decode		| DERIVED: the per-slot and classifier decodes
+| --- and the state the resolution left behind: the leaf PTE and the watched
+|     longword (did anything get mapped, did the store land), and ptest again. ---
+	movel	i10r_pre_fa,%d0
+	bsrw	i10r_readtgt
+	movel	%d0,i10r_pte_post
+	movel	%d1,i10r_tv_post
+	movel	i10r_pre_fa,%d0
+	bsrw	i10r_doptest
+	movel	%d0,i10r_pt_post
+	movel	%d1,i10r_mmusr_post
+	movel	&1,i10r_latched
+	clrl	i10r_pend
+	movel	%d6,%d0
+	.word	0x4e7b,0x0001		| movec %d0,%dfc -- give the interrupted code its
+	movel	%d7,%d0			| function-code registers back, exactly as the
+	.word	0x4e7b,0x0000		| movec %d0,%sfc -- wrapper itself just did
+	braw	Lir_post_out
+Lir_post_alien:
+	addql	&1,i10r_alien_n		| a nested exit while a latch is pending: ignored,
+Lir_post_out:				| counted, and the outer exit still completes it
+	moveml	%sp@+,%d0-%d7/%a0-%a6
+	unlk	%fp
+Lir_post_ret:
+	rts
+
+	.balign 4
+
+	.data
+	.balign 4
+| ---------------------------------------------------------------------------
+| The i10r block -- read i10r_magic FIRST (a stale address does not fail, it
+| returns a plausible number), then 79 longs: `kpeek <i10r_magic address> 79`.
+| Everything is a .data long so a run can re-aim the audit with kpoke instead of
+| a rebuild, which is the i10p_vmask lesson.
+	.globl	i10r_magic
+i10r_magic:
+	.long	0x49315221		| "I1R!"
+| --- knobs ---
+	.globl	i10r_watchva
+i10r_watchva:
+	.long	0			| 0 = DORMANT (ships this way).  kpoke the fault
+					| address to audit -- the write that vanishes was
+					| measured at user 0x800152A0
+	.globl	i10r_famask
+i10r_famask:
+	.long	0xffffffff		| applied to the frame's FA before the compare:
+					| 0xffffffff = that exact address, 0xfffff000 =
+					| any fault anywhere in that page
+	.globl	i10r_rwsel
+i10r_rwsel:
+	.long	0			| 0 = audit a WRITE-class fault (SSW bit 8 clear),
+					| 1 = a READ-class one, 2 = whichever comes first
+	.globl	i10r_ptest_on
+i10r_ptest_on:
+	.long	1			| 1 = call ptest (and read the raw MMUSR) before and
+					| after; 0 = leave all four fields 0 and touch the
+					| MMU not at all
+| --- counters and latch state ---
+	.globl	i10r_seen_n
+i10r_seen_n:
+	.long	0			| format-7 user faults seen while armed (uncapped)
+	.globl	i10r_match_n
+i10r_match_n:
+	.long	0			| ... of which matched watchva and the access class
+	.globl	i10r_nest_n
+i10r_nest_n:
+	.long	0			| matches skipped because a latch was already pending
+	.globl	i10r_alien_n
+i10r_alien_n:
+	.long	0			| exits seen while pending that belong to another frame
+	.globl	i10r_post_n
+i10r_post_n:
+	.long	0			| completions (1 = the audited fault reached its exit)
+	.globl	i10r_pend
+i10r_pend:
+	.long	0			| 1 between the pre hook's latch and its completion
+	.globl	i10r_pendfp
+i10r_pendfp:
+	.long	0			| the frame pointer that completion must match
+	.globl	i10r_latched
+i10r_latched:
+	.long	0			| 1 once the audit is complete -- read this FIRST after
+					| the magic: with it 0, every field below is ship-time
+					| state and says nothing about any fault
+	.globl	i10r_proc
+i10r_proc:
+	.long	0			| curproc at the latch (compare with i10p_curproc)
+| --- the frame the wrapper was handed ---
+	.globl	i10r_frame
+i10r_frame:
+	.long	0			| the POINTER value (%fp@(8)), not its contents
+	.globl	i10r_fmtvec
+i10r_fmtvec:
+	.long	0			| the format/vector word at +70 (high nibble = 7)
+	.globl	i10r_pre_sr
+i10r_pre_sr:
+	.long	0			| SR; bit 13 (0x2000) = S: set would be a kernel fault
+	.globl	i10r_pre_pc
+i10r_pre_pc:
+	.long	0			| the faulting instruction's PC (one PAST a deferred
+					| store: the 040 pushes the write-back separately)
+	.globl	i10r_pre_fa
+i10r_pre_fa:
+	.long	0			| the fault address the CPU reported
+	.globl	i10r_pre_ssw
+i10r_pre_ssw:
+	.long	0			| the special status word: bit 10 ATC, bit 8 read,
+					| bits 6-5 size, bits 2-0 TM (1 = user data)
+	.globl	i10r_pre_w3s
+i10r_pre_w3s:
+	.long	0			| WB3 status WORD at +78: bit 7 valid, 6-5 size, 2-0 TM
+	.globl	i10r_pre_w3a
+i10r_pre_w3a:
+	.long	0			| WB3 address -- where the pending store must land
+	.globl	i10r_pre_w3d
+i10r_pre_w3d:
+	.long	0			| WB3 data -- the value it must land there
+	.globl	i10r_pre_w2s
+i10r_pre_w2s:
+	.long	0
+	.globl	i10r_pre_w2a
+i10r_pre_w2a:
+	.long	0
+	.globl	i10r_pre_w2d
+i10r_pre_w2d:
+	.long	0
+	.globl	i10r_pre_w1s
+i10r_pre_w1s:
+	.long	0
+	.globl	i10r_pre_w1a
+i10r_pre_w1a:
+	.long	0
+	.globl	i10r_pre_w1d
+i10r_pre_w1d:
+	.long	0
+| --- the same frame at the wrapper's exit: any difference is a rewrite ---
+	.globl	i10r_post_ssw
+i10r_post_ssw:
+	.long	0
+	.globl	i10r_post_w3s
+i10r_post_w3s:
+	.long	0
+	.globl	i10r_post_w3a
+i10r_post_w3a:
+	.long	0
+	.globl	i10r_post_w3d
+i10r_post_w3d:
+	.long	0
+	.globl	i10r_post_w2s
+i10r_post_w2s:
+	.long	0
+	.globl	i10r_post_w1s
+i10r_post_w1s:
+	.long	0
+| --- the resolution's verdict, and what the process is told ---
+	.globl	i10r_ret
+i10r_ret:
+	.long	0			| the wrapper's d4 at the exit: 0 = resolved.  Equal to
+					| usrxmemflt_orig's own return unless wbsig_d or
+					| x60sig_d below is nonzero
+	.globl	i10r_sisig
+i10r_sisig:
+	.long	0			| infop->si_signo -- 0 means NO signal will be posted
+	.globl	i10r_sicode
+i10r_sicode:
+	.long	0			| infop->si_code
+	.globl	i10r_siaddr
+i10r_siaddr:
+	.long	0			| infop->_fault._addr
+| --- what the write-back replay actually did ---
+	.globl	i10r_wbrep_pre
+i10r_wbrep_pre:
+	.long	0			| wb_replay_n before the resolver ran
+	.globl	i10r_wbrep_post
+i10r_wbrep_post:
+	.long	0			| ... and at the exit
+	.globl	i10r_wb_d
+i10r_wb_d:
+	.long	0			| the delta: write-back slots RE-ISSUED for this fault.
+					| 0 with i10r_dec3 = 1 is the whole question in two
+					| numbers -- the frame carried a pending store and the
+					| kernel landed none
+	.globl	i10r_wbslot
+i10r_wbslot:
+	.long	0			| wbf_slot at the exit (which slot the last replay took)
+	.globl	i10r_wbfail_pre
+i10r_wbfail_pre:
+	.long	0
+	.globl	i10r_wbfail_d
+i10r_wbfail_d:
+	.long	0			| write-backs permanently DENIED during this fault
+	.globl	i10r_wbsig_pre
+i10r_wbsig_pre:
+	.long	0
+	.globl	i10r_wbsig_d
+i10r_wbsig_d:
+	.long	0			| k_siginfo_t records built for a denied write-back
+	.globl	i10r_x60sig_pre
+i10r_x60sig_pre:
+	.long	0
+	.globl	i10r_x60sig_d
+i10r_x60sig_d:
+	.long	0			| 060 far-page failures translated into a signal
+	.globl	i10r_wbf_addr
+i10r_wbf_addr:
+	.long	0			| wbf_addr at the exit: the denied byte + 1, if any
+	.globl	i10r_wbf_wbs
+i10r_wbf_wbs:
+	.long	0			| wbf_wbs at the exit: the denied slot's status
+| --- DERIVED (computed by i10r_decode from the fields above, not observed) ---
+	.globl	i10r_dec1
+i10r_dec1:
+	.long	0			| WB1: 0 = not valid, 1 = would be replayed
+	.globl	i10r_dec2
+i10r_dec2:
+	.long	0			| WB2: 0 / 1 / 2 = valid but SIZE = LINE, skipped
+	.globl	i10r_dec3
+i10r_dec3:
+	.long	0			| WB3: 0 = not valid, 1 = would be replayed
+	.globl	i10r_branch
+i10r_branch:
+	.long	0			| the stock classifier's branch, decoded from
+					| i10r_pt_pre and i10r_pre_ssw: 1 = 030 B SIGSEGV,
+					| 2 = 030 S, 3 = F_INVAL demand, 4 = F_PROT COW,
+					| 5 = hardbus (write-protected, read), 6 = hardbus
+					| with no fault bits at all
+| --- what the MMU said, before and after ---
+	.globl	i10r_pt_pre
+i10r_pt_pre:
+	.long	0			| ptest's 030-form PSR for the fault address BEFORE
+					| the resolver: 0x400 = I (not present), 0x800 = W
+					| (write-protected), 0 = resident and writable
+	.globl	i10r_pt_post
+i10r_pt_post:
+	.long	0			| ... and after it.  0x400 both times means the
+					| resolution mapped nothing at all
+	.globl	i10r_mmusr_pre
+i10r_mmusr_pre:
+	.long	0			| the RAW 68040 MMUSR before: bit 0 R, bit 2 W,
+					| bit 4 M, bit 11 B
+	.globl	i10r_mmusr_post
+i10r_mmusr_post:
+	.long	0			| ... and after
+	.globl	i10r_pte_pre
+i10r_pte_pre:
+	.long	0			| the fault address's leaf PTE before (0 = the walk
+					| found no resident leaf, which is what a first touch
+					| of a fresh anon page looks like)
+	.globl	i10r_pte_post
+i10r_pte_post:
+	.long	0			| ... and after: still 0 = nothing was mapped
+	.globl	i10r_tv_pre
+i10r_tv_pre:
+	.long	0			| the longword AT the fault address before
+	.globl	i10r_tv_post
+i10r_tv_post:
+	.long	0			| ... and after: equal to i10r_pre_w3d only if the
+					| pending store was actually landed
+| the 16 saved registers of the faulting instruction, frame+0..+60:
+| d0-d7 (r0..r7), a0-a6 (r8..r14), supervisor a7 (r15)
+	.globl	i10r_r0
+i10r_r0:
+	.long	0
+	.globl	i10r_r1
+i10r_r1:
+	.long	0
+	.globl	i10r_r2
+i10r_r2:
+	.long	0
+	.globl	i10r_r3
+i10r_r3:
+	.long	0
+	.globl	i10r_r4
+i10r_r4:
+	.long	0
+	.globl	i10r_r5
+i10r_r5:
+	.long	0
+	.globl	i10r_r6
+i10r_r6:
+	.long	0
+	.globl	i10r_r7
+i10r_r7:
+	.long	0
+	.globl	i10r_r8
+i10r_r8:
+	.long	0
+	.globl	i10r_r9
+i10r_r9:
+	.long	0
+	.globl	i10r_r10
+i10r_r10:
+	.long	0
+	.globl	i10r_r11
+i10r_r11:
+	.long	0
+	.globl	i10r_r12
+i10r_r12:
+	.long	0
+	.globl	i10r_r13
+i10r_r13:
+	.long	0
+	.globl	i10r_r14
+i10r_r14:
+	.long	0
+	.globl	i10r_r15
+i10r_r15:
+	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement)

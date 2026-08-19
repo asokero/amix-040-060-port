@@ -507,6 +507,23 @@ if m68k-linux-gnu-nm "$OUT" | grep -E ' U i10g_hook$' >/dev/null 2>&1; then
 fi
 echo "[OK] ISSUE-10 genesis-watch edge bound: usrxmemflt/krnxmemflt -> i10g_hook @0x$IGADDR."
 
+# HARD CHECK (2026-08-19, ISSUE-10 resolution audit): usrxmemflt now `jsr`s i10r_pre
+# on ENTRY and i10r_post at its exit join (i10rev040.o).  Both edges are on the path
+# EVERY user fault takes -- not just the resolved ones -- so an unbound entry here is
+# a call to address 0 on the first user fault of the boot.  Shaped like the i10w/i10g
+# guards, and checking both symbols because a half-linked pair is the shape that
+# would survive a build and die at run time.
+for h in i10r_pre i10r_post; do
+	HADDR=$(m68k-linux-gnu-nm "$OUT" | awk -v h="$h" '$3==h && $2=="T" {print $1}')
+	if [ -z "$HADDR" ]; then
+		echo "[FAIL] $h is not a global T -> the resolution-audit edge is unbound"; exit 1
+	fi
+	if m68k-linux-gnu-nm "$OUT" | grep -E " U $h\$" >/dev/null 2>&1; then
+		echo "[FAIL] $h still UND -> every user fault would call address 0"; exit 1
+	fi
+	echo "[OK] ISSUE-10 resolution-audit edge bound: usrxmemflt -> $h @0x$HADDR."
+done
+
 # HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
 # remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired
 # 030 ublksde and never updates the live uarea_pt, so a kernel whose strong `resume`
