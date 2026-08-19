@@ -12,9 +12,11 @@
 # See docs/Z3660-KERNEL-FEASIBILITY-260731.md for the evidence and the wiring map.
 #
 # Registration (patch_z3660.py): a four-row scsicard[] table replacing the stock
-# three, the cdevsw[48].d_str streamtab store from the parinit hook, and the
+# three, the cdevsw[51].d_str streamtab store from the parinit hook, and the
 # dd.c completion-ordering island (their src/kernel-patches/dd.c.patch, which we
 # can only apply as a relocation retarget because we have dd.c as a binary).
+# The ethernet char major is 51, renumbered from 48 upstream on 2026-07-30; the
+# offset arithmetic and the evidence for it are in src/z3660_glue040.s.
 #
 # NOT the standard kernel.  usage: sh relink-040-z3660.sh [base-kernel] [output]
 set -e
@@ -139,6 +141,6 @@ python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
 echo "[OK] built $OUT"
 echo "     boot: unix_boot040 $(basename "$OUT")   <- unix_boot040 is MANDATORY"
-echo "     nodes: mknod /dev/zen0 c 48 0     (ethernet; then slink + ifconfig)"
+echo "     nodes: mknod /dev/zen0 c 51 0     (ethernet; then slink + ifconfig)"
 echo "     NOTE: with no Z3660 present, autocon() misses the board and z3660queue is"
 echo "           never called -- the kernel is safe to boot on this A3000."
