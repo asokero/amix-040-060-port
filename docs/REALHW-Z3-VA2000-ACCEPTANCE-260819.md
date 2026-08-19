@@ -99,9 +99,18 @@ rose by **900 events — 450 pages, 1.8 MB of framebuffer, every one classified 
 just the three that were probed.
 
 **wolf3d ran, with no corruption.** `cmf_fb_n` rose by 38 events, 19 pages, 76 KiB — which is
-exactly a 320×200 8-bit buffer plus change. That is the measure a structural census cannot give:
-a cache-class mistake does not crash, it puts intermittent garbage on screen, and sustained
-drawing is the only thing that shows it.
+exactly a 320×200 8-bit buffer plus change.
+
+**Quake ran, with no corruption.** Another 38 events, 19 pages: the same working set, a heavier
+renderer.
+
+That is the measure a structural census cannot give. A cache-class mistake does not crash; it puts
+intermittent garbage on screen, and sustained drawing is the only thing that shows it. Three
+clients, three clean runs.
+
+Across the whole Zorro III session the selector classified **1494 framebuffer events, every one
+`NC`, and 34 register-page events, every one `NCS`** — starting from zero at boot. Not one page
+was classified the wrong way.
 
 So changes A/B/C/D are now proven on Zorro III **both ways** — the bits read out of the live page
 table, and the behaviour under a real client.
