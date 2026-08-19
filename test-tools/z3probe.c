@@ -17,9 +17,15 @@
  * not assumed), so mapping offset X lands on physical X.
  *
  * WHY USERSPACE.  A kernel probe that touched an unresponsive aperture would
- * bus-error in supervisor mode and panic. Here a bus error kills one process,
- * and this program catches SIGBUS so that "no response" is a RESULT rather than
- * a crash.
+ * bus-error in supervisor mode and panic.  Here it kills one process, and this
+ * program catches the fault so that "no response" is a RESULT rather than a
+ * crash.
+ *
+ * IT CATCHES BOTH SIGBUS AND SIGSEGV, and its output is UNBUFFERED.  Both were
+ * learned the hard way on 2026-08-19: the first version caught only SIGBUS and
+ * buffered its output, so a fatal access produced an empty log and no core --
+ * an instrument that dies without saying what it was doing tells you nothing.
+ * Unbuffered output means the line naming the access survives the access.
  *
  * SELF-VERIFYING.  It never trusts the mapping without checking it first: it
  * maps a physical address whose contents it can obtain independently (through
@@ -45,13 +51,22 @@
 
 static jmp_buf busjmp;
 static int     bushit;
+static int     bussig;
 
 static void
 onbus(sig)
 int sig;
 {
     bushit = 1;
+    bussig = sig;
     longjmp(busjmp, 1);
+}
+
+static void
+armfault()
+{
+    signal(SIGBUS, onbus);
+    signal(SIGSEGV, onbus);
 }
 
 /* Read one long from physical addr the OTHER way: lseek + read, no mapping. */
@@ -77,6 +92,7 @@ char **argv;
     volatile unsigned long *p;
     char *m;
 
+    setbuf(stdout, (char *)0);          /* every line must survive a fatal access */
     phys = 0x40000000L;
     if (argc > 1) sscanf(argv[1], "%lx", &phys);
 
@@ -95,15 +111,15 @@ char **argv;
         exit(3);
     }
     viaread = peek(fd, KNOWNPHYS);
-    signal(SIGBUS, onbus);
+    armfault();
     bushit = 0;
     viamap = 0;
     if (setjmp(busjmp) == 0)
         viamap = *(volatile unsigned long *)m;
     munmap((caddr_t)m, PAGESZ);
     if (bushit) {
-        printf("Z3 SELFTEST BUS ERROR reading mapped %08lx -- instrument unusable\n",
-               KNOWNPHYS);
+        printf("Z3 SELFTEST FAULT sig=%d reading mapped %08lx -- instrument unusable\n",
+               bussig, KNOWNPHYS);
         exit(3);
     }
     printf("Z3 selftest phys %08lx: lseek=%08lx mmap=%08lx  %s\n",
@@ -124,25 +140,30 @@ char **argv;
     printf("Z3 mapped phys %08lx at %08lx\n", phys, (unsigned long)m);
 
     p = (volatile unsigned long *)m;
+    printf("Z3 READ  %08lx  attempting...\n", phys);
+    armfault();
     bushit = 0;
     back = 0;
     if (setjmp(busjmp) == 0)
         back = *p;
     if (bushit) {
-        printf("Z3 READ  %08lx -> BUS ERROR (aperture does not respond)\n", phys);
+        printf("Z3 READ  %08lx -> FAULT sig=%d (aperture does not respond)\n",
+               phys, bussig);
         munmap((caddr_t)m, PAGESZ);
         exit(1);
     }
     printf("Z3 READ  %08lx -> %08lx\n", phys, back);
 
     wrote = 0x5A3C96E7L;
+    printf("Z3 WRITE %08lx  attempting...\n", phys);
+    armfault();
     bushit = 0;
     if (setjmp(busjmp) == 0) {
         *p = wrote;
         back = *p;
     }
     if (bushit) {
-        printf("Z3 WRITE %08lx -> BUS ERROR\n", phys);
+        printf("Z3 WRITE %08lx -> FAULT sig=%d\n", phys, bussig);
         munmap((caddr_t)m, PAGESZ);
         exit(1);
     }
@@ -152,6 +173,7 @@ char **argv;
     /* A second, different pattern: one match could be a coincidence if the
      * aperture happened to already hold that value. */
     wrote = 0xA5C36918L;
+    armfault();
     bushit = 0;
     if (setjmp(busjmp) == 0) {
         *p = wrote;

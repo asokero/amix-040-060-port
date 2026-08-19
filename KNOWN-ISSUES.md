@@ -4456,3 +4456,46 @@ Remove the round-up at `0x20688` so `mmmmap` truncates like every other producer
 it belongs in `patch_devmmap2.py`, which already owns and asserts that site. Not applied yet: it
 was found during a Zorro III hardware session and lands with its own before/after evidence rather
 than being folded into unrelated work.
+
+---
+
+## ⚠ ISSUE-47 (2026-08-19, OPEN): a user-mode bus error is retried forever instead of signalling the process
+
+> **Ledger: OPEN** — found while probing a Zorro III aperture; no fix attempted. Canonical:
+> [`STATUS.md`](STATUS.md) §4.
+
+A user process mapped physical `0x40000000` — a Zorro III aperture belonging to a card nothing had
+initialised — and touched it. The debug kernel logged, repeatedly:
+
+```
+WARNING: DBG hardbus pid=283 addr=C1033000 pte=40000049 ret=0 upc=80000B74 uva=48478000 n=800
+```
+
+`n=0x800` is 2048 occurrences on one address. `ret=0` means `hardbus` reported the fault handled,
+so the instruction was restarted, so it faulted again.
+
+**Observed:** the process ran forever, consuming CPU (`18%`, `0:07` accumulated and rising). It
+never returned and **never received a signal** — the probe had handlers armed for both `SIGBUS`
+and `SIGSEGV` and neither fired. The machine stayed responsive and `kill -9` ended it, so this is
+an ordinary fault-retry loop in user context, not a stalled bus cycle.
+
+**Expected:** an unresolvable bus error on a user access delivers `SIGBUS` to that process. A
+process that touches a non-responding physical address should die, not spin.
+
+### Why it matters beyond this probe
+
+Any user mapping of an address that does not answer — a device aperture that is powered down,
+unconfigured, or simply absent — hangs the process indefinitely. It is recoverable (the machine is
+fine, `kill -9` works), so it is a robustness defect rather than a stability one. But it also
+**hides** the underlying condition: the probe was written specifically to turn "no response" into
+a reported result, with both plausible signals handled, and it still could not report, because no
+signal was ever sent.
+
+### Not yet established
+
+Whether `hardbus` is deciding to retry, or is falling through to a default that retries; and
+whether the same happens for a supervisor-mode access, which would be considerably more serious.
+Both are readable from the handler; neither was chased during a hardware session that was there
+for something else.
+
+Full context: `docs/REALHW-Z3-APERTURE-PROBE-260819.md`.
