@@ -201,6 +201,15 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/issue39_040.s" -o "$HERE/build/issue39_
 # themselves, plus i10_deep_n -- the how-close-did-a-search-get reading that
 # makes a zero fail count mean something.  hat_dup040 is counted too, as the
 # chain-growth PRODUCER: it has no bound of its own because it never searches.
+#   It is no longer data-only: the same file now carries i10p_probe, the one-shot
+# capture that answers the question the counters raised but cannot settle -- WHAT
+# the page holding the corrupt word is.  wb040.s's usrxmemflt tail calls it at the
+# moment a user fault is known unresolved, and it walks the victim's own page tree
+# looking for the value the fault died on, latching that page's whole identity
+# (pfn, page_t, p_vnode, p_mapping and what the chain names, plus the frame's own
+# first words) together with what the KERNEL'S map says about the value.  Gated on
+# the fault address lying in the kernel VA band, so ordinary user faults pay one
+# masked compare; see the header of the file for the register/safety contract.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/i10rev040.s" -o "$HERE/build/i10rev040.o"
 # legacysdt040 (2026-08-01, ISSUE-40 fix): hat_free040 tore down only the native
 # 040 A/B/C tree and never released the LEGACY SDT allocations that the retained
@@ -387,6 +396,14 @@ echo "[*] overridden symbols (each must be a single strong def):"
 for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig segvn_faultpage segvn_faultpage_orig segvn_prot_magic segvn_prot_pp_n segvn_prot_n x60_far_addr x60_siginfo_n krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem \
          hat_growsdt hat_legacy_sdt_free i40_magic i40_on i40_calls i40_sec2_n i40_sec3_n i40_empty_n i40_bad_n i40_err_n i40_pgfreed_n i40_held_n i40_last_n i40_last_base i40_last_bits \
          i10_magic i10_rpfail_n i10_hlfail_n i10_hffail_n i10_dupreg_n i10_deep_n \
+         i10p_probe i10p_magic i10p_gmask i10p_gwant i10p_vmask i10p_n i10p_done i10p_have \
+         i10p_fa i10p_lastfa i10p_want i10p_maxtry i10p_tries i10p_busy i10p_why \
+         i10p_as i10p_rootraw i10p_curproc i10p_uprocp i10p_comm0 i10p_comm1 i10p_comm2 i10p_comm3 \
+         i10p_kdesca i10p_kdesc i10p_kpte i10p_root i10p_pgs i10p_hits i10p_chbad \
+         i10p_uva i10p_pte i10p_ptea i10p_pfn i10p_pp i10p_pflags i10p_vnode i10p_off \
+         i10p_hash i10p_map i10p_map0 i10p_mapn i10p_min i10p_hoff i10p_hitv \
+         i10p_w0 i10p_w1 i10p_w2 i10p_w3 i10p_w4 i10p_w5 i10p_w6 i10p_w7 \
+         i10p_p_kvseg i10p_p_segu i10p_p_segkmap i10p_p_pages i10p_p_pgbase i10p_p_pgend \
          hat_sdtfree hat_ptdat_retire ptd_magic ptd_on ptd_calls ptd_retired_n ptd_pgfreed_n \
          ptd_keep0_n ptd_keepn_n ptd_meta_n ptd_badlink_n ptd_wake_n ptd_tblfreed_n \
          nullvect nullvect_orig kvp_magic kvp_on kvp_n kvp_user_n kvp_super_n kvp_over_n \
@@ -440,6 +457,21 @@ if m68k-linux-gnu-nm "$OUT" | grep -E ' U hat_sdtfree$' >/dev/null 2>&1; then
 	echo "[FAIL] hat_sdtfree still UND after globalize -> the call would go to 0"; exit 1
 fi
 echo "[OK] ISSUE-40 ptdat edge bound: hat_ptdat_retire @0x$PRADDR -> retained hat_sdtfree @0x$SFADDR."
+
+# HARD CHECK (2026-08-19, ISSUE-10): wb040.o's usrxmemflt tail now `jsr`s i10p_probe
+# (i10rev040.o).  `ld -r` does not fail on an unresolved symbol, so dropping
+# i10rev040.o from the link list -- or renaming the entry -- would leave a call to
+# address 0 on the UNRESOLVED USER FAULT path: the kernel would survive until the
+# first process took a fault it could not resolve, and then die somewhere that looks
+# nothing like the cause.  Same shape as the two edges above, for the same reason.
+IPADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="i10p_probe" && $2=="T" {print $1}')
+if [ -z "$IPADDR" ]; then
+	echo "[FAIL] i10p_probe is not a global T -> the usrxmemflt capture edge is unbound"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U i10p_probe$' >/dev/null 2>&1; then
+	echo "[FAIL] i10p_probe still UND -> the unresolved-fault path would call address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 capture edge bound: usrxmemflt -> i10p_probe @0x$IPADDR."
 
 # HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
 # remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired

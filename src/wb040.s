@@ -118,6 +118,18 @@ Lu_done:
 	cmpiw	&7,%d0			| page_base+0.  Format 7 only: that is the only frame
 	bnes	Lu_norec		| carrying an FA at +84, and the only CPU that makes one.
 	movel	%a0@(84),wbf_fa
+| --- ISSUE-10 capture (2026-08-19, src/i10rev040.s).  This is the moment the wall
+|     is real: the resolver gave up (d4 != 0), so the process is about to be told
+|     about a fault it cannot survive -- and the word it tripped over is still
+|     sitting in its own memory, in its own context, unwritten-over.  Nowhere
+|     later is that true.  i10p_probe gates itself on the fault address being in
+|     the kernel VA band, and stops walking for good once it finds something;
+|     every other unresolved user fault pays one masked compare.  a0 and d0/d1 are dead here -- Lu_norec's
+|     first act is bsrw Lwb_dfcinject, which writes d0 before it reads it -- and
+|     the probe preserves everything else, d4 (the return value) included. ---
+	movel	%a0@(84),%sp@-		| the fault address, as the CPU reported it
+	jsr	i10p_probe
+	addqw	&4,%sp
 Lu_norec:
 	bsrw	Lwb_dfcinject		| ISSUE-22 fault injection (see Lwb_dfcinject)
 	bsrw	Lwb_dfccheck		| count DFC corruption whether or not the fix is on
