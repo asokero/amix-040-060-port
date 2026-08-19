@@ -30,14 +30,21 @@ Three mechanisms were on the table; the counters settled two of them and re-aime
 second instrument found the page (candidate D); a third — a frame census (§9) — then refuted the
 stale-fill reading of it (candidate E) and left a mis-addressed write standing; a fourth — a
 write-watch (§10) — then caught that store and **refuted the mis-addressing** too: it is `/bin/sh`'s
-own correctly-addressed allocator copying a corrupt free-list **link**, so the genesis is one hop
-upstream, on a different page, and the "kernel or user" question is still open for it:
+own correctly-addressed allocator carrying a corrupt free-list **link**. A fifth — a value-triggered
+genesis watch (**§11**) — then found what put `0x4AFC0000` there: a **USER store** in `sh` whose landed
+value has **no source** (its operands all point at valid `sh` tokens; the value is in no register and is
+not an immediate). That closes "kernel or user" — it is a user store, not a kernel one — and promotes
+**candidate C**, the **68040 write-back-fidelity** family, from "untested" to measured: the value is
+fabricated by the 040 store/write-back mechanism, `0x4AFC` is the `ILLEGAL` opcode, and the 68060 (whose
+write-back path differs) does not reproduce it. Two limits are stated in §11: the capture routes through
+`wb040_replay`, and none of this has run on real 040 silicon — so the wall may be a 68040 **emulation**
+defect that does not occur on hardware.
 
 | | Candidate | Verdict |
 |---|---|---|
 | **A** | One of the bounded-256 reverse-map unlink paths gives up on exhaustion, leaving a stale `p_mapping` after the PTE is removed | **REFUTED** — all three give-up counters are 0 across every reproduction, and no search ever walked half its budget |
 | **B** | The eight-site SysV shm 2 KiB anon-map mismatch | **CONFIRMED as a live defect, but a different bug** — it panics, deterministically, in its predicted band; `sh` never calls `shmget` |
-| **C** | Amiberry 68040 format-$7 write-back infidelity | **NOT TESTED after all** — see §6; the run that produced the "all zero" reading is one in which the wall never fired |
+| **C** | Amiberry 68040 format-$7 write-back infidelity | **MEASURED — §11.** The genesis store lands `0x4AFC0000` while every operand it could have copied from holds a valid `sh` token, the value is in no register and is no immediate: the write-back value has no source, so it is fabricated by the 040 store/write-back mechanism. 040-specific (the 68060 does not reproduce), constant (`0x4AFC` = `ILLEGAL`). Confounds stated in §11: the WP capture routes through `wb040_replay`, and it has never run on 040 silicon — it may be an emulation defect |
 | **D** | The page holding the corrupt word is a frame that is, or recently was, a kernel u-area page — the phys double-use / page-lifetime family | **REFUTED** — §4. The page is an ordinary, correctly-mapped, singly-mapped anon heap page of `sh`'s own arena with an intact reverse map, holding **one** wrong longword |
 | **E** | The frame was handed to the anon page with its upper 2 KiB uncleaned — a fill that stopped at `0x800`, so `0x4AFC0000` is a prior owner's content (the Model-B tail-zero family) | **REFUTED** — §9. A frame census shows the upper half is 80% zero with a 343-long contiguous zero run, and the bad word sits in valid `sh` arena among ASCII tokens; the frame was zero-filled correctly. The named 2 KiB tail-zero sites are all already `0x1000` in this kernel. What remains is **H2**: a mis-addressed single-longword write |
 
@@ -431,3 +438,73 @@ closes "kernel or user" for the **genesis** — this one closed it for the propa
 store is itself another `move.l (a1),(a0)`, the chain is walked one hop at a time back to the store
 that computes or is handed `0x4AFC0000` from outside the arena; if it is a supervisor store, the
 kernel corner of ISSUE-10 is back on the table, now with an exact PC to name.
+
+## 11. The genesis — the value has no source
+
+The write-watch of §10 was built (`i10g_hook`, `src/i10rev040.s`). Raw capture:
+[`test-tools/issue10-genesis-260819.txt`](../test-tools/issue10-genesis-260819.txt). It rides the
+same resolved-fault tail, write-protects a heap band so the stores into it fault, and for the first
+resolved fault whose landed value is the poison records the storing PC and privilege (**PART W**), the
+frame it appears in with its fill census (**PART I**), and — the deciding field — the value each of the
+store's **address registers points at**. The kernel is byte-audited: a control rebuild of `HEAD` is
+identical to the shipped kernel except the 16-byte build-id, and only `i10rev040.o` (the instrument)
+and `wb040.o` (its two `jsr` sites) differ from the control; the wall reproduces byte-for-byte under it
+(`4AFC0003`, `PC:800023FC`, `FAULT:6`, `PID:23`) and `i10g_armproc` = the wall's own `sh`.
+
+**The §10 guess about the source page was wrong, and measuring it was how.** A first run watched page
+`0x80013000` — the page the §10 cursors pointed at — write-protected it, and scanned it after **all
+3320** of its forced store faults: `0x4AFC0000` appeared there **zero** times (`i10g_scan_hits = 0`).
+The poison does not transit page `0x80013`. Re-aimed at page `0x80014` — the page the wall reads the
+bad link from — the watch caught it at once.
+
+```
+i10g_wctx  1        usrxmemflt: a USER-fault wrapper
+i10g_wsr   00000000 SR S-bit CLEAR -> a USER store, not a kernel copyout
+i10g_wpc   800023fa the storing instruction (one past it; the 040 defers the WB)
+i10g_wb3a  80014aa0 the store target      i10g_wb3d 4afc0000  the value landed
+i10g_iself 3        this store's own WB wrote that offset -> the poison's FIRST
+                    appearance in the arena, not a value the frame arrived carrying
+i10g_inzlo 411  i10g_inzhi 102  i10g_izrun 343   the page is cleanly zero-filled
+a0 80013d2c *(a0) 5b000000 "["     a3/a4 80013d14 *()=24656c65 "$ele"
+a1 80014aa0 *(a1) 4afc0000 <- but a1 == WB3A == the DEST this store just wrote
+a5 80013d28 *(a5) 5b000000 "["     i10g_wsrcr -1: no NON-DEST register holds it
+```
+
+Reading it:
+
+* **WRITTEN, not inherited — settled three ways.** The frame is cleanly zero-filled (census identical
+  to §9's), PART I catches the poison's *first* appearance as a store (`iself = 3`), and the companion
+  page-`0x80013` run scanned that page 3320 times and never saw the value. The demand-zero fill is not
+  the culprit and the value is not prior-owner content — it is stored.
+* **A USER store, not a kernel one.** `SR` S-bit clear, `PC` in `/bin/sh`'s own text, caught through the
+  user wrapper; the kernel-store wrapper (`krnxmemflt`, ctx 2) never latched. No `copyout`/`bcopy`/
+  mis-addressed supervisor write put it there. The kernel corner of ISSUE-10 that §10 left open is
+  **closed** for this genesis: it is not a kernel store.
+* **The value has no source.** For a `move` that lands `0x4AFC0000`, the write-back data must equal the
+  source it copied; but every one of the store's address registers points at a **valid `sh` parse token**
+  (`"["`, `"$ele"`), the value is in **no data register**, and it is **not an immediate** (`4A FC 00 00`
+  occurs zero times in `/bin/sh`). The only place `0x4AFC0000` exists is in the write-back landing at the
+  destination. It was **not copied from anywhere** — it was produced by the 68040 store / deferred
+  write-back mechanism itself.
+
+**Verdict — candidate C, promoted from "untested" to measured.** The genesis is the **68040
+write-back-fidelity family** (§6's candidate C): a store whose intended source value is a valid link
+lands `0x4AFC0000` instead, `0x4AFC` being exactly the m68k `ILLEGAL` opcode, and the fault not
+reproducing on the 68060 whose write-back path differs. It is **one 040-specific mechanism and one
+constant**, not a per-site fill or VM defect, and it is the same signature the historical `amixadm`
+avalanche carried — so it explains that avalanche rather than being trigger-specific.
+
+**Two limits, stated rather than hidden.**
+
+* **The capture routes through `wb040_replay`.** Write-protecting the page forces the store's completion
+  through the 68040 write-back replay in `src/wb040.s`, so this run cannot by itself separate "the
+  emulator's 040 core fabricates the value on the ordinary store" from "the fault-driven replay
+  fabricates it." Both are the same 040-write-back surface. The poison is *independently* real —
+  `i10cen.sh` read `0x4AFC0000` at `0x80014AA0` with no write-protection at all (§9) — so it is not an
+  artifact of the watch; what the watch adds is that the landed value has no data source.
+* **Never run on 68040 silicon.** All of this is emulated, on two emulators, and the 68060 does not
+  reproduce it. A store-mechanism defect that is 040-specific and emulator-reproduced may be a **68040
+  emulation defect** rather than a port defect — in which case the `setup.sh` wall would not occur on
+  real 040 hardware. The follow-up that separates the emulator core from `wb040_replay`, and both from
+  silicon, is a **non-write-protect single-step** capture of the ordinary store, plus a real-hardware
+  run of the same `sh -n setup.sh`.

@@ -95,6 +95,14 @@ usrxmemflt:
 	movel	%fp@(8),%sp@-		| the frame
 	jsr	i10w_hook
 	addqw	&8,%sp
+| --- ISSUE-10 genesis watch (2026-08-19, src/i10rev040.s).  Same resolved frame,
+|     one hop upstream of i10w_hook: it names the FIRST store of 0x4AFC0000 (PART W)
+|     or the frame that arrived carrying it (PART I).  Dormant (one tstl) until
+|     i10g_on; preserves d4/d5 and every other register, exactly like i10w_hook. ---
+	movel	&1,%sp@-		| ctx = 1: a USER store
+	movel	%fp@(8),%sp@-		| the frame
+	jsr	i10g_hook
+	addqw	&8,%sp
 	moveal	u+0x730,%a0		| 060-B: fmt-4 page-crossing completion
 	moveal	%a0@(124),%a1		| a1 = as = curproc->p_as
 	bsrw	wb060_xpage
@@ -183,6 +191,12 @@ Lk_wbok:				| but it has no infop and must NOT enter the signal ABI.
 	movel	&2,%sp@-		| ctx = 2: a KERNEL store
 	movel	%fp@(8),%sp@-		| the frame
 	jsr	i10w_hook
+	addqw	&8,%sp
+| --- ISSUE-10 genesis watch: a KERNEL store of 0x4AFC0000 into the arena would be
+|     named here with its exact PC, exactly as i10w_hook names a kernel propagation. ---
+	movel	&2,%sp@-		| ctx = 2: a KERNEL store
+	movel	%fp@(8),%sp@-		| the frame
+	jsr	i10g_hook
 	addqw	&8,%sp
 	lea	kas,%a1			| 060-B: fmt-4 page-crossing completion, as = &kas
 	bsrw	wb060_xpage

@@ -1363,3 +1363,894 @@ i10w_c14:
 i10w_c15:
 	.long	0
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
+
+| ===========================================================================
+| PART FOUR -- i10g_hook: the GENESIS watch, value-triggered.
+|
+| i10w_hook (part three) named the store at user 0x80014AA0 that walls: sh's own
+| free-block coalescing `move.l (a1),(a0)`, a USER store, correctly addressed --
+| a memory-to-memory COPY whose value 0x4AFC0000 was read from another arena slot
+| that ALREADY held it (the byte string 4AFC0000 occurs zero times in /bin/sh, so
+| it is neither an immediate nor a register value; it was copied).  That store
+| PROPAGATES the corrupt free-list link; it does not originate it.  The genesis --
+| what FIRST put 0x4AFC0000 into a free-list link -- is one hop upstream, on a
+| DIFFERENT page (the source *(a1), which the 0x80013xxx cursors in the capture
+| place on page 0x80013000), and the "kernel or user" question is still open there.
+|
+| This unit answers it, in ONE boot, two independent ways:
+|
+|   PART W (WRITTEN).  On EVERY resolved fault, the 68040 format-7 frame carries
+|   the deferred write-back's own address and DATA (WB3A/WB3D, and WB2/WB1).  When
+|   a store faults -- which the FIRST store into a fresh demand-zero arena page
+|   always does, and which a copy-on-write break does -- WBnD is the value being
+|   stored.  So if any WBnD == 0x4AFC0000, a store of the poison just landed, and
+|   the frame names its PC and privilege.  A stale WBnD (a non-store fault leaves
+|   the field holding a previous instruction's data) is rejected by CONFIRMING the
+|   poison actually landed: the target longword is re-read through its own frame
+|   and must equal the poison.  This catches a genesis STORE red-handed -- and its
+|   SR bit settles kernel-vs-user for the genesis, which the propagation capture
+|   could only settle for the propagation.
+|
+|   PART I (INHERITED).  If the value is not written but was already in a frame the
+|   kernel handed sh -- leftover content of a physical frame whose demand-zero fill
+|   skipped it, an ILLEGAL-opcode word being exactly what a prior code page leaves
+|   behind -- then NO store of it ever lands and PART W stays silent.  So on every
+|   resolved fault in sh's arena band, the just-resolved frame is scanned for the
+|   poison; the FIRST frame that holds it is latched with its full identity, its
+|   fill census (non-zero longs per half, longest zero run) and the block around
+|   the word.  On a demand-zero page-in fault this is the frame AS HANDED OUT.  A
+|   frame carrying the poison in a run of dense foreign content is an inherited
+|   prior owner's page (a fill gap); the poison isolated in clean zero-fill is a
+|   store PART W will have caught.  i10g_iself records whether THIS fault's own
+|   store wrote that offset, to tell a self-write from pre-existing content.
+|
+| WHY NO WRITE-PROTECTION.  Unlike i10w_hook, which pinned one page and forced a
+| fault on every store into it, this rides the faults the wall already generates:
+| the arena grows by demand-zero page-ins (each first store faults -> PART W sees
+| it) and each new frame is scanned once (PART I).  It never protects a page, so it
+| perturbs nothing, and it is globally armed rather than pinned to a VA guessed in
+| advance -- the poison VALUE, constant across processes and boots, is the anchor.
+| It ships dormant (i10g_on = 0, one tstl per resolved fault) and is armed with a
+| kpoke immediately before the wall, exactly as i10w_hook is.
+|
+| SAFETY.  Saves and restores d0-d7/a0-a6, so neither wrapper's live d4/d5 is
+| disturbed.  Every frame base comes from i10w_leafpte (the resident-or-nothing
+| A/B/C walk part three documents); a non-resident target abandons the operation
+| rather than dereferencing a guess.  Both latches are one-shot.
+
+	.text
+	.balign 4
+
+| ---------------------------------------------------------------------------
+| i10g_ckframe -- %d0 = a user VA -> %a1 = the physical base of its 4 KiB frame,
+| or %a1 = 0 if the VA is not resident in the current process.  Clobbers d0/d1/a0
+| (via i10w_leafpte, which preserves d2 and touches no other a-register), so a2
+| (the trap frame) and d3-d7 survive across it.
+i10g_ckframe:
+	bsrw	i10w_leafpte		| d0 = VA -> a0 = &leafPTE, or a0 = 0
+	movel	%a0,%d0
+	beqs	Lig_cf0
+	movel	%a0@,%d0		| the leaf PTE
+	andil	&0xfffff000,%d0		| frame physical base (identity-mapped low RAM)
+	moveal	%d0,%a1
+	rts
+Lig_cf0:
+	suba	%a1,%a1
+	rts
+
+| ---------------------------------------------------------------------------
+| i10g_wlatch -- PART W capture.  a2 = frame, d3 = which write-back matched
+| (1/2/3), d4 = its target address.  i10g_wmem is already set by the caller (the
+| confirmed longword at the target).  Clobbers d0/d1/a0/a1.
+i10g_wlatch:
+	movel	i10g_seq,i10g_wseq
+	movel	%fp@(12),i10g_wctx	| the hook's ctx arg: 1 = user wrapper, 2 = kernel
+	moveq	&0,%d0
+	movew	%a2@(64),%d0		| SR -- bit 13 (0x2000) = S: set => a KERNEL store
+	movel	%d0,i10g_wsr
+	movel	%a2@(66),i10g_wpc	| the faulting instruction's PC
+	movel	%a2@(84),i10g_wfa	| the fault address
+	moveq	&0,%d0
+	movew	%a2@(76),%d0		| SSW
+	movel	%d0,i10g_wssw
+	movel	%d3,i10g_wslot
+	movel	%a2@(88),i10g_wb3a
+	movel	%a2@(92),i10g_wb3d
+	movel	%a2@(96),i10g_wb2a
+	movel	%a2@(100),i10g_wb2d
+	movel	%a2@(104),i10g_wb1a
+	movel	%a2@(108),i10g_wb1d
+	movel	%d4,i10g_wtgt		| the matched store's effective address
+	movel	%d4,%d0
+	andil	&0xfff,%d0
+	movel	%d0,i10g_wtoff		| its offset inside the frame
+	moveal	%a2,%a0			| the 16 saved registers, frame+0..+60
+	lea	i10g_wr0,%a1		| d0-d7, a0-a6, supervisor a7
+	moveq	&15,%d1
+Lig_wlr:
+	movel	%a0@+,%a1@+
+	dbra	%d1,Lig_wlr
+	movel	%d4,%d0			| the 64-byte block around the store target:
+	bsrw	i10g_ckframe		| framebase + (tgt & 0xFC0), 16 longs
+	movel	%a1,%d0
+	beqs	Lig_wl_nb		| target frame not resident: leave the block zero
+	movel	%d4,%d0
+	andil	&0xfc0,%d0
+	movel	%a1,%d1
+	addl	%d0,%d1
+	moveal	%d1,%a0
+	lea	i10g_wc0,%a1
+	moveq	&15,%d1
+Lig_wlc:
+	movel	%a0@+,%a1@+
+	dbra	%d1,Lig_wlc
+Lig_wl_nb:
+| --- identify the COPY SOURCE: for a move.l (aSrc),(aDst) the CPU frame records only
+|     the DEST (WB3A); the source is a register.  Scan a0-a6 (wr8..wr14) for one whose
+|     target longword == the poison, and dump the 32-byte block around it.  That names
+|     the frame the poison was copied FROM -- one hop toward the true genesis, and
+|     enough to tell an arena page from a text/data/library page. ---
+	movel	&-1,i10g_wsrcr		| -1 = no source register (other than the dest) found
+	clrl	i10g_wsrc
+	clrl	i10g_wsrcv
+	moveq	&8,%d6			| d6 = wr index: 8 = a0 .. 14 = a6
+Lig_wsrc:
+	movel	%d6,%d0
+	asll	&2,%d0
+	lea	i10g_wr0,%a0
+	movel	%a0@(0,%d0:l),%d7	| d7 = the address register value (survives ckframe)
+| record *(aN) for every address register, so intended-source-value can be compared
+| to WB3D host-side: for a faithful move.l (aSrc),(aDst) the write-back data MUST equal
+| *(aSrc).  If no register except the dest points at the poison, the poison is not a
+| copy of any source -- the write-back value itself is fabricated (a 68040 WB defect).
+	movel	%d6,%d0
+	subql	&8,%d0
+	asll	&2,%d0
+	lea	i10g_wpv0,%a0
+	addal	%d0,%a0			| a0 = &i10g_wpv<N>
+	clrl	%a0@			| default: not a readable user pointer
+	cmpil	&0x80000000,%d7
+	bcss	Lig_wsrc_n		| not a user address
+	movel	%d7,%d0
+	bsrw	i10g_ckframe		| -> a1 = frame base or 0 (d6/d7 survive)
+	movel	%a1,%d0
+	beqs	Lig_wsrc_n		| source frame not resident
+	movel	%d7,%d0
+	andil	&0xfff,%d0
+	addl	%d0,%a1			| a1 = physical address of *(aN)
+	movel	%a1@,%d5		| d5 = *(aN)
+	movel	%d6,%d0
+	subql	&8,%d0
+	asll	&2,%d0
+	lea	i10g_wpv0,%a0
+	movel	%d5,%a0@(0,%d0:l)	| i10g_wpv<N> = *(aN)
+	cmpl	i10g_wantval,%d5
+	bnes	Lig_wsrc_n		| this register does not point at the poison
+	cmpl	i10g_wb3a,%d7
+	beqs	Lig_wsrc_n		| it IS the destination the store just wrote -- not a source
+	movel	%d7,i10g_wsrc		| a genuine SOURCE that already held the poison
+	movel	%d6,%d0
+	subql	&8,%d0
+	movel	%d0,i10g_wsrcr		| 0..6 = a0..a6
+	movel	%d5,i10g_wsrcv
+	movel	%a1,%d0			| dump the 32-byte block around the source
+	andil	&0xffffffe0,%d0
+	moveal	%d0,%a0
+	lea	i10g_ws0,%a1
+	moveq	&7,%d1
+Lig_wsb:
+	movel	%a0@+,%a1@+
+	dbra	%d1,Lig_wsb
+	bras	Lig_wsdone
+Lig_wsrc_n:
+	addql	&1,%d6
+	cmpil	&15,%d6
+	bcsw	Lig_wsrc
+Lig_wsdone:
+	movel	&1,i10g_wlatched
+	rts
+
+| ---------------------------------------------------------------------------
+| i10g_ilatch -- PART I capture.  a1 = frame physical base, i10g_ioff already set
+| to the poison's byte offset in the frame, a2 = frame.  Clobbers d0-d7/a0-a4.
+i10g_ilatch:
+	movel	i10g_seq,i10g_iseq
+| the STORING instruction that made the poison appear in this frame -- with the band
+| write-protected, a store into it faults, so the frame PC (one past the store, WB
+| deferred) and the SR privilege name the genesis instruction; WB3A/WB3D are its target
+| and data.  This is what turns PART I from "which frame" into "which store".
+	moveq	&0,%d0
+	movew	%a2@(64),%d0		| SR: bit 13 (0x2000) = S -> kernel vs user store
+	movel	%d0,i10g_isr
+	movel	%a2@(66),i10g_ipc	| the storing instruction's PC
+	movel	%a2@(88),i10g_iwb3a	| WB3 address
+	movel	%a2@(92),i10g_iwb3d	| WB3 data
+	movel	%a2@(84),i10g_ifa	| the fault address that brought this frame in
+	movel	%a2@(84),%d0
+	andil	&0xfffff000,%d0
+	movel	%d0,i10g_iuva		| the poison page's user VA base
+	movel	%a1,i10g_iframe		| the frame physical base
+	movel	%a1,%d0
+	lsrl	&8,%d0
+	lsrl	&4,%d0
+	movel	%d0,i10g_ipfn
+	movel	curproc,i10g_iproc	| which process (its u_comm below must read "sh")
+	movel	u+0x1c0,i10g_icomm0
+	movel	u+0x1c4,i10g_icomm1
+	movel	u+0x1c8,i10g_icomm2
+	movel	u+0x1cc,i10g_icomm3
+	moveal	%a1,%a0			| the frame's first eight longs
+	movel	%a0@,i10g_iw0
+	movel	%a0@(4),i10g_iw1
+	movel	%a0@(8),i10g_iw2
+	movel	%a0@(12),i10g_iw3
+	movel	%a0@(16),i10g_iw4
+	movel	%a0@(20),i10g_iw5
+	movel	%a0@(24),i10g_iw6
+	movel	%a0@(28),i10g_iw7
+| the fill census: non-zero longs in each half, longest run of consecutive zeros.
+| A frame the demand-zero fill cleaned correctly reads as a big zero run + sh's own
+| 0x8001xxxx arena; a frame handed out with a prior owner's tail reads dense.
+	clrl	i10g_inzlo
+	clrl	i10g_inzhi
+	clrl	i10g_izrun
+	clrl	%d1			| current run of consecutive zero longs
+	moveal	%a1,%a0
+	movel	%a1,%d7
+	addil	&2048,%d7		| midpoint (base + 0x800)
+	movel	%a1,%d0
+	addil	&4096,%d0
+	moveal	%d0,%a3			| one past the frame
+Lig_cen:
+	movel	%a0@+,%d0
+	bnes	Lig_cen_nz
+	addql	&1,%d1
+	cmpl	i10g_izrun,%d1
+	blss	Lig_cen_end
+	movel	%d1,i10g_izrun
+	bras	Lig_cen_end
+Lig_cen_nz:
+	clrl	%d1
+	movel	%a0,%d0
+	subql	&4,%d0
+	cmpl	%d7,%d0
+	bccs	Lig_cen_hi
+	addql	&1,i10g_inzlo
+	bras	Lig_cen_end
+Lig_cen_hi:
+	addql	&1,i10g_inzhi
+Lig_cen_end:
+	cmpal	%a3,%a0
+	bcss	Lig_cen
+	movel	i10g_ioff,%d0		| the 64-byte block that contains the poison
+	andil	&0xffffffc0,%d0
+	movel	%a1,%d1
+	addl	%d0,%d1
+	moveal	%d1,%a0
+	lea	i10g_ih0,%a4
+	moveq	&15,%d1
+Lig_ilb:
+	movel	%a0@+,%a4@+
+	dbra	%d1,Lig_ilb
+	movel	i10g_ipfn,%d0		| the page_t: pages + (pfn - pages_base)*60
+	subl	pages_base,%d0
+	moveq	&60,%d1
+	mulsl	%d1,%d0
+	addl	pages,%d0
+	movel	%d0,i10g_ipp
+	moveal	%d0,%a0
+	movel	%a0@,i10g_ipflags	| flags word @0 + p_keepcnt @2
+	movel	%a0@(4),i10g_ivnode	| p_vnode -- nonzero here is the anon/swap vnode
+	movel	%a0@(8),i10g_ioffp	| p_offset
+	movel	%a0@(12),i10g_ihash
+	movel	%a0@(32),i10g_imap	| p_mapping
+	movel	&1,i10g_ilatched
+	rts
+
+| ---------------------------------------------------------------------------
+| i10g_hook(frame, ctx) -- called from usrxmemflt (ctx=1) and krnxmemflt (ctx=2)
+| at the resolved tail, AFTER wb040_replay has landed the faulting store, right
+| after i10w_hook.  Dormant until i10g_on.
+	.globl	i10g_hook
+i10g_hook:
+	tstl	i10g_on
+	beqw	Lig_ret			| dormant: one memory test, nothing saved
+	linkw	%fp,&0
+	moveml	%d0-%d7/%a0-%a6,%sp@-	| preserve the wrappers' d4 (verdict) and d5 (FSLW)
+	moveal	%fp@(8),%a2		| a2 = frame
+	tstl	i10g_armed
+	bnes	Lig_seq
+	movel	curproc,i10g_armproc	| the process live at the first armed fault
+	movel	&1,i10g_armed
+| PART P proactive protect: on THIS first armed fault -- the wall's own sh, freshly
+| exec'd right after the kpoke, whose parse has not yet reached the genesis -- write-
+| protect every page ALREADY resident in the band [plo,phi).  A page that was resident
+| before the watch armed (sh's bss / heap tail, mapped at exec) never faults on its own,
+| so a store into it would be invisible to the reactive protect below -- which is exactly
+| why the first band run caught only the propagation into the freshly-demand-zeroed
+| 0x80014 page and never the genesis into the already-resident 0x80013 page.  One-shot.
+	movel	i10g_plo,%d0
+	beqs	Lig_seq			| band disabled (plo = 0)
+	movel	i10g_plo,%d7		| d7 = page cursor
+Lig_pinit:
+	movel	%d7,%d0
+	bsrw	i10w_leafpte		| -> a0 = &leafPTE or 0 (preserves d2/d7; clobbers d0/d1/a0/a1)
+	movel	%a0,%d0
+	beqs	Lig_pinit_n		| not resident: nothing to protect yet
+	moveal	%a0,%a1
+	orl	&4,%a1@			| set write-protect bit 2
+Lig_pinit_n:
+	addil	&0x1000,%d7
+	cmpl	i10g_phi,%d7
+	bcss	Lig_pinit
+	.word	0xf4f8			| cpusha bc  (once, after protecting the resident band)
+	.word	0xf518			| pflusha
+Lig_seq:
+	addql	&1,i10g_seq		| resolved faults seen since arming
+| ===== PART P: force stores in the heap band [plo,phi) to fault, so PART W sees
+|       them.  The first genesis run found the poison is neither inherited (PART I
+|       scanned every arena frame at hand-out and found none) nor caught as a
+|       faulting store (PART W silent) -- because the genesis store lands on an
+|       already-RESIDENT, writable page and does not fault at all.  This write-
+|       protects each band page as it is touched (the same bit hat_chgprot040 flips)
+|       so every subsequent store into it faults and PART W's WB-data check runs on
+|       it.  It protects only the small heap band the poison is known to live in
+|       (0x80013xxx source, 0x80014xxx propagation dest), and stops the moment PART W
+|       latches, so the flood is bounded.  This is i10w_hook's proven protect/replay/
+|       re-protect mechanism, value-triggered instead of pinned to one longword. =====
+	tstl	i10g_wlatched
+	bnew	Lig_p_done		| already caught (a store): stop perturbing
+	tstl	i10g_ilatched
+	bnew	Lig_p_done		| already caught (an appearance): stop perturbing
+	movel	i10g_plo,%d0
+	beqw	Lig_p_done		| band watch disabled (plo = 0)
+	movel	%a2@(84),%d1		| FA
+	andil	&0xfffff000,%d1		| its page
+	cmpl	%d0,%d1
+	bcsw	Lig_p_done		| below the band
+	cmpl	i10g_phi,%d1
+	bccw	Lig_p_done		| at or above the band
+	tstl	i10g_p_armed
+	bnes	Lig_p_prot
+	movel	curproc,i10g_p_proc	| the process whose band we protect (must be sh)
+	movel	&1,i10g_p_armed
+Lig_p_prot:
+	addql	&1,i10g_p_fault_n
+	movel	%a2@(84),%d0		| re-protect THIS faulting band page
+	bsrw	i10w_leafpte		| -> a0 = &leafPTE of the faulting page, or 0
+	movel	%a0,%d0
+	beqw	Lig_p_done
+	moveal	%a0,%a1
+	orl	&4,%a1@			| set write-protect bit 2, then publish + flush
+	.word	0xf4f8			| cpusha bc
+	.word	0xf518			| pflusha
+Lig_p_done:
+| ===== PART W: a CONFIRMED faulting store of the poison? =====
+	tstl	i10g_wlatched
+	bnew	Lig_inh
+	movel	i10g_wantval,%d5
+	movel	%a2@(92),%d0		| WB3D
+	cmpl	%d5,%d0
+	bnes	Lig_w2
+	moveq	&3,%d3
+	movel	%a2@(88),%d4		| WB3A
+	braw	Lig_wconf
+Lig_w2:
+	movel	%a2@(100),%d0		| WB2D
+	cmpl	%d5,%d0
+	bnes	Lig_w1
+	moveq	&2,%d3
+	movel	%a2@(96),%d4
+	braw	Lig_wconf
+Lig_w1:
+	movel	%a2@(108),%d0		| WB1D
+	cmpl	%d5,%d0
+	bnew	Lig_inh
+	moveq	&1,%d3
+	movel	%a2@(104),%d4
+Lig_wconf:
+| d3 = slot, d4 = the store's target.  Reject a non-user or non-resident target,
+| and CONFIRM the poison landed there (a stale WBnD field on a non-store fault
+| holds a previous instruction's data and must not be believed).
+	movel	%d4,%d0
+	cmpil	&0x80000000,%d0
+	bcsw	Lig_inh			| not a user address
+	movel	%d4,%d0
+	bsrw	i10g_ckframe		| -> a1 = frame base or 0
+	movel	%a1,%d0
+	beqw	Lig_inh			| target not resident: cannot confirm
+	movel	%d4,%d0
+	andil	&0xfff,%d0
+	addl	%d0,%a1			| a1 = the target longword's physical address
+	movel	%a1@,%d0
+	movel	%d0,i10g_wmem		| what the target holds after the store
+	cmpl	i10g_wantval,%d0
+	bnew	Lig_inh			| the poison did NOT land there: stale WB, reject
+	bsrw	i10g_wlatch
+Lig_inh:
+| ===== PART I: does the faulting page's frame already carry the poison? =====
+	tstl	i10g_ilatched
+	bnew	Lig_out
+	movel	%a2@(84),%d0		| FA
+	cmpl	i10g_lova,%d0
+	bcsw	Lig_out			| below the arena band
+	cmpl	i10g_hiva,%d0
+	bccw	Lig_out			| at or above it
+	addql	&1,i10g_arena_n
+	movel	%a2@(84),%d0
+	bsrw	i10g_ckframe		| -> a1 = the faulting page's frame base or 0
+	movel	%a1,%d0
+	beqw	Lig_out
+	moveal	%a1,%a0			| a0 = scan cursor
+	movel	%a1,%d6			| d6 = frame base (for the offset), saved across scan
+	movel	i10g_wantval,%d5
+	movel	%a1,%d0
+	addil	&4096,%d0
+	moveal	%d0,%a3			| a3 = one past the frame
+Lig_iscan:
+	movel	%a0@+,%d0
+	cmpl	%d5,%d0
+	beqs	Lig_ihit
+	cmpal	%a3,%a0
+	bcss	Lig_iscan
+	braw	Lig_out			| the poison is not in this frame
+Lig_ihit:
+	addql	&1,i10g_scan_hits
+	movel	%a0,%d0
+	subql	&4,%d0			| a0 post-incremented past the match
+	subl	%d6,%d0
+	movel	%d0,i10g_ioff		| the poison's byte offset in the frame
+| iself: did THIS fault's own store write that exact address?  If so the poison is
+| this instruction's doing, not something the frame arrived carrying.
+	movel	%a2@(84),%d0
+	andil	&0xfffff000,%d0
+	addl	i10g_ioff,%d0		| the poison's user VA
+	clrl	i10g_iself
+	cmpl	%a2@(88),%d0		| WB3A
+	bnes	Lig_isf2
+	movel	&3,i10g_iself
+	bras	Lig_idone
+Lig_isf2:
+	cmpl	%a2@(96),%d0		| WB2A
+	bnes	Lig_isf1
+	movel	&2,i10g_iself
+	bras	Lig_idone
+Lig_isf1:
+	cmpl	%a2@(104),%d0		| WB1A
+	bnes	Lig_idone
+	movel	&1,i10g_iself
+Lig_idone:
+	moveal	%d6,%a1			| a1 = frame base for the latch
+	bsrw	i10g_ilatch
+Lig_out:
+	moveml	%sp@+,%d0-%d7/%a0-%a6
+	unlk	%fp
+Lig_ret:
+	rts
+
+	.balign 4
+
+	.data
+	.even
+| ---------------------------------------------------------------------------
+| The i10g block -- read i10g_magic FIRST (a stale address does not fail, it
+| lies), then 105 longs.  Knobs are kpoke-able: the watched value and the arena
+| band can move without a rebuild.
+	.globl	i10g_magic
+i10g_magic:
+	.long	0x49314721		| "I1G!"
+| --- knobs ---
+	.globl	i10g_on
+i10g_on:
+	.long	0			| 0 = dormant (ships this way).  kpoke 1 to arm.
+	.globl	i10g_wantval
+i10g_wantval:
+	.long	0x4afc0000		| the poison value hunted for
+	.globl	i10g_lova
+i10g_lova:
+	.long	0x80010000		| PART I arena band: [lova, hiva) -- sh's heap, past
+	.globl	i10g_hiva		| its text/data image (sh text has 0x4AFC00xx but not
+i10g_hiva:				| 0x4AFC0000, so the exact-value scan cannot false-hit)
+	.long	0x80080000
+| --- state ---
+	.globl	i10g_armed
+i10g_armed:
+	.long	0
+	.globl	i10g_armproc
+i10g_armproc:
+	.long	0			| curproc at the first armed fault
+	.globl	i10g_seq
+i10g_seq:
+	.long	0			| resolved faults seen since arming (the clock the
+					| two latch seqs are ordered against)
+	.globl	i10g_arena_n
+i10g_arena_n:
+	.long	0			| resolved faults in the arena band (PART I scans)
+	.globl	i10g_scan_hits
+i10g_scan_hits:
+	.long	0			| frames found holding the poison (>=1 means PART I fired)
+| --- PART W: the store that WROTE the poison (if any) ---
+	.globl	i10g_wlatched
+i10g_wlatched:
+	.long	0			| 1 = a confirmed poison store was caught
+	.globl	i10g_wseq
+i10g_wseq:
+	.long	0			| i10g_seq at the W latch (compare with i10g_iseq)
+	.globl	i10g_wctx
+i10g_wctx:
+	.long	0			| 1 = usrxmemflt (user wrapper), 2 = krnxmemflt (kernel)
+	.globl	i10g_wsr
+i10g_wsr:
+	.long	0			| SR; bit 13 (0x2000) = S: SET => a KERNEL store
+	.globl	i10g_wpc
+i10g_wpc:
+	.long	0			| the storing instruction's PC (040 defers WB by one insn)
+	.globl	i10g_wfa
+i10g_wfa:
+	.long	0			| the fault address
+	.globl	i10g_wssw
+i10g_wssw:
+	.long	0
+	.globl	i10g_wslot
+i10g_wslot:
+	.long	0			| which write-back matched: 3, 2 or 1
+	.globl	i10g_wb3a
+i10g_wb3a:
+	.long	0
+	.globl	i10g_wb3d
+i10g_wb3d:
+	.long	0
+	.globl	i10g_wb2a
+i10g_wb2a:
+	.long	0
+	.globl	i10g_wb2d
+i10g_wb2d:
+	.long	0
+	.globl	i10g_wb1a
+i10g_wb1a:
+	.long	0
+	.globl	i10g_wb1d
+i10g_wb1d:
+	.long	0
+	.globl	i10g_wtgt
+i10g_wtgt:
+	.long	0			| the matched store's effective address
+	.globl	i10g_wtoff
+i10g_wtoff:
+	.long	0			| its offset inside the frame
+	.globl	i10g_wmem
+i10g_wmem:
+	.long	0			| the target longword re-read after the store (== poison)
+| the 16 saved registers of the storing instruction (frame+0..+60): d0-d7, a0-a6,
+| supervisor a7.  If the store is a move.l (aX),(aY) copy, the source address
+| register exposes where it read the poison FROM -- the next hop upstream.
+	.globl	i10g_wr0
+i10g_wr0:
+	.long	0
+	.globl	i10g_wr1
+i10g_wr1:
+	.long	0
+	.globl	i10g_wr2
+i10g_wr2:
+	.long	0
+	.globl	i10g_wr3
+i10g_wr3:
+	.long	0
+	.globl	i10g_wr4
+i10g_wr4:
+	.long	0
+	.globl	i10g_wr5
+i10g_wr5:
+	.long	0
+	.globl	i10g_wr6
+i10g_wr6:
+	.long	0
+	.globl	i10g_wr7
+i10g_wr7:
+	.long	0
+	.globl	i10g_wr8
+i10g_wr8:
+	.long	0
+	.globl	i10g_wr9
+i10g_wr9:
+	.long	0
+	.globl	i10g_wr10
+i10g_wr10:
+	.long	0
+	.globl	i10g_wr11
+i10g_wr11:
+	.long	0
+	.globl	i10g_wr12
+i10g_wr12:
+	.long	0
+	.globl	i10g_wr13
+i10g_wr13:
+	.long	0
+	.globl	i10g_wr14
+i10g_wr14:
+	.long	0
+	.globl	i10g_wr15
+i10g_wr15:
+	.long	0
+| the 64-byte block around the store target, low address first:
+	.globl	i10g_wc0
+i10g_wc0:
+	.long	0
+	.globl	i10g_wc1
+i10g_wc1:
+	.long	0
+	.globl	i10g_wc2
+i10g_wc2:
+	.long	0
+	.globl	i10g_wc3
+i10g_wc3:
+	.long	0
+	.globl	i10g_wc4
+i10g_wc4:
+	.long	0
+	.globl	i10g_wc5
+i10g_wc5:
+	.long	0
+	.globl	i10g_wc6
+i10g_wc6:
+	.long	0
+	.globl	i10g_wc7
+i10g_wc7:
+	.long	0
+	.globl	i10g_wc8
+i10g_wc8:
+	.long	0
+	.globl	i10g_wc9
+i10g_wc9:
+	.long	0
+	.globl	i10g_wc10
+i10g_wc10:
+	.long	0
+	.globl	i10g_wc11
+i10g_wc11:
+	.long	0
+	.globl	i10g_wc12
+i10g_wc12:
+	.long	0
+	.globl	i10g_wc13
+i10g_wc13:
+	.long	0
+	.globl	i10g_wc14
+i10g_wc14:
+	.long	0
+	.globl	i10g_wc15
+i10g_wc15:
+	.long	0
+| --- PART I: the frame that arrived carrying the poison (if any) ---
+	.globl	i10g_ilatched
+i10g_ilatched:
+	.long	0			| 1 = a frame holding the poison was latched
+	.globl	i10g_iseq
+i10g_iseq:
+	.long	0			| i10g_seq at the I latch
+	.globl	i10g_ifa
+i10g_ifa:
+	.long	0			| the fault address that brought the frame in
+	.globl	i10g_iuva
+i10g_iuva:
+	.long	0			| the poison page's user VA base
+	.globl	i10g_iframe
+i10g_iframe:
+	.long	0			| the frame's physical base
+	.globl	i10g_ipfn
+i10g_ipfn:
+	.long	0
+	.globl	i10g_iproc
+i10g_iproc:
+	.long	0			| curproc at the latch (its u_comm must read "sh")
+	.globl	i10g_icomm0
+i10g_icomm0:
+	.long	0			| u_comm, 16 bytes
+	.globl	i10g_icomm1
+i10g_icomm1:
+	.long	0
+	.globl	i10g_icomm2
+i10g_icomm2:
+	.long	0
+	.globl	i10g_icomm3
+i10g_icomm3:
+	.long	0
+	.globl	i10g_ioff
+i10g_ioff:
+	.long	0			| the poison's byte offset in the frame
+	.globl	i10g_iself
+i10g_iself:
+	.long	0			| nonzero (=slot) if THIS fault's own store wrote that
+					| offset; 0 = the frame already held it (inherited)
+	.globl	i10g_ipp
+i10g_ipp:
+	.long	0			| its page_t
+	.globl	i10g_ipflags
+i10g_ipflags:
+	.long	0			| flags word @0 + p_keepcnt @2
+	.globl	i10g_ivnode
+i10g_ivnode:
+	.long	0			| p_vnode
+	.globl	i10g_ioffp
+i10g_ioffp:
+	.long	0			| p_offset
+	.globl	i10g_ihash
+i10g_ihash:
+	.long	0			| p_hash
+	.globl	i10g_imap
+i10g_imap:
+	.long	0			| p_mapping
+	.globl	i10g_inzlo
+i10g_inzlo:
+	.long	0			| non-zero longs in the frame's LOWER half (512)
+	.globl	i10g_inzhi
+i10g_inzhi:
+	.long	0			| non-zero longs in the frame's UPPER half (512)
+	.globl	i10g_izrun
+i10g_izrun:
+	.long	0			| longest run of consecutive zero longs in the frame
+	.globl	i10g_iw0
+i10g_iw0:
+	.long	0			| the frame's first eight longs
+	.globl	i10g_iw1
+i10g_iw1:
+	.long	0
+	.globl	i10g_iw2
+i10g_iw2:
+	.long	0
+	.globl	i10g_iw3
+i10g_iw3:
+	.long	0
+	.globl	i10g_iw4
+i10g_iw4:
+	.long	0
+	.globl	i10g_iw5
+i10g_iw5:
+	.long	0
+	.globl	i10g_iw6
+i10g_iw6:
+	.long	0
+	.globl	i10g_iw7
+i10g_iw7:
+	.long	0
+| the 64-byte block that contains the poison, low address first:
+	.globl	i10g_ih0
+i10g_ih0:
+	.long	0
+	.globl	i10g_ih1
+i10g_ih1:
+	.long	0
+	.globl	i10g_ih2
+i10g_ih2:
+	.long	0
+	.globl	i10g_ih3
+i10g_ih3:
+	.long	0
+	.globl	i10g_ih4
+i10g_ih4:
+	.long	0
+	.globl	i10g_ih5
+i10g_ih5:
+	.long	0
+	.globl	i10g_ih6
+i10g_ih6:
+	.long	0
+	.globl	i10g_ih7
+i10g_ih7:
+	.long	0
+	.globl	i10g_ih8
+i10g_ih8:
+	.long	0
+	.globl	i10g_ih9
+i10g_ih9:
+	.long	0
+	.globl	i10g_ih10
+i10g_ih10:
+	.long	0
+	.globl	i10g_ih11
+i10g_ih11:
+	.long	0
+	.globl	i10g_ih12
+i10g_ih12:
+	.long	0
+	.globl	i10g_ih13
+i10g_ih13:
+	.long	0
+	.globl	i10g_ih14
+i10g_ih14:
+	.long	0
+	.globl	i10g_ih15
+i10g_ih15:
+	.long	0
+| --- PART P: the heap-band write-protect that forces resident-page stores to fault ---
+	.globl	i10g_plo
+i10g_plo:
+	.long	0x80014000		| protect stores into [plo, phi) so PART W/PART I see them;
+	.globl	i10g_phi		| plo = 0 disables PART P.  Default: the SINGLE page 0x80014
+i10g_phi:				| the wall reads the corrupt link from -- and where PART I found
+					| the poison's FIRST appearance in the arena.  Widening the band
+					| (kpoke a lower plo) protects more pages but the flood scales with
+					| every store into them, so a multi-page default would grind.
+	.long	0x80015000
+	.globl	i10g_p_armed
+i10g_p_armed:
+	.long	0
+	.globl	i10g_p_proc
+i10g_p_proc:
+	.long	0			| the process whose band is protected (must be the wall's sh)
+	.globl	i10g_p_fault_n
+i10g_p_fault_n:
+	.long	0			| store faults forced on the band (i10w saw 1869 for one page)
+| --- PART I: the storing instruction that made the poison appear (band write-protected) ---
+	.globl	i10g_ipc
+i10g_ipc:
+	.long	0			| the storing instruction's PC (one past the store: WB deferred)
+	.globl	i10g_isr
+i10g_isr:
+	.long	0			| SR; bit 13 (0x2000) = S: SET => a KERNEL store
+	.globl	i10g_iwb3a
+i10g_iwb3a:
+	.long	0			| WB3 address of that store
+	.globl	i10g_iwb3d
+i10g_iwb3d:
+	.long	0			| WB3 data of that store
+| --- PART W: the frame the poison was COPIED FROM (the store's source register) ---
+	.globl	i10g_wsrc
+i10g_wsrc:
+	.long	0			| the source VA (the register that points at the poison)
+	.globl	i10g_wsrcr
+i10g_wsrcr:
+	.long	0			| which address register: 0..6 = a0..a6, -1 = none found
+	.globl	i10g_wsrcv
+i10g_wsrcv:
+	.long	0			| the longword at the source (must be the poison)
+	.globl	i10g_ws0
+i10g_ws0:
+	.long	0			| 32-byte block around the source, low address first
+	.globl	i10g_ws1
+i10g_ws1:
+	.long	0
+	.globl	i10g_ws2
+i10g_ws2:
+	.long	0
+	.globl	i10g_ws3
+i10g_ws3:
+	.long	0
+	.globl	i10g_ws4
+i10g_ws4:
+	.long	0
+	.globl	i10g_ws5
+i10g_ws5:
+	.long	0
+	.globl	i10g_ws6
+i10g_ws6:
+	.long	0
+	.globl	i10g_ws7
+i10g_ws7:
+	.long	0
+| *(a0)..*(a6) at the store -- the value each address register points at.  The move's
+| intended write value is *(source); comparing these to WB3D (i10g_wb3d) tells a real
+| copy (some wpv == the poison, at a non-dest address) from a fabricated write-back
+| (no wpv holds the poison except the dest -> the 040 write-back invented the value).
+	.globl	i10g_wpv0
+i10g_wpv0:
+	.long	0
+	.globl	i10g_wpv1
+i10g_wpv1:
+	.long	0
+	.globl	i10g_wpv2
+i10g_wpv2:
+	.long	0
+	.globl	i10g_wpv3
+i10g_wpv3:
+	.long	0
+	.globl	i10g_wpv4
+i10g_wpv4:
+	.long	0
+	.globl	i10g_wpv5
+i10g_wpv5:
+	.long	0
+	.globl	i10g_wpv6
+i10g_wpv6:
+	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

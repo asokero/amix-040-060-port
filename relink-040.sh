@@ -404,6 +404,12 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          i10p_hash i10p_map i10p_map0 i10p_mapn i10p_min i10p_hoff i10p_hitv \
          i10p_w0 i10p_w1 i10p_w2 i10p_w3 i10p_w4 i10p_w5 i10p_w6 i10p_w7 \
          i10p_p_kvseg i10p_p_segu i10p_p_segkmap i10p_p_pages i10p_p_pgbase i10p_p_pgend \
+         i10g_hook i10g_magic i10g_on i10g_wantval i10g_lova i10g_hiva i10g_armed i10g_armproc \
+         i10g_seq i10g_arena_n i10g_scan_hits i10g_wlatched i10g_wseq i10g_wctx i10g_wsr i10g_wpc \
+         i10g_wfa i10g_wslot i10g_wb3a i10g_wb3d i10g_wtgt i10g_wtoff i10g_wmem \
+         i10g_ilatched i10g_iseq i10g_ifa i10g_iuva i10g_iframe i10g_ipfn i10g_iproc i10g_ioff \
+         i10g_iself i10g_ipp i10g_ipflags i10g_ivnode i10g_ioffp i10g_imap i10g_inzlo i10g_inzhi i10g_izrun \
+         i10g_plo i10g_phi i10g_p_armed i10g_p_proc i10g_p_fault_n i10g_ipc i10g_isr i10g_iwb3a i10g_iwb3d i10g_wsrc i10g_wsrcr i10g_wsrcv i10g_wpv0 i10g_wpv1 i10g_wpv6 \
          hat_sdtfree hat_ptdat_retire ptd_magic ptd_on ptd_calls ptd_retired_n ptd_pgfreed_n \
          ptd_keep0_n ptd_keepn_n ptd_meta_n ptd_badlink_n ptd_wake_n ptd_tblfreed_n \
          nullvect nullvect_orig kvp_magic kvp_on kvp_n kvp_user_n kvp_super_n kvp_over_n \
@@ -486,6 +492,20 @@ if m68k-linux-gnu-nm "$OUT" | grep -E ' U i10w_hook$' >/dev/null 2>&1; then
 	echo "[FAIL] i10w_hook still UND -> the resolved-fault path would call address 0"; exit 1
 fi
 echo "[OK] ISSUE-10 write-watch edge bound: usrxmemflt/krnxmemflt -> i10w_hook @0x$IWADDR."
+
+# HARD CHECK (2026-08-19, ISSUE-10 genesis watch): both usrxmemflt and krnxmemflt now
+# also `jsr` i10g_hook (i10rev040.o) at their RESOLVED tails, right after i10w_hook.
+# Same trap as the two edges above: a dropped object or renamed entry would leave a
+# call to address 0 on the resolved-fault path, taken by every memory fault once the
+# watch is armed.  Shaped like the i10w_hook guard.
+IGADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="i10g_hook" && $2=="T" {print $1}')
+if [ -z "$IGADDR" ]; then
+	echo "[FAIL] i10g_hook is not a global T -> the genesis-watch capture edge is unbound"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U i10g_hook$' >/dev/null 2>&1; then
+	echo "[FAIL] i10g_hook still UND -> the resolved-fault path would call address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 genesis-watch edge bound: usrxmemflt/krnxmemflt -> i10g_hook @0x$IGADDR."
 
 # HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
 # remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired
