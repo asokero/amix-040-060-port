@@ -19,7 +19,7 @@
 #      at (pa>>11)<<12 = 2*pa -- a mapping of the WRONG PHYSICAL PAGE, which is
 #      exactly the device-mmap defect already fixed kernel-side for
 #      scrmmap/ammmap/timmap/svgammap and for the VA2000 driver.
-#   2. Page COUNTS are sized in 2 KiB units, and the sources say so out loud:
+#   2. Page COUNTS are sized in 2 KiB units, and the sources said so out loud:
 #      z3660.c   `#define BOUNCE_PAGES 32   /* 64KB bounce; Amix NBPP is 2KB, not 4KB! */`
 #      z3660eth.h `#define ZZ_FRAME_PAGES 64            /* 64 * 2048 = 128 KB */`
 #      Halving them keeps the mapped BYTE size identical, which is what the
@@ -27,12 +27,38 @@
 #      be harmless here since the extra pages are still board space -- but
 #      "probably harmless" is not a thing this port ships.)
 #
+# ---------------------------------------------------------------------------
+# BOTH DRIVER TREES HAVE SINCE FIXED (2) AT THE SOURCE, and this script now
+# recognises that rather than failing on it.  Upstream's window geometry is
+# stated in BYTES and the page count is derived from NBPP at compile time:
+#
+#      z3660.c    #define BOUNCE_BYTES  0x00010000
+#                 #define BOUNCE_PAGES  Z3660_PAGES(BOUNCE_BYTES)
+#      z3660eth.h #define ZZ_FRAME_BYTES 0x20000
+#                 #define ZZ_FRAME_PAGES ((ZZ_FRAME_BYTES + NBPP - 1) / NBPP)
+#
+# which is strictly better than halving a literal here: the count follows
+# whatever NBPP the compile actually sees, so it cannot disagree with the kernel
+# it is being linked into.  Measured through the Model-B mirror sysroot, the
+# unmodified sources emit exactly the counts this script used to write by hand
+# (`pea 0x10` = 16 bounce pages, `pea 0x20` = 32 frame pages), and through the
+# stock sysroot the SAME sources emit 32 and 64.  So on the derived form there
+# is nothing left to rewrite, and rewriting anyway would replace a
+# self-adjusting expression with a constant -- a regression.
+#
+# Each page-count site therefore accepts EITHER form and refuses anything else:
+# the legacy literal is rewritten as before, the derived expression is left
+# alone, and a site that matches neither (or both) aborts the build.  Silent
+# drift still fails; upstream having fixed the defect no longer does.
+# ---------------------------------------------------------------------------
+#
 # Every replacement count is asserted exactly, so upstream drift or an
 # over-match fails the build instead of producing a quietly wrong driver.
 #
 # Usage: python3 src/z3660_modelb.py
 
 import os
+import re
 import shutil
 import sys
 
@@ -60,12 +86,59 @@ def sub_exact(text, old, new, count, what):
     return text.replace(old, new)
 
 
+def page_count(text, legacy_old, legacy_new, derived_re, what):
+    """Accept either the legacy 2 KiB literal or an NBPP-derived expression.
+
+    Exactly one of the two must be present.  The literal is halved (byte size
+    unchanged); the derived expression is left untouched, because it already
+    produces the Model-B count from the NBPP the compile sees -- see the header
+    comment for the measured evidence that the two agree.
+
+    Anything else -- neither form, both forms, or the literal more than once --
+    aborts.  The point of this script is that a page count can never be wrong by
+    accident, and "I did not recognise the source" is a way to be wrong.
+    """
+    n_legacy = text.count(legacy_old)
+    derived = re.search(derived_re, text, re.M)
+    if n_legacy and derived:
+        raise SystemExit("ABORT: %s -- source has BOTH the legacy literal and an "
+                         "NBPP-derived definition; cannot tell which one the "
+                         "compiler will use" % what)
+    if n_legacy == 1:
+        print("  [ok]   %-42s legacy literal halved" % what)
+        return text.replace(legacy_old, legacy_new)
+    if n_legacy > 1:
+        raise SystemExit("ABORT: %s -- %d copies of the legacy literal, expected 1"
+                         % (what, n_legacy))
+    if derived:
+        print("  [ok]   %-42s already NBPP-derived, left as-is" % what)
+        print("         %s" % derived.group(0).strip())
+        return text
+    raise SystemExit("ABORT: %s -- neither the legacy 2 KiB literal nor an "
+                     "NBPP-derived definition found (upstream drifted?).\n"
+                     "       Looked for: %r\n"
+                     "                or /%s/" % (what, legacy_old, derived_re))
+
+
 def phystopfn_override(text, marker):
     """Force phystopfn to the Model-B shift right after the immu.h include.
 
     Overriding at the call site rather than editing <sys/immu.h> keeps the
     licensed sysroot untouched and puts the conversion in the driver's own
     source, where a reader looking at the object can find it.
+
+    KEPT ON PURPOSE THOUGH IT IS NOW REDUNDANT, and that is measured rather than
+    assumed: compiled through the Model-B mirror sysroot, the UNMODIFIED driver
+    sources produce objects whose .text, .data, relocations, disassembly and
+    symbol table are byte-identical to the ones produced from these rewritten
+    copies -- the only difference in the file is the embedded source filename.
+    The mirror sysroot's <sys/immu.h> already carries PNUMSHFT 12, so this
+    #define lands on top of an identical definition.
+
+    It stays because it costs nothing and it is the second of two independent
+    guards (the first being mk_modelb_sysroot.sh's probe, the third being the
+    object-level check in src/check_page_geometry.sh).  Do not read its presence
+    as evidence that the header set is insufficient -- it is not.
     """
     if "sys/immu.h" not in text:
         raise SystemExit("ABORT: %s does not include sys/immu.h -- geometry assumption changed" % marker)
@@ -92,10 +165,11 @@ def main():
         raise SystemExit("ABORT: %s missing (clone amix-z3660scsi)" % SCSI_SRC)
     t = open(SCSI_SRC).read()
     t = phystopfn_override(t, "z3660.c")
-    t = sub_exact(t,
-                  "#define\tBOUNCE_PAGES\t32\t\t/* 64KB bounce; Amix NBPP is 2KB, not 4KB! */",
-                  "#define\tBOUNCE_PAGES\t16\t\t/* 64KB bounce; Model B NBPP is 4 KiB (z3660_modelb.py) */",
-                  1, "BOUNCE_PAGES 32 -> 16 (64 KB unchanged)")
+    t = page_count(t,
+                   "#define\tBOUNCE_PAGES\t32\t\t/* 64KB bounce; Amix NBPP is 2KB, not 4KB! */",
+                   "#define\tBOUNCE_PAGES\t16\t\t/* 64KB bounce; Model B NBPP is 4 KiB (z3660_modelb.py) */",
+                   r"^#define\s+BOUNCE_PAGES\s+Z3660_PAGES\(",
+                   "BOUNCE_PAGES (64 KB bounce window)")
     open(os.path.join(BUILD, "z3660_040.c"), "w").write(t)
     print("  [ok]   build/z3660_040.c written")
 
@@ -109,10 +183,11 @@ def main():
     print("  [ok]   build/z3660eth_040.c written")
 
     h = open(os.path.join(NET_DIR, "z3660eth.h")).read()
-    h = sub_exact(h,
-                  "#define ZZ_FRAME_PAGES\t64\t\t\t/* 64 * 2048 = 128 KB */",
-                  "#define ZZ_FRAME_PAGES\t32\t\t\t/* 32 * 4096 = 128 KB (z3660_modelb.py) */",
-                  1, "ZZ_FRAME_PAGES 64 -> 32 (128 KB unchanged)")
+    h = page_count(h,
+                   "#define ZZ_FRAME_PAGES\t64\t\t\t/* 64 * 2048 = 128 KB */",
+                   "#define ZZ_FRAME_PAGES\t32\t\t\t/* 32 * 4096 = 128 KB (z3660_modelb.py) */",
+                   r"^#define\s+ZZ_FRAME_PAGES\s+\(\(ZZ_FRAME_BYTES\s*\+\s*NBPP",
+                   "ZZ_FRAME_PAGES (128 KB frame window)")
     open(os.path.join(BUILD, "z3660eth.h"), "w").write(h)
     for extra in ("z3660ethuser.h",):
         src = os.path.join(NET_DIR, extra)
