@@ -4533,9 +4533,12 @@ Full context: `docs/REALHW-Z3-APERTURE-PROBE-260819.md`.
 > **Ledger: OPEN** — driver defect in `va2000-amix`, found the evening the Zorro III firmware went
 > in. Canonical: [`STATUS.md`](STATUS.md) §4.
 
-When X11 exits, the VA2000 driver's `close` path calls `va2_restore_passthrough()` to hand the
+When a client exits, the VA2000 driver's `close` path calls `va2_restore_passthrough()` to hand the
 display back to the Amiga's native output. On the Zorro III firmware the display **freezes**
 instead — it keeps showing a stale image rather than the passthrough picture.
+
+**Reproducible and client-independent**: observed first when X11 exited, then again when wolf3d
+exited. It is the routine, not something about one client's teardown.
 
 ### The card is not crashed, and that is the point
 
