@@ -454,6 +454,72 @@ Lip_hit:
 	movel	%a1@(20),i10p_w5
 	movel	%a1@(24),i10p_w6
 	movel	%a1@(28),i10p_w7
+| --- ISSUE-10 census (2026-08-19): does the poisoned frame's UPPER half read as
+|     sh's own arena carrying one anomalous word -- a stray store into a page that
+|     WAS zero-filled correctly -- or as dense foreign content, the fingerprint of
+|     a fill that left the 2 KiB tail uncleaned (H1)?  Every named 2 KiB tail-zero
+|     site is already converted to 0x1000, so a clean upper half here says the fill
+|     did its job and the bad word arrived by a mis-addressed write (H2).  Counts
+|     non-zero longs in each half, tracks the longest run of consecutive zero
+|     longs, and copies the 64-byte block that contains the hit.  Runs once, on the
+|     latched page, using only d0/d1/d7/a0/a1 -- the scan's live registers (d2/d3
+|     value+mask, d4-d6 walk indices, a2-a4 tables) are not touched, so the count
+|     of remaining hits below is unaffected.
+	clrl	i10p_nzlo
+	clrl	i10p_nzhi
+	clrl	i10p_zrun
+	clrl	%d1			| d1 = current run of consecutive zero longs
+	moveal	%fp@(-12),%a0		| a0 = frame base (phys, identity, Lip_okbase-validated)
+	movel	%a0,%d7
+	addil	&2048,%d7		| d7 = upper-half start (base + 0x800)
+	movel	%a0,%d0
+	addil	&4096,%d0
+	moveal	%d0,%a1			| a1 = one past the frame (base + 0x1000)
+Lip_cen:
+	movel	%a0@+,%d0		| d0 = the long; a0 advances past it
+	bnes	Lip_cen_nz
+	addql	&1,%d1			| a zero long: extend the run
+	cmpl	i10p_zrun,%d1
+	blss	Lip_cen_end		| not longer than the record: leave it
+	movel	%d1,i10p_zrun		| a new longest zero run
+	bras	Lip_cen_end
+Lip_cen_nz:
+	clrl	%d1			| a non-zero long: the run ends here
+	movel	%a0,%d0
+	subql	&4,%d0			| a0 post-incremented; d0 = this long's address
+	cmpl	%d7,%d0
+	bccs	Lip_cen_hi		| at or above the midpoint: upper half
+	addql	&1,i10p_nzlo
+	bras	Lip_cen_end
+Lip_cen_hi:
+	addql	&1,i10p_nzhi
+Lip_cen_end:
+	cmpal	%a1,%a0
+	bcss	Lip_cen
+| the 64-byte block that holds the hit: base = frame + (hoff & ~0x3F), 16 longs.
+| One of them IS the hit; its neighbours are the reading -- 0x8001xxxx links,
+| ASCII and zero say valid arena, anything else says foreign content.
+	movel	i10p_hoff,%d0
+	andil	&0xffffffc0,%d0		| 64-byte align the hit offset down to a block base
+	movel	%fp@(-12),%d1
+	addl	%d0,%d1
+	moveal	%d1,%a0
+	movel	%a0@,i10p_h0
+	movel	%a0@(4),i10p_h1
+	movel	%a0@(8),i10p_h2
+	movel	%a0@(12),i10p_h3
+	movel	%a0@(16),i10p_h4
+	movel	%a0@(20),i10p_h5
+	movel	%a0@(24),i10p_h6
+	movel	%a0@(28),i10p_h7
+	movel	%a0@(32),i10p_h8
+	movel	%a0@(36),i10p_h9
+	movel	%a0@(40),i10p_h10
+	movel	%a0@(44),i10p_h11
+	movel	%a0@(48),i10p_h12
+	movel	%a0@(52),i10p_h13
+	movel	%a0@(56),i10p_h14
+	movel	%a0@(60),i10p_h15
 | the page_t: pages + (pfn - pages_base) * 60, the stride hat040.s uses
 	movel	%fp@(-8),%d0
 	subl	pages_base,%d0
@@ -790,4 +856,66 @@ i10p_p_pgbase:
 	.globl	i10p_p_pgend
 i10p_p_pgend:
 	.long	pages_end
+| --- the census, filled once by the loop in Lip_hit on the latched hit page.
+| Appended after the six handles so every offset above is unchanged; the reader
+| grows its kpeek count from 58 to 77 and nothing else moves. ---
+	.globl	i10p_nzlo
+i10p_nzlo:
+	.long	0			| non-zero longs in the frame's LOWER half (0x000..0x7FC)
+	.globl	i10p_nzhi
+i10p_nzhi:
+	.long	0			| non-zero longs in the frame's UPPER half (0x800..0xFFC)
+	.globl	i10p_zrun
+i10p_zrun:
+	.long	0			| longest run of consecutive zero longs anywhere in the frame
+| The 64-byte block that contains the hit: base = frame + (i10p_hoff & ~0x3F).
+| i10p_h0..h15 are that block, low address first; the hit is one of them.
+	.globl	i10p_h0
+i10p_h0:
+	.long	0
+	.globl	i10p_h1
+i10p_h1:
+	.long	0
+	.globl	i10p_h2
+i10p_h2:
+	.long	0
+	.globl	i10p_h3
+i10p_h3:
+	.long	0
+	.globl	i10p_h4
+i10p_h4:
+	.long	0
+	.globl	i10p_h5
+i10p_h5:
+	.long	0
+	.globl	i10p_h6
+i10p_h6:
+	.long	0
+	.globl	i10p_h7
+i10p_h7:
+	.long	0
+	.globl	i10p_h8
+i10p_h8:
+	.long	0
+	.globl	i10p_h9
+i10p_h9:
+	.long	0
+	.globl	i10p_h10
+i10p_h10:
+	.long	0
+	.globl	i10p_h11
+i10p_h11:
+	.long	0
+	.globl	i10p_h12
+i10p_h12:
+	.long	0
+	.globl	i10p_h13
+i10p_h13:
+	.long	0
+	.globl	i10p_h14
+i10p_h14:
+	.long	0
+	.globl	i10p_h15
+i10p_h15:
+	.long	0
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

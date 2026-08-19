@@ -1,0 +1,170 @@
+ISSUE-10 poisoned-page CENSUS -- raw bench evidence (H1 stale-fill vs H2 stray store)
+=====================================================================================
+Date        2026-08-19            Platform  EMU (Amiberry, 68040+FPU+MMU, 16 MB)
+Kernel      68040-260819 census   i10p_magic @ 0710BE94  ("I10P")
+            = the 68040-260819 i10p tree plus the census loop added to i10p_probe
+              (src/i10rev040.s): non-zero-long counts per half, longest zero run,
+              and a 64-byte window around the hit.
+Rig         a3000mem 16 MB, mbresmem 0 -> LOAD BASE 0x07000000; cycle_exact=false,
+            cpu/fpu_no_unimplemented=true, no a2065, software render, dummy audio.
+            Same rig and same two staging steps as issue10-page-identity-260819.txt
+            (the swap-device anchor edit + read-only payload mount).
+Guest       test-tools/i10cen.sh, staged into the source disk's raw slice and dd'd
+            out on the box; it publishes its log back into the raw slice so the
+            numbers are read out of the disk image instead of off screenshots.
+
+THE QUESTION
+------------
+issue10-page-identity-260819.txt found the page: one healthy, singly-mapped anon
+heap page of sh's arena (user 0x80014000) holding exactly ONE wrong longword,
+0x4AFC0000, at frame offset 0xAA0 -- in the UPPER half of the 4 KiB frame.  Two
+readings of how it got there:
+
+  H1  a fill left the 2 KiB tail uncleaned: the frame was handed to the anon page
+      carrying a prior owner's content in 0x800..0xFFF, and the word is that
+      owner's.  Prediction: the upper half is DENSE, foreign, zero-run-free.
+  H2  the frame WAS zero-filled correctly and a mis-addressed write dropped the
+      one word into it later.  Prediction: the upper half is mostly zero, with the
+      word an isolated anomaly sitting in valid arena.
+
+Every named 2 KiB-era tail-zero site is already converted to a full 0x1000 clear
+in this kernel -- anon_zero (patch_modelb.py @0xADDFA, "pea 0x800"->"pea 0x1000"),
+the block-swap-in klustsize .data initializer and anon_getpage length
+(patch_swapin.py), the s5/ufs/spec file-getapage tails (patch_modelb.py +
+patch_modelb_pager.py) and segmap_pagecreate's five callers (patch_pagecreate.py).
+So H1 for THIS trigger would require a still-unconverted fill site; H2 needs none.
+
+THE CONSOLE (identical to the page-identity run; flood thousands of lines deep)
+    NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:20 CMD:sh -n /cdrom/install/bin/setup.sh
+    ...
+    /cdrom/install/bin/setup.sh: no space
+    I10CEN-PUBLISHED
+
+THE CAPTURE (i10p block; the page-identity fields reproduce, then the census)
+  i10p_n        00001f70   8048 band faults, again
+  i10p_have     00000001   captured on the first walk (i10p_tries 1)
+  i10p_fa/lastfa 4afc0003  one repeated address
+  i10p_want     4afc0000   the free-list link, vmask 0xFFFFFFFC
+  i10p_kdesc    00000000   still not a kernel address of any kind (UDT 0)
+  i10p_uva      80014000   sh's heap, past the file image
+  i10p_pfn      0000762f   (was 7623 last boot -- frame shuffles, the pattern does not)
+  i10p_pte      0762f039   i10p_ptea 0764e050
+  i10p_vnode    40078704   the anon/swap vnode        i10p_off 00036000
+  i10p_map      0764e050 == i10p_ptea   map0 0762f039   mapn 1   min 1
+  i10p_hoff     00000aa0   -> user 0x80014AA0          i10p_hitv 4afc0000
+  w0..w7        6e745f6d 62000000 8001401d 80013ff8 02000000 80011414 00000000 80014031
+                (identical to the page-identity boot: "nt_m" "b\0\0\0" + 0x8001xxxx
+                 arena links -- the arena content is deterministic across boots)
+
+  --- the census (the 19 fields added for this run) ---
+  i10p_nzlo     0000019b   411 of 512 lower-half longs are non-zero (101 zero)
+  i10p_nzhi     00000066   102 of 512 UPPER-half longs are non-zero (410 ZERO)
+  i10p_zrun     00000157   longest run of consecutive zero longs = 343 (= 1372 bytes)
+  i10p_h0..h15  the 64-byte block that holds the hit, base = 0xAA0 & ~0x3F = 0xA80:
+     +0x00 (0xA80)  22000000     0x22 then zeros
+     +0x04 (0xA84)  00000000
+     +0x08 (0xA88)  69660000     "if"
+     +0x0c (0xA8C)  00000000
+     +0x10 (0xA90)  5b000000     "["
+     +0x14 (0xA94)  00000000
+     +0x18 (0xA98)  2d730000     "-s"
+     +0x1c (0xA9C)  00000000
+     +0x20 (0xAA0)  4afc0000     <-- THE HIT
+     +0x24 (0xAA4)  00000000
+     +0x28 (0xAA8)  00000000
+     +0x2c (0xAAC)  00000000
+     +0x30 (0xAB0)  00000000
+     +0x34 (0xAB4)  00000000
+     +0x38 (0xAB8)  00000000
+     +0x3c (0xABC)  00000000
+  i10 counters   rpfail/hlfail/hffail 0/0/0, dupreg 0x347 (live), deep 0 (unchanged)
+
+READING IT -- H2, DECISIVELY; H1 REFUTED
+----------------------------------------
+* The frame was zero-filled correctly.  The longest run of consecutive zero longs
+  is 343 (1372 bytes of contiguous zero).  The lower half holds only 101 zeros, so
+  that run lies in the UPPER half -- the very region H1 says should be a prior
+  owner's dense content.  A stale/under-cleaned page cannot contain a 343-long
+  zero run.  80% of the upper half (410/512 longs) is zero.  The demand-zero fill
+  did its job; this is not a fill that stopped at 0x800.
+
+* The bad word is an isolated anomaly in valid arena.  Its 64-byte block is sh's
+  own parse memory for setup.sh -- the ASCII tokens "if", "[", "-s" (an
+  `if [ -s ... ]` under construction) with zero padding between them -- and the
+  seven longs immediately after the hit are all zero.  0x4AFC0000 is one wrong
+  longword surrounded by sh's own content and clean zero-fill, not one word of a
+  page full of somebody else's content.
+
+* Consistent with the page-identity capture and with the fill census above: the
+  page's IDENTITY is right (anon, singly mapped, reverse map intact) and its
+  CONTENT has exactly one bad longword, in a correctly zero-filled frame.  So the
+  word arrived by a WRITE that landed at the wrong address (or a single-longword
+  store of a wrong value), not by a page-lifetime or fill-tail defect.
+
+WHAT THIS DOES AND DOES NOT SETTLE
+----------------------------------
+Settles: H1 (the LEAD's stale-frame / under-cleaned-tail family) is refuted for
+this trigger.  The named 2 KiB constants and sites (anon_zero pea 0x800, klustsize
+0x800 .data, anon_getpage, s5/ufs/spec getapage tails, segmap_pagecreate) are all
+already converted to 0x1000 in this kernel, and this census shows the fill they
+govern produces a clean, fully-zeroed frame here -- so none of them is putting the
+word in.  These are Model-B 2 KiB->4 KiB conversions the port already carries; the
+census confirms they hold at run time for the anon demand-zero path.
+
+Does not settle: the exact instruction that writes 0x4AFC0000 to 0x80014AA0.  That
+value is a constant across processes, both of today's boots, and the 2026-07-10
+amixadm captures -- a deterministic store, not a race.  Naming its PC needs a
+write-watch on that one longword (the store is a single word into an otherwise
+clean, valid page, so it need not pass through copyout and cannot be found by a
+frame scan): checkpoint 0x80014AA0 across kernel entry/exit and catch the good->bad
+transition.  That is the next probe and follows directly from this result.
+
+===== FULL GUEST LOG OF THE CAPTURE RUN (i10cen.sh, published from the box) =====
+(kpeek reads /dev/mem; "BEFORE" reads the block idle, "AFTER" reads it latched.
+ The census fields are the last 19 longs of the 77 read, i10p_nzlo..i10p_h15.)
+
+I10CEN-START
+--- BEFORE (abridged): i10p_magic 49313050, masks f0000000/40000000/fffffffc,
+    the rest of the block zero; the six handles at 0710bf64..0710bf78 nonzero. ---
+MOUNT rc=0
+/cdrom/install/bin/setup.sh: no space
+WALL rc=1
+--- AFTER (the block, i10p_magic @ 0710be94, 77 longs) ---
+  0710be94 49313050   0710be98 f0000000   0710be9c 40000000   0710bea0 fffffffc
+  0710bea4 00001f70   0710bea8 00000001   0710beac 00000001   0710beb0 4afc0003
+  0710beb4 4afc0003   0710beb8 4afc0000   0710bebc 00000008   0710bec0 00000001
+  0710bec4 00000000   0710bec8 00000005   0710becc 4012f190   0710bed0 4014b000
+  0710bed4 4013be00   0710bed8 4013be00   0710bedc 00000000   0710bee0 00000000
+  0710bee4 00000000   0710bee8 00000000   0710beec 07105cfc   0710bef0 00000000
+  0710bef4 00000000   0710bef8 4014b000   0710befc 00000033   0710bf00 00000001
+  0710bf04 00000000   0710bf08 80014000   0710bf0c 0762f039   0710bf10 0764e050
+  0710bf14 0000762f   0710bf18 40051328   0710bf1c 06000000   0710bf20 40078704
+  0710bf24 00036000   0710bf28 00000000   0710bf2c 0764e050   0710bf30 0762f039
+  0710bf34 00000001   0710bf38 00000001   0710bf3c 00000aa0   0710bf40 4afc0000
+  0710bf44 6e745f6d   0710bf48 62000000   0710bf4c 8001401d   0710bf50 80013ff8
+  0710bf54 02000000   0710bf58 80011414   0710bf5c 00000000   0710bf60 80014031
+  0710bf64 07123550   0710bf68 0714cfc8   0710bf6c 0713ae4c   0710bf70 07150118
+  0710bf74 0714d5ac   0710bf78 07126d50   [handles]
+  0710bf7c 0000019b   i10p_nzlo = 411
+  0710bf80 00000066   i10p_nzhi = 102
+  0710bf84 00000157   i10p_zrun = 343
+  0710bf88 22000000   i10p_h0   (0xA80)
+  0710bf8c 00000000   i10p_h1
+  0710bf90 69660000   i10p_h2   "if"
+  0710bf94 00000000   i10p_h3
+  0710bf98 5b000000   i10p_h4   "["
+  0710bf9c 00000000   i10p_h5
+  0710bfa0 2d730000   i10p_h6   "-s"
+  0710bfa4 00000000   i10p_h7
+  0710bfa8 4afc0000   i10p_h8   <-- THE HIT (0xAA0)
+  0710bfac 00000000   i10p_h9
+  0710bfb0 00000000   i10p_h10
+  0710bfb4 00000000   i10p_h11
+  0710bfb8 00000000   i10p_h12
+  0710bfbc 00000000   i10p_h13
+  0710bfc0 00000000   i10p_h14
+  0710bfc4 00000000   i10p_h15
+--- i10 counter block @ 0710be7c ---
+  0710be7c 49313021   i10_magic "I10!"
+  0710be8c 00000347   i10_dupreg_n = 839 (live)   rpfail/hlfail/hffail/deep all 0
+I10CEN-END

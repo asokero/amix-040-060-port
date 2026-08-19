@@ -25,7 +25,8 @@ same PC, same fault class. It fires again here, and it is **deterministic**: one
 memory pressure, no fork storm.
 
 Three mechanisms were on the table; the counters settled two of them and re-aimed the third. A
-second instrument then went after the re-aimed one and **did not find what was expected**:
+second instrument found the page (candidate D); a third — a frame census (§9) — then refuted the
+stale-fill reading of it (candidate E) and left one mechanism standing, a mis-addressed write:
 
 | | Candidate | Verdict |
 |---|---|---|
@@ -33,6 +34,7 @@ second instrument then went after the re-aimed one and **did not find what was e
 | **B** | The eight-site SysV shm 2 KiB anon-map mismatch | **CONFIRMED as a live defect, but a different bug** — it panics, deterministically, in its predicted band; `sh` never calls `shmget` |
 | **C** | Amiberry 68040 format-$7 write-back infidelity | **NOT TESTED after all** — see §6; the run that produced the "all zero" reading is one in which the wall never fired |
 | **D** | The page holding the corrupt word is a frame that is, or recently was, a kernel u-area page — the phys double-use / page-lifetime family | **REFUTED** — §4. The page is an ordinary, correctly-mapped, singly-mapped anon heap page of `sh`'s own arena with an intact reverse map, holding **one** wrong longword |
+| **E** | The frame was handed to the anon page with its upper 2 KiB uncleaned — a fill that stopped at `0x800`, so `0x4AFC0000` is a prior owner's content (the Model-B tail-zero family) | **REFUTED** — §9. A frame census shows the upper half is 80% zero with a 343-long contiguous zero run, and the bad word sits in valid `sh` arena among ASCII tokens; the frame was zero-filled correctly. The named 2 KiB tail-zero sites are all already `0x1000` in this kernel. What remains is **H2**: a mis-addressed single-longword write |
 
 ## 1. Candidate A — refuted, with the reading that makes zero mean something
 
@@ -294,3 +296,62 @@ which is indistinguishable from a measurement that found nothing.
   it is not, so watch the **word**, not the page — trap the write. `sh`'s arena address is known
   (`0x80014AA0` in this run), the trigger is one command, and a write-watch on that longword would
   name the store that puts `0x4AFC0000` there.
+
+## 9. The frame census — the stale-fill hypothesis refuted, the store confirmed
+
+§4 left one reading of the healthy page still open, and it is the one the Model-B work makes most
+tempting: the offending word is at frame offset `0xAA0`, in the **upper half** of the 4 KiB page,
+and this port's history is full of 2 KiB-era fills that clean only `0x000..0x7FF` of a 4 KiB frame
+and leave `0x800..0xFFF` holding a prior owner's content. If that were happening here, `0x4AFC0000`
+would not be a *write* at all — it would be **stale frame content** the anon page was handed with
+its tail uncleaned, and the fix would be a one-constant change at a named fill site.
+
+`i10p_probe` now censuses the latched frame (`src/i10rev040.s`, the loop in `Lip_hit`): non-zero
+longs in each half, the longest run of consecutive zero longs, and the 64-byte block that contains
+the hit. Raw readings: [`test-tools/issue10-census-260819.txt`](../test-tools/issue10-census-260819.txt).
+
+```
+i10p_nzlo   411      non-zero longs in the LOWER half (512)
+i10p_nzhi   102      non-zero longs in the UPPER half (512) -- 410 are ZERO
+i10p_zrun   343      longest run of consecutive zero longs = 1372 bytes
+i10p_h0..15          the 64-byte block at 0xA80 (the hit is at 0xAA0):
+    0xA80  22000000   .  0xA88  69660000 "if"  .  0xA90  5b000000 "["
+    0xA98  2d730000 "-s"  .  0xAA0  4afc0000  <-- the hit  .  0xAA4..0xABC all zero
+```
+
+Two facts, and they point the same way:
+
+* **The frame was zero-filled correctly — the fill did not stop at `0x800`.** The longest run of
+  consecutive zero longs is **343** (1372 bytes). The lower half holds only 101 zeros, so that run
+  lies in the **upper half** — the very region the stale-fill hypothesis says should be dense prior
+  content. A page whose tail was left uncleaned cannot contain a 343-long zero run; 80% of the upper
+  half is zero. The demand-zero path produced a clean frame.
+* **The bad word is an isolated anomaly in valid arena.** Its 64-byte block is `sh`'s own parse
+  memory for `setup.sh` — the tokens `if`, `[`, `-s` (an `if [ -s … ]` under construction) with
+  zero padding between them — and the seven longs immediately after the hit are all zero.
+  `0x4AFC0000` is **one** wrong longword surrounded by `sh`'s own content and clean zero-fill, not
+  one word of a page full of somebody else's content.
+
+So **candidate E is refuted and H2 is confirmed**: the frame was correctly zero-filled and a
+mis-addressed write (or a single-longword store of a wrong value) put `0x4AFC0000` at `0x80014AA0`.
+This is not a fill-tail bug and there is no fill constant to change for it. The named 2 KiB tail-zero
+sites the hypothesis rests on — `anon_zero`'s `pea 0x800` (`patch_modelb.py`), the block-swap-in
+`klustsize` `.data` initializer and `anon_getpage` length (`patch_swapin.py`), the s5/ufs/spec
+file-getapage tails, and `segmap_pagecreate`'s five callers (`patch_pagecreate.py`) — are all
+already converted to a full `0x1000` clear in this kernel, and this census shows the anon
+demand-zero fill they govern holds at run time. The historical `0x4AFC005F`/`0x4AFC0055` avalanche
+that the swap-in `klustsize` half-fill produced (stale `sh` **text**) is a different, already-fixed
+mechanism; this trigger's `0x4AFC0000` occurs nowhere in `sh` and comes from a store.
+
+The instrument was byte-audited: the census is entirely inside `i10rev040.o` (`.data` +76 bytes =
+19 new longs, `.text` +240 bytes for the loop and window copy), every pre-existing `i10p_*` symbol
+keeps its offset, and the full kernel links with `TOTAL complaints: 0`. The census kernel reproduces
+the wall byte-for-byte (`4AFC0003`, `PC:800023FC`, `FAULT:6`, `i10p_n` = 8048), so the added code
+does not perturb the trigger.
+
+**Next.** The write-watch of §8 is now the single remaining thread and it is sharper for this result:
+the store is one longword into an otherwise clean, valid page, so it need not pass through `copyout`
+and cannot be found by scanning frames — it has to be caught at the moment it lands. Checkpoint
+`0x80014AA0` across kernel entry/exit and name the PC of the good→bad transition. `0x4AFC0000` is a
+constant across processes, both of today's boots, and the July `amixadm` captures, so the writer is
+deterministic and a bracketed checkpoint will find it.
