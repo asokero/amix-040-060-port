@@ -4111,38 +4111,49 @@ i10a_a_seglast:
 
 | ---------------------------------------------------------------------------
 | brk -- the i10b wrapper.  brk(uap): fp@(8) = uap, *uap = the requested new break.
+| The brk wrapper is SHARED by i10b (the one-shot grow-failure latch) and i10d (the
+| ring tracer, PART ELEVEN): brk has a single strong def, so one wrapper serves both.
+| Active when EITHER i10b_on or i10d_on; both dormant = one/two tstl + tail jmp.
 	.globl	brk
 brk:
+	tstl	i10d_on
+	bnew	Lbrk_active
 	tstl	i10b_on
-	bnew	Lib_active
-Lib_fwd:
-	jmp	brk_orig		| dormant / one-shot done: forward unchanged
-Lib_active:
-	tstl	i10b_latched
-	bnew	Lib_fwd			| already caught the first failing grow
+	bnew	Lbrk_active
+Lbrk_fwd:
+	jmp	brk_orig		| both dormant: forward unchanged
+Lbrk_active:
 	linkw	%fp,&0
 	moveml	%d2-%d7/%a2-%a6,%sp@-
-	addql	&1,i10b_seen_n		| brk calls seen while armed
 	moveal	%fp@(8),%a0		| uap
 	movel	%a0@,%d2		| d2 = requested new break (*uap)
 	moveal	u+0x730,%a2		| curproc = u.u_procp (the proc brk updates)
 	movel	%a2@(56),%d3		| d3 = p_brksize BEFORE
 	movel	%a2@(52),%d7
 	addl	%d3,%d7			| d7 = current break end = p_brkbase + p_brksize
-	movel	hat_sdtfail_n,%d4	| d4 = hat_sdtfail_n BEFORE
+	movel	hat_sdtfail_n,%d4	| d4 = hat_sdtfail_n BEFORE (i10b)
 | --- call the real brk, capture its verdict ---
 	movel	%fp@(8),%sp@-
 	jsr	brk_orig
 	addqw	&4,%sp
 	movel	%d0,%d5			| d5 = brk's return (0 = ok; grow-fail = as_map errno)
 	movel	%a2@(56),%d6		| d6 = p_brksize AFTER
+| === i10d: record EVERY brk into the ring (if armed and band-matched) ===
+	tstl	i10d_on
+	beqs	Lbrk_i10b
+	bsrw	i10d_record		| in: d2 newbrk, d3 pre, d5 ret, d6 post, a2 proc
+Lbrk_i10b:
+| === i10b: one-shot latch on the first FAILING grow ===
+	tstl	i10b_on
+	beqw	Lbrk_done
+	addql	&1,i10b_seen_n		| brk calls seen while i10b armed
+	tstl	i10b_latched
+	bnew	Lbrk_done		| already caught the first failing grow
 	tstl	%d5
-	beqw	Lib_done		| brk succeeded: not a failing grow
+	beqw	Lbrk_done		| brk succeeded: not a failing grow
 	addql	&1,i10b_fail_n		| any failing brk (grow or early reject)
 	cmpl	%d7,%d2			| requested new break vs current end
-	blsw	Lib_done		| not above the end: an early reject/shrink, not an as_map grow
-	tstl	i10b_latched
-	bnew	Lib_done		| one-shot
+	blsw	Lbrk_done		| not above the end: an early reject/shrink, not an as_map grow
 	movel	&1,i10b_latched
 | --- latch the failing GROW ---
 	movel	curproc,i10b_proc
@@ -4165,7 +4176,7 @@ Lib_active:
 	movel	%a0@,i10b_freemem
 	movel	%a2,i10b_uprocp
 	movel	%a2@(124),i10b_pas	| p_as
-Lib_done:
+Lbrk_done:
 	movel	%d5,%d0			| return brk_orig's value unchanged
 	moveml	%sp@+,%d2-%d7/%a2-%a6
 	unlk	%fp
@@ -4563,4 +4574,127 @@ i10c_freemem:
 i10c_wbrep:
 	.long	0			| wb_replay_n at the genesis: resolved store-faults so far.
 					| Small = the genesis is early in the wall, not a late grow
+	.balign 4			| pad section to a 4-byte multiple (bss placement)
+
+| ===========================================================================
+| PART ELEVEN -- i10d: the CPU-INDEPENDENT brk/sbrk RING TRACER (2026-08-20).
+|
+| WHY.  User ruling: sh is the SAME binary on 030/040/060, so ISSUE-10's desync (sh's
+| blok arena top 0x800152A0 lands past its break 0x80014FB4) must be the 040 kernel
+| granting a DIFFERENT brk result than 030/060 for identical requests.  This records a
+| ring of the last 24 brk syscalls -- {requested newbrk, p_brkbase, p_brksize before,
+| p_brksize after, brkend after, return} -- so the same probe run on 040, 030 and 060
+| shows whether the 040 UNDER-GROWS (grants a smaller break than 030/060) for the
+| identical sbrk sequence, and by how much.
+|
+| WHY ONE PROBE RUNS ON ALL THREE.  brk is the same sysent slot on every CPU, and this
+| build's brk hook is the proven-100% weaken/redefine (a single sysent reloc, no bypass;
+| the i10b hard check asserts it).  The 040 and 060 run this exact image; the 030 gets
+| the SAME ring via a standalone generic-68k copy (src/i10dtrace030.s, relink-030-i10d.sh)
+| whose I1D! block is byte-for-byte the same layout, so one driver reads all three.
+|
+| SHARED WRAPPER.  i10d rides the brk wrapper above (PART NINE): on every armed brk it
+| calls i10d_record, which appends one ring entry.  Report-only, never changes brk.  It
+| ships dormant (i10d_on = 0).  An optional band filter (i10d_lo/i10d_hi, default all)
+| narrows the ring to sh's arena grows (e.g. [0x80011000, 0x80020000)) when other procs
+| would otherwise share the ring.
+|
+| READ IT.  status-facts finds the block by i10d_magic; the whole block is
+| `kpeek <i10d_magic addr> 157` -- 13 header longs then 24 * 6 ring longs.  i10d_head is
+| the next write slot, i10d_n the total; entries [0..min(n,24)-1] chronological unless n>24,
+| when the oldest is at head and the newest at head-1.  Each entry is 6 longs:
+| newbrk, brkbase, brksize_pre, brksize_post, brkend (= brkbase + post), ret.
+
+	.text
+	.balign 4
+| ---------------------------------------------------------------------------
+| i10d_record -- append the current brk to the ring.  in: d2 = newbrk, d3 = brksize_pre,
+| d5 = ret, d6 = brksize_post, a2 = proc (u.u_procp).  Preserves d2-d7/a2-a6; clobbers
+| only d0/d1/a0/a1, which it saves.
+	.globl	i10d_record
+i10d_record:
+	moveml	%d0-%d1/%a0-%a1,%sp@-
+	movel	%d2,%d0			| band filter on the requested new break
+	cmpl	i10d_lo,%d0
+	bcsw	Lidr_out		| newbrk < lo
+	cmpl	i10d_hi,%d0
+	bccw	Lidr_out		| newbrk >= hi (default hi = 0xffffffff -> all)
+	movel	i10d_head,%d0		| slot address = i10d_ring + head * 24
+	moveq	&24,%d1
+	mulsl	%d1,%d0
+	lea	i10d_ring,%a0
+	addal	%d0,%a0
+	movel	%d2,%a0@		| [0] newbrk
+	movel	%a2@(52),%a0@(4)	| [1] p_brkbase
+	movel	%d3,%a0@(8)		| [2] p_brksize before
+	movel	%d6,%a0@(12)		| [3] p_brksize after
+	movel	%a2@(52),%d0		| [4] brkend after = brkbase + brksize_after
+	addl	%d6,%d0
+	movel	%d0,%a0@(16)
+	movel	%d5,%a0@(20)		| [5] return code
+	movel	i10d_head,%d0		| advance head mod 24
+	addql	&1,%d0
+	cmpil	&24,%d0
+	bcss	Lidr_nw
+	moveq	&0,%d0
+Lidr_nw:
+	movel	%d0,i10d_head
+	addql	&1,i10d_n
+	movel	%a2,i10d_proc		| last recorder's proc + u_comm (for context)
+	movel	u+0x1c0,i10d_comm0
+	movel	u+0x1c4,i10d_comm1
+	movel	u+0x1c8,i10d_comm2
+	movel	u+0x1cc,i10d_comm3
+Lidr_out:
+	moveml	%sp@+,%d0-%d1/%a0-%a1
+	rts
+
+	.balign 4
+
+	.data
+	.balign 4
+| The i10d block -- read i10d_magic FIRST; whole block = `kpeek <magic> 157`.
+	.globl	i10d_magic
+i10d_magic:
+	.long	0x49314421		| "I1D!"
+	.globl	i10d_on
+i10d_on:
+	.long	0			| 0 = DORMANT (ships this way).  kpoke 1 to arm the ring.
+	.globl	i10d_n
+i10d_n:
+	.long	0			| total brk calls recorded (the ring holds the last 24)
+	.globl	i10d_head
+i10d_head:
+	.long	0			| next write slot (0..23); if n>24 the oldest is here
+	.globl	i10d_size
+i10d_size:
+	.long	24			| ring capacity (entries)
+	.globl	i10d_stride
+i10d_stride:
+	.long	6			| longs per entry: newbrk,brkbase,pre,post,brkend,ret
+	.globl	i10d_lo
+i10d_lo:
+	.long	0			| band filter: record only newbrk in [lo, hi).  Default all;
+	.globl	i10d_hi			| kpoke lo=0x80011000 hi=0x80020000 to keep only sh's grows
+i10d_hi:
+	.long	0xffffffff
+	.globl	i10d_proc
+i10d_proc:
+	.long	0			| curproc of the last recorded call
+	.globl	i10d_comm0
+i10d_comm0:
+	.long	0			| u_comm, 16 bytes (expect "sh")
+	.globl	i10d_comm1
+i10d_comm1:
+	.long	0
+	.globl	i10d_comm2
+i10d_comm2:
+	.long	0
+	.globl	i10d_comm3
+i10d_comm3:
+	.long	0
+| the ring: 24 entries * 6 longs.  One symbol; the reader indexes it by entry*24 bytes.
+	.globl	i10d_ring
+i10d_ring:
+	.space	576
 	.balign 4			| pad section to a 4-byte multiple (bss placement)

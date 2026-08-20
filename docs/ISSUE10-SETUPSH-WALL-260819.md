@@ -1398,3 +1398,51 @@ its `0x800114B5` marker to the new bloktop, but the segment/brk state at `fa` le
 write with no covering, resolvable page. If instead `i10c_brksize` is large and memory scarce, the
 late grow-failure stands. Either way, `i10c_seg`/`i10c_covered`/`i10c_fa_covered` + `i10c_brksize` read
 the genesis directly, which no wrapper probe could.
+
+## 21. PART ELEVEN — `i10d`, the CPU-independent brk/sbrk ring tracer (dormant; cross-CPU)
+
+User ruling: sh is the SAME binary on 030/040/060, so the desync (arena top `0x800152A0`
+past the break `0x80014FB4`) must be the kernel granting a different brk result per CPU for
+identical requests. `i10d` records a ring of the last 24 brk calls — `{newbrk, p_brkbase,
+p_brksize before, p_brksize after, brkend after, ret}` — so the same probe run on the 040,
+030 and 060 shows whether the 040 **under-grows**.
+
+**Live-path guarantee (both CPUs).** brk is one sysent slot with a single ET_REL reloc, so
+weaken+wrapper binds 100% with no bypass. The 040/060 tracer shares the i10b brk wrapper in
+`src/i10rev040.s` (PART ELEVEN, `i10d_record`); the relink `grow-probe` hard check already
+asserts that edge. The 030 gets a **standalone, generic-68k copy** — `src/i10dtrace030.s` +
+`relink-030-i10d.sh` — that overlays the SAME base kernel (`$AMIX_ROOT/stand/unix`, run
+030-native and unpatched) by the exact `relink-030-dbg.sh` mechanism (weaken brk @ `0x580e8`,
+`ld -r`). Its I1D! block is byte-for-byte the same layout, so `test-tools/i10d.sh` reads all
+three by finding the block via its magic. Built and byte-audited here: the 030 image is
+**fully identical** across rebuilds (no build-id to differ).
+
+**030 staging (answered, not just advised):** `AMIX_ALLOW_UNKNOWN_STOCK=1 sh
+relink-030-i10d.sh` → `build/unix-030-i10d`, boot it with the STOCK 030 loader on a 68030.
+The proc pointer is the `curproc` global (identical on every CPU, no u-area dependency); proc
+offsets p_brkbase@52 / p_brksize@56 are the same on both stock brk prologues (0x580e8 / 0x580bc).
+
+### 21.1 Prediction — ranked
+
+sh's `morecore` extends the break with adaptive **sub-page** increments (512, +256/grow, cap
+~2047), while `addblok` bumps the arena top and writes the sentinel **without** a per-grow
+sbrk. So the arena top runs ahead of the break by design. i10c measured the break at
+`0x80014FB4` — and `p_brksize` is the **unrounded** requested size (the brk body stores
+`new - brkbase` raw, page-rounding only the segment), so brkend is a pure function of sh's
+requests, independent of 2 KiB vs 4 KiB.
+
+- **PRIMARY: the ring is IDENTICAL on 040 and 030** (same `newbrk` → same `brkend`), sh's
+  break reaches `0x80014FB4` on both, and sh writes the marker at `0x800152A0` — **748 bytes
+  past its break** — on both. Then brk is **exonerated**: the difference is the kernel's
+  FAULT-TIME handling of the write-past-break — the 030 demand-grows the segment on the fault,
+  the 040's demand-fill fails (`as_fault`→`segvn`, exactly where i10a/i10c localized it). The
+  4 KiB-rounded segment ends at `round4k(0x80014FB4) = 0x80015000`, still below `0x800152A0`,
+  so the write is past coverage on both — but only the 040 fails to grow it in.
+- **ALTERNATIVE (the ruling's hypothesis): the 040 ring shows a SMALLER `brkend`** than the
+  030 for the same `newbrk` (under-grow: `brkend < newbrk`, or below the 030's grant). Then
+  brk itself under-grows on the 040/4 KiB path — a brk/grow bug, and the fix is there.
+
+The ring reads it directly: line up the 040 and 030 rings entry-by-entry for the identical
+`newbrk` sequence and compare `brkend`. The console dump (`test-tools/i10d.sh` ends by
+kpeek-ing the whole block to `/dev/console`) is the reliable readout; the slice publish is a
+backup.
