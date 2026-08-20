@@ -11,9 +11,11 @@ Guest drivers: [`test-tools/i10bench.sh`](../test-tools/i10bench.sh),
 [`test-tools/i10probe.sh`](../test-tools/i10probe.sh),
 [`test-tools/i10w.sh`](../test-tools/i10w.sh). Probe:
 [`test-tools/shmband.c`](../test-tools/shmband.c).
-**Sections 14 and 15 are the current state of this document**; sections 2, 6, 11 and 12 record
-readings that §14 has since overturned, and are kept because each of them is how the next one was
-reached. Resolution audit: [`test-tools/i10r.sh`](../test-tools/i10r.sh).
+**Sections 14 and 16 are the current state of this document**; §15 is the audit instrument §16
+runs, and sections 2, 6, 11 and 12 record readings that §14 has since overturned, kept because each
+of them is how the next one was reached. Resolution audit driver:
+[`test-tools/i10r.sh`](../test-tools/i10r.sh); its measured run (§16):
+[`test-tools/issue10-i10r-260820.txt`](../test-tools/issue10-i10r-260820.txt).
 
 ## Summary
 
@@ -921,3 +923,233 @@ and byte-identical to both in the same way — so the block addresses `test-tool
 for all three. `relink-040.sh` refuses a build whose user-fault path would call an unbound `i10r_pre` or
 `i10r_post`, in the shape the `i10w_hook`/`i10g_hook` guards already use. **It has not been run on the
 bench yet** — the block ships all-zero and dormant, and no reading in §15 is a measurement.
+
+## 16. PART SIX run — the audit lands on branch 3, and the store dies in `as_fault`
+
+**2026-08-20 · EMU (Amiberry, 68040+MMU, 16 MB, load base `0x07000000`) · kernel
+`68040-260819-43`, the byte-audited build §15 describes.** Raw capture:
+[`test-tools/issue10-i10r-260820.txt`](../test-tools/issue10-i10r-260820.txt) — the prose header plus
+the guest's own log, byte for byte as `test-tools/i10r.sh` published it into slice-5 block 25728. The
+audit was armed with a single `kpoke` of `i10r_watchva`; `i10g_on` and `i10w_on` stayed `0`, so
+**nothing was write-protected** and the fault it latched is the ordinary one the uninstrumented wall
+takes. Pass 1 aimed the exact address (`i10r_famask = 0xFFFFFFFF`, `watchva = 0x800152A0`) and
+latched; pass 2 widened `famask` to `0xFFFFF000` and re-aimed at the page (`watchva = 0x80015000`) and
+latched the identical frame. The wall reproduced byte-for-byte in both passes
+(`/cdrom/install/bin/setup.sh: no space`, `WALL rc=1`), so the instrument does not mask the trigger.
+
+**This is §15's expected reading, confirmed — and it names the branch.** §14 established the mechanism
+from outside the guest (a first-touch write vanishes); §16 rides the fault path itself and reports what
+each stage decided. It also **refines** §14 on one point: the fault does not "return as-if-resolved" —
+it returns a **SIGSEGV** that `sh` survives.
+
+### 16.1 The measurement (I1R!, kept apart from the reading)
+
+```
+i10r_frame   40001f44   fmtvec 7008 (68040 format 7)   proc 4013be00 (the wall's own sh)
+pre_sr       00000008   S bit CLEAR -> a USER fault
+pre_pc       8000250e   one PAST the store (the 040 defers the write-back)
+pre_fa       800152a0   pre_ssw 0401 (ATC set, RW bit CLEAR = write, TM 1 = user data)
+
+  --- the frame the kernel received == the frame the CPU pushed, exactly ---
+pre_w3s      00000081   valid, size long, TM 1        post_w3s  00000081
+pre_w3a      800152a0   the pending store's target    post_w3a  800152a0
+pre_w3d      800114b5   its data = _end+1, the marker  post_w3d 800114b5
+             (WB2/WB1 all zero, both ends)            post_ssw  0401
+
+  --- ptest, the SAME routine the stock classifier branches on ---
+pt_pre       00000400   pt_post 00000400   030-form I (invalid): nothing mapped, before OR after
+mmusr_pre    0          mmusr_post 0       raw 68040 MMUSR: R clear -> page NOT resident
+pte_pre      0          pte_post   0       no leaf PTE, before OR after
+tv_pre       0          tv_post    0       the longword at 800152a0: still 0 -> the marker never landed
+
+  --- the verdict, and what sh is told ---
+branch       00000003   the F_INVAL demand path (5aff6)   dec3 1 (the frame carried a valid WB3)
+ret          0000000b   11 = SIGSEGV        sisig 0000000b (infop->si_signo = 11)
+sicode       00000001   SEGV_MAPERR         siaddr 800152a0
+wbrep_pre    000000c8   wbrep_post 000000c8   wb_d 0  -> wb040_replay NEVER RAN for this fault
+wbfail_d     0   wbsig_d 0   x60sig_d 0     -> ret 11 IS usrxmemflt_orig's own return
+seen_n ~     match_n 1   nest_n 0   alien_n 1(pending)   -- one clean latch, no nesting
+
+  --- the faulting instruction's registers ---
+d2 = 800114b5 (the marker, the store's SOURCE)   a1 = 800152a0 (the store's TARGET)
+-> `move.l %d2,(%a1)` in sh's addblok: source value CORRECT, not fabricated
+```
+
+Every number above is measured. The reading follows.
+
+### 16.2 The corrected mechanism — `as_fault` fails, then the store is dropped
+
+The classifier did everything right. `ptest` reports the page absent (`pt_pre = 0x400`, MMUSR R
+clear), so the stock resolver takes **branch 3**, the `F_INVAL` demand path at `5aff6` — the *correct*
+classification for a first touch of a fresh page, and the normal user page-in route on both CPUs
+(`src/usrxmemflt040-design.md`; `../amix-kernel-analysis/vm-map/040-FAULT-RESOLVER-AUDIT.md`, "Demand
+and stack path"). It then calls `as_fault(p_as, 0x800152a0, 1, F_INVAL, S_WRITE)` — and **that call
+returns an error.** The audit sees the whole shape of the failure in one block:
+
+* `as_fault` mapped **nothing** — `pte_post = 0`, `mmusr_post = 0`, `pt_post = 0x400`.
+* it stored **nothing** — `tv_post = 0`; the marker `0x800114B5` never reached `0x800152A0`.
+* it returned **SIGSEGV** — `ret = 11`, `sisig = 11`, `sicode = 1` (`SEGV_MAPERR`),
+  `siaddr = 0x800152A0`. `wbfail_d = wbsig_d = x60sig_d = 0`, so this is `usrxmemflt_orig`'s **own**
+  return, not a write-back-denial the wrapper substituted (`src/i10rev040.s`, the `i10r_post` note).
+* and the pending store was **dropped as a direct consequence**. The frame carried a valid write-back
+  (`dec3 = 1`, `pre_w3s = 0x81`), but `wb_d = 0`: `wb040_replay` never ran. It never ran because the
+  wrapper skips it on any nonzero resolver return — `src/wb040.s:94` `tstl %d4` / `bnew Lu_done`. The
+  replay tail is reached only for a *resolved* fault; an unresolved one bypasses it, and the 68040
+  does not re-run a faulted write on `rte`. So the marker vanishes.
+
+That is the whole ISSUE-10 setup.sh mechanism in measured form, and it corrects the two readings §14
+could only infer from outside:
+
+```
+first-touch WRITE to a fresh anon page
+  -> ptest: not resident        (MEASURED: pt_pre 0x400, mmusr 0)
+  -> classifier: branch 3, as_fault(F_INVAL, S_WRITE)   (MEASURED: branch 3)
+  -> as_fault FAILS             (MEASURED: ret 11, pte_post 0, tv_post 0)
+  -> usrxmemflt returns SIGSEGV (MEASURED: sisig 11, SEGV_MAPERR, siaddr 800152a0)
+  -> wrapper skips wb040_replay (MEASURED: wb_d 0 with dec3 1)   <- the store is dropped HERE
+  -> the marker _end+1 never lands; the coalescing walk later reads 0, follows NULL to VA 0,
+     reads the ILLEGAL-at-null sentinel 0x4AFC0000, and walls on btst at 0x4AFC0003 (§14.1)
+```
+
+The store does not "vanish into a silently resolved fault." It vanishes because the demand **write**
+fault *failed*, and the failure verdict is what makes the wrapper skip the replay.
+
+### 16.3 The `hat_sdtalloc` hypothesis — killed by source
+
+The strong hypothesis was: the same session's `hat_sdtalloc: not enough contiguous memory for segment
+tables` (pid 8, an earlier boot) is the F_INVAL failure — `as_fault → segvn_fault → hat_pteload →
+hat_sdtalloc` failing to allocate a table for the newly grown range. Traced against source, **it is
+killed**, three independent ways:
+
+1. **The fatal page needs no table at all — geometry.** The 040 HAT walk is
+   `A = (va>>25)&0x7f`, `B = (va>>18)&0x7f`, `C = (va>>12)&0x3f`
+   (`../amix-kernel-analysis/vm-map/HAT-LOAD-CONTRACT.md`, "040 tree geometry"). For the prior arena
+   top `0x80014AA0` and the fatal marker `0x800152A0`:
+
+   | VA | A (`>>25`) | B (`>>18`) | C (`>>12 &0x3f`) | leaf table |
+   |---|---:|---:|---:|---|
+   | `0x80014AA0` (prior top) | 64 | 0 | 20 | (A=64,B=0) |
+   | `0x800152A0` (fatal) | 64 | 0 | 21 | (A=64,B=0) |
+
+   Both live in the **same** leaf page-table `(A=64, B=0)`, which spans `[0x80000000, 0x80040000)` and
+   already backs `sh`'s text at `0x80000000`, its data/heap, and the prior arena pages (§14.3's grow 1
+   `0x80012688` and grow 2 `0x80014530` are `C=18` and `C=20` in this **same** table). The fatal write
+   fault therefore allocates **no leaf table and no pointer table** — it writes a fresh PTE into an
+   existing table. No allocation site is on its path, so no allocation can fail on it. The grow does
+   **not** cross a segment-table span boundary; the sub-hypothesis in the investigation ask is
+   answered *no*.
+
+2. **The native 040 load path does not call `hat_sdtalloc` anyway.** `src/hat040.s:199-212` records
+   that the pointer-table and leaf allocations were rewritten to use `hat_ptalloc`/`page_get`,
+   *replacing* "the old `hat_sdtalloc(16) + round-up-to-512 + manual-zero dance" — the very
+   `hat_sdtalloc` calls it names as "the bulk of the ~26-page/exec kernel-heap drain." `hat_sdtalloc`
+   now survives only on the **legacy** `hat_growsdt` path, whose active callers are `hat_map`,
+   `hat_exec_orig`, and `hat_swapout` (`../amix-kernel-analysis/vm-map/HAT-GROWSDT-AUDIT.md`, "Active
+   call sites"), i.e. segment-creation and exec-time reservation — never the anon demand-zero
+   `hat_pteload`.
+
+3. **When `hat_sdtalloc` does fail it only warns and returns — ISSUE-39.** `src/patch_sdtfail.py` and
+   `src/kdbg040.s:75-115` retarget its single `cmn_err` to a counter (`hat_sdtfail_n`) and leave "its
+   stack, arguments and return path untouched." A nonzero count means an *exec/segment-creation*
+   allocation came up short; it is not a demand-fault error surfacing as `as_fault(F_INVAL)` failure.
+
+So the `hat_sdtalloc` warning and the setup.sh wall are two different events. The wall's F_INVAL
+failure is **not** a segment-table allocation failure. This also disposes of the segment-table-boundary
+reading of the investigation's ask 2.
+
+### 16.4 What actually fails — the WRITE demand-fill, not the table
+
+If not allocation, why does `as_fault(F_INVAL, S_WRITE)` fail here at all? The decisive contrast is
+inside §14's own record: **five ticks later the walk's own READ fault on the same page (fa
+`0x800152A3`, `rw=R`) maps and zero-fills it** (§14.5, points 3–4). The page is perfectly mappable.
+Only the WRITE variant fails. The two faults are the same class (F_INVAL demand, branch 3) on the same
+absent page; they differ **only in `rw`** — `S_WRITE` for the marker store, `S_READ` for the `btst`.
+
+That puts the defect in `segvn_fault`'s handling of a first-touch **write** demand-fill, not in HAT
+table lifetime. `segvn_fault` checks access permission against `svd->prot`/`vpage->vp_prot` before it
+brings a page in, and chooses the anon/zero-fill path from that
+(`../amix-kernel-analysis/vm-map/SVR4-VM-FAULT-LIFECYCLE.md`, "segvn_fault" / "segvn_faultpage"). A
+write that the segment's per-page protection does not currently admit, or an anon/`vpage` slot the brk
+growth did not extend to cover the new page, would fail the write while the read — which needs no anon
+slot and no write permission — succeeds. The `sicode = 1` (`SEGV_MAPERR`, "address not mapped") rather
+than `SEGV_ACCERR` says the resolver reported it as *nothing mapped*, consistent with a demand-fill
+that produced no page rather than a clean protection refusal.
+
+**This is not universal**, which the reproducer proves by booting and running many processes: ordinary
+first-touch anon writes work. It is specific to a **deep brk grow** — which matches §3's sharp
+34 KiB/38 KiB threshold (arena *growth distance*, not file size) and the ISSUE-11/ISSUE-42 note in
+`src/wb040.s` that "the first real-hardware `Lwb_fail` landing came from a WB aimed at a page
+`as_fault` never touched." The exact `segvn` sub-branch is **not** something i10r captures — by design,
+it records the classifier branch that *chooses* `as_fault`'s arguments, not `as_fault`'s own
+`(addr, type, rw)` or `segvn`'s return path (§15, "What it does not do"). §15 stated the rule: *if the
+audit lands on branch 3, `as_fault`'s arguments become worth the intrusion.* It landed on branch 3.
+The next instrument wraps `as_fault`/`segvn_fault` for this proc and VA and records `rw`, the
+`faultcode_t` returned, and which `segvn_faultpage` sub-path failed (protection check vs anon-map
+index vs `anon_zero` allocation).
+
+### 16.5 The SIGSEGV that `sh` survives — reconciling `ret = 11` with "sh sails on"
+
+§14 read the fatal fault as "no signal is delivered: `sh` simply continues." i10r reads the resolver's
+**own output** and it is a signal: `sisig = 11`, `SEGV_MAPERR`, `siaddr = 0x800152A0`. The delivery
+contract is documented in `src/wb040.s:361-374` (`Lu_siginfo`), read from the stock binary: `u_trap`
+at `0x5a5a2` selects its `/proc` fault class from `infop->si_signo` and **`trapsig` queues nothing
+only while `si_signo == 0`.** Here `si_signo = 11 ≠ 0`, so this is a **real, queued SIGSEGV**, not a
+silent as-if-resolved return. §14's "no signal" was the emulator watch's inference from memory and
+frames; i10r shows the kernel did reach a signal verdict.
+
+Yet `sh` continues to the later wall in the *same* run (both passes ended in the `no space` flood, not
+a SIGSEGV death; `proc = 0x4013BE00` is the same `sh` throughout). So "sh sails on" is **literally
+true, and it is a survived signal, not a resolved fault.** The most likely reason `sh` survives is its
+own doing: Bourne `sh` catches memory faults to grow its arena — the same machinery §2 already
+attributes the flood's closing `no space` to ("catch-and-retry-after-`sbrk`"). A caught SIGSEGV whose
+handler grows and resumes at the deferred-write-back PC (`0x8000250E`, already past the store) loses
+the store exactly as measured and continues the parse — which is the whole corruption.
+
+**What i10r cannot decide, and the exact next latch.** Its hooks end at the wrapper exit; it does not
+observe `trapsig`/`psig`/`sendsig` or `sh`'s signal disposition. So it cannot separate (a) *delivered,
+caught by `sh`, resumed* from the far less likely (b) *queued but never acted on (a delivery-path
+defect)*. To close it: hook the signal path — `psig`/`sendsig`, or `u_trap` just past `0x5a5a2` —
+gated on `curproc == 0x4013BE00` and `signo == 11`, and latch (i) whether signal 11 is actually
+delivered and the PC it is delivered to, and (ii) `u.u_signal[SIGSEGV-1]` for that proc (`SIG_DFL` vs a
+handler). A handler confirms (a); `SIG_DFL` with the process surviving would prove (b).
+
+### 16.6 Fix direction — ranked
+
+The fix is **investigation-only** here; this section is the ranked proposal, not an implementation. It
+is written against what §16 measured (branch 3, `as_fault(F_INVAL, S_WRITE)` fails, replay skipped,
+store dropped) and what §16 killed (`hat_sdtalloc`).
+
+1. **(b) — the real cure: `segvn`/`as_fault` write demand-fill on a freshly grown anon page.** This is
+   where the fault actually dies. **Prerequisite measurement first:** wrap `as_fault`/`segvn_fault`
+   for this proc+VA (§16.4) to name the exact `segvn_faultpage` sub-path that fails on `S_WRITE` and
+   succeeds on `S_READ` — protection (`svd->prot`/`vpage`), anon-map/`vpage` coverage the brk grow did
+   not extend, or `anon_zero`. Only then is the site known. **Blast radius: high** — it is the hot
+   user fault path; a wrong change here is a boot regression (patch history already records withdrawn
+   broad fault-length flips, `SVR4-VM-FAULT-LIFECYCLE.md`). **Proof on this reproducer:** rebuild,
+   `sh -n /cdrom/install/bin/setup.sh` with the wall gone; a first-touch-write PoC (write one byte to
+   each page of a large fresh `sbrk` region and read it back) passing; and no boot regression on 040
+   and 060.
+
+2. **(d) — mitigation, not a cure: make the dropped store loud.** Independent of the root cause, §16
+   shows an unresolved WRITE-class fault that carries a valid pending write-back (`dec3 = 1`) returns a
+   *survivable* SIGSEGV and silently drops the store (`wb_d = 0`) — the "lost-store-over-panic policy"
+   of `wb040_replay` (`040-FAULT-RESOLVER-AUDIT.md`) biting a case it was not meant for. A guard that
+   refuses to skip a **valid** pending WB on an unresolved user write — converting it to a hard,
+   named, delivered fault (or a loud counter) rather than a survivable one — turns a silent data-loss
+   into a diagnosable stop. **Blast radius: low–medium** (one wrapper site). It does not cure the
+   bug; it stops it being invisible. Useful as a safety net while (b) is developed.
+
+3. **(a) HAT `sdt`-allocation fix — NOT indicated for this bug.** Killed in §16.3: the fatal page
+   allocates no table, and the native path does not call `hat_sdtalloc`. (The `hat_sdtalloc`/
+   `hat_sdtfree` 2 KiB/4 KiB mismatch remains a real *separate* defect — `HAT-GROWSDT-AUDIT.md`,
+   `HAT-SDT-ALLOC-FREE-POLICY.md` — worth its own fix on the `hat_map`/`hat_exec` lane, but it is not
+   the setup.sh wall.)
+
+4. **(c) 040 override-lane `pteload` fix — NOT indicated for this bug**, for the same reason as (a):
+   the fatal page's leaf table exists, so `hat_pteload` is not the failing stage. Listed to record it
+   was considered and excluded by the geometry, not skipped.
+
+**Net.** The setup.sh wall is one kernel defect on the 040 lane — a first-touch **write** demand-fill
+that `as_fault` cannot resolve — and the fix is candidate (b), gated on one more measurement that names
+the `segvn` sub-branch. Candidate (d) is a cheap safety net. Candidates (a) and (c) are measured off
+the path.
