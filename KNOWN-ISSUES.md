@@ -5003,6 +5003,63 @@ i.e. a targeted write at a fixed address. `smu_freeset_n` ≈ 3540 (the coherent
 **If `smu_imposs_n` is large, the reframe is wrong** and the free-list accounting is systemically
 broken, which would send this back to the VM after all.
 
+### Fourth metal read 2026-08-21 — the census fires, and it RETRACTS the previous entry
+
+`s3ran = "CEN!"`, `freeset_n = 3688`, `imposs_n = 2`, `imposs_i = 3541`,
+`imposs_pp = 0x40073DEC`, and stage 1 unchanged except `pflags` = **`0xFF000002`** where four
+earlier boots read `0x33000002`.
+
+**Census mask audited first, and it is correct.** The shipped encoding is
+`moveq #0,%d1 / moveb %a0@,%d1 / btst #5,%d1` — bit 5 of byte 0, the same bit `page_free`'s own
+assert tests (`btst #5,%a2@` ↔ `pp->p_free == 0`). `p_lock` is bit **7** and the census does not
+read it. So `freeset_n = 3688` is a real measurement, not a repeat of the stage-2 label bug.
+
+#### The three facts reconciled
+
+1. **The adjacency is not a corruption footprint.** A segmap slot is MAXBSIZE = 8192 = exactly
+   **two** 4 KiB pages, so frames 3541 and 3542 *are* the 2-page cluster of one `getpage` for slot
+   0. Nothing about that pairing needs a writer to explain it. (Correcting the premise as well:
+   this island latches the **first** hit — `tstl smu_imposs_pp / bnew` skips once set — so
+   `imposs_pp` is 3541, and 3542 is the second.)
+2. **`freeset_n = 3688` is the one that matters.** Every struct has `p_free` set, while the
+   freelist walk and `freemem` independently agree on 3539. **149 pages are off the free list with
+   `p_free` still set.** This page is not special — it is one of 149, and merely the first whose
+   `p_free` was ever checked in a fatal position.
+3. **`0xFF` is not a page-code value.** `page_free` leaves `0x20`, `page_get`'s cascade leaves
+   `0x02`. `0xFF` is every bit set. The address held across five boots; the value did not.
+
+#### Retraction
+
+**The previous section's conclusion — "a deterministic write to a fixed page-struct address" — is
+withdrawn.** It was built on stage 1 reproducing at one address, and the census shows the anomaly
+is population-wide. The address determinism is nothing more than boot determinism: segmap slot 0
+is always the first slot faulted, so it is always the first page where a stale `p_free` can kill.
+
+That reopens the question the previous section thought it had closed, and it reopens it against a
+structural proof that `page_get`'s cascade cannot be skipped. Two possibilities remain, and they
+are distinguished by measurement, not argument: either those 149 pages never went through
+`page_get`, or the cascade's writes are not landing in the page array.
+
+#### Stage 4: measure the population instead of reasoning about it
+
+One counter per flag bit across every struct, plus counts of the two byte-0 values that mean
+something — `0x20` (a clean free page, what `page_free` leaves) and `0xFF`.
+
+The cascade clears bits 7, 5, 4, 2 and 0 on every page it hands out, so:
+
+* `smu_bitpop[7]` (**p_lock**) large → the cascade did not take, and the defect is in the write
+  path to the page array, not in the page logic;
+* `smu_bitpop[7]` ≈ 0 with `bitpop[5]` = 3688 → the cascade ran and something set `p_free` back on
+  149 pages afterwards;
+* `smu_b0_20` ≈ 3539 with 149 others → the free population is clean and the allocated one is not;
+* `smu_b0_ff` large → a fill, and the story is memory corruption after all.
+
+**Deliberately not yet built: the standalone write-watch.** It was the agreed next step while the
+target looked like one fixed address. A watch on one address is the wrong instrument for an
+anomaly spanning 149 of them, and it would cost a boot to learn that. The histogram costs no new
+machinery and narrows the target first; if it comes back "targeted after all", the watch follows
+with a much better address to watch.
+
 ## ⏳ ISSUE-50 (2026-08-20, DIAGNOSED — deliberately not fixed in this pass): the panic backtrace stops after one frame because its frame-pointer window is 64 KiB wide
 
 > **Ledger: OPEN, diagnosed, fix designed but not implemented.** Recorded now because it has cost

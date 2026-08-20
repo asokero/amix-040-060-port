@@ -263,6 +263,30 @@ Lsmu_cen:
 	bccw	Lsmu_go			| reached epages
 	moveq	&0,%d1
 	moveb	%a0@,%d1		| the flag byte
+| --- STAGE 4 (2026-08-21): the POPULATION, over every struct, not just free ones.
+|     freeset_n == npages refuted the single-target story; measure the distribution
+|     instead of reasoning about it.  One counter per flag bit, plus the two exact
+|     byte values that mean something: 0x20 = a clean free page (what page_free
+|     leaves), 0xFF = every bit set, which nothing in the page code writes.
+	lea	smu_bitpop,%a3
+	moveq	&0,%d4
+Lsmu_bp:
+	btst	%d4,%d1
+	beqw	Lsmu_bpn
+	addql	&1,%a3@(0,%d4:l:4)
+Lsmu_bpn:
+	addql	&1,%d4
+	moveq	&8,%d5
+	cmpl	%d5,%d4
+	bnew	Lsmu_bp
+	cmpib	&0xff,%d1
+	bnew	Lsmu_v1
+	addql	&1,smu_b0_ff
+Lsmu_v1:
+	cmpib	&0x20,%d1
+	bnew	Lsmu_v2
+	addql	&1,smu_b0_20
+Lsmu_v2:
 	btst	&5,%d1			| p_free?
 	beqw	Lsmu_cnx
 	addql	&1,smu_freeset_n	| should track freemem + cachelist
@@ -370,6 +394,19 @@ smu_poff:
 | event at a fixed address, not a systemic accounting failure.
 	.globl	smu_s3ran
 smu_s3ran:
+	.long	0
+| Population of each flag bit across the whole array, bit 0 (p_pagein) first,
+| bit 7 (p_lock) last.  page_get's cascade clears bits 7,5,4,2,0 on every page it
+| hands out, so a large bit-7 or bit-2 population means the cascade did not take.
+	.globl	smu_bitpop
+smu_bitpop:
+	.long	0,0,0,0,0,0,0,0
+| Exact byte-0 values worth counting: 0x20 is a clean free page, 0xFF is all bits.
+	.globl	smu_b0_ff
+smu_b0_ff:
+	.long	0
+	.globl	smu_b0_20
+smu_b0_20:
 	.long	0
 	.globl	smu_freeset_n
 smu_freeset_n:
