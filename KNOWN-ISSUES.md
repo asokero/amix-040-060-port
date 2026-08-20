@@ -4499,3 +4499,73 @@ by three independently named asserts elsewhere in the same file (`pp->p_keepcnt 
 the bitfield unit is read as two bytes rather than four. **Which of the four is non-zero is
 still unmeasured** — that is a runtime fact, and it is exactly what the guard lets the next
 boot print alongside the backtrace.
+
+## ⚠ ISSUE-47 (2026-08-20, RECORDED NOT FIXED): `config()`'s memory-sizing fallback is `0x07000000`-shaped and silently wrong at load base `0x08000000`
+
+> **Ledger: OPEN, deliberately not fixed in this pass.** Latent: the path has not been
+> observed to run. Recorded now because it is cheap to record and expensive to rediscover,
+> and because it fails in a shape that would be mistaken for a different bug entirely.
+
+### What it is
+
+`config()` (`0x18f5c`) seeds `MAINSTORE = end` / `VSIZOFMEM = 0` and then runs a fixpoint over
+`bootinfo.memory[]` (16 records of 32 bytes; `start` at +`0x14`, `end` at +`0x18`, base
+`bootinfo+0x440`, loop `0x19174`–`0x191ce`): it lowers `MAINSTORE` through any record that
+contains it, and extends `VSIZOFMEM` through any record that contains the current top,
+repeating while anything changed. That part is base-agnostic and derives the right answer at
+either `0x07000000` or `0x08000000`.
+
+Immediately after it there is a fallback, taken **only if `VSIZOFMEM` is still zero** — i.e.
+only if `bootinfo.memory[]` yielded nothing usable:
+
+```
+191d2:  tstl  VSIZOFMEM / bnew 19210   ; only when nothing was derived
+191dc:  movel #0x07000000,%d5          ; hardcoded
+191e2:  cmpil #end,%d5 / bccw 19210    ; only if 0x07000000 < end
+191ec:  movel #end,%d5
+191f2:  andil #0xF7C00000,%d5          ; round down -- this mask CLEARS bit 27
+191f8:  movel %d5,MAINSTORE
+191fe:  movel #0x08000000,%d5
+19204:  subl  MAINSTORE,%d5
+1920a:  movel %d5,VSIZOFMEM            ; VSIZOFMEM = 0x08000000 - MAINSTORE
+```
+
+It encodes one 1991 assumption: *the kernel lives in the A3000 motherboard-RAM window
+`[0x07000000, 0x08000000)`*. The mask `0xF7C00000` keeps bits 31–28 and 26–22 and clears
+**bit 27** — the `0x08000000` bit — and the terminus is the literal `0x08000000`.
+
+| kernel load base | `end` | `MAINSTORE = end & 0xF7C00000` | `VSIZOFMEM = 0x08000000 - MAINSTORE` |
+|---|---|---|---|
+| `0x07000000` (A3000 motherboard RAM) | `0x0710B930` | `0x07000000` ✔ | 16 MiB ✔ |
+| **`0x08000000` (an accelerator with its own RAM)** | `0x0810B930` | **`0x00000000`** | **`0x08000000` = 128 MiB** |
+
+At `0x08000000` the fallback declares main memory to be 128 MiB starting at zero and sizes the
+page-frame database for `[0, 0x08000000)` — which excludes **every byte of the machine's actual
+RAM**. `maxclick = btopr(MAINSTORE) + physmem` then covers a range no real page is in, and the
+first page handed to the allocator is outside `[pages, epages)`.
+
+### Why it is worth recording rather than fixing today
+
+The failure it produces is not obviously a memory-map failure. It is
+`assertion failed: pp >= pages && pp < epages, file: vm_page.c, line: 622` — a page-allocator
+assertion, in a subsystem that has nothing wrong with it. Anybody meeting that on a machine
+whose `bootinfo.memory[]` happened to arrive empty would start in the page allocator and stay
+there.
+
+**Inference, not measurement:** the 68040 boots on an accelerator card at `0x08000000` did *not*
+take this path, because the panic they produced is the held-page `cmn_err(CE_PANIC, "page_free")`
+at `0xafb00` (ISSUE-46), not the line-622 assertion this would cause. That is an argument from
+which panic fired, not a reading of `MAINSTORE`; the fallback's condition (`VSIZOFMEM` still zero
+after the fixpoint) has not been observed either way, and `MAINSTORE`/`VSIZOFMEM` have not been
+read out of a running kernel on that machine.
+
+### What a fix would have to do
+
+Both constants have to come from the memlist rather than from the 1991 assumption: the round-down
+mask must not clear a bit that a legal load base uses, and the terminus must be the top of the
+region the kernel was loaded into. The obvious minimal shape — mask with something that preserves
+bit 27, and take the terminus from the record `end` already walked — is a `config040.s` job
+(`config_orig` is already exposed at `0x18f5c` and the unit already wraps it for the ISSUE-21
+cache handoff), so the wiring cost is near zero. It is left undone here deliberately: it changes
+the memory sizing of every kernel this port builds, including the 030-based lines that boot from
+motherboard RAM today, and that is a change that wants its own A/B rather than a ride-along.
