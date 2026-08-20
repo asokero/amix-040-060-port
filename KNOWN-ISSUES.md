@@ -4945,6 +4945,64 @@ zero.
 the two previous boots, and `pgz_hash_n` = 71 after 2. Both counts vary run to run exactly as an
 uninitialised-DRAM story predicts, and the boot gets past `kvm_init` every time.
 
+### Third metal read 2026-08-21 — stage 2 answered, and it inverts the hypothesis
+
+`s2ran = "RAN!"` ✓, `oncache = 0`, `onfree = 0`, cache list empty (`cachesz = 0`, walk 0),
+freelist walk **3539** == `freemem` **3539** — the walk is internally consistent and the freelist
+is coherent at 3539 of 3688 frames. **The page is on neither list**: properly unlinked, correctly
+excluded from a healthy freelist, in the hash with the right identity, mid-pagein, held twice —
+with `p_free` stale. The third pre-registered outcome, exactly.
+
+That should have made this "find the acquisition path that forgot to clear `p_free`". It is not,
+and the audit is what says so.
+
+#### The 040 lane is exonerated for this, by a complete diff rather than by inspection
+
+A byte-for-byte diff of the built kernel against the stock image across `vm_page.c`, `seg_map.c`
+and `s5getapage` returns **44 changed runs, and every single one is a 2 KiB→4 KiB constant
+conversion** (`07ff`→`0fff`, `0800`→`1000`, `f8`→`f0`, `moveq #11`→`#12`) plus the two documented
+`cb_release` hooks (`page_free` `0xafb08`, `free_vp_pages` `0xafd98`). **Nothing in the port
+touches the flag code.** `patch_cb_release.py`'s `free_vp_pages` hook was separately cleared last
+round (the following instruction is a `btst`, which sets its own condition codes).
+
+#### And the stock flag code is correct — checked structurally, not by reading
+
+* **`page_get`'s cascade is unskippable.** The re-init at `0xb023c`–`0xb0278` (`p_age = p_nc =
+  p_mod = p_free = 0; p_pagein = p_intrans = p_lock = 0; p_ref = 1; p_keepcnt = 1`) sits in the
+  `dbf` loop, and the highest branch target anywhere in that loop body is `0xb022c` — **below the
+  cascade**. Every iteration falls through it. No page leaves `page_get` with `p_free` set.
+* **`page_unfree`** (`0xaff3c`) clears `p_free` by the same idiom, and it is what `page_reclaim`
+  uses.
+* **`page_enter`** (`0xaf87e`) is `page_exists` + `page_hashin` and touches no flags — correctly,
+  since its callers acquire through `page_get`. Its twelve call sites include one in the port's
+  own `hat_dup040.s`, which was checked: it takes its page from `page_get(4096,0)` first.
+
+#### The reframe
+
+There are exactly **two** instructions in the kernel that set `p_free`: `orib #32,%a2@` in
+`page_free` (`0xafb3a`) and in `free_vp_pages` (`0xafe04`). Both are guarded by assertions that
+this page violates — `page_free` by the four held-page tests (ISSUE-48), `free_vp_pages` by
+`p_free == 0`, `p_intrans == 0`, `p_keepcnt == 0` (lines 753–755). **Had either run on this page
+it would have produced a different panic, and it did not.**
+
+So `p_free` was **not left set by a missing clear. It was SET, after the page was legitimately
+acquired, by something that is not the page code.** Combined with stage 1 reproducing byte-identically
+across four boots — same frame 3542, same VA `0x40440000`, same flag word `0x33000002` — this is a
+**deterministic write to a fixed page-struct address** (`0x40073E28`), not a logic error and not a
+race. That is a different class of bug from the one this entry started with, and it puts it in the
+neighbourhood of the port's ISSUE-10 family (fixed-address poisoning) rather than the VM's.
+
+#### Stage 3: how many pages are in the impossible state
+
+One bounded pass over `pages..epages` counting flag bytes. `smu_freeset_n` should track
+`freemem` + cache list; `smu_imposs_n` counts pages that are **both free and in transit**, with
+the first one latched.
+
+**Predicted:** `smu_imposs_n == 1` and `smu_imposs_pp == 0x40073E28` — exactly one page, ours,
+i.e. a targeted write at a fixed address. `smu_freeset_n` ≈ 3540 (the coherent 3539 plus ours).
+**If `smu_imposs_n` is large, the reframe is wrong** and the free-list accounting is systemically
+broken, which would send this back to the VM after all.
+
 ## ⏳ ISSUE-50 (2026-08-20, DIAGNOSED — deliberately not fixed in this pass): the panic backtrace stops after one frame because its frame-pointer window is 64 KiB wide
 
 > **Ledger: OPEN, diagnosed, fix designed but not implemented.** Recorded now because it has cost
