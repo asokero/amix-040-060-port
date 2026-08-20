@@ -1314,3 +1314,46 @@ i10r's `SEGV_MAPERR`:
 The field that forks the reading is **`i10a_brkend` vs `0x800152A0`**, then **`i10a_seg`** and
 **`i10a_ret`**. If instead `i10a_ret = 0` with a covering seg, the latched fault was an innocent
 resolved write and the exact-address pass 2 (`test-tools/i10a.sh`) re-aims at `0x800152A0`.
+
+## 19. PART NINE — `i10b` grow-failure probe, and the landable drop-warning safety net
+
+Two additions on top of §18. **Neither `i10b` result is measured yet** (the bench run is next);
+the safety net is a report-only defensive change meant to land.
+
+### 19.1 `i10b` — confirming the grow fails at `brk` (source-traced, prediction only)
+
+§18 placed the write's refusal in `as_fault` (no covering segment → `FC_NOMAP`). `i10b`
+(`src/i10rev040.s` PART NINE) confirms the step before it: the data-segment grow itself. It wraps
+`brk` and latches the **first brk whose grow fails** — return non-zero AND the requested break above
+the current break end (the only case that reaches `as_map`) — recording the requested new break,
+`p_brkbase`/`p_brksize` before and after, `brk`'s return, and — reusing the ISSUE-39 island —
+`hat_sdtfail_n` before/after and `availrmem`/`freemem` (via `i39_availrmem_p`/`i39_freemem_p`).
+
+**Live-path guarantee (the i10a lesson made airtight).** The kernel is `ET_REL`, so every
+cross-reference is a relocation resolved at relink. `brk` (`0x580e8`) has **exactly one** reference
+in the whole image — the sysent dispatch slot (reloc at `0x69d4`) — so `--weaken-symbol brk` plus a
+strong wrapper re-binds that single slot and intercepts **100 %** of `brk` syscalls, with no other
+call path to bypass it. The relink hard check asserts the strong `brk` moved off `0x580e8` and
+`brk_orig` still points at it. This is stronger than the `as_fault` case (many callers); `i10b` cannot
+be off the path.
+
+**Prediction (ranked in §18.3, restated for the direct probe):** `i10b_ret = 12` (`ENOMEM`),
+`i10b_brksize_post == i10b_brksize_pre` (the break not advanced), `i10b_brkend_pre < 0x800152A0` (the
+break never covered the write), and — the key confirmation — `i10b_sdtfail_post > i10b_sdtfail_pre`
+(hat_sdtalloc's "not enough contiguous memory for segment tables" path fired for this grow) with
+`i10b_availrmem`/`i10b_freemem` showing the shortfall. If `sdtfail` does **not** move, the grow failed
+elsewhere in `as_map`/anon reservation, which redirects the fix but still confirms the grow-failure
+root.
+
+### 19.2 The drop-warning safety net (`wbf_dropwarn`) — landable, report-only
+
+Independent of the cure, this names the whole bug **class**. At both replay-skip sites in
+`src/wb040.s` (`usrxmemflt` and `krnxmemflt`, where an unresolved fault, `d4 != 0`, skips
+`wb040_replay`), when the 68040 frame still carries a **valid** pending write-back (WB3S bit 7),
+`wbf_dropwarn` emits a `cmn_err` level-2 console NOTICE — `unresolved fault dropped a pending
+write-back: ctx=%d addr=%x data=%x pc=%x` (ctx 1 = user, 2 = kernel; addr = WB3A, data = WB3D, pc =
+the faulting PC) — and increments `wbf_dropped_n`. It is **rate-limited** by `wbf_drop_max` (default 8):
+count always, print only the first few, so the wall's flood cannot bury the console. It does **not**
+change the outcome (the fault still signals and the replay is still skipped — the cure is separate).
+This turns the silent first-touch-write data loss into a named, counted, attributable event on
+emulator and real silicon; `wbf_dropped_n` is readable in the `WBF!` block via status-facts.

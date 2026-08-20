@@ -348,6 +348,8 @@ m68k-linux-gnu-objcopy \
 	--add-symbol segvn_faultpage_orig=.text:0xac01a,function,global \
 	--weaken-symbol as_fault \
 	--add-symbol as_fault_orig=.text:0xae108,function,global \
+	--weaken-symbol brk \
+	--add-symbol brk_orig=.text:0x580e8,function,global \
 	--weaken-symbol krnxmemflt \
 	--add-symbol krnxmemflt_stock=.text:0x5b140,function,global \
 	--weaken-symbol segu_get \
@@ -585,6 +587,28 @@ if m68k-linux-gnu-nm "$OUT" | grep -E ' U as_segat$' >/dev/null 2>&1; then
 	echo "[FAIL] as_segat still UND -> the i10a lookup would call address 0"; exit 1
 fi
 echo "[OK] ISSUE-10 as_fault-audit edge bound: as_fault (i10a @0x$AFADDR) -> as_fault_orig @0x$AFOADDR, as_segat resolved."
+
+# HARD CHECK (2026-08-20, ISSUE-10 grow-failure probe PART NINE): i10rev040.o's i10b
+# wrapper OWNS the strong brk and CALLS brk_orig (the stock body at 0x580e8).  brk has a
+# SINGLE reference in the whole ET_REL image -- the sysent dispatch slot -- so taking the
+# symbol is what puts the probe on the live syscall path; if the wrapper did not take it
+# (brk still 0x580e8) the probe is dead, and if brk_orig is unbound the wrapper's jsr goes
+# to address 0 on the first brk of the boot.  Assert both.
+BKADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="brk" && $2=="T" {print $1}')
+BKOADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="brk_orig" && $2=="T" {print $1}')
+if [ -z "$BKADDR" ]; then
+	echo "[FAIL] brk is not a global T -> the i10b wrapper is unbound"; exit 1
+fi
+if [ "$BKADDR" = "000580e8" ]; then
+	echo "[FAIL] strong brk is still the stock body 0x580e8 -> i10b wrapper did not take the symbol"; exit 1
+fi
+if [ -z "$BKOADDR" ] || [ "$BKOADDR" != "000580e8" ]; then
+	echo "[FAIL] brk_orig missing or not at 0x580e8 (nm: '$BKOADDR') -> the i10b call target is wrong"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U brk_orig$' >/dev/null 2>&1; then
+	echo "[FAIL] brk_orig still UND -> the i10b jsr would go to address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 grow-probe edge bound: brk (i10b @0x$BKADDR) -> brk_orig @0x$BKOADDR."
 
 # HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
 # remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired

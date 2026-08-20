@@ -4063,3 +4063,194 @@ i10a_a_segs:
 i10a_a_seglast:
 	.long	0			| as->a_seglast (@8, the lookup cache)
 	.balign 4			| pad section to a 4-byte multiple (bss placement)
+
+| ===========================================================================
+| PART NINE -- i10b: the GROW-FAILURE CONFIRMATION PROBE (2026-08-20).
+|
+| WHAT THIS CONFIRMS.  i10s exonerated the per-page check; i10a placed the refusal in
+| as_fault (as_segat finds no covering segment -> FC_NOMAP).  The synthesis is that the
+| arena grow itself fails one step earlier: brk -> as_map -> hat_map -> hat_growsdt ->
+| hat_sdtalloc "not enough contiguous memory for segment tables", the 040 4 KiB-page
+| pressure, so the data segment is never extended and the later write to it finds no
+| segment.  sh's own "no space" is setbrk reporting that brk() returned an error.  This
+| probe turns that synthesis into a line-level reading: it catches the FIRST brk whose
+| grow FAILS and records, at that instant, brk's own numbers and the contiguous-memory
+| shortfall the ISSUE-39 counters already track.
+|
+| WHY A brk WRAPPER IS GUARANTEED ON THE LIVE PATH (the i10a lesson).  The kernel is
+| ET_REL: every cross-reference is a relocation resolved at relink, not a hard-coded
+| address.  brk (0x580e8) has EXACTLY ONE reference in the whole image -- the sysent
+| dispatch slot (reloc at 0x69d4) -- so weakening brk and providing a strong wrapper
+| re-binds that one slot and intercepts 100% of brk syscalls, with no other call path to
+| bypass it.  (Contrast as_fault, which has many callers.)  The relink hard check asserts
+| the strong brk moved off 0x580e8 and brk_orig still points at it.
+|
+| HOW IT DECIDES "the grow failed".  From the stock brk body: a grow calls as_map
+| (0x5819c) and, if as_map returns non-zero, brk returns that errno WITHOUT advancing
+| p_brksize (0x581ba-0x581c6); on success it sets p_brksize (0x581f8).  So this wrapper
+| calls brk_orig, and latches the first call that (a) returned non-zero AND (b) was a
+| GROW -- the requested new break is above the current break end (p_brkbase + p_brksize),
+| the only case that reaches as_map.  That is precisely "an as_map grow that failed".
+|
+| WHAT IT RECORDS at the failing grow: the requested new break, p_brkbase, p_brksize
+| before and after (equal = not advanced), the current break end, brk's return (the
+| as_map errno), curproc/u_comm/p_as, and -- reusing the ISSUE-39 island -- hat_sdtfail_n
+| before and after (a non-zero delta = hat_sdtalloc's "not enough contiguous memory" path
+| fired for THIS grow) and availrmem/freemem via i39_availrmem_p/i39_freemem_p (the
+| contiguous-memory shortfall, read directly).
+|
+| SAFETY AND COST.  Throwaway confirmation instrument.  Ships dormant: i10b_on = 0, so
+| every brk pays one tstl and a tail jmp to brk_orig (brk is a syscall, not a hot fault
+| path).  Armed, it wraps brk call-and-return, saving/restoring d2-d7/a2-a6 and returning
+| brk_orig's own d0, so the syscall ABI is exact.  It reads only kernel memory and the
+| ISSUE-39 counters; it never changes brk's behaviour.  One-shot (i10b_latched).
+| ===========================================================================
+
+	.text
+	.balign 4
+
+| ---------------------------------------------------------------------------
+| brk -- the i10b wrapper.  brk(uap): fp@(8) = uap, *uap = the requested new break.
+	.globl	brk
+brk:
+	tstl	i10b_on
+	bnew	Lib_active
+Lib_fwd:
+	jmp	brk_orig		| dormant / one-shot done: forward unchanged
+Lib_active:
+	tstl	i10b_latched
+	bnew	Lib_fwd			| already caught the first failing grow
+	linkw	%fp,&0
+	moveml	%d2-%d7/%a2-%a6,%sp@-
+	addql	&1,i10b_seen_n		| brk calls seen while armed
+	moveal	%fp@(8),%a0		| uap
+	movel	%a0@,%d2		| d2 = requested new break (*uap)
+	moveal	u+0x730,%a2		| curproc = u.u_procp (the proc brk updates)
+	movel	%a2@(56),%d3		| d3 = p_brksize BEFORE
+	movel	%a2@(52),%d7
+	addl	%d3,%d7			| d7 = current break end = p_brkbase + p_brksize
+	movel	hat_sdtfail_n,%d4	| d4 = hat_sdtfail_n BEFORE
+| --- call the real brk, capture its verdict ---
+	movel	%fp@(8),%sp@-
+	jsr	brk_orig
+	addqw	&4,%sp
+	movel	%d0,%d5			| d5 = brk's return (0 = ok; grow-fail = as_map errno)
+	movel	%a2@(56),%d6		| d6 = p_brksize AFTER
+	tstl	%d5
+	beqw	Lib_done		| brk succeeded: not a failing grow
+	addql	&1,i10b_fail_n		| any failing brk (grow or early reject)
+	cmpl	%d7,%d2			| requested new break vs current end
+	blsw	Lib_done		| not above the end: an early reject/shrink, not an as_map grow
+	tstl	i10b_latched
+	bnew	Lib_done		| one-shot
+	movel	&1,i10b_latched
+| --- latch the failing GROW ---
+	movel	curproc,i10b_proc
+	movel	u+0x1c0,i10b_comm0	| u_comm: expect "sh"
+	movel	u+0x1c4,i10b_comm1
+	movel	u+0x1c8,i10b_comm2
+	movel	u+0x1cc,i10b_comm3
+	movel	%d2,i10b_newbrk
+	movel	%a2@(52),i10b_brkbase
+	movel	%d3,i10b_brksize_pre
+	movel	%d6,i10b_brksize_post
+	movel	%d7,i10b_brkend_pre
+	movel	%d5,i10b_ret
+	movel	&1,i10b_isgrow		| we latch only grows (new break above the end)
+	movel	%d4,i10b_sdtfail_pre
+	movel	hat_sdtfail_n,i10b_sdtfail_post	| delta > 0 = the hat_sdtalloc fail path fired
+	moveal	i39_availrmem_p,%a0
+	movel	%a0@,i10b_availrmem	| availrmem at the failing grow (contiguous-mem shortfall)
+	moveal	i39_freemem_p,%a0
+	movel	%a0@,i10b_freemem
+	movel	%a2,i10b_uprocp
+	movel	%a2@(124),i10b_pas	| p_as
+Lib_done:
+	movel	%d5,%d0			| return brk_orig's value unchanged
+	moveml	%sp@+,%d2-%d7/%a2-%a6
+	unlk	%fp
+	rts
+
+	.balign 4
+
+	.data
+	.balign 4
+| ---------------------------------------------------------------------------
+| The i10b block -- read i10b_magic FIRST, then 23 longs: `kpeek <i10b_magic> 23`.
+	.globl	i10b_magic
+i10b_magic:
+	.long	0x49314221		| "I1B!"
+	.globl	i10b_on
+i10b_on:
+	.long	0			| 0 = DORMANT (ships this way).  kpoke 1 to arm; it then
+					| latches the FIRST brk whose as_map grow fails (no VA/proc
+					| filter -- a proc pointer is not stable across boots)
+	.globl	i10b_seen_n
+i10b_seen_n:
+	.long	0			| brk calls seen while armed (uncapped)
+	.globl	i10b_fail_n
+i10b_fail_n:
+	.long	0			| ... which returned non-zero (grow-fail OR early reject)
+	.globl	i10b_latched
+i10b_latched:
+	.long	0			| 1 once the first failing GROW is caught -- read FIRST
+					| after the magic; with it 0 every field below is ship-time
+	.globl	i10b_proc
+i10b_proc:
+	.long	0			| curproc at the latch
+	.globl	i10b_comm0
+i10b_comm0:
+	.long	0			| u_comm, 16 bytes (expect "sh")
+	.globl	i10b_comm1
+i10b_comm1:
+	.long	0
+	.globl	i10b_comm2
+i10b_comm2:
+	.long	0
+	.globl	i10b_comm3
+i10b_comm3:
+	.long	0
+	.globl	i10b_newbrk
+i10b_newbrk:
+	.long	0			| the requested new break (*uap) -- expect a heap addr
+					| whose page covers 0x800152A0
+	.globl	i10b_brkbase
+i10b_brkbase:
+	.long	0			| p_brkbase (@52)
+	.globl	i10b_brksize_pre
+i10b_brksize_pre:
+	.long	0			| p_brksize BEFORE the call
+	.globl	i10b_brksize_post
+i10b_brksize_post:
+	.long	0			| p_brksize AFTER (== pre for a failed grow: not advanced)
+	.globl	i10b_brkend_pre
+i10b_brkend_pre:
+	.long	0			| p_brkbase + p_brksize = the break end before the grow.
+					| newbrk > this = it was a real grow that reached as_map;
+					| brkend_pre < 0x800152A0 = the break never covered the write
+	.globl	i10b_ret
+i10b_ret:
+	.long	0			| brk's return: 0 = ok, else the as_map errno (12 = ENOMEM)
+	.globl	i10b_isgrow
+i10b_isgrow:
+	.long	0			| 1 = the latched call was a grow (always 1 at a latch)
+	.globl	i10b_sdtfail_pre
+i10b_sdtfail_pre:
+	.long	0			| hat_sdtfail_n BEFORE (ISSUE-39 "not enough contiguous mem")
+	.globl	i10b_sdtfail_post
+i10b_sdtfail_post:
+	.long	0			| ... and AFTER: a non-zero delta means hat_sdtalloc's fail
+					| path fired for THIS grow -- the segment-table shortfall
+	.globl	i10b_availrmem
+i10b_availrmem:
+	.long	0			| availrmem at the failing grow (via i39_availrmem_p)
+	.globl	i10b_freemem
+i10b_freemem:
+	.long	0			| freemem at the failing grow (via i39_freemem_p)
+	.globl	i10b_uprocp
+i10b_uprocp:
+	.long	0			| u.u_procp -- must equal i10b_proc
+	.globl	i10b_pas
+i10b_pas:
+	.long	0			| p_as (@124)
+	.balign 4			| pad section to a 4-byte multiple (bss placement)
