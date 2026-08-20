@@ -274,6 +274,8 @@ m68k-linux-gnu-objcopy \
 	--globalize-symbol usrxmemflt \
 	--globalize-symbol segvn_faultpage \
 	--globalize-symbol krnxmemflt \
+	--globalize-symbol page_cachelist \
+	--globalize-symbol page_cachelist_size \
 	"$HERE/build/unix-stage1"
 
 # HARD CHECK (2026-08-12, ISSUE-43): fpu060.o replaces the three FP-context routines and keeps
