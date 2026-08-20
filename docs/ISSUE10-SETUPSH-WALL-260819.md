@@ -918,9 +918,12 @@ is a different bug in a different file.
 `bindings failing: 0`, only `i10rev040.o` (the instrument) and `wb040.o` (its two `jsr` sites) differ
 from a build of the same tree without it, all 404 pre-existing symbols in `i10rev040.o` keep their
 offsets, and a control rebuild (`-42`) is byte-identical to it except the single build-id sequence
-byte. The artifact left in `build/unix-040` is a third rebuild, `-43`, made from the committed tree
+byte. The artifact left in `build/unix-040` was a third rebuild, `-43`, made from the committed tree
 and byte-identical to both in the same way — so the block addresses `test-tools/i10r.sh` carries hold
-for all three. `relink-040.sh` refuses a build whose user-fault path would call an unbound `i10r_pre` or
+for all three. **Superseded 2026-08-20:** ISSUE-46 added an override unit (`src/syncguard.s`) to the
+link, which grows `.text` and therefore moves *every* counter block; `build/unix-040` now holds a
+`68040-260820` build and the `i10r` addresses must be re-read from `tools/status-facts.sh` before the
+next use. `relink-040.sh` refuses a build whose user-fault path would call an unbound `i10r_pre` or
 `i10r_post`, in the shape the `i10w_hook`/`i10g_hook` guards already use. **It has not been run on the
 bench yet** — the block ships all-zero and dormant, and no reading in §15 is a measurement.
 

@@ -4382,3 +4382,120 @@ say something falsifiable, or it is decoration.
 **Byte-exact regression:** rebuilding the base after all of this yields an image differing from
 the pre-change build in exactly **two bytes**, both inside the build-id string (`260813-09` →
 `260814-01`). All six variant kernels build; all reloc checks pass against their own image.
+
+## ✅ ISSUE-46 (2026-08-20, FIXED THE SAME DAY): the panic path destroys its own diagnosis — `sync()` walks the vfs switch through a NULL pointer
+
+> **Ledger: FIXED in the port tree; not yet reflected in [`STATUS.md`](STATUS.md).**
+> No hardware run has exercised the guard yet — the acceptance below is static and
+> build-time only, and it is labelled as such.
+
+**Not a 68040 defect.** It is in generic vfs code and it is available to any AMIX kernel on
+any CPU. It surfaced on the 040 line only because that is where a panic happened early enough
+to hit it.
+
+### Symptom
+
+A 68040 kernel booting on an accelerator card with its own RAM at `0x08000000` reached VM
+init and printed
+
+```
+PANIC: page_free
+DOUBLE PANIC ... vector=0x3
+```
+
+The second panic replaced the first one's diagnosis. Every hour spent on the address error,
+the Kickstart ROM and `ExecBase` was spent on the *second* panic; the bug is whatever caused
+the first one, and the second one is what stopped anybody reading it.
+
+### Mechanism, from this repository's own stock image
+
+Every address is `.text`-relative in the 2.1c image this port patches, taken from its
+disassembly or its relocation records.
+
+1. `panic` (`0x3eb58`) is a two-line wrapper on `xcmn_err(CE_PANIC, ...)`; `xcmn_err` prints
+   and calls `xpanic` (`0x3e668`, a file-local `t`).
+2. `xpanic` runs `backtrace`, `clkreld`, stores `panicstr`, calls `sysdump` — and then, at
+   relocation **`0x3e6a2 R_68K_32 sync`**, calls `sync()`, ahead of `mtcrchk`, `call_demon`
+   and `rtnfirm` (the orderly return to firmware). So a filesystem flush sits in the middle
+   of the panic path.
+3. `sync` (`0x5d21a`) is `for (i = 1; i < nfstype; i++) (*vfssw[i].vsw_vfsops->vfs_sync)(0, 0,
+   u.u_procp->p_cred);` — `moveal %a2@(8,%d0:l),%a0` (`vsw_vfsops`, +8 of a 16-byte
+   `struct vfssw`) then `moveal %a0@(16),%a0` (`vfs_sync`, the fifth pointer of
+   `struct vfsops`) then `jsr %a0@`. **Neither pointer is checked.** Offsets confirmed against
+   `<sys/vfs.h>`.
+4. `vsw_vfsops` is filled in at runtime. `vfsinit` (`0x5dab2`) sets row 0 to `vfs_strayops` and
+   then calls each row's `vsw_init`. The `.data` relocations of `vfssw` (`.data+0x913c`, 12
+   rows × 16 = `0xc0` bytes, `nfstype` = 12 at `.data+0x91fc`) show only row 0 with a link-time
+   `vsw_vfsops` (`0x9144 R_68K_32 vfs_strayops`); rows 1–11 carry `vsw_name` and `vsw_init`
+   relocations and nothing at +8. **`sync()`'s loop starts at row 1**, so before `vfsinit()`
+   the very first iteration dereferences NULL.
+5. `NULL+16` is absolute address `0x10` = **CPU exception vector 4** in the vector table
+   AmigaOS leaves in low memory. The "`vfs_sync`" the kernel then calls is an exec ROM trap
+   stub; it walks `ExecBase` (absolute 4, which AMIX repoints at its own pseudo-ExecBase) to
+   `ThisTask->tc_TrapCode`, finds a sentinel, and returns to an odd address — address error,
+   vector 3, into the kernel's own handler, which panics again.
+
+Steps 2–5 are kernel code plus the Kickstart ROM. Nothing in them depends on the accelerator,
+the emulator or the memory map, which is why a bench that never panics this early never sees
+it: the divergence is entirely in *what panicked*, not in what the panic path then does.
+
+### Fix
+
+`src/syncguard.s` — a whole-routine override (`--weaken-symbol sync` in `relink-040.sh`)
+carrying the stock loop instruction-for-instruction plus two null checks: skip the row if
+`vsw_vfsops` is NULL, skip it if `vfs_sync` is NULL. Skipping is not a loss of function — a
+filesystem whose switch row is empty has not been initialised and has nothing to flush.
+
+One deliberate reordering: stock pushes the three arguments and *then* loads `vfs_sync`; the
+override loads `vfs_sync` first, so a null one can be skipped without unwinding three pushes.
+The loads and the pushes do not alias, so the order between them is not observable.
+
+The unit carries a `syncg` counter block (`syncg_magic` = `"SYNG"`, `syncg_calls`,
+`syncg_skip_ops`, `syncg_skip_fn`, `syncg_last_i`). It exists to make the *absence* of a
+behaviour change measurable: on a kernel that reaches multiuser, `syncg_calls` climbs
+(`fsflush` calls `sync(2)` continuously) while both skip counters stay at zero. A passing boot
+would not demonstrate that; two counters that cannot both be true do.
+
+### Acceptance — static and build-time only
+
+* the override's assembled `.text` reproduces the stock routine's 23-instruction opcode sequence
+  exactly; the guards, the counters and the reordered `vfs_sync` load are the only additions;
+* exactly one strong `sync` in the linked image, off the stock address, with both call sites
+  (`xpanic` `0x3e6a2` and `syssync` `0x5d272` — the only two `R_68K_32 sync` references in the
+  whole image) rebinding to it. `relink-040.sh` asserts this; `tools/status-facts.sh` carries
+  the row, because `ld -r` links a missing override cleanly and the failure would be a kernel
+  that looks built and behaves like stock;
+* `TOTAL complaints: 0`, `bindings failing: 0`;
+* two builds of the tree differ in exactly **one byte**, inside the build-id string.
+
+**Not measured:** no boot, on any platform, has yet run this code. `syncg_calls` has never been
+read. The claim here is that the panic path can no longer fault on an empty switch, and that is
+argued from the instruction stream, not from a run.
+
+### What this unblocks, and one static correction to go with it
+
+With the panic path able to complete, an early panic keeps its own console output and reaches
+`rtnfirm` instead of dying in an unrelated second fault.
+
+Worth writing down while the addresses are fresh, because it narrows the *primary* bug and it
+was read from the stock image rather than from the machine: **`PANIC: page_free` is not one of
+`page_free`'s three assertions.** Those (`0xafa0a`, `0xafa2c`, `0xafa4e`) call `assfail`, which
+formats `"assertion failed: %s, file: %s, line: %d"` — `pp >= pages && pp < epages`,
+`pp->p_free == 0`, `pp->p_uown == NULL`, all in `vm_page.c` lines 622–624. The observed text is
+the bare format string of a **fourth** site, `cmn_err(CE_PANIC, "page_free")` at `0xafb00`,
+reached from four tests on the page being freed:
+
+| test | insn | field | offset |
+|---|---|---|---|
+| `0xafad6` | `tstw %a2@(2)` | `p_keepcnt` | +2 |
+| `0xafade` | `tstl %a2@(32)` | `p_mapping` | +32 |
+| `0xafae6` | `tstw %a2@(36)` | `p_lckcnt` | +36 |
+| `0xafaee` | `tstw %a2@(38)` | `p_cowcnt` | +38 |
+
+i.e. *the page being freed is still held*. The offsets are the measured AMIX layout, confirmed
+by three independently named asserts elsewhere in the same file (`pp->p_keepcnt == 0` →
+`tstw %a2@(2)` at `0xafde2`; `pp->p_vnode == vp` → `cmpal %a2@(4)` at `0xafc96`;
+`pp->p_mapping == NULL` → `tstl %a2@(32)` at `0xb01a2`) and consistent with `<vm/page.h>` once
+the bitfield unit is read as two bytes rather than four. **Which of the four is non-zero is
+still unmeasured** — that is a runtime fact, and it is exactly what the guard lets the next
+boot print alongside the backtrace.
