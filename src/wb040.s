@@ -92,7 +92,11 @@ usrxmemflt:
 	addqw	&8,%sp
 	movel	%d0,%d4			| save return (0 = demand-fault resolved)
 	tstl	%d4
-	bnew	Lu_done
+	beqs	Lu_replay		| resolved: complete the pending write-back below
+	moveq	&1,%d0			| UNRESOLVED user fault, ctx = 1: a pending store is
+	bsrw	wbf_dropwarn		| about to be dropped by skipping the replay -- name it
+	braw	Lu_done			| OUTCOME UNCHANGED: still skip replay and signal
+Lu_replay:
 	moveal	%fp@(8),%a2		| a2 = frame
 	bsrw	wb040_replay
 	tstl	%d0			| ISSUE-42: 0 = every valid WB completed;
@@ -202,7 +206,11 @@ krnxmemflt:
 	addqw	&4,%sp
 	movel	%d0,%d4			| save return (0 = demand-fault resolved)
 	tstl	%d4
-	bnew	Lk_done
+	beqs	Lk_replay		| resolved: complete the pending write-back below
+	moveq	&2,%d0			| UNRESOLVED kernel fault, ctx = 2: a pending store is
+	bsrw	wbf_dropwarn		| about to be dropped by skipping the replay -- name it
+	braw	Lk_done			| OUTCOME UNCHANGED: still skip replay
+Lk_replay:
 	moveal	%fp@(8),%a2		| a2 = frame
 	bsrw	wb040_replay
 	tstl	%d0			| ISSUE-42 item 9: the kernel path stops the replay for
@@ -240,6 +248,52 @@ Lk_nodfc:
 	movel	%d4,%d0			| restore krnxmemflt's return value
 	moveml	%fp@(-32),%d2-%d5/%a2-%a3
 	unlk	%fp
+	rts
+
+| --- wbf_dropwarn (2026-08-20): name a silently-dropped pending write-back.
+|
+| When a user or kernel memory fault comes back UNRESOLVED (the wrapper's d4 != 0), the
+| replay is skipped and the 68040's deferred write-back is discarded.  If that frame still
+| carried a VALID pending store (WB3S bit 7 set), a real datum has just been dropped on the
+| floor with no trace -- the first-touch-write data-loss this port kept hitting silently.
+| This makes the drop a NAMED, counted, attributable console event (on emulator AND real
+| silicon).  It does NOT change the outcome: the caller still skips the replay and signals,
+| exactly as before -- the cure is a separate change.  Report-only.
+|
+| Called by bsr with the wrapper's frame still live, so %fp is the wrapper's frame pointer
+| and %fp@(8) is the trap frame; d0 = ctx (1 = user, 2 = kernel).  cmn_err preserves
+| d2-d7/a2-a6 (the wrapper's d4 verdict, d5 FSLW and %fp included); d0/d1/a0/a1 are dead at
+| both call sites.  Gated on a format-7 frame, so it never reads write-back fields on a
+| 68060 (which pushes a format-4 frame and has no such fields).  Rate-limited: it counts
+| every drop but prints only the first wbf_drop_max, so a fault flood cannot bury the console.
+	.globl	wbf_dropwarn
+wbf_dropwarn:
+	movel	%d2,%sp@-		| d2 = ctx, held across the cmn_err (which preserves it)
+	movel	%d0,%d2
+	moveal	%fp@(8),%a0		| the wrapper's trap frame
+	moveq	&0,%d0
+	moveb	%a0@(70),%d0		| format/vector byte: high nibble = frame format
+	lsrb	&4,%d0
+	cmpiw	&7,%d0
+	bnes	Lwd_ret			| not a 68040 format-7 frame: no write-back fields to read
+	moveq	&0,%d0
+	movew	%a0@(78),%d0		| WB3 status word
+	btst	&7,%d0			| bit 7 = a VALID pending write-back
+	beqs	Lwd_ret			| none pending: nothing was dropped
+	addql	&1,wbf_dropped_n	| UNCAPPED: every dropped valid write-back
+	movel	wbf_dropped_n,%d0
+	cmpl	wbf_drop_max,%d0
+	bhis	Lwd_ret			| past the notice budget: count on, spare the console
+	movel	%a0@(66),%sp@-		| the faulting instruction's PC
+	movel	%a0@(92),%sp@-		| WB3D -- the datum being dropped
+	movel	%a0@(88),%sp@-		| WB3A -- where it should have landed
+	movel	%d2,%sp@-		| ctx (1 = user, 2 = kernel)
+	pea	Lwd_msg
+	pea	2			| cmn_err level 2 -- the console NOTICE level userspace040 uses
+	jsr	cmn_err
+	lea	%sp@(24),%sp
+Lwd_ret:
+	movel	%sp@+,%d2
 	rts
 
 | --- Lwb_dfccheck (ISSUE-22, 2026-07-28): does this fault return with a DIFFERENT DFC than it
@@ -1051,6 +1105,19 @@ wbf_code:
 	.globl	wbf_fa
 wbf_fa:
 	.long	0			| the CPU's fault address for the denied byte (frame+84)
+| --- ISSUE-10 safety net (2026-08-20, wbf_dropwarn): a valid pending write-back discarded
+|     because its fault came back unresolved.  Report-only; the outcome is unchanged. ---
+	.globl	wbf_dropped_n
+wbf_dropped_n:
+	.long	0			| UNCAPPED: unresolved faults whose 040 frame still held a
+					| VALID pending store, silently dropped by the skipped replay
+					| -- the first-touch-write data-loss class, now counted
+	.globl	wbf_drop_max
+wbf_drop_max:
+	.long	8			| emit the console NOTICE for only the first this-many drops,
+					| then count quietly so a fault flood cannot bury the console
+Lwd_msg:
+	.asciz	"unresolved fault dropped a pending write-back: ctx=%d addr=%x data=%x pc=%x"
 	.balign	4
 
 | --- ISSUE-22 (2026-07-28): DFC restore, and the one .data long that turns it off ---
