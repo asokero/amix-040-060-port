@@ -153,9 +153,9 @@ Lsmu_why:
 	movel	&-1,smu_bucket
 	moveal	page_hash,%a0
 	tstl	%a0
-	beqw	Lsmu_go
+	beqw	Lsmu_lists
 	movel	smu_hashsz,%d0		| d0 = bucket count
-	beqw	Lsmu_go
+	beqw	Lsmu_lists
 	movel	%a3@,%d5		| d5 = target vp
 	movel	%d3,%d6			| d6 = target off
 	movel	&100000,%d3		| d3 = total link budget
@@ -193,10 +193,13 @@ Lsmu_budget:
 |     splits the remaining space three ways.  Both lists are circular and doubly
 |     linked through p_next (+16) / p_prev (+20); both walks are budgeted, for the
 |     same reason the hash scan is.
+Lsmu_lists:
+	movel	&0x52414e21,smu_s2ran	| "RAN!" -- set FIRST: an instrument that cannot
+					| say whether it ran is indistinguishable from
+					| one that ran and found nothing.
 	movel	page_cachelist_size,smu_cachesz
 	movel	freemem,smu_freemem
 | ---- page_cachelist ----
-	movel	&0,%d0
 	moveal	page_cachelist,%a1
 	tstl	%a1
 	beqw	Lsmu_freel
@@ -220,25 +223,25 @@ Lsmu_cln:
 Lsmu_freel:
 	moveal	page_freelist,%a1
 	tstl	%a1
-	beqw	Lsmu_lists
+	beqw	Lsmu_done2
 	movel	%a1,%d1
 	movel	&200000,%d0
 Lsmu_fl:
 	cmpal	%a1,%a2
 	bnew	Lsmu_fln
 	movel	&1,smu_onfree
-	braw	Lsmu_lists
+	braw	Lsmu_done2
 Lsmu_fln:
 	moveal	%a1@(16),%a1		| p_next
 	tstl	%a1
-	beqw	Lsmu_lists
+	beqw	Lsmu_done2
 	addql	&1,smu_freewalk
 	cmpl	%a1,%d1
-	beqw	Lsmu_lists
+	beqw	Lsmu_done2
 	subql	&1,%d0
 	bnew	Lsmu_fl
 
-Lsmu_lists:
+Lsmu_done2:
 Lsmu_go:
 	moveml	%sp@+,%d0-%d7/%a0-%a6
 | The stack now holds cmn_err's return address and its two arguments (CE_PANIC and
@@ -324,6 +327,11 @@ smu_poff:
 	.long	0
 | STAGE 2: which free list the page is ACTUALLY linked into, and the ring sizes
 | to judge the walks by.  1 = found on that list.
+| "RAN!" once the stage-2 block has executed.  Zero here means the block was never
+| reached, which is a DIFFERENT fact from every walk field being zero.
+	.globl	smu_s2ran
+smu_s2ran:
+	.long	0
 	.globl	smu_oncache
 smu_oncache:
 	.long	0
