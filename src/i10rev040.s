@@ -4254,3 +4254,313 @@ i10b_uprocp:
 i10b_pas:
 	.long	0			| p_as (@124)
 	.balign 4			| pad section to a 4-byte multiple (bss placement)
+
+| ===========================================================================
+| PART TEN -- i10c: the GENESIS INTROSPECTION, at the one site that fires once.
+|
+| WHY HERE, AND WHY IT IS GUARANTEED TO FIRE EXACTLY ONCE.  Every symbol-wrapper probe
+| so far (as_fault, segvn_faultpage) kept catching ADJACENT events -- the watched VA or
+| access class matched innocent faults before the genesis.  But wb040's drop-warning
+| safety net (wbf_dropwarn) fires on precisely one thing: a fault that came back
+| UNRESOLVED with a VALID pending write-back still in its 040 frame, and on the setup.sh
+| wall wbf_dropped_n reached exactly 1 -- the genesis, the store the kernel dropped.  At
+| that instant the trap is still on the faulting process's stack: curproc is sh, the CPU
+| frame holds fa/WB3D/PC/SR/SSW, and sh's address space is walkable.  So this hook rides
+| the SAME site (called right after wbf_dropwarn in both usrxmemflt and krnxmemflt) and,
+| once armed, synchronously reads the GROUND TRUTH of why that one first-touch write did
+| not resolve.  It does NOT change the outcome (report-only, exactly like wbf_dropwarn):
+| the fault still signals and the replay is still skipped.
+|
+| THE FORK IT SETTLES.  i10a placed the refusal in as_fault (no covering segment) and
+| i10b synthesised a late brk grow-failure.  This asks the genesis-specific question the
+| wrapper probes could not: at THIS fault, is fa IN a segment with the break already past
+| it (=> a demand-zero resolution corner: the page should have been zero-fillable and was
+| not) or NOT covered (=> brk/grow had not extended the segment before sh wrote)?  And is
+| it EARLY (tiny arena, memory plentiful) or LATE (the 16 MB grow-failure)?  It records
+| both sides so the answer is a reading, not a choice.
+|
+| WHAT IT CAPTURES, once, on the first unresolved-fault-with-valid-WB3 while armed:
+|   * the fault essentials the frame carries -- fa (WB3A), WB3D (the dropped value,
+|     expect 0x800114B5), WB3S, the faulting PC, SR (S bit), SSW, and rw DERIVED from the
+|     040 SSW bit 8 (1 = read, 0 = write -- the exact source usrxmemflt's classifier uses,
+|     src/usrxmemflt040-design.md; the stock resolver's own type/rw locals are gone by
+|     this point, so rw is re-derived and ptest re-measured here, which is ground truth at
+|     the introspection instant rather than a stale copy);
+|   * as_segat(curproc->p_as, fa & ~0xFFF): does a segment COVER fa?  seg (0 = none),
+|     s_base, s_size, s_data, svd->pageprot, and a decoded i10c_covered;
+|   * the break extent -- p_brkbase, p_brksize, their sum, and i10c_fa_covered (fa <
+|     brkend: had sh's break already reached this address?);
+|   * ptest(fa) via i10r_doptest -- the 030-form PSR and the raw 040 MMUSR (resident /
+|     write-protected / invalid), the classifier's own input, re-measured;
+|   * the leaf PTE and the longword at fa via i10r_readtgt (present-but-something vs truly
+|     absent), availrmem/freemem (plentiful = early), and wb_replay_n (a cheap count of
+|     resolved store-faults so far: small = the genesis is early, a tiny arena).
+|
+| SAFETY AND COST.  Ships dormant: i10c_on = 0, one memory test per drop-warning call.
+| Armed, it saves/restores d0-d7/a0-a6 AND DFC/SFC (i10r_doptest writes DFC for the 040
+| ptestr, and this must hand the interrupted fault path its function-code registers back,
+| the ISSUE-22 discipline), so neither the wrapper's d4/d5 nor the DFC/SFC accounting is
+| disturbed.  It calls only leaf lookups -- as_segat, and i10r_doptest/i10r_readtgt which
+| walk the page tree the resident-or-abandon way -- so nothing it does can fault.  One-shot.
+| ===========================================================================
+
+	.text
+	.balign 4
+
+| ---------------------------------------------------------------------------
+| i10c_hook(frame, ctx) -- called right after wbf_dropwarn in usrxmemflt (ctx=1) and
+| krnxmemflt (ctx=2).  frame = sp@(4), ctx = sp@(8).  Dormant until i10c_on.
+	.globl	i10c_hook
+i10c_hook:
+	tstl	i10c_on
+	beqw	Lic_ret			| dormant: one memory test, nothing saved
+	tstl	i10c_latched
+	bnew	Lic_ret			| one-shot: the genesis is already captured
+	linkw	%fp,&0
+	moveml	%d0-%d7/%a0-%a6,%sp@-	| preserve the wrapper's d4/d5 and everything else
+	.word	0x4e7a,0x0001		| movec %dfc,%d0
+	movel	%d0,%d6			| d6 = caller DFC (i10r_doptest writes DFC)
+	.word	0x4e7a,0x0000		| movec %sfc,%d0
+	movel	%d0,%d7			| d7 = caller SFC
+	moveal	%fp@(8),%a2		| a2 = frame (survives all leaf calls below)
+| gate on the SAME condition wbf_dropwarn latched on: a format-7 frame with a valid WB3
+	moveq	&0,%d0
+	moveb	%a2@(70),%d0
+	lsrb	&4,%d0
+	cmpiw	&7,%d0
+	bnew	Lic_out			| not a 68040 format-7 frame
+	moveq	&0,%d0
+	movew	%a2@(78),%d0		| WB3S
+	btst	&7,%d0
+	beqw	Lic_out			| no valid pending write-back: not a real drop
+	addql	&1,i10c_seen_n
+	movel	&1,i10c_latched
+	movel	i10c_seen_n,i10c_seq
+	movel	%fp@(12),i10c_ctx	| ctx: 1 = user (usrxmemflt), 2 = kernel (krnxmemflt)
+	movel	curproc,i10c_proc
+	movel	u+0x1c0,i10c_comm0	| u_comm: expect "sh"
+	movel	u+0x1c4,i10c_comm1
+	movel	u+0x1c8,i10c_comm2
+	movel	u+0x1cc,i10c_comm3
+| --- fault essentials, from the frame ---
+	movel	%a2@(88),i10c_fa	| WB3A = the store target / fault address
+	movel	%a2@(92),i10c_wb3d	| WB3D = the dropped value (expect 0x800114B5)
+	moveq	&0,%d0
+	movew	%a2@(78),%d0
+	movel	%d0,i10c_wb3s
+	movel	%a2@(84),i10c_fa2	| the CPU's own fault address at +84 (cross-check)
+	movel	%a2@(66),i10c_pc
+	moveq	&0,%d0
+	movew	%a2@(64),%d0		| SR: bit 13 (0x2000) = S -> supervisor
+	movel	%d0,i10c_sr
+	moveq	&0,%d0
+	movew	%a2@(76),%d0		| SSW
+	movel	%d0,i10c_ssw
+	moveq	&2,%d1			| rw: default S_WRITE
+	btst	&8,%d0			| SSW bit 8: 1 = a READ access
+	beqs	Lic_rw
+	moveq	&1,%d1			| S_READ
+Lic_rw:
+	movel	%d1,i10c_rw
+| --- does a segment COVER fa?  d3 = fa page base, live across the leaf calls ---
+	movel	%a2@(88),%d3
+	andil	&0xfffff000,%d3
+	clrl	i10c_covered
+	clrl	i10c_as
+	moveal	curproc,%a0
+	movel	%a0,%d0
+	beqw	Lic_brk			| no curproc: skip the VM reads
+	moveal	%a0@(124),%a1		| p_as
+	movel	%a1,i10c_as
+	movel	%a1,%d0
+	beqw	Lic_brk
+	movel	%d3,%sp@-		| as_segat(p_as, page base)
+	movel	%a1,%sp@-
+	jsr	as_segat
+	addqw	&8,%sp
+	movel	%d0,i10c_seg		| 0 = NO covering segment
+	tstl	%d0
+	beqs	Lic_brk
+	moveal	%d0,%a0
+	movel	%a0@(4),i10c_segbase	| s_base
+	movel	%a0@(8),i10c_segsize	| s_size
+	movel	%a0@(28),i10c_svd	| s_data
+	moveal	%a0@(28),%a1
+	moveq	&0,%d0
+	moveb	%a1@(2),%d0		| svd->pageprot
+	movel	%d0,i10c_pageprot
+	movel	%a0@(4),%d0		| covered = s_base <= fa < s_base + s_size
+	cmpl	%d3,%d0
+	bhis	Lic_brk			| s_base > fa
+	movel	%a0@(4),%d0
+	addl	%a0@(8),%d0
+	cmpl	%d3,%d0
+	blss	Lic_brk			| s_base + s_size <= fa: a gap
+	movel	&1,i10c_covered
+Lic_brk:
+| --- the break extent: had sh's break already reached fa? ---
+	moveal	u+0x730,%a0		| u.u_procp
+	movel	%a0@(52),i10c_brkbase
+	movel	%a0@(56),i10c_brksize
+	movel	%a0@(52),%d0
+	addl	%a0@(56),%d0
+	movel	%d0,i10c_brkend
+	clrl	i10c_fa_covered
+	cmpl	%d0,%d3			| fa page base vs brkend
+	bccs	Lic_pt			| fa >= brkend: the break did not cover it
+	movel	&1,i10c_fa_covered	| fa < brkend: the break already covered it
+Lic_pt:
+| --- ptest(fa): resident / write-protected / invalid, synchronously ---
+	movel	%d3,%d0
+	bsrw	i10r_doptest		| d0 = 030-form PSR, d1 = raw 040 MMUSR
+	movel	%d0,i10c_ptpsr
+	movel	%d1,i10c_mmusr
+	movel	%a2@(88),%d0		| the exact fa (not page base) for the value read
+	bsrw	i10r_readtgt		| d0 = leaf PTE (0 = not resident), d1 = longword at fa
+	movel	%d0,i10c_pte
+	movel	%d1,i10c_ptev
+| --- memory state, and a cheap resolved-fault clock (small = the genesis is early) ---
+	moveal	i39_availrmem_p,%a0
+	movel	%a0@,i10c_availrmem
+	moveal	i39_freemem_p,%a0
+	movel	%a0@,i10c_freemem
+	movel	wb_replay_n,i10c_wbrep
+Lic_out:
+	movel	%d6,%d0			| restore DFC/SFC (i10r_doptest wrote DFC) -- ISSUE-22
+	.word	0x4e7b,0x0001		| movec %d0,%dfc
+	movel	%d7,%d0
+	.word	0x4e7b,0x0000		| movec %d0,%sfc
+	moveml	%sp@+,%d0-%d7/%a0-%a6
+	unlk	%fp
+Lic_ret:
+	rts
+
+	.balign 4
+
+	.data
+	.balign 4
+| ---------------------------------------------------------------------------
+| The i10c block -- read i10c_magic FIRST, then 37 longs: `kpeek <i10c_magic> 37`.
+	.globl	i10c_magic
+i10c_magic:
+	.long	0x49314321		| "I1C!"
+	.globl	i10c_on
+i10c_on:
+	.long	0			| 0 = DORMANT (ships this way).  kpoke 1 to arm; it then
+					| latches the FIRST unresolved fault carrying a valid pending
+					| write-back -- the genesis (no VA/proc filter)
+	.globl	i10c_seen_n
+i10c_seen_n:
+	.long	0			| drop events seen while armed (should reach 1 = the genesis)
+	.globl	i10c_latched
+i10c_latched:
+	.long	0			| 1 once the genesis is captured -- read FIRST after the
+					| magic; with it 0 every field below is ship-time state
+	.globl	i10c_seq
+i10c_seq:
+	.long	0			| i10c_seen_n at the latch (1 = it was the first drop)
+	.globl	i10c_ctx
+i10c_ctx:
+	.long	0			| 1 = usrxmemflt (user store), 2 = krnxmemflt (kernel store)
+	.globl	i10c_proc
+i10c_proc:
+	.long	0			| curproc at the genesis (u_comm below must read "sh")
+	.globl	i10c_comm0
+i10c_comm0:
+	.long	0			| u_comm, 16 bytes
+	.globl	i10c_comm1
+i10c_comm1:
+	.long	0
+	.globl	i10c_comm2
+i10c_comm2:
+	.long	0
+	.globl	i10c_comm3
+i10c_comm3:
+	.long	0
+| --- fault essentials (from the 040 frame) ---
+	.globl	i10c_fa
+i10c_fa:
+	.long	0			| WB3A -- the store's target address (the fault address)
+	.globl	i10c_wb3d
+i10c_wb3d:
+	.long	0			| WB3D -- the dropped value (expect 0x800114B5, sh's marker)
+	.globl	i10c_wb3s
+i10c_wb3s:
+	.long	0			| WB3S -- bit 7 = valid (the gate)
+	.globl	i10c_fa2
+i10c_fa2:
+	.long	0			| the CPU fault address at frame+84 (must equal i10c_fa)
+	.globl	i10c_pc
+i10c_pc:
+	.long	0			| the faulting instruction's PC (one past a deferred store)
+	.globl	i10c_sr
+i10c_sr:
+	.long	0			| SR; bit 13 (0x2000) = S: set = a supervisor fault
+	.globl	i10c_ssw
+i10c_ssw:
+	.long	0			| SSW; bit 8 = read, bits 6-5 size, bits 2-0 TM
+	.globl	i10c_rw
+i10c_rw:
+	.long	0			| rw derived from SSW bit 8: 1 = S_READ, 2 = S_WRITE
+| --- DECISIVE: does a segment cover fa, and had the break reached it? ---
+	.globl	i10c_as
+i10c_as:
+	.long	0			| curproc->p_as
+	.globl	i10c_seg
+i10c_seg:
+	.long	0			| as_segat(p_as, fa&~0xFFF): 0 = NO segment covers fa
+	.globl	i10c_segbase
+i10c_segbase:
+	.long	0			| s_base of that segment (valid only when i10c_seg != 0)
+	.globl	i10c_segsize
+i10c_segsize:
+	.long	0			| s_size
+	.globl	i10c_covered
+i10c_covered:
+	.long	0			| 1 = s_base <= fa < s_base + s_size (a segment DOES cover fa
+					| -> a demand-zero corner); 0 = not covered (-> brk/grow gap)
+	.globl	i10c_svd
+i10c_svd:
+	.long	0			| seg->s_data (segvn_data)
+	.globl	i10c_pageprot
+i10c_pageprot:
+	.long	0			| svd->pageprot (@2): 0 = segment-wide protection
+	.globl	i10c_brkbase
+i10c_brkbase:
+	.long	0			| p_brkbase (@52)
+	.globl	i10c_brksize
+i10c_brksize:
+	.long	0			| p_brksize (@56): SMALL here = early (tiny arena), not the
+					| late 16 MB grow-failure
+	.globl	i10c_brkend
+i10c_brkend:
+	.long	0			| p_brkbase + p_brksize = the current break
+	.globl	i10c_fa_covered
+i10c_fa_covered:
+	.long	0			| 1 = fa < brkend (sh's break already reached this address,
+					| so it should have been demand-zero-able); 0 = past the break
+| --- what the MMU and the frame say about fa ---
+	.globl	i10c_ptpsr
+i10c_ptpsr:
+	.long	0			| ptest 030-form PSR: 0x400 = I (not present), 0x800 = W
+					| (write-protected), 0 = resident and writable
+	.globl	i10c_mmusr
+i10c_mmusr:
+	.long	0			| raw 040 MMUSR: bit 0 R (resident), bit 2 W, bit 4 M, bit 11 B
+	.globl	i10c_pte
+i10c_pte:
+	.long	0			| the leaf PTE for fa (0 = no resident leaf: truly absent)
+	.globl	i10c_ptev
+i10c_ptev:
+	.long	0			| the longword at fa if resident
+	.globl	i10c_availrmem
+i10c_availrmem:
+	.long	0			| availrmem at the genesis (plentiful = early)
+	.globl	i10c_freemem
+i10c_freemem:
+	.long	0			| freemem at the genesis
+	.globl	i10c_wbrep
+i10c_wbrep:
+	.long	0			| wb_replay_n at the genesis: resolved store-faults so far.
+					| Small = the genesis is early in the wall, not a late grow
+	.balign 4			| pad section to a 4-byte multiple (bss placement)

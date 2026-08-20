@@ -95,6 +95,10 @@ usrxmemflt:
 	beqs	Lu_replay		| resolved: complete the pending write-back below
 	moveq	&1,%d0			| UNRESOLVED user fault, ctx = 1: a pending store is
 	bsrw	wbf_dropwarn		| about to be dropped by skipping the replay -- name it
+	movel	&1,%sp@-		| ISSUE-10 genesis introspection (i10c), ctx = 1: this is
+	movel	%fp@(8),%sp@-		| the site that fires exactly once for the dropped store.
+	jsr	i10c_hook		| Dormant (one tstl) until i10c_on; report-only, preserves d4.
+	addqw	&8,%sp
 	braw	Lu_done			| OUTCOME UNCHANGED: still skip replay and signal
 Lu_replay:
 	moveal	%fp@(8),%a2		| a2 = frame
@@ -209,6 +213,10 @@ krnxmemflt:
 	beqs	Lk_replay		| resolved: complete the pending write-back below
 	moveq	&2,%d0			| UNRESOLVED kernel fault, ctx = 2: a pending store is
 	bsrw	wbf_dropwarn		| about to be dropped by skipping the replay -- name it
+	movel	&2,%sp@-		| ISSUE-10 genesis introspection (i10c), ctx = 2: same
+	movel	%fp@(8),%sp@-		| fire-once site, kernel store variant.  Dormant until
+	jsr	i10c_hook		| i10c_on; report-only, preserves d4.
+	addqw	&8,%sp
 	braw	Lk_done			| OUTCOME UNCHANGED: still skip replay
 Lk_replay:
 	moveal	%fp@(8),%a2		| a2 = frame

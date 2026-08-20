@@ -1357,3 +1357,44 @@ count always, print only the first few, so the wall's flood cannot bury the cons
 change the outcome (the fault still signals and the replay is still skipped — the cure is separate).
 This turns the silent first-touch-write data loss into a named, counted, attributable event on
 emulator and real silicon; `wbf_dropped_n` is readable in the `WBF!` block via status-facts.
+
+## 20. PART TEN — `i10c`, the genesis introspection (dormant; prediction only)
+
+`i10c` (`src/i10rev040.s` PART TEN) rides the one site that fires **exactly once** for the dropped
+store — the wb040 drop-warning point (unresolved fault + valid pending WB3, where `wbf_dropped_n`
+reached 1 on the wall). At that instant `curproc` is `sh`, the frame holds `fa`/`WB3D`/`PC`/`SR`/`SSW`,
+and sh's address space is walkable, so it synchronously captures the genesis ground truth. Hooked with
+a `jsr i10c_hook` right after `wbf_dropwarn` in **both** `usrxmemflt` and `krnxmemflt`, report-only
+(the outcome is unchanged), dormant until `i10c_on`. **Live-path guarantee:** it is the same
+proven-fire-once site as the safety net — no VA/proc filter to catch an adjacent event. The relink
+hard check binds the `i10c_hook` edge like the i10w/i10g hooks. `i10c` records: `fa` (WB3A), `WB3D`
+(expect `0x800114B5`), `WB3S`, PC, SR, SSW, and `rw` derived from SSW bit 8; `as_segat(p_as, fa&~0xFFF)`
+with `s_base`/`s_size`/`s_data`/`pageprot` and a decoded `i10c_covered`; the break extent
+(`brkbase`/`brksize`/`brkend`, `i10c_fa_covered` = fa < brkend); `ptest(fa)` (via `i10r_doptest`, the
+030-PSR and raw MMUSR); the leaf PTE and value at `fa`; and `availrmem`/`freemem`/`wb_replay_n`.
+
+### 20.1 Prediction — constrained by i10s, ranked
+
+`i10s` proved the write **never reaches `segvn_faultpage`** (`vamatch_n = 0`). From the stock `as_fault`
+body, the only ways it returns before calling the segment fault op are: `as_segat` returns NULL, **or**
+`as_segat` returns a seg whose `s_base + s_size <= fa` and the next seg does not start at `fa` (a gap →
+`moveq #3` = FC_NOMAP at `as_fault+0x9e`). So **`i10c_covered = 0` is essentially forced** — a covering
+segment would have run `segvn_faultpage`, contradicting `i10s`. The open sub-questions:
+
+1. **PRIMARY — seg found but SHORT (a coverage gap).** `i10c_seg != 0` (sh has a data segment) but
+   `i10c_segbase + i10c_segsize <= 0x800152A0` (`i10c_covered = 0`): the data segment exists but was
+   **not extended** to reach `fa`. Then `i10c_fa_covered` forks it further: `= 1` (brkend > fa) means
+   brk advanced its bookkeeping while the segment did not (a brk/segment divergence); `= 0` means the
+   break itself never reached `fa`. Expect `i10c_ptpsr = 0x400` (not present) / `i10c_pte = 0` (truly
+   absent) — the page was never mapped.
+2. **Alternative — no segment at all.** `i10c_seg = 0`: nothing covers `fa` (the grow created no seg
+   or the wrong one).
+
+**Early vs late — the question i10a/i10b could not answer for the genesis.** I predict **EARLY**:
+`i10c_brksize` small (a tiny arena, not the 16 MB late grow), `i10c_availrmem`/`i10c_freemem` plentiful,
+`i10c_wb_replay_n` small. If so, the late `hat_sdtalloc` contiguous-memory shortfall (§18/§19) is **not**
+the genesis mechanism — the genesis is an early **coverage boundary**: sh's `addblok` grew and wrote
+its `0x800114B5` marker to the new bloktop, but the segment/brk state at `fa` left the first-touch
+write with no covering, resolvable page. If instead `i10c_brksize` is large and memory scarce, the
+late grow-failure stands. Either way, `i10c_seg`/`i10c_covered`/`i10c_fa_covered` + `i10c_brksize` read
+the genesis directly, which no wrapper probe could.

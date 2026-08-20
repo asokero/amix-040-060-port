@@ -610,6 +610,20 @@ if m68k-linux-gnu-nm "$OUT" | grep -E ' U brk_orig$' >/dev/null 2>&1; then
 fi
 echo "[OK] ISSUE-10 grow-probe edge bound: brk (i10b @0x$BKADDR) -> brk_orig @0x$BKOADDR."
 
+# HARD CHECK (2026-08-20, ISSUE-10 genesis introspection PART TEN): wb040.o's usrxmemflt
+# and krnxmemflt now `jsr` i10c_hook (i10rev040.o) right after wbf_dropwarn -- the site
+# that fires exactly once for a dropped pending write-back.  `ld -r` does not fail on an
+# unresolved symbol, so a dropped object or renamed entry would leave a call to address 0
+# on the first such drop.  Shaped like the i10w/i10g hook guards.
+ICADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="i10c_hook" && $2=="T" {print $1}')
+if [ -z "$ICADDR" ]; then
+	echo "[FAIL] i10c_hook is not a global T -> the genesis-introspection edge is unbound"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U i10c_hook$' >/dev/null 2>&1; then
+	echo "[FAIL] i10c_hook still UND -> the drop-warning path would call address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 genesis-introspection edge bound: usrxmemflt/krnxmemflt -> i10c_hook @0x$ICADDR."
+
 # HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
 # remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired
 # 030 ublksde and never updates the live uarea_pt, so a kernel whose strong `resume`
