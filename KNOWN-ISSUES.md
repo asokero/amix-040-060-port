@@ -4826,6 +4826,83 @@ is precisely how ISSUE-46 turned a panic into a dead machine.
 
 **Nothing here is measured yet.** The build has not been booted.
 
+### MEASURED on hardware 2026-08-21 — the latch fired, and it refutes two of my four predictions
+
+Kernel `68040-260821-02`, death ~22 s post-MMU, block read post-mortem from the reset window.
+
+| | | |
+|---|---|---|
+| `smu_n` | 1 | ✓ predicted |
+| `smu_addr` == `smu_addr0` | `0x40440000` | ✓ predicted — the **first** page of the run, and `0x40440000` is the base of `kvsegmap`, i.e. segmap slot 0 |
+| `smu_off` == `smu_smoff` == `smu_poff` | 0 | offset 0 of the vnode |
+| `smu_len` / `smu_rw` | `0x1000` / 0 | exactly one page |
+| `smu_why` | **3** | ✗ **predicted 4 or 2** — got `1|2` = **p_pagein AND p_free together** |
+| `smu_scan` | **1** | ✗ **predicted 0** — the page IS in the hash |
+| `smu_bucket` == `smu_want` | 556 | same bucket |
+| `smu_scanpp` == `smu_pp` | `0x40073E28` | the same page |
+| `smu_vp` == `smu_pvnode` | `0x40078B04` | identity intact |
+| `smu_hashsz` | 1024 | |
+| `smu_pflags` | `0x33000002` | byte0 `0x33` = **p_free, p_intrans, p_ref, p_pagein**; `p_keepcnt = 2` |
+
+`smu_pp - 0x40040000 = 0x33E28 = 212520`, and `212520 / 60 = 3542` **exactly** — so `pages[]` is at
+`0x40040000` and this is page index 3542 of 3688, click `0x8F6E`. The array length `60 * 0xE68 =
+0x36060` is the same `0x00036060` that appeared in ISSUE-48's stack frames. Three independent
+numbers agreeing is what says the decode is right.
+
+**Correction to this entry's own instrument.** The `smu_scan` interpretation table above was
+written for the `pp == NULL` case and is wrong as stated for this one: with `pp != NULL` the scan
+re-finding the same page in the same bucket proves nothing about locking — it simply confirms the
+hash is healthy and the page is exactly where it should be. The table should have said so. What
+the scan *did* establish is worth keeping: **the page hash is not the problem**, which was the
+hypothesis most worth killing.
+
+### The verdict
+
+Not wrong-bucket, not concurrent mutation, not not-in-cache. The page is precisely where it
+belongs, with the right identity, and **its flag state is the defect**: it is simultaneously
+marked as on a free list (`p_free`) and as a pagein in flight (`p_intrans | p_pagein`), while held
+twice (`p_keepcnt = 2`). `p_ref = 1` and `p_keepcnt` rising from 1 to 2 are exactly what
+`page_get` + a softlock hold produce, so everything about this page is normal **except `p_free`**.
+
+### What that single bit rules out, statically
+
+* **`page_get` never ran on it.** Its per-frame re-init at `0xb023c`–`0xb0278` is the compiled
+  form of `p_age = p_nc = p_mod = p_free = 0; p_pagein = p_intrans = p_lock = 0; p_ref = 1;
+  p_keepcnt = 1` — a `bfextu`/`bfins` cascade that **clears `p_free` at `0xb025c`**. Any page
+  through it is clean.
+* **`page_unfree` never ran on it** — the reclaim path (`0xaff3c`–`0xaff4c`) clears `p_free` by
+  the same idiom, and it is what `page_reclaim` (called from `page_lookup` at `0xaf85c`) uses.
+* **`free_vp_pages` did not put it there.** Before setting `p_free` (`orib #32` at `0xafe04`) it
+  asserts `p_free == 0` (line 753), `p_intrans == 0` (754) and `p_keepcnt == 0` (755). This page
+  violates all three, so it would have `assfail`ed three times over first.
+* **`page_abort` did not do it** — it asserts `p_free == 0` on entry (line 550) and returns early
+  if `p_keepcnt != 0` or `p_intrans` is set.
+* **The copyback release patch is not implicated.** `patch_cb_release.py` hook 2 rewrites
+  `addql #1,freemem` → `jsr cb_vpfree_enter` at `0xafd98`; the next instruction is `btst #5,%a2@`,
+  which sets its own condition codes, so the classic "a `jsr` where an `addql` set the CCR" trap
+  does not apply here. Checked because it is exactly the trap this repository documents.
+
+So `p_free` was set by `page_free` (`0xafb3a`, the only remaining setter, and its ISSUE-48 guard
+means `p_keepcnt` was 0 at that moment), and then **the page was taken for a pagein without ever
+being reclaimed** — neither `page_get`'s cascade nor `page_unfree` cleared the bit.
+
+### Stage 2, and what it decides
+
+The remaining question is which list the page is actually linked into, and it splits three ways.
+The island now walks both (`p_next` +16 / `p_prev` +20, circular, both budgeted):
+
+| outcome | meaning |
+|---|---|
+| `smu_oncache = 1` | it is on `page_cachelist` — a cache-list page taken for a pagein without `page_reclaim`. The acquirer is the bug |
+| `smu_onfree = 1` | worse: a genuinely free page is being paged into, i.e. the free list handed out a page that is still linked |
+| both 0 | **`p_free` is a stale bit** — the page was properly unlinked but the flag was never cleared, and the bug is one specific missing clear |
+
+`smu_cachesz`/`smu_freemem` and the two walk counts are latched alongside so a truncated or
+looping walk is visible rather than silently reported as "not found".
+
+**Predicted before the run:** `smu_oncache = 1`, `smu_onfree = 0`. If both come back 0, the
+"stale bit" reading is right and the search narrows to a single missing `page_unfree`.
+
 ## ⏳ ISSUE-50 (2026-08-20, DIAGNOSED — deliberately not fixed in this pass): the panic backtrace stops after one frame because its frame-pointer window is 64 KiB wide
 
 > **Ledger: OPEN, diagnosed, fix designed but not implemented.** Recorded now because it has cost
@@ -4873,3 +4950,56 @@ addresses — this alone kills every cycle); and cap the frame count outright.
 Not done in this pass on purpose: it would put a second, unproven variable into a kernel whose
 one job is to diagnose ISSUE-49. It is worth doing immediately afterwards — every future panic in
 this port pays for it, and two investigations have already paid for it once each.
+
+## ⚠ ISSUE-51 (2026-08-21, DIAGNOSED — not fixed): `xpanic` decides whether to `sync()` from uninitialised bits
+
+> **Ledger: OPEN, diagnosed.** Matters mainly because it decides how much to trust a
+> post-mortem counter, which is now a working diagnostic channel for this port.
+
+### The observation that forced it
+
+Two panics on the same kernel family, both with ISSUE-46's guarded `sync()` linked in:
+
+* ISSUE-46's boot (`PANIC: page_free`): `syncg_calls = 1`, `syncg_skip_ops = 11` — `sync()` ran
+  and skipped all eleven unfilled `vfssw` rows.
+* ISSUE-49's boot (`PANIC: segmap_unlock`): **`syncg_calls = 0`** — `sync()` was never entered,
+  though the machine warm-rebooted cleanly and the `putbuf` ring was intact.
+
+### Why
+
+`xpanic` (`.text+0x3e668`) gates its `sync()` call like this:
+
+```
+3e688:  movew %sr,%d0            ; writes only the LOW word of d0
+3e68a:  movew #9216,%sr
+3e68e:  movel %d0,%fp@(-4)       ; stores the FULL LONG
+3e692:  movew %sr,%d1
+3e694:  movew %d0,%sr
+3e696:  bftst %fp@(-4),5,3       ; e8ee 0143 fffc -> offset 5, width 3
+3e69c:  bnew  3e6a6              ; non-zero -> SKIP sync
+3e6a0:  jsr   sync
+```
+
+`bftst {5:3}` on a memory operand counts from the MSB of the addressed byte, so it tests bits
+26–24 of the stored longword — i.e. bits 10–8 of **d0's high word**. `movew %sr,%d0` never writes
+that half. What is in it is whatever the preceding `jsr sysdump` (`0x3e682`) left in `d0`.
+
+**So the panic path's decision to flush filesystems is taken on uninitialised bits**, and the two
+boots differ because `sysdump` returned different values.
+
+### Consequences, which is the point of recording it
+
+* **`syncg_calls` is not a reliable indicator that the panic path ran.** A zero means "`sync()`
+  was not called this time", not "the panic path failed". For post-mortems the trustworthy signals
+  are the `putbuf` ring contents and a clean warm reboot.
+* **ISSUE-46's guard is not made redundant by this.** It was simply not exercised on the second
+  boot. Had those bits fallen the other way — a coin toss on every early panic — the unguarded
+  `sync()` would have walked the NULL `vfssw` and destroyed the ring that produced ISSUE-49's
+  entire diagnosis. The guard remains load-bearing precisely because the gate is unpredictable.
+
+### The fix, when it is taken
+
+Make the gate explicit rather than accidental: zero `d0`'s upper half before the `movew %sr,%d0`
+(or store the SR as a word and test a word field). One instruction's worth of change, but it
+alters panic-path behaviour on every panic, so it wants its own pass and its own A/B rather than
+riding into a kernel whose job is to diagnose ISSUE-49 — the same reason ISSUE-50 is still open.

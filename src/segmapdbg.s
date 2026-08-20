@@ -89,7 +89,12 @@
 |
 | Assemble: m68k-cbm-sysv4-gcc -m68040 -c segmapdbg.s -o build/segmapdbg.o
 | Wire:     patch_segmapdbg.py (relocation retarget).  Externals: page_hash,
-|           page_hashsz (both COMMON), cmn_err.
+|           page_hashsz, page_freelist, freemem (all COMMON) and cmn_err.
+|           page_cachelist / page_cachelist_size are file-LOCAL 'b' in the stock
+|           image and need --globalize-symbol in relink-040.sh -- without it the
+|           two list walks bind to address 0.  The relocation validator refuses
+|           that build (BADSHNDX, shndx=0), which is how it was caught here rather
+|           than on the card.
 | ============================================================================
 
 	.text
@@ -170,7 +175,7 @@ Lsmu_c:
 	movel	%d1,smu_bucket		| FOUND -- and in which bucket
 	movel	%a1,smu_scanpp
 	movel	&1,smu_scan
-	braw	Lsmu_go
+	braw	Lsmu_lists
 Lsmu_nx:
 	moveal	%a1@(12),%a1		| p_hash
 	subql	&1,%d2
@@ -179,10 +184,61 @@ Lsmu_bn:
 	addql	&1,%d1
 	cmpl	%d0,%d1
 	bcsw	Lsmu_b
-	braw	Lsmu_go
+	braw	Lsmu_lists
 Lsmu_budget:
 	movel	&2,smu_scan		| inconclusive, and says so
 
+| --- STAGE 2 (2026-08-21): p_free is set, so the page claims to be on a free
+|     list.  WHICH list it is actually linked into is the whole question, and it
+|     splits the remaining space three ways.  Both lists are circular and doubly
+|     linked through p_next (+16) / p_prev (+20); both walks are budgeted, for the
+|     same reason the hash scan is.
+	movel	page_cachelist_size,smu_cachesz
+	movel	freemem,smu_freemem
+| ---- page_cachelist ----
+	movel	&0,%d0
+	moveal	page_cachelist,%a1
+	tstl	%a1
+	beqw	Lsmu_freel
+	movel	%a1,%d1			| d1 = head, to close the ring
+	movel	&200000,%d0		| budget
+Lsmu_cl:
+	cmpal	%a1,%a2
+	bnew	Lsmu_cln
+	movel	&1,smu_oncache
+	braw	Lsmu_freel
+Lsmu_cln:
+	moveal	%a1@(16),%a1		| p_next
+	tstl	%a1
+	beqw	Lsmu_freel
+	addql	&1,smu_cachewalk
+	cmpl	%a1,%d1
+	beqw	Lsmu_freel		| back at the head: whole ring seen
+	subql	&1,%d0
+	bnew	Lsmu_cl
+| ---- page_freelist ----
+Lsmu_freel:
+	moveal	page_freelist,%a1
+	tstl	%a1
+	beqw	Lsmu_lists
+	movel	%a1,%d1
+	movel	&200000,%d0
+Lsmu_fl:
+	cmpal	%a1,%a2
+	bnew	Lsmu_fln
+	movel	&1,smu_onfree
+	braw	Lsmu_lists
+Lsmu_fln:
+	moveal	%a1@(16),%a1		| p_next
+	tstl	%a1
+	beqw	Lsmu_lists
+	addql	&1,smu_freewalk
+	cmpl	%a1,%d1
+	beqw	Lsmu_lists
+	subql	&1,%d0
+	bnew	Lsmu_fl
+
+Lsmu_lists:
 Lsmu_go:
 	moveml	%sp@+,%d0-%d7/%a0-%a6
 | The stack now holds cmn_err's return address and its two arguments (CE_PANIC and
@@ -265,5 +321,25 @@ smu_pvnode:
 	.long	0
 	.globl	smu_poff
 smu_poff:
+	.long	0
+| STAGE 2: which free list the page is ACTUALLY linked into, and the ring sizes
+| to judge the walks by.  1 = found on that list.
+	.globl	smu_oncache
+smu_oncache:
+	.long	0
+	.globl	smu_onfree
+smu_onfree:
+	.long	0
+	.globl	smu_cachewalk
+smu_cachewalk:
+	.long	0
+	.globl	smu_freewalk
+smu_freewalk:
+	.long	0
+	.globl	smu_cachesz
+smu_cachesz:
+	.long	0
+	.globl	smu_freemem
+smu_freemem:
 	.long	0
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
