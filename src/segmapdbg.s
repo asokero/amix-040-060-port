@@ -241,7 +241,45 @@ Lsmu_fln:
 	subql	&1,%d0
 	bnew	Lsmu_fl
 
+| --- STAGE 3 (2026-08-21): every p_free-touching code path is stock and correct
+|     (proved by a stock-vs-built byte diff and by page_get's cascade being
+|     unskippable), so p_free was SET on this page after it was acquired, by
+|     something that is not one of the two guarded `orib #32` instructions.
+|     The question is therefore no longer "which clear is missing" but "how many
+|     pages are in this impossible state" -- one means a targeted write at a fixed
+|     address, many means something systemic.  One bounded pass over pages..epages.
 Lsmu_done2:
+	movel	&0x43454e21,smu_s3ran	| "CEN!"
+	moveal	pages,%a0
+	tstl	%a0
+	beqw	Lsmu_go
+	moveal	epages,%a1
+	tstl	%a1
+	beqw	Lsmu_go
+	moveq	&0,%d0			| d0 = struct index
+	movel	&100000,%d3		| safety cap: pages/epages are themselves suspect
+Lsmu_cen:
+	cmpal	%a1,%a0
+	bccw	Lsmu_go			| reached epages
+	moveq	&0,%d1
+	moveb	%a0@,%d1		| the flag byte
+	btst	&5,%d1			| p_free?
+	beqw	Lsmu_cnx
+	addql	&1,smu_freeset_n	| should track freemem + cachelist
+	movel	%d1,%d2
+	andil	&0x11,%d2		| p_intrans (0x10) | p_pagein (0x01)
+	beqw	Lsmu_cnx
+	addql	&1,smu_imposs_n		| free AND in transit -- impossible
+	tstl	smu_imposs_pp
+	bnew	Lsmu_cnx
+	movel	%a0,smu_imposs_pp	| latch the first one
+	movel	%d0,smu_imposs_i
+Lsmu_cnx:
+	lea	%a0@(60),%a0
+	addql	&1,%d0
+	subql	&1,%d3
+	bnew	Lsmu_cen
+
 Lsmu_go:
 	moveml	%sp@+,%d0-%d7/%a0-%a6
 | The stack now holds cmn_err's return address and its two arguments (CE_PANIC and
@@ -327,6 +365,24 @@ smu_poff:
 	.long	0
 | STAGE 2: which free list the page is ACTUALLY linked into, and the ring sizes
 | to judge the walks by.  1 = found on that list.
+| "CEN!" once the stage-3 census has executed, and its results.  smu_imposs_n == 1
+| means exactly one page in the array is both free and in transit -- a targeted
+| event at a fixed address, not a systemic accounting failure.
+	.globl	smu_s3ran
+smu_s3ran:
+	.long	0
+	.globl	smu_freeset_n
+smu_freeset_n:
+	.long	0
+	.globl	smu_imposs_n
+smu_imposs_n:
+	.long	0
+	.globl	smu_imposs_i
+smu_imposs_i:
+	.long	0
+	.globl	smu_imposs_pp
+smu_imposs_pp:
+	.long	0
 | "RAN!" once the stage-2 block has executed.  Zero here means the block was never
 | reached, which is a DIFFERENT fact from every walk field being zero.
 	.globl	smu_s2ran
