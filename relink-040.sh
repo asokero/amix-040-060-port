@@ -254,6 +254,15 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/config040.s" -o "$HERE/build/config040.
 # strong def (the stock body stays reachable as krnxmemflt_stock, reference only).
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/krnxmemflt040.s" -o "$HERE/build/krnxmemflt040.o"
 m68k-linux-gnu-objcopy --redefine-sym segu_get=segu_get_lockfix "$HERE/build/segu_lockfix.o"
+# i10s (2026-08-20, ISSUE-10 resolution audit PART SEVEN): i10rev040.o carries an OUTER
+# tail-call wrapper on segvn_faultpage that observes the per-page decision and then hands
+# off to segvn_prot040's per-page restorer.  For the wrapper to take the segvn_faultpage
+# symbol, segvn_prot040.o's own definition is renamed to segvn_faultpage_prot here -- a
+# relink-time rename (the segu_get idiom above) so segvn_prot040.s stays untouched and
+# standalone-upstreamable, knowing nothing about the audit.  The chain then binds as
+# segvn_faultpage (i10rev040.o) -> segvn_faultpage_prot (segvn_prot040.o) ->
+# segvn_faultpage_orig (0xac01a stock body).  The hard check after the link asserts it.
+m68k-linux-gnu-objcopy --redefine-sym segvn_faultpage=segvn_faultpage_prot "$HERE/build/segvn_prot040.o"
 
 echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
 cp "$STOCK" "$HERE/build/unix-stage1"
@@ -523,6 +532,30 @@ for h in i10r_pre i10r_post; do
 	fi
 	echo "[OK] ISSUE-10 resolution-audit edge bound: usrxmemflt -> $h @0x$HADDR."
 done
+
+# HARD CHECK (2026-08-20, ISSUE-10 decision audit PART SEVEN): i10rev040.o's i10s outer
+# wrapper now OWNS the strong segvn_faultpage and tail-jmps segvn_faultpage_prot -- the
+# per-page restorer, renamed above from segvn_prot040.o.  Two ways this can silently
+# break, both of which `ld -r` links cleanly through: the wrapper never took the symbol
+# (segvn_faultpage still resolves to the stock body at 0xac01a, so the audit is dead and
+# the per-page check runs unobserved), or the tail target is unbound (segvn_faultpage_prot
+# left UND -> the jmp goes to address 0 on the FIRST VM fault of the boot).  Assert both,
+# and that the per-page body is still reachable off its stock address, before trusting it.
+SFPADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="segvn_faultpage" && $2=="T" {print $1}')
+SFPPADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="segvn_faultpage_prot" && $2=="T" {print $1}')
+if [ -z "$SFPADDR" ]; then
+	echo "[FAIL] segvn_faultpage is not a global T -> the i10s wrapper is unbound"; exit 1
+fi
+if [ "$SFPADDR" = "000ac01a" ]; then
+	echo "[FAIL] strong segvn_faultpage is still the stock body 0xac01a -> i10s wrapper did not take the symbol"; exit 1
+fi
+if [ -z "$SFPPADDR" ]; then
+	echo "[FAIL] segvn_faultpage_prot is not a global T -> the per-page restorer rename did not take"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U segvn_faultpage_prot$' >/dev/null 2>&1; then
+	echo "[FAIL] segvn_faultpage_prot still UND -> the i10s tail jmp would go to address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 decision-audit edge bound: segvn_faultpage (i10s @0x$SFPADDR) -> segvn_faultpage_prot @0x$SFPPADDR -> segvn_faultpage_orig @0xac01a."
 
 # HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
 # remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired

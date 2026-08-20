@@ -3393,3 +3393,359 @@ i10r_r14:
 i10r_r15:
 	.long	0
 	.balign 4			| pad section to a 4-byte multiple (bss placement)
+
+| ===========================================================================
+| PART SEVEN -- i10s: the SEGVN-FAULTPAGE DECISION AUDIT (2026-08-20).
+|
+| WHAT PART SIX LEFT OPEN.  i10r proved the marker write fault (fa 0x800152A0,
+| proc 0x4013BE00) is classified F_INVAL demand (branch 3, ptest agrees the page
+| is absent), that as_fault(F_INVAL, S_WRITE) returned NONZERO, that usrxmemflt
+| returned SIGSEGV code 1 (SEGV_MAPERR), and that the pending write-back was then
+| dropped.  The decisive contrast is in the same record: five ticks later the
+| WALK's own READ fault on the SAME absent page maps and zero-fills it (doc 14.5).
+| Two faults of the same class on the same page, differing ONLY in rw -- S_WRITE
+| dies, S_READ succeeds.  That localises the defect to segvn_fault's handling of a
+| first-touch WRITE demand-fill, and i10r cannot see inside it BY DESIGN: it
+| records the classifier branch that CHOOSES as_fault's arguments, not the segvn
+| return path (i10r header, "What it does not do").  Doc 16.4/16.6 name the next
+| instrument exactly: wrap segvn_fault/segvn_faultpage for this proc+VA and record
+| rw, the faultcode returned, and WHICH segvn_faultpage sub-path failed --
+| protection (svd->prot / vpage->vp_prot) vs anon/vpage COVERAGE the brk grow did
+| not extend vs anon_zero.  This unit is that instrument.
+|
+| WHERE IT HOOKS, AND WHY AS AN OUTER WRAPPER.  segvn_prot040.s already owns the
+| strong segvn_faultpage: it restores SVR4's per-page permission check and, on a
+| PASS, tail-jmps segvn_faultpage_orig (the linked kernel body at 0xac01a).  Its
+| deny path returns FC_PROT WITHOUT jmping orig, so a hook placed at orig would
+| never see a denied write -- and a denied write is the whole question.  So this
+| audit is an OUTER tail-call wrapper that takes the segvn_faultpage symbol for
+| itself, OBSERVES the arguments read-only, REPLICATES segvn_prot040's per-page
+| decision (so it can say what that wrapper is about to return), and then tail-jmps
+| the per-page wrapper -- which is reached under the name segvn_faultpage_prot, a
+| pure relink rename of segvn_prot040.o (--redefine-sym, the segu_get idiom), so
+| segvn_prot040.s itself is UNTOUCHED and stays a standalone upstreamable fix that
+| knows nothing about this audit.  The real decision is still segvn_prot040's; this
+| wrapper only latches what it sees and what it predicts.  Chain:
+|     segvn_faultpage (i10s, here) -> segvn_faultpage_prot (segvn_prot040.s)
+|                                  -> segvn_faultpage_orig (0xac01a, stock body)
+|
+| WHAT IT CAPTURES, once, on the first call matching curproc == i10s_watchproc AND
+| (addr & i10s_watchmask) == i10s_watchva AND rw == i10s_watchrw (default S_WRITE):
+|   * rw, the seg pointer, seg->s_base / seg->s_size (so the vpage/anon index range
+|     can be checked offline), and svd = seg->s_data;
+|   * svd->pageprot (@2) and svd->prot (@3) -- pageprot == 0 says the per-page path
+|     is not even entered and any denial is segment-wide (or downstream in anon);
+|   * the vpage pointer for this page (arg5), its raw byte, and the decoded vp_prot
+|     nibble (top nibble, the bfextu 0,4 segvn_prot040 uses);
+|   * protchk for this rw (the exact switch: S_READ->1, S_WRITE->2, S_EXEC->4,
+|     else 7), the (vp_prot & protchk) value, and whether that is zero (denied);
+|   * whether segvn_prot040's FC_PROT return is TAKEN -- computed by replicating its
+|     own guard exactly (pageprot != 0 AND vpage != 0 AND (vp_prot & protchk) == 0)
+|     -- and the value it returns on that path (4 = FC_PROT, or -1 = falls through
+|     to segvn_faultpage_orig, verdict decided downstream);
+|   * the first 16 longs of svd.  The anon-map slot / anon_zero decision is NOT
+|     decoded in-kernel: it needs segvn_data's amp/anon_index offsets and the
+|     anon_map/ahp layout, none of which is confirmed against this binary, and a
+|     diagnostic that dereferences an unverified offset is how a probe panics the
+|     machine it was added to measure.  Dumping svd instead makes coverage-vs-
+|     protection separable OFFLINE (kpeek the raw block, decode against the headers)
+|     without a single guessed dereference -- the i10p_vmask lesson, applied to a
+|     struct instead of a mask.
+|
+| CROSS-CHECK BUILT IN.  segvn_prot040 keeps its OWN counters (segvn_prot_pp_n,
+| segvn_prot_n, segvn_prot_last_addr/last_prot).  If i10s_fcprot latches 1 for this
+| address, segvn_prot_n must have incremented and segvn_prot_last_addr must equal
+| i10s_addr -- two independent readings of the same decision, one predicted here and
+| one recorded by the code that actually makes it.
+|
+| SAFETY AND COST.  Ships dormant: i10s_watchproc = 0, so the wrapper is one tstl
+| plus the tail jmp on every segvn_faultpage call until it is armed with a kpoke.
+| Armed, it saves and restores d0-d7/a0-a6 across the latch, so the ABI is
+| undisturbed: d0/d1/a0/a1 are scratch in the frameless-tail-call ABI segvn_prot040
+| documents, the caller expects d0 to be the faultcode segvn_faultpage_prot loads,
+| and d2-d7/a2-a6 are handed back untouched.  It reads only KERNEL memory (the seg,
+| svd and vpage structs, curproc, the u-area) -- never a user VA, no ptest, no MMU
+| poke -- so no DFC/SFC dance is needed.  vpage is checked for NULL before it is
+| dereferenced, exactly as segvn_prot040 checks it; seg and svd are trusted the same
+| way segvn_prot040 trusts them, and the latch fires only for the one watched fault.
+| ===========================================================================
+
+	.text
+	.balign 4
+
+| ---------------------------------------------------------------------------
+| segvn_faultpage -- the i10s outer wrapper.  Frameless-tail-call ABI (see
+| segvn_prot040.s): sp@(0) = return address, argument N at sp@(4N).  A linkw frame
+| then puts arg1 at fp@(8) and argN at fp@(8+4(N-1)); the arguments this audit
+| reads are seg = arg1 (fp@8), addr = arg2 (fp@12), vpage = arg5 (fp@24),
+| rw = arg9 (fp@40).
+	.globl	segvn_faultpage
+segvn_faultpage:
+	tstl	i10s_watchproc
+	bnew	Lis_maybe		| armed: rare -- check the gate (d0/d1 scratch)
+Lis_tail:
+	jmp	segvn_faultpage_prot	| dormant OR done: the per-page wrapper decides
+Lis_maybe:
+	tstl	i10s_latched
+	bnew	Lis_tail		| one-shot: the audit is already complete
+	addql	&1,i10s_seen_n		| UNCAPPED: segvn_faultpage calls seen while armed
+	movel	curproc,%d0
+	cmpl	i10s_watchproc,%d0
+	bnew	Lis_tail		| not the watched process
+	movel	%sp@(8),%d0		| arg2 = the fault address
+	movel	%d0,%d1
+	andl	i10s_watchmask,%d1
+	cmpl	i10s_watchva,%d1
+	bnew	Lis_tail		| not the watched address / page
+	movel	%sp@(36),%d0		| arg9 = rw
+	cmpl	i10s_watchrw,%d0
+	bnew	Lis_tail		| not the watched access class (default S_WRITE)
+	addql	&1,i10s_match_n
+| --- MATCH: latch the decision once.  Build a frame so every callee-saved register
+|     is handed back untouched; segvn_faultpage_prot reloads all args from the stack
+|     and treats d0/d1/a0/a1 as scratch, so the tail jmp after unlk is exact. ---
+	linkw	%fp,&0
+	moveml	%d0-%d7/%a0-%a6,%sp@-
+	movel	curproc,i10s_proc
+	movel	u+0x1c0,i10s_comm0	| u_comm: the command must read "sh"
+	movel	u+0x1c4,i10s_comm1
+	movel	u+0x1c8,i10s_comm2
+	movel	u+0x1cc,i10s_comm3
+	movel	%fp@(12),i10s_addr	| arg2 = the denied fault address
+	movel	%fp@(40),i10s_rw	| arg9 = rw
+	moveal	%fp@(8),%a0		| arg1 = seg
+	movel	%a0,i10s_seg
+	movel	%a0@(4),i10s_segbase	| seg->s_base
+	movel	%a0@(8),i10s_segsize	| seg->s_size
+	moveal	%a0@(28),%a1		| svd = seg->s_data
+	movel	%a1,i10s_svd
+	moveq	&0,%d0
+	moveb	%a1@(2),%d0		| svd->pageprot (0 => per-page path not entered)
+	movel	%d0,i10s_pageprot
+	moveq	&0,%d0
+	moveb	%a1@(3),%d0		| svd->prot (segment-wide protection)
+	movel	%d0,i10s_prot
+| the first 16 longs of svd, for OFFLINE anon-map/vpage-coverage decode
+	moveal	%a1,%a0
+	lea	i10s_svd0,%a1
+	moveq	&15,%d1
+Lis_svd:
+	movel	%a0@+,%a1@+
+	dbra	%d1,Lis_svd
+| the vpage pointer for this page (arg5), its byte and decoded vp_prot nibble
+	moveal	%fp@(24),%a0		| arg5 = vpage
+	movel	%a0,i10s_vpage
+	moveq	&0,%d1
+	movel	%a0,%d0
+	beqs	Lis_novp		| vpage NULL: leave vpbyte / vpprot 0
+	moveq	&0,%d1
+	moveb	%a0@,%d1		| the vpage byte
+	movel	%d1,i10s_vpbyte
+	lsrl	&4,%d1			| vp_prot = its TOP nibble (bfextu 0,4)
+	andil	&0x0f,%d1
+Lis_novp:
+	movel	%d1,i10s_vpprot		| 0 when vpage is NULL
+| protchk from rw -- the exact switch segvn_prot040 computes
+	movel	i10s_rw,%d0
+	moveq	&7,%d1			| default = PROT_READ|PROT_WRITE|PROT_EXEC
+	cmpil	&1,%d0
+	bnes	Lis_nrd
+	moveq	&1,%d1			| S_READ  -> PROT_READ
+	bras	Lis_pk
+Lis_nrd:
+	cmpil	&2,%d0
+	bnes	Lis_nwr
+	moveq	&2,%d1			| S_WRITE -> PROT_WRITE
+	bras	Lis_pk
+Lis_nwr:
+	cmpil	&3,%d0
+	bnes	Lis_pk
+	moveq	&4,%d1			| S_EXEC  -> PROT_EXEC
+Lis_pk:
+	movel	%d1,i10s_protchk
+	movel	i10s_vpprot,%d0
+	andl	%d1,%d0			| vp_prot & protchk -- the value the check branches on
+	movel	%d0,i10s_andval
+	moveq	&0,%d0
+	tstl	i10s_andval
+	bnes	Lis_setd
+	moveq	&1,%d0			| (vp_prot & protchk) == 0: the check would deny
+Lis_setd:
+	movel	%d0,i10s_denied
+| whether segvn_prot040's FC_PROT return is TAKEN -- its own guard, replicated:
+|   Lsp_pass (no FC_PROT) if pageprot == 0, or vpage == 0, or (vp_prot & protchk)!=0
+|   else return FC_PROT (moveq #4).
+	clrl	i10s_fcprot
+	movel	&-1,i10s_retval		| -1 = falls through to segvn_faultpage_orig
+	tstl	i10s_pageprot
+	beqs	Lis_done		| pageprot 0: per-page path not entered -> pass
+	tstl	i10s_vpage
+	beqs	Lis_done		| vpage 0: defensive pass
+	tstl	i10s_denied
+	beqs	Lis_done		| permitted -> pass
+	movel	&1,i10s_fcprot		| the per-page wrapper WILL return FC_PROT here
+	movel	&4,i10s_retval		| FC_PROT = 4 (vm/faultcode.h)
+Lis_done:
+	movel	&1,i10s_latched
+	moveml	%sp@+,%d0-%d7/%a0-%a6
+	unlk	%fp
+	braw	Lis_tail		| hand off: segvn_faultpage_prot makes the REAL decision
+
+	.balign 4
+
+	.data
+	.balign 4
+| ---------------------------------------------------------------------------
+| The i10s block -- read i10s_magic FIRST (a stale address does not fail, it
+| returns a plausible number), then 45 longs: `kpeek <i10s_magic address> 45`.
+| Everything is a .data long so a run can re-aim the audit with kpoke instead of a
+| rebuild, the i10p_vmask lesson.
+	.globl	i10s_magic
+i10s_magic:
+	.long	0x49315321		| "I1S!"
+| --- knobs ---
+	.globl	i10s_watchproc
+i10s_watchproc:
+	.long	0			| 0 = DORMANT (ships this way).  kpoke the process to
+					| audit -- the wall's sh, measured at 0x4013BE00
+	.globl	i10s_watchva
+i10s_watchva:
+	.long	0x80015000		| compared as (addr & watchmask) == watchva; the marker
+					| write that vanishes was measured at user 0x800152A0
+	.globl	i10s_watchmask
+i10s_watchmask:
+	.long	0xfffff000		| 0xfffff000 = any fault in that page, 0xffffffff = the
+					| exact address
+	.globl	i10s_watchrw
+i10s_watchrw:
+	.long	2			| the access class to audit: 1 = S_READ, 2 = S_WRITE
+					| (the marker store), 3 = S_EXEC
+| --- counters and latch state ---
+	.globl	i10s_seen_n
+i10s_seen_n:
+	.long	0			| segvn_faultpage calls seen while armed (uncapped)
+	.globl	i10s_match_n
+i10s_match_n:
+	.long	0			| ... of which matched watchproc + address + rw
+	.globl	i10s_latched
+i10s_latched:
+	.long	0			| 1 once the audit is complete -- read this FIRST after
+					| the magic: with it 0, every field below is ship-time
+					| state and says nothing about any fault
+	.globl	i10s_proc
+i10s_proc:
+	.long	0			| curproc at the latch (must equal i10s_watchproc)
+	.globl	i10s_comm0
+i10s_comm0:
+	.long	0			| u_comm, 16 bytes: the command running (expect "sh")
+	.globl	i10s_comm1
+i10s_comm1:
+	.long	0
+	.globl	i10s_comm2
+i10s_comm2:
+	.long	0
+	.globl	i10s_comm3
+i10s_comm3:
+	.long	0
+| --- the captured decision ---
+	.globl	i10s_addr
+i10s_addr:
+	.long	0			| arg2: the fault address segvn_faultpage received
+	.globl	i10s_rw
+i10s_rw:
+	.long	0			| arg9: rw (1 S_READ, 2 S_WRITE, 3 S_EXEC)
+	.globl	i10s_seg
+i10s_seg:
+	.long	0			| arg1: the struct seg pointer
+	.globl	i10s_segbase
+i10s_segbase:
+	.long	0			| seg->s_base -- with s_size, bounds the vpage/anon index
+	.globl	i10s_segsize
+i10s_segsize:
+	.long	0			| seg->s_size
+	.globl	i10s_svd
+i10s_svd:
+	.long	0			| svd = seg->s_data (segvn_data)
+	.globl	i10s_pageprot
+i10s_pageprot:
+	.long	0			| svd->pageprot @2: 0 = per-page path NOT entered
+	.globl	i10s_prot
+i10s_prot:
+	.long	0			| svd->prot @3: segment-wide protection (bit1 = WRITE)
+	.globl	i10s_vpage
+i10s_vpage:
+	.long	0			| arg5: the vpage pointer for this page (0 = none)
+	.globl	i10s_vpbyte
+i10s_vpbyte:
+	.long	0			| the raw vpage byte (0 when vpage is NULL)
+	.globl	i10s_vpprot
+i10s_vpprot:
+	.long	0			| vp_prot: the byte's TOP nibble (bfextu 0,4)
+	.globl	i10s_protchk
+i10s_protchk:
+	.long	0			| protchk from rw: S_READ 1, S_WRITE 2, S_EXEC 4, else 7
+	.globl	i10s_andval
+i10s_andval:
+	.long	0			| vp_prot & protchk -- the value the check branches on
+	.globl	i10s_denied
+i10s_denied:
+	.long	0			| 1 if (vp_prot & protchk) == 0 (the per-page check denies)
+	.globl	i10s_fcprot
+i10s_fcprot:
+	.long	0			| 1 if segvn_prot040's FC_PROT return is TAKEN (pageprot
+					| != 0 AND vpage != 0 AND denied); 0 = it passes through
+	.globl	i10s_retval
+i10s_retval:
+	.long	0			| the value the per-page wrapper returns on this path:
+					| 4 = FC_PROT, -1 = falls through to segvn_faultpage_orig
+| the first 16 longs (64 bytes) of svd, for OFFLINE anon-map / vpage-coverage
+| decode against the segvn_data layout -- no field offset is guessed in-kernel
+	.globl	i10s_svd0
+i10s_svd0:
+	.long	0
+	.globl	i10s_svd1
+i10s_svd1:
+	.long	0
+	.globl	i10s_svd2
+i10s_svd2:
+	.long	0
+	.globl	i10s_svd3
+i10s_svd3:
+	.long	0
+	.globl	i10s_svd4
+i10s_svd4:
+	.long	0
+	.globl	i10s_svd5
+i10s_svd5:
+	.long	0
+	.globl	i10s_svd6
+i10s_svd6:
+	.long	0
+	.globl	i10s_svd7
+i10s_svd7:
+	.long	0
+	.globl	i10s_svd8
+i10s_svd8:
+	.long	0
+	.globl	i10s_svd9
+i10s_svd9:
+	.long	0
+	.globl	i10s_svd10
+i10s_svd10:
+	.long	0
+	.globl	i10s_svd11
+i10s_svd11:
+	.long	0
+	.globl	i10s_svd12
+i10s_svd12:
+	.long	0
+	.globl	i10s_svd13
+i10s_svd13:
+	.long	0
+	.globl	i10s_svd14
+i10s_svd14:
+	.long	0
+	.globl	i10s_svd15
+i10s_svd15:
+	.long	0
+	.balign 4			| pad section to a 4-byte multiple (bss placement)

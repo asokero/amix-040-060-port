@@ -1153,3 +1153,65 @@ store dropped) and what §16 killed (`hat_sdtalloc`).
 that `as_fault` cannot resolve — and the fix is candidate (b), gated on one more measurement that names
 the `segvn` sub-branch. Candidate (d) is a cheap safety net. Candidates (a) and (c) are measured off
 the path.
+
+## 17. PART SEVEN — `i10s`, the `segvn_faultpage` decision audit (built dormant; prediction only)
+
+This section is the **instrument and its prediction, not a measurement.** The run is the orchestrator's
+next step; nothing below has been observed. It is written down first so the run checks a *stated*
+prediction rather than being read after the fact.
+
+### 17.1 What it is, and where it hooks
+
+§16.4/§16.6 named the next instrument exactly: wrap `segvn_fault`/`segvn_faultpage` for `proc =
+0x4013BE00` and `VA = 0x800152A0` and record `rw`, the returned `faultcode_t`, and *which*
+`segvn_faultpage` sub-path fails on `S_WRITE` while it succeeds on `S_READ` — protection
+(`svd->prot`/`vpage->vp_prot`), anon/`vpage` **coverage** the brk grow did not extend, or `anon_zero`.
+`i10s` (`src/i10rev040.s` PART SEVEN) is that instrument. It is an **outer tail-call wrapper** that
+takes the strong `segvn_faultpage` symbol, reads the arguments read-only, **replicates**
+`segvn_prot040`'s per-page decision so it can state what that wrapper is about to return, and then
+tail-jmps the per-page restorer (reached as `segvn_faultpage_prot` — a relink rename of
+`segvn_prot040.o`, so `segvn_prot040.s` is untouched and stays standalone-upstreamable). The real
+decision is still `segvn_prot040`'s; `i10s` only observes it. Chain:
+`segvn_faultpage` (i10s) → `segvn_faultpage_prot` (segvn_prot040) → `segvn_faultpage_orig` (0xac01a).
+It ships **dormant** (`i10s_watchproc = 0`, one `tstl` per `segvn_faultpage` call) and is armed with a
+single `kpoke` of the process; `test-tools/i10s.sh` is the driver. It captures `rw`, `seg`,
+`seg->s_base/s_size`, `svd`, `svd->pageprot`/`svd->prot`, the `vpage` pointer + its byte + decoded
+`vp_prot`, the `protchk`/`(vp_prot & protchk)` pair, whether `segvn_prot040`'s `FC_PROT` return is
+taken and its value, and the first 64 bytes of `segvn_data` (so the anon-map/`vpage` coverage can be
+decoded **offline** without a guessed on-box dereference).
+
+### 17.2 The prediction — ranked, and what each outcome would mean
+
+The load-bearing fact from §16.4: the two faults differ **only in `rw`**, and inside a demand-fill the
+only `rw`-keyed pass/fail is the permission check (`(vp_prot & protchk)` per-page, or `(svd->prot &
+protchk)` segment-wide) — *unless* a write and a read take structurally different page-creation paths
+(a write needs a fresh anon slot; a read of a never-written anon page can map the shared zero page with
+no slot). The `sicode = SEGV_MAPERR` ("nothing mapped") rather than `SEGV_ACCERR`, measured by i10r,
+leans away from a *clean* protection refusal and toward *nothing was produced* — or toward an
+`F_INVAL`-with-`FC_PROT` mismap. Against that, `sh`'s brk heap normally carries **segment-wide**
+protection (no `mprotect`-of-part → `pageprot = 0`) and should be writable. The prediction weighs those:
+
+- **Predicted (lead): `i10s_pageprot = 0`, `i10s_prot` retains WRITE (`3 = R|W` or `7 = R|W|X`),
+  `i10s_fcprot = 0`, `i10s_retval = -1`, `i10s_vpage = 0`, `i10s_vpprot = 0`.** The per-page check is
+  not even entered and the segment admits writes, so the refusal is **not** a protection refusal. The
+  `S_WRITE`/`S_READ` split is then **anon/`vpage` coverage** the deep brk grow failed to extend
+  (sub-hypothesis *b*, at the anon-map level) — consistent with `SEGV_MAPERR`. The `svd0..15` dump plus
+  `segbase`/`segsize` are what localise the missing coverage offline. **Expected `vp_prot` at
+  `0x800152A0`: not applicable (no per-page array), read as `0`.** This redirects the fix to the
+  anon/`anon_zero` write path and needs one more latch (anon-map index vs `anon_zero`).
+
+- **Alternative (the §-prime per-page hypothesis): `i10s_pageprot != 0`.** Then I expect
+  `i10s_vpprot` at `0x800152A0` to **lack the WRITE bit** — value `0` (the vpage array was not extended
+  to this index / stale) or `1`/`5` (`R` / `R|X`). That gives `i10s_protchk = 2`, `i10s_andval = 0`,
+  `i10s_denied = 1`, `i10s_fcprot = 1`, `i10s_retval = 4` (FC_PROT). Because i10r saw `SEGV_MAPERR`
+  and **not** `SEGV_ACCERR`, this outcome would *also* confirm sub-hypothesis *c* — the
+  `F_INVAL`+`FC_PROT` interaction mismapping the permission refusal to MAPERR. The built-in SVN!
+  cross-check corroborates it: `segvn_prot_n` incremented and `segvn_prot_last_addr = 0x800152A0`.
+
+- **Alternative (segment-wide RO): `i10s_pageprot = 0` but `i10s_prot` lacks WRITE (`1` or `5`).**
+  A heap that is not segment-wide writable — a bug in the grow's protection — refused in
+  `segvn_faultpage_orig`'s own segment-wide check (`i10s_fcprot = 0`, but `prot` bit1 clear).
+
+The single field that forks the whole reading is **`i10s_pageprot`**, and after it `i10s_prot` bit1
+(WRITE) and `i10s_fcprot`. Whatever the run shows, `i10s` separates protection (`a`), coverage (`b`)
+and the MAPERR mismap (`c`) — which i10r, by design, could not.
