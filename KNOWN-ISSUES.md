@@ -4385,9 +4385,10 @@ the pre-change build in exactly **two bytes**, both inside the build-id string (
 
 ## ✅ ISSUE-46 (2026-08-20, FIXED THE SAME DAY): the panic path destroys its own diagnosis — `sync()` walks the vfs switch through a NULL pointer
 
-> **Ledger: FIXED in the port tree; not yet reflected in [`STATUS.md`](STATUS.md).**
-> No hardware run has exercised the guard yet — the acceptance below is static and
-> build-time only, and it is labelled as such.
+> **Ledger: FIXED, and CONFIRMED ON HARDWARE 2026-08-20** (same day). Not yet reflected
+> in [`STATUS.md`](STATUS.md). The hardware evidence is at the end of this entry; the
+> static acceptance that preceded it is kept as written, because the prediction it made
+> is what the run tested.
 
 **Not a 68040 defect.** It is in generic vfs code and it is available to any AMIX kernel on
 any CPU. It surfaced on the 040 line only because that is where a panic happened early enough
@@ -4468,9 +4469,44 @@ would not demonstrate that; two counters that cannot both be true do.
 * `TOTAL complaints: 0`, `bindings failing: 0`;
 * two builds of the tree differ in exactly **one byte**, inside the build-id string.
 
-**Not measured:** no boot, on any platform, has yet run this code. `syncg_calls` has never been
-read. The claim here is that the panic path can no longer fault on an empty switch, and that is
-argued from the instruction stream, not from a run.
+**Not measured (at the time of writing):** no boot, on any platform, had yet run this code.
+`syncg_calls` had never been read. The claim was that the panic path can no longer fault on an
+empty switch, argued from the instruction stream rather than from a run. It was tested the same
+day — see below.
+
+### Measured on hardware, 2026-08-20 (68040 on an accelerator card, kernel `68040-260820-18`)
+
+The kernel panicked in early VM init exactly as before, and this time the console read:
+
+```
+PANIC: page_free
+Backtrace: 80F4964:
+```
+
+**No `DOUBLE PANIC`, no trap, no vector-3 entry in the firmware exception trace.** The counter
+block, read live at its build-specific address, says precisely what happened inside `sync()`:
+
+| counter | value | meaning |
+|---|---:|---|
+| `syncg_magic` | `SYNG` | the block is the one this build published |
+| `syncg_calls` | 1 | `sync()` was entered exactly once — from `xpanic` |
+| `syncg_skip_ops` | **11** | **all eleven** rows 1–11 had a NULL `vsw_vfsops` and were skipped |
+| `syncg_skip_fn` | 0 | no row had ops but a NULL `vfs_sync` |
+| `syncg_last_i` | 11 | the last row skipped, i.e. the loop ran to `nfstype`-1 |
+
+`syncg_skip_ops` = 11 with `nfstype` = 12 is the whole prediction, confirmed to the count: every
+row the loop visits was empty, the guard skipped every one of them, and `sync()` returned instead
+of calling through NULL. The static reading of the `vfssw` relocations — only row 0 populated at
+link time — is now a measurement.
+
+Two things that had never been observed before this boot: the panic path ran to completion, and
+the panic message survived long enough to be read and acted on. The `page_free` panic it exposed
+is ISSUE-48.
+
+**One defect this uncovered, not fixed here:** the kernel's own backtrace printer emitted a single
+frame address (`80F4964:`) and then stalled, so the `Backtrace:` line is a stub. The chain was
+recovered by dumping the boot stack and walking the frame pointers by hand. That is a separate
+(minor) defect of the panic printer, recorded here so it is not rediscovered as part of ISSUE-48.
 
 ### What this unblocks, and one static correction to go with it
 
@@ -4499,6 +4535,11 @@ by three independently named asserts elsewhere in the same file (`pp->p_keepcnt 
 the bitfield unit is read as two bytes rather than four. **Which of the four is non-zero is
 still unmeasured** — that is a runtime fact, and it is exactly what the guard lets the next
 boot print alongside the backtrace.
+
+*(Resolved 2026-08-20, the same day, by the boot the guard made readable: the panic is reached
+from `memialloc` during `kvm_init`, and the four fields are not state at all — see ISSUE-48.
+The four branches converging on one `cmn_err` is why the panic text names no field, and is why
+the fix had to bring its own counters.)*
 
 ## ⚠ ISSUE-47 (2026-08-20, RECORDED NOT FIXED): `config()`'s memory-sizing fallback is `0x07000000`-shaped and silently wrong at load base `0x08000000`
 
@@ -4569,3 +4610,118 @@ bit 27, and take the terminus from the record `end` already walked — is a `con
 cache handoff), so the wiring cost is near zero. It is left undone here deliberately: it changes
 the memory sizing of every kernel this port builds, including the 030-based lines that boot from
 motherboard RAM today, and that is a change that wants its own A/B rather than a ride-along.
+
+## ✅ ISSUE-48 (2026-08-20): `PANIC: page_free` at boot — the page-frame database is mapped-in DRAM and **nothing zeroes it**
+
+> **Ledger: FIXED in the port tree, NOT YET CONFIRMED ON HARDWARE.** The diagnosis is static
+> and complete; the fix ships its own falsifier (`pgz_held_n`) and the next boot either proves
+> or refutes it. Not yet reflected in [`STATUS.md`](STATUS.md).
+
+**Not a 68040 defect either.** Like ISSUE-46 this is generic SVR4 VM code, and like ISSUE-46 the
+040 lane is simply where it finally got hit.
+
+### How it was found
+
+The first 68040 boot on an accelerator card whose panic path survived (ISSUE-46) printed
+`PANIC: page_free` and nothing else useful — the kernel's own backtrace printer stalls after one
+frame. The boot stack was dumped live and the frame chain walked by hand; symbolised against the
+booted image (`68040-260820-18`, load base `0x08000000`) it reads:
+
+| frame | return address | symbol |
+|---|---|---|
+| `080F49A0` | `080AFB06` | `page_free+0x11c` — immediately after the `cmn_err` at `.text+0xafb00` |
+| `080F49BC` | `08052930` | **`memialloc+0x94`** — the caller of `page_free` |
+| `080F49D8` | `08048EBC` | `kvm_init+0x28e` |
+| `080F4A30` | `08048B78` | `mlsetup+0xb0` |
+| `080F4A60` | `080D75D8` | `Lps_nopcr+0x2a` (`pstart040`, just after the MMU is enabled) |
+| `080F4AB0` | `08000030` | `stext+0x30` |
+
+Three of the frame arguments pin the state exactly, and they agree with the code: `0x8198` (the
+first free click), `0x9000` (`maxclick`) and `0x0E68` (`maxmem` = 3688 pages = `maxclick` − first
+free click). So this is boot-time VM setup, handing the page allocator its initial free memory.
+
+### The mechanism, from the stock image
+
+```c
+kvm_init():                                    /* .text+0x48c2e */
+    va = sptalloc(npages, 1, first_free_click, 0);   /* .text+0xa8bb6 */
+    page_hash = va + 60 * npages_estimate;
+    hat_init();
+    maxmem = maxclick - first_free_click;
+    page_init(va, maxmem, first_free_click);         /* .text+0xaf42a */
+    memialloc(first_free_click, maxclick);           /* .text+0x5289c */
+```
+
+* **`sptalloc` with a NON-ZERO third argument does not allocate.** It branches to
+  `segkmem_mapin` (the zero case goes to `segkmem_alloc`), i.e. it maps the physical memory that
+  is *already* at that click into kernel virtual space. Nothing is allocated and nothing is
+  cleared. The page-frame database is a window onto raw DRAM.
+* **`page_init` does not initialise the structs.** Its only write to the array is
+  `orib #-128,%a0@` per 60-byte struct — it ORs `p_lock` into byte 0 and touches nothing else.
+  It sets `pages`, `epages`, `pages_base`, `pages_end`, `max_page_get`, checks that
+  `page_hash`/`page_hashsz` are non-zero, and returns. **It never zeroes the structs and never
+  zeroes the hash buckets.** Both are *assumed* to arrive zero.
+* **`memialloc` then frees every one of them**: `page_free(pp, 1)` in 60-byte steps across
+  exactly the range `page_init` published.
+* **`page_free` refuses to free a held page**: `p_keepcnt` (+2), `p_mapping` (+32),
+  `p_lckcnt` (+36) and `p_cowcnt` (+38) must all be zero. All four branches converge on the same
+  `cmn_err(CE_PANIC, "page_free")` at `.text+0xafb00`, which is why the panic text names no field.
+
+At this point in boot **nothing has ever mapped, locked or held a managed page** — `hat_init()`
+has only just returned and no page has been handed out. A non-zero value in those four fields
+therefore cannot be state. It can only be what the DRAM already contained. The assertion is
+correct and is doing its job; the missing precondition is what is wrong.
+
+### Why the bench never sees it
+
+The emulator hands out zero-filled RAM, so "sptalloc'd physical memory is zero" is always true
+there. On metal the kernel is loaded by a program running under AmigaOS, out of the same Fast RAM
+pool AmigaOS allocates from, and the database lands about 1.4 MB above the load base — in memory
+AmigaOS was recently using. This is precisely the failure class `AGENTS.md` warns about: an
+untested path in the emulator is indistinguishable from a passing one.
+
+**Open question, deliberately not answered here:** the 68030 kernel runs on the same card, with
+the same AmigaOS-dirty DRAM, through this same generic code, and does not panic. Whether it
+escapes because its database lands somewhere AmigaOS happened to leave clean, or for some other
+reason, is **not determined**. It matters only for understanding the history — the fix does not
+depend on the answer, and zeroing memory that the code already requires to be zero cannot make
+the 030 line worse. (Anyone re-opening the intermittent early-boot failures recorded under
+ISSUE-21 may want this entry in view; that is a suggestion for a re-check, not a claim, and
+ISSUE-21 has its own measured root cause.)
+
+### Fix
+
+`src/pageinitzero.s` — a wrapper on `page_init` (`--weaken-symbol page_init` plus
+`--add-symbol page_init_orig=.text:0xaf42a`) that zeroes `60 * npages` bytes at the array and the
+`page_hashsz` 4-byte buckets at `page_hash`, then tail-jumps to the stock body with the stack
+untouched. **The bounds are `page_init`'s own arguments** — the same two values the stock body
+turns into `pages` and `epages = pages + 60*npages` — so there is no second opinion about how big
+the array is and no way for the two to drift apart. `page_init` has exactly one reference in the
+whole image (`kvm_init` at `0x48eaa`), which is also the entire blast radius.
+
+The hash is included because it is in the same `sptalloc`'d window and equally raw: a garbage
+bucket is a wild pointer that `page_find` would follow later. That half is reasoning, not a
+measured failure, and `pgz_hash_n` is there to turn it into one.
+
+### The fix carries its own falsifier
+
+`pageinitzero.s` reads every struct **before** it clears it:
+
+| counter | what a boot proves with it |
+|---|---|
+| `pgz_dirty_n` | structs with any non-zero byte |
+| `pgz_held_n` | structs `page_free` would have **refused** — i.e. the panic, counted |
+| `pgz_first_i`, `pgz_first_w0`, `pgz_first_map`, `pgz_first_lc` | the first such struct and its three field words, exactly as the DRAM held them |
+| `pgz_hash_n` | non-zero hash buckets, over `pgz_hashsz` of them |
+
+**Written down before the run:** on the card `pgz_held_n` > 0 and `pgz_first_*` names a page; on
+the bench every counter except `pgz_calls`, `pgz_npages` and `pgz_hashsz` reads 0. A boot that
+comes up with `pgz_held_n == 0` **refutes this entry** — the boot would then have been fixed for
+some other reason, and finding out which is worth more than the fix.
+
+### Acceptance so far — static and build-time only
+
+`TOTAL complaints: 0`; `bindings failing: 0` with the new row
+`| page_init | af42a | 000db6ac | page_init_orig=000af42a | ok |`; `pgz_magic` reads `PGZ!` out of
+the artifact. The zero loop and the scan loop cover the same 15 longs (60 bytes) per struct that
+`memialloc` steps over. **No boot has run this code.**

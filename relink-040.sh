@@ -241,6 +241,13 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/ptdatfree040.s" -o "$HERE/build/ptdatfr
 # read.  This override is the stock loop plus two null checks and a counter block.
 # CPU-independent: it is a defect in generic vfs code, not in anything 040.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/syncguard.s" -o "$HERE/build/syncguard.o"
+# pageinitzero (2026-08-20, ISSUE-48): the page-frame database is sptalloc'd with a
+# non-zero base, which is segkmem_mapin -- it MAPS existing DRAM and clears nothing --
+# and page_init only ORs p_lock into each struct.  Every other field arrives as
+# whatever the DRAM held, so memialloc's page_free() walk panics on the first struct
+# whose p_keepcnt/p_mapping/p_lckcnt/p_cowcnt garbage is non-zero.  Zero-filled
+# emulator RAM hides this completely; AmigaOS-dirty Fast RAM on metal does not.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/pageinitzero.s" -o "$HERE/build/pageinitzero.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
@@ -366,6 +373,8 @@ m68k-linux-gnu-objcopy \
 	--add-symbol swapinub_stock=.text:0x000a9e5c,function,global \
 	--weaken-symbol inituname \
 	--add-symbol inituname_orig=.text:0x00049140,function,global \
+	--weaken-symbol page_init \
+	--add-symbol page_init_orig=.text:0xaf42a,function,global \
 	--weaken-symbol nullvect \
 	--add-symbol nullvect_orig=.text:0x11b4,function,global \
 	--weaken-symbol lmul \
@@ -410,7 +419,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/config040.o" "$HERE/build/cb_icode040.o" "$HERE/build/kdbg040.o" \
 	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o" \
 	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o" \
-	"$HERE/build/syncguard.o" \
+	"$HERE/build/syncguard.o" "$HERE/build/pageinitzero.o" \
 	"$HERE/build/i10rev040.o"
 
 echo
@@ -437,6 +446,8 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          nullvect nullvect_orig kvp_magic kvp_on kvp_n kvp_user_n kvp_super_n kvp_over_n \
          kvp_last_vec kvp_last_pc kvp_vec \
          sync syncg_magic syncg_calls syncg_skip_ops syncg_skip_fn syncg_last_i \
+         page_init page_init_orig pgz_magic pgz_calls pgz_npages pgz_dirty_n pgz_held_n \
+         pgz_have pgz_first_i pgz_first_w0 pgz_first_map pgz_first_lc pgz_hash_n pgz_hashsz \
          fpsp060_top fpsp060_image fpsp060_vec11 f60_magic f60_entry_n f60_mem_n f60_real_n \
          f60_access_n f60_done_n f60_reserved_n f60_last_co f60_memfail_n f60_arith_n \
          f60_bsun_n f60_fline_n f60_trap_n f60_trace_n f60_fpudis_n f60_superdone_n \
@@ -506,6 +517,26 @@ if [ -z "$(m68k-linux-gnu-nm "$OUT" | awk '$3=="syncg_magic" && $2=="D" {print $
 	echo "[FAIL] syncg_magic missing -> syncguard.o's counter block is not in the image"; exit 1
 fi
 echo "[OK] ISSUE-46 panic-path guard bound: sync @0x$SGADDR (stock body was 0x5d21a)."
+
+# HARD CHECK (2026-08-20, ISSUE-48): pageinitzero.o wraps page_init so the page-frame
+# database is zeroed before it is published.  Both directions matter and each fails
+# silently on its own: without the weaken, the stock body stays strong and the boot
+# panics on metal exactly as before; without the retained alias the wrapper tail-jumps
+# to address 0 and the machine dies in kvm_init with no message at all.  page_init has
+# exactly ONE caller in the image (kvm_init @0x48eaa), so this is also the whole
+# blast radius.
+PZADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="page_init" && $2=="T" {print $1}')
+PZORIG=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="page_init_orig" && $2=="T" {print $1}')
+if [ -z "$PZADDR" ] || [ "$PZADDR" = "000af42a" ]; then
+	echo "[FAIL] page_init did not move off the stock body 0xaf42a -> ISSUE-48 fix not in"; exit 1
+fi
+if [ "$PZORIG" != "000af42a" ]; then
+	echo "[FAIL] page_init_orig is '$PZORIG', not 000af42a -> the wrapper would tail-jump wrong"; exit 1
+fi
+if [ -z "$(m68k-linux-gnu-nm "$OUT" | awk '$3=="pgz_magic" && $2=="D" {print $1}')" ]; then
+	echo "[FAIL] pgz_magic missing -> pageinitzero.o's counter block is not in the image"; exit 1
+fi
+echo "[OK] ISSUE-48 page-database zero bound: page_init @0x$PZADDR -> page_init_orig @0x$PZORIG."
 
 # HARD CHECK (2026-08-19, ISSUE-10): wb040.o's usrxmemflt tail now `jsr`s i10p_probe
 # (i10rev040.o).  `ld -r` does not fail on an unresolved symbol, so dropping
