@@ -4725,3 +4725,151 @@ some other reason, and finding out which is worth more than the fix.
 `| page_init | af42a | 000db6ac | page_init_orig=000af42a | ok |`; `pgz_magic` reads `PGZ!` out of
 the artifact. The zero loop and the scan loop cover the same 15 longs (60 bytes) per struct that
 `memialloc` steps over. **No boot has run this code.**
+
+## ⏳ ISSUE-49 (2026-08-20, OPEN — instrumented, predictions registered): `PANIC: segmap_unlock` at first root-mount I/O
+
+> **Ledger: OPEN.** The statics below are settled and are not worth re-deriving; what remains
+> is runtime state, and the build carries an instrument that answers it in one boot. Not yet
+> reflected in [`STATUS.md`](STATUS.md).
+
+### Symptom
+
+With ISSUE-46 and ISSUE-48 in, the 68040 kernel on the accelerator card boots past console init
+and dies ~10 s after MMU-on — where root-mount I/O begins. Recovered verbatim from the dead
+kernel's `putbuf` ring through the firmware debug console:
+
+```
+PANIC: segmap_unlock
+4.0 2.1c 0800430 Backtrace:
+40001DF4: 803E66C->80595
+```
+
+The version banner is in the ring, so the console `printf` path is alive; `0x0803E66C` is
+`xpanic`. The guest then warm-reboots cleanly — the ISSUE-46 guard doing its job — which is what
+makes the ring readable in the reset window at all. (The truncated `Backtrace:` is ISSUE-50, not
+this.)
+
+### What segmap_unlock actually asserts
+
+`segmap_unlock` (`.text+0xa8fec`) is the **F_SOFTUNLOCK** arm of `segmap_fault` — `type == 3`,
+dispatched at `0xa9170` — i.e. the release half of a softlock/softunlock pair. For each 4 KiB
+page in `[addr, addr+len)` it looks the page up in the page hash by `(vp, off)` and then:
+
+```c
+if (pp == NULL || pp->p_pagein || pp->p_free)
+        cmn_err(CE_PANIC, "segmap_unlock");
+```
+
+`btst #0` is `p_pagein`, `btst #5` is `p_free` — the byte-0 bitfield layout ISSUE-48 pinned. **All
+three guards branch to the same `cmn_err` at `0xa907e`**, so the panic text cannot name the
+condition. Exactly ISSUE-48's problem, and the reason this entry ships an instrument instead of
+another reading of the disassembly.
+
+### Settled statically — do not re-ask these
+
+* **Not an ISSUE-48 repeat.** `segmap_create` (`0xa8ea8`) takes both the segmap data and the whole
+  smap array from **`kmem_zalloc`**. segmap's own memory arrives zeroed; the dirty-DRAM story does
+  not apply here.
+* **The page-hash shift is uniform.** `page_find`, `page_exists`, `page_hashin`, `page_hashout`
+  and `segmap_unlock`'s inlined copy all use `>>11`. Insert and lookup agree, so the hash is
+  self-consistent; `>>11` under 4 KiB pages only halves the effective bucket count, which costs
+  distribution, not correctness. `src/detect_pagesize.py` lists `segmap_unlock@a901e` among its
+  deliberate exclusions for this reason, and that decision is **confirmed correct**. The
+  `moveq #12` in `page_hashout` (`0xb043c`) is the `p_hash` **field offset**, not a shift — the
+  "a page-size constant is not always a page size" trap, caught.
+* **The geometry is converted.** `segmap_unlock` steps 4096 per page (`0xa90f4`), `as_fault`
+  rounds to 4096 (`0xae156`, `0xae164`), slots are MAXBSIZE 8192 (`&0x1FFF`, `>>13`), and the two
+  halves are symmetric about `p_keepcnt`: the F_SOFTLOCK arm keeps `getpage`'s hold, and
+  `segmap_unlock`'s `subqw #1,%a2@(2)` releases it.
+
+So the geometry is right and the memory is initialised. What is left is that **at softunlock time
+the page is not where the softlock left it** — a fact about the running machine.
+
+### Instrument
+
+`src/segmapdbg.s` + `src/patch_segmapdbg.py` retarget the single `cmn_err` relocation at
+`0xa9080` to `smu_panic_latch` — the one-relocation idiom `patch_sdtfail.py` already uses. The
+island saves every register, latches, restores, and tail-jumps into the real `cmn_err`, so the
+panic prints unchanged. **Blast radius on a healthy kernel is zero**: the only path that reaches
+it was already calling `cmn_err(CE_PANIC)` on the next instruction. Verified surgical — exactly
+one relocation moved, the other 531 `cmn_err` call sites untouched.
+
+At the `jsr`, `segmap_unlock`'s registers are still live, so the state is read rather than
+reconstructed: `a2` = pp (or NULL), `a3` = smp, `a4` = seg, `d2` = the failing page address,
+`d3` = the offset looked up, `d4` = the `addr` argument, `d5` = rw, `d6` = len.
+
+**The discriminator** is what the unit is for: after latching it walks the *whole* page hash for
+`(vp, off)`.
+
+| `smu_scan` | means |
+|---|---|
+| 1 | the page **is** in the cache, in bucket `smu_bucket`, while `segmap_unlock` looked in `smu_want`. Differ → the bucket arithmetic disagrees between insert and lookup. Equal → the chain was mutated concurrently, i.e. a locking defect |
+| 0 | the page is genuinely **not** in the cache — freed, hashed out, or never entered; `smu_why` then separates the three guards |
+| 2 | the scan hit its own safety budget and proves nothing |
+
+The scan is bounded per-chain (1024) and in total (100000) because it runs inside a panic on a
+machine whose page structures are already suspect, and an unbounded walk through a corrupt chain
+is precisely how ISSUE-46 turned a panic into a dead machine.
+
+### Predictions, registered before the run
+
+* `smu_n == 1` and `smu_addr == smu_addr0` — it fails on the **first** page of the run. If
+  `smu_addr > smu_addr0` the failure is position-dependent and the run length matters, which is a
+  different bug.
+* `smu_why == 4` (pp NULL) or `2` (p_free). A `1` (p_pagein) would mean a page still being read in
+  under a softlock, which should be impossible.
+* `smu_scan == 0`. **If it comes back 1, this entry is wrong about the cause** and the hash bucket
+  arithmetic is where to look next.
+* `smu_vp != 0` and `smu_smoff` a plausible file offset. A zero or wild `vp` means the smap slot
+  itself was recycled under the softlock — a third story, which would move the investigation to
+  `segmap_getmap`/`segmap_release`.
+
+**Nothing here is measured yet.** The build has not been booted.
+
+## ⏳ ISSUE-50 (2026-08-20, DIAGNOSED — deliberately not fixed in this pass): the panic backtrace stops after one frame because its frame-pointer window is 64 KiB wide
+
+> **Ledger: OPEN, diagnosed, fix designed but not implemented.** Recorded now because it has cost
+> two investigations already and the diagnosis is the expensive half.
+
+### It is not a stall
+
+`backtrace` (`.text+0x595a4`) prints each frame **before** it validates it (`printf(LC%4, fp)` at
+`0x595fa`–`0x59604`, validity test at `0x5960e`–`0x5962a`). The test is:
+
+```
+5960e:  cmpil #0x3FFFFFFF,%fp@(-4) / blsw  -> invalid
+5961a:  cmpil #0x4000FFFF,%fp@(-4) / bhiw  -> invalid
+59626:  moveq #1,%d0                       -> valid
+5962a:  beqw 5979a                         -> stop the walk
+```
+
+i.e. a frame pointer is accepted only in **`[0x40000000, 0x4000FFFF]`** — a 64 KiB window at the
+u-block base. So the printer emits the address, rejects it, and stops. That is the whole
+behaviour, and it explains both observations exactly:
+
+* ISSUE-48's boot printed `Backtrace: 80F4964:` and stopped — `0x080F4964` is the boot stack
+  `pstack`, which lives in `.bss` and is nowhere near the window.
+* ISSUE-49's boot printed `40001DF4: 803E66C->80595` — that frame **is** in the window, so it
+  printed the frame and its return address; the next frame pointer left the window.
+
+The window is too narrow for the kernel's real stacks: AMIX's u-block is `[0x40000000,
+0x40040000)` (256 KiB, four times the window), and the boot and interrupt stacks are in the
+kernel's own `.bss` entirely outside it.
+
+### Why this is not a two-constant byte patch
+
+**The window is the walk's only terminator.** The loop (`0x5978e`–`0x59796`) simply follows
+`*fp` back to the top; there is no frame counter and no monotonicity check. Widening the window
+without adding a bound would let a corrupt chain walk forever *inside a panic* — the exact
+failure mode ISSUE-46 exists to prevent, reintroduced by the fix meant to help.
+
+### The fix, when it is taken
+
+A whole-routine override of `backtrace` that keeps the existing output format and adds all three
+bounds at once: accept the full u-block **and** the kernel's own data/bss range; require the
+frame pointer to **increase** each step (stacks grow down, so caller frames are at higher
+addresses — this alone kills every cycle); and cap the frame count outright.
+
+Not done in this pass on purpose: it would put a second, unproven variable into a kernel whose
+one job is to diagnose ISSUE-49. It is worth doing immediately afterwards — every future panic in
+this port pays for it, and two investigations have already paid for it once each.

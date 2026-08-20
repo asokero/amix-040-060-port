@@ -248,6 +248,12 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/syncguard.s" -o "$HERE/build/syncguard.
 # whose p_keepcnt/p_mapping/p_lckcnt/p_cowcnt garbage is non-zero.  Zero-filled
 # emulator RAM hides this completely; AmigaOS-dirty Fast RAM on metal does not.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/pageinitzero.s" -o "$HERE/build/pageinitzero.o"
+# segmapdbg (2026-08-20, ISSUE-49): segmap_unlock's three guards -- pp NULL,
+# p_pagein, p_free -- all branch to ONE cmn_err, so the panic text cannot say which
+# fired.  This island latches segmap_unlock's live registers plus a full-hash search
+# for the page it could not find, then tail-jumps into cmn_err so the panic prints
+# unchanged.  Only reachable from a path that was already panicking.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segmapdbg.s" -o "$HERE/build/segmapdbg.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
@@ -419,7 +425,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/config040.o" "$HERE/build/cb_icode040.o" "$HERE/build/kdbg040.o" \
 	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o" \
 	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o" \
-	"$HERE/build/syncguard.o" "$HERE/build/pageinitzero.o" \
+	"$HERE/build/syncguard.o" "$HERE/build/pageinitzero.o" "$HERE/build/segmapdbg.o" \
 	"$HERE/build/i10rev040.o"
 
 echo
@@ -447,6 +453,8 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          kvp_last_vec kvp_last_pc kvp_vec \
          sync syncg_magic syncg_calls syncg_skip_ops syncg_skip_fn syncg_last_i \
          page_init page_init_orig pgz_magic pgz_calls pgz_npages pgz_dirty_n pgz_held_n \
+         smu_panic_latch smu_magic smu_n smu_why smu_scan smu_bucket smu_want smu_pp \
+         smu_addr smu_off smu_addr0 smu_vp smu_smoff smu_hashsz smu_pflags \
          pgz_have pgz_first_i pgz_first_w0 pgz_first_map pgz_first_lc pgz_hash_n pgz_hashsz \
          fpsp060_top fpsp060_image fpsp060_vec11 f60_magic f60_entry_n f60_mem_n f60_real_n \
          f60_access_n f60_done_n f60_reserved_n f60_last_co f60_memfail_n f60_arith_n \
@@ -823,6 +831,9 @@ run_step 3 python3 "$HERE/src/patch_config_cachefix.py" "$OUT"
 
 echo "[*] ISSUE-39: count hat_sdtalloc out-of-contiguous-memory warnings"
 python3 "$HERE/src/patch_sdtfail.py" "$OUT"
+
+echo "[*] ISSUE-49: latch which of segmap_unlock's three guards panics"
+run_step 2 python3 "$HERE/src/patch_segmapdbg.py" "$OUT"
 
 echo "[*] per-process fault-depth gate: assert v.v_proc matches the table size"
 python3 "$HERE/src/check_vproc.py" "$OUT"
