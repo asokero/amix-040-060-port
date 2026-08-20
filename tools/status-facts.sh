@@ -181,6 +181,7 @@ OVERRIDES = [
     ("vtop",             0xb7568, "vtop_orig",           "040 page-table walker"),
     ("mprotect",         0x58550, "mprotect_orig",       "ISSUE-41 / XPAGE"),
     ("segvn_faultpage",  0xac01a, "segvn_faultpage_orig","ISSUE-41: per-page permission check"),
+    ("as_fault",         0xae108, "as_fault_orig",       "ISSUE-10: as_fault decision audit (i10a)"),
     ("krnxmemflt",       0x5b140, "krnxmemflt_stock",    "native 040 kernel fault resolver (krnxmemflt_orig binds to OURS on purpose)"),
     ("usrxmemflt",       0x5aede, "usrxmemflt_orig",     "040 user fault path"),
     ("nullvect",         0x011b4, "nullvect_orig",       "kvecprobe wrapper"),

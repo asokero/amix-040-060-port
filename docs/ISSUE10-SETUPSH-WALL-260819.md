@@ -1233,3 +1233,84 @@ protection (no `mprotect`-of-part → `pageprot = 0`) and should be writable. Th
 The single field that forks the whole reading is **`i10s_pageprot`**, and after it `i10s_prot` bit1
 (WRITE) and `i10s_fcprot`. Whatever the run shows, `i10s` separates protection (`a`), coverage (`b`)
 and the MAPERR mismap (`c`) — which i10r, by design, could not.
+
+## 18. PART EIGHT — `i10a`, the `as_fault` decision audit (source trace + prediction, not measurement)
+
+The `i10s` re-run (§17) was decisive: the marker write **never reaches `segvn_faultpage`**
+(`i10s_vamatch_n = 0`, `i10s_seen_n = 663`, wall confirmed firing at PID 41, proc filter off). The
+refusal is one level up, in `as_fault`. This section traces that path in the stock body and predicts
+where the grow fails. **Nothing here is measured yet**; `i10a` (`src/i10rev040.s` PART EIGHT) and
+`test-tools/i10a.sh` run on the bench next.
+
+### 18.1 The `as_fault` → `as_segat` → `FC_NOMAP` mechanism, from the binary
+
+Read from `build/unix-040` (68040-260820 series) with `objdump`:
+
+- **`as_fault` @ `0xae108`** takes `(as, addr, size, type, rw)` — 5 stack args (`fp@8..fp@24`;
+  prologue `0xae108`, arg loads `0xae110`/`0xae114`/`0xae118`, `size` at `0xae15a`). It rounds `addr`
+  down to a page (`0xae156`, `andi.w #-4096`) and calls **`as_segat(as, pagebase)`** at `0xae172`.
+- If `as_segat` returns **NULL** (`tst.l %a2; beq` at `0xae17c`), `as_fault` executes **`moveq #3,%d0`**
+  at `0xae182` and returns it (`0xae250`). **`3` = `FC_NOMAP`**, which `u_trap` maps to `SEGV_MAPERR`
+  (`sicode = 1`) — exactly i10r's reading. There is a second no-cover path at `0xae19a`–`0xae1a8`: a
+  seg is found but `s_base + s_size <= addr` and the next seg's `s_base != addr` (a gap) → `moveq #3,%d6`.
+  Either way the write dies **before** `seg->s_ops->fault` (i.e. before `segvn_faultpage`), which is
+  precisely `i10s_vamatch_n = 0`.
+- **`as_segat` @ `0xadefc`** = `(as, addr)`: walks `as->a_segs` (`@4`) / `as->a_seglast` (`@8`, a cache)
+  by `seg->s_next` (`@16`), comparing `s_base` (`@4`) and `s_base + s_size` (`@8`); returns the seg in
+  `d0` (copied to `a0` at `0xadf52`), or **`0`** when nothing covers (`clr.l %d0` at `0xadf4c`).
+- **`brk` @ `0x580e8`** reads `curproc = u.u_procp` (`u+0x730`), with `p_brkbase` (`@52`), `p_brksize`
+  (`@56`), `p_as` (`@124`). It is **already Model-B 4 KiB**: it rounds the new break and the current end
+  to 4 KiB (`0x58130`–`0x5814e`) and only grows when they differ. To grow it calls **`as_map`** with
+  `(p_as, current_end, delta, …)` (`0x58184`–`0x5819c`). **If `as_map` returns non-zero it returns that
+  errno and does NOT update `p_brksize`** (`0x581ba`–`0x581c6`); on success it sets `p_brksize`
+  (`0x581f8`). The `moveq #12` (`ENOMEM`) guards are at `0x5812a`. (`grow` @ `0x5820e` is the separate
+  *stack* helper — region `0xC0000000` — not the data-heap path.)
+- Cross-refs: `../amix-kernel-analysis/vm-map/SVR4-VM-FAULT-LIFECYCLE.md:60` (`as_fault` @ `0xae108`),
+  `../amix-kernel-analysis/vm-map/040-FAULT-RESOLVER-AUDIT.md:270` (`as_fault(F_INVAL, rw)` failure →
+  `SIGSEGV/SEGV_MAPERR`), and **`EXEC-BOUNDARY-CENSUS.md:190-202`**: `brk`/`grow` are "already converted"
+  to the 4 KiB form **but explicitly deferred/untested** — "require a separate boundary test for heap
+  growth" — which is exactly the deep-grow case the wall exercises.
+
+### 18.2 What `i10a` records, and the read-vs-write asymmetry
+
+`i10a` wraps `as_fault`, and on the first `S_WRITE` fault matching the page latches: the `as_segat`
+result before resolution (`i10a_seg`, `0` = no covering segment), the seg's `s_base`/`s_size` if any,
+the type/rw, `as_fault`'s **actual** return (`i10a_ret`), the `as_segat` result *after* resolution
+(`i10a_seg_post`), and the process break extent (`i10a_brkbase`/`i10a_brksize`/`i10a_brkend`,
+`brkend = brkbase + brksize`). That makes **"brk did not grow" (`brkend < addr`) vs "grew but the
+lookup misses" (`brkend >= addr` with `i10a_seg = 0`)** directly readable.
+
+The read-vs-write asymmetry (write dies, a later read to the same page zero-fills, run-4 PADDR) is
+predicted to be **temporal, not a per-access permission difference**: between the failed write and the
+read, a *smaller* grow — sh's `SIGSEGV`-handler `sbrk`, or a retry — succeeds and extends the segment
+past `0x80015000`, so the read then finds a covering segment. i10s already showed the refusal is not
+protection; i10a will show it is coverage that only later exists.
+
+### 18.3 The prediction — ranked, with what each `i10a` outcome would mean
+
+The decisive external clue is sh's own **"no space"** = `setbrk` reporting `brk()` **failed** (returned
+an error). Combined with the `brk` disassembly (a failed `as_map` returns the errno and leaves
+`p_brksize` unadvanced, `0x581ba`), the census flag that heap growth is converted-but-untested, and
+i10r's `SEGV_MAPERR`:
+
+1. **(i) — PRIMARY: `brk`'s grow (`as_map`) fails on the 040/Model-B line for the deep grow.**
+   `as_map`/`segvn_create`/anon-reservation returns an error, so `brk` returns `ENOMEM` (sh's
+   "no space"), `p_brksize` is not advanced to reach `0x800152A0`, and the data segment is never
+   extended. `as_segat` therefore finds no covering segment and `as_fault` returns `FC_NOMAP`.
+   **Predicted `i10a`: `i10a_ret = 3`, `i10a_seg = 0`, `i10a_brkend < 0x800152A0`, `i10a_type = 1`
+   (F_INVAL), `i10a_pas = i10a_as`.**
+2. **(iii) — sh writes past its break; the fault-driven grow other platforms rely on is what the 040
+   store-drop breaks.** Same `as_fault` signature as (i) — `brkend < addr`, `seg = 0`, `ret = 3` — but
+   here `brk` was never asked to cover the address. Distinguished from (i) only with knowledge of
+   whether a `brk(>= addr)` was issued; the "no space" (brk *was* called and failed) leans against
+   this and toward (i). Ranked second because the evidence says brk was called.
+3. **(ii) — `brk` extends its bookkeeping but `as_segat` misses the segment (as/segment-list bug).**
+   Cleanly distinguishable: **`i10a_brkend >= 0x800152A0` with `i10a_seg = 0`** (or a seg present whose
+   `s_base + s_size <= addr`). Ranked last because "no space" indicates `brk` returned failure, which
+   is inconsistent with a completed extension — but the `a_seglast` cache (`0xadf0a`) and the unrounded
+   `p_brksize` vs 4 KiB-rounded segment size are the places such a divergence could hide, so the
+   measurement checks it.
+
+The field that forks the reading is **`i10a_brkend` vs `0x800152A0`**, then **`i10a_seg`** and
+**`i10a_ret`**. If instead `i10a_ret = 0` with a covering seg, the latched fault was an innocent
+resolved write and the exact-address pass 2 (`test-tools/i10a.sh`) re-aims at `0x800152A0`.

@@ -346,6 +346,8 @@ m68k-linux-gnu-objcopy \
 	--add-symbol usrxmemflt_orig=.text:0x5aede,function,global \
 	--weaken-symbol segvn_faultpage \
 	--add-symbol segvn_faultpage_orig=.text:0xac01a,function,global \
+	--weaken-symbol as_fault \
+	--add-symbol as_fault_orig=.text:0xae108,function,global \
 	--weaken-symbol krnxmemflt \
 	--add-symbol krnxmemflt_stock=.text:0x5b140,function,global \
 	--weaken-symbol segu_get \
@@ -556,6 +558,33 @@ if m68k-linux-gnu-nm "$OUT" | grep -E ' U segvn_faultpage_prot$' >/dev/null 2>&1
 	echo "[FAIL] segvn_faultpage_prot still UND -> the i10s tail jmp would go to address 0"; exit 1
 fi
 echo "[OK] ISSUE-10 decision-audit edge bound: segvn_faultpage (i10s @0x$SFPADDR) -> segvn_faultpage_prot @0x$SFPPADDR -> segvn_faultpage_orig @0xac01a."
+
+# HARD CHECK (2026-08-20, ISSUE-10 as_fault audit PART EIGHT): i10rev040.o's i10a
+# wrapper now OWNS the strong as_fault and CALLS as_fault_orig (the stock body, kept
+# at 0xae108).  Same silent-break shapes `ld -r` links through: the wrapper never took
+# the symbol (as_fault still resolves to 0xae108, audit dead and the fault path
+# unobserved), or as_fault_orig is unbound (the wrapper's jsr goes to address 0 on the
+# first matched fault).  Assert both.  as_segat is a pre-existing global the wrapper
+# also calls; a stray UND on it would be caught by the reloc census, but check it here
+# too since the audit's whole result is that call.
+AFADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="as_fault" && $2=="T" {print $1}')
+AFOADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="as_fault_orig" && $2=="T" {print $1}')
+if [ -z "$AFADDR" ]; then
+	echo "[FAIL] as_fault is not a global T -> the i10a wrapper is unbound"; exit 1
+fi
+if [ "$AFADDR" = "000ae108" ]; then
+	echo "[FAIL] strong as_fault is still the stock body 0xae108 -> i10a wrapper did not take the symbol"; exit 1
+fi
+if [ -z "$AFOADDR" ] || [ "$AFOADDR" != "000ae108" ]; then
+	echo "[FAIL] as_fault_orig missing or not at 0xae108 (nm: '$AFOADDR') -> the i10a call target is wrong"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U as_fault_orig$' >/dev/null 2>&1; then
+	echo "[FAIL] as_fault_orig still UND -> the i10a jsr would go to address 0"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U as_segat$' >/dev/null 2>&1; then
+	echo "[FAIL] as_segat still UND -> the i10a lookup would call address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 as_fault-audit edge bound: as_fault (i10a @0x$AFADDR) -> as_fault_orig @0x$AFOADDR, as_segat resolved."
 
 # HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
 # remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired

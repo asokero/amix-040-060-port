@@ -3786,3 +3786,280 @@ i10s_svd14:
 i10s_svd15:
 	.long	0
 	.balign 4			| pad section to a 4-byte multiple (bss placement)
+
+| ===========================================================================
+| PART EIGHT -- i10a: the as_fault-level AUDIT (2026-08-20).
+|
+| WHAT PART SEVEN SETTLED.  i10s armed on the VA (proc filter off) and its run was
+| decisive: the wall fired (BUS ERROR 4AFC0003 flood, PID 41) but i10s_vamatch_n = 0
+| with i10s_seen_n = 663 -- the marker WRITE fault at 0x800152A0 NEVER reaches
+| segvn_faultpage.  The per-page protection restorer (segvn_prot040) is exonerated.
+| The refusal is one level UP, in as_fault: as_segat finds no segment covering the
+| address, and as_fault returns FC_PROT's neighbour FC_NOMAP.  This is not inference
+| -- it is in the stock body: as_fault (0xae108) calls as_segat (0xadefc); a NULL
+| return takes the `moveq #3` at as_fault+0x7a, and 3 = FC_NOMAP, which u_trap maps to
+| SEGV_MAPERR (sicode 1 -- exactly what i10r measured).  The guest's own "no space"
+| is Bourne sh's setbrk reporting brk() failed, so the arena GROW / segment machinery
+| is implicated.  This unit audits that decision from inside as_fault.
+|
+| WHERE IT HOOKS, AND WHY A CALL-AND-RETURN WRAPPER.  as_fault is stock (not wrapped),
+| so this takes the as_fault symbol by the segu_get/segvn_faultpage relink idiom
+| (--weaken-symbol as_fault + --add-symbol as_fault_orig = 0xae108) and provides a
+| strong as_fault here.  Unlike i10s -- which only needed the ARGUMENTS and so could
+| tail-jmp -- this audit wants as_fault's RETURN CODE (was it FC_NOMAP?) and whether a
+| covering segment appears during resolution, so on the one matched fault it CALLS
+| as_fault_orig (re-pushing the 5 args unchanged) and records d0.  as_segat is a pure
+| lookup (the stock body caches as->a_seglast and has no other side effect), so this
+| calls it directly -- once before as_fault_orig (is there a segment now?) and once
+| after (did one appear?) -- without perturbing the resolution.
+|
+| WHAT IT CAPTURES, once, on the first call matching (addr & i10a_watchmask) ==
+| i10a_watchva AND rw == i10a_watchrw (default S_WRITE), with the proc filter
+| i10a_watchproc OPTIONAL (0 = any process, the default -- the i10s lesson: a proc
+| pointer is a table slot the wall's sh lands in differently each boot, so VA + rw is
+| the stable key, and i10a_vamatch_n counts VA+rw matches regardless of proc):
+|   * as_fault's own arguments -- the address space (arg1), addr (arg2), type (arg4:
+|     F_INVAL 1 / F_PROT 2 / ...), rw (arg5);
+|   * the as_segat result for the page BEFORE resolution (i10a_seg: 0 = NO covering
+|     segment, which is the FC_NOMAP cause) and, if found, the seg's s_base/s_size --
+|     so "no segment" vs "segment too short to cover the address" is separable;
+|   * the as's segment-list head (a_segs @4, a_seglast @8) for offline decode;
+|   * the process BREAK extent as brk keeps it -- u.u_procp's p_brkbase (@52),
+|     p_brksize (@56) and their sum (the current break), plus p_as (@124).  This is
+|     what makes "brk did not grow the segment" (break < addr) directly readable
+|     against "brk grew but the lookup misses" (break >= addr yet as_segat NULL);
+|   * as_fault's ACTUAL return code (i10a_ret: 3 = FC_NOMAP), and the as_segat result
+|     AFTER resolution (i10a_seg_post) -- did a segment appear during the fault?
+|
+| SAFETY AND COST.  Ships dormant: i10a_watchva = 0, so every as_fault call pays one
+| tstl and a tail jmp to as_fault_orig -- the shape i10s already proved does not mask
+| the wall.  Armed, non-matching faults pay one gate compare and the same tail jmp;
+| only the single matched fault builds a frame, and it saves/restores d2-d7/a2-a6 and
+| returns as_fault_orig's own d0, so the ABI is exact (d0/d1/a0/a1 are scratch in this
+| ABI; d0 is the faultcode the caller reads).  i10a_busy guards against re-entry from
+| a fault taken inside as_fault_orig.  It reads only kernel memory (the as/seg structs,
+| the proc, the u-area) and calls only the stock as_segat and as_fault_orig -- no user
+| dereference, no MMU poke.
+| ===========================================================================
+
+	.text
+	.balign 4
+
+| ---------------------------------------------------------------------------
+| as_fault -- the i10a outer wrapper.  Frameless entry: sp@(0) = return address,
+| argument N at sp@(4N) (as_fault(as, addr, size, type, rw), confirmed from the stock
+| prologue at 0xae108).  A linkw frame puts arg1 at fp@(8), argN at fp@(8+4(N-1)).
+	.globl	as_fault
+as_fault:
+	tstl	i10a_watchva
+	bnew	Lia_maybe		| armed (watchva != 0): rare -- check the gate
+Lia_fwd:
+	jmp	as_fault_orig		| dormant / no match / done: forward unchanged
+Lia_maybe:
+	tstl	i10a_latched
+	bnew	Lia_fwd			| one-shot: the audit is complete
+	tstl	i10a_busy
+	bnew	Lia_fwd			| inside our own as_fault_orig call: do not re-enter
+	addql	&1,i10a_seen_n		| UNCAPPED: as_fault calls seen while armed
+	movel	%sp@(8),%d0		| arg2 = addr
+	andl	i10a_watchmask,%d0
+	cmpl	i10a_watchva,%d0
+	bnew	Lia_fwd			| not the watched address / page
+	movel	%sp@(20),%d0		| arg5 = rw
+	cmpl	i10a_watchrw,%d0
+	bnew	Lia_fwd			| not the watched access class (default S_WRITE)
+	addql	&1,i10a_vamatch_n	| VA + rw matched, REGARDLESS of proc
+	movel	i10a_watchproc,%d1
+	beqs	Lia_take		| watchproc 0 = any proc -> take it
+	movel	curproc,%d0
+	cmpl	%d1,%d0
+	bnew	Lia_fwd			| watchproc set and curproc differs -> skip
+Lia_take:
+	addql	&1,i10a_match_n
+	linkw	%fp,&0
+	moveml	%d2-%d7/%a2-%a6,%sp@-	| callee-saved; d0/d1/a0/a1 scratch, d0 = our return
+| --- identity ---
+	movel	curproc,i10a_proc
+	movel	u+0x1c0,i10a_comm0	| u_comm: the command must read "sh"
+	movel	u+0x1c4,i10a_comm1
+	movel	u+0x1c8,i10a_comm2
+	movel	u+0x1cc,i10a_comm3
+| --- as_fault's own arguments ---
+	movel	%fp@(12),i10a_addr	| arg2 = the faulting address
+	movel	%fp@(20),i10a_type	| arg4 = fault type (1 = F_INVAL, 2 = F_PROT)
+	movel	%fp@(24),i10a_rw	| arg5 = rw
+	movel	%fp@(8),i10a_as		| arg1 = the address space
+| --- as_segat(as, pagebase) BEFORE the resolver: is there a covering segment? ---
+	movel	i10a_addr,%d0
+	andil	&0xfffff000,%d0		| page base, as_fault's own rounding (andiw #-4096)
+	movel	%d0,%sp@-		| push addr (page base)
+	movel	%fp@(8),%sp@-		| push as
+	jsr	as_segat
+	addqw	&8,%sp
+	movel	%d0,i10a_seg		| 0 = NO covering segment -> the FC_NOMAP cause
+	tstl	%d0
+	beqs	Lia_noseg
+	moveal	%d0,%a0
+	movel	%a0@(4),i10a_segbase	| seg->s_base
+	movel	%a0@(8),i10a_segsize	| seg->s_size  (s_base + s_size <= addr = too short)
+Lia_noseg:
+	moveal	%fp@(8),%a0		| the as's segment-list head, for offline decode
+	movel	%a0@(4),i10a_a_segs	| as->a_segs
+	movel	%a0@(8),i10a_a_seglast	| as->a_seglast
+| --- the process break extent, as brk keeps it (u.u_procp) ---
+	moveal	u+0x730,%a2		| curproc = u.u_procp (the proc brk() updates)
+	movel	%a2,i10a_uprocp
+	movel	%a2@(52),i10a_brkbase	| p_brkbase
+	movel	%a2@(56),i10a_brksize	| p_brksize
+	movel	%a2@(52),%d0
+	addl	%a2@(56),%d0
+	movel	%d0,i10a_brkend		| p_brkbase + p_brksize = the current break
+	movel	%a2@(124),i10a_pas	| p_as (must equal i10a_as for a user data fault)
+| --- call the real as_fault, capture its verdict ---
+	movel	&1,i10a_busy
+	movel	%fp@(24),%sp@-
+	movel	%fp@(20),%sp@-
+	movel	%fp@(16),%sp@-
+	movel	%fp@(12),%sp@-
+	movel	%fp@(8),%sp@-		| re-push the 5 args unchanged
+	jsr	as_fault_orig
+	lea	%sp@(20),%sp		| pop them
+	movel	%d0,i10a_ret		| the faultcode as_fault actually returned (3 = FC_NOMAP)
+	movel	%d0,%d7			| keep for our own rts (survives the post-latch below)
+	clrl	i10a_busy
+| --- as_segat AFTER: did a covering segment appear during resolution? ---
+	movel	i10a_addr,%d0
+	andil	&0xfffff000,%d0
+	movel	%d0,%sp@-
+	movel	%fp@(8),%sp@-
+	jsr	as_segat
+	addqw	&8,%sp
+	movel	%d0,i10a_seg_post
+	movel	&1,i10a_latched
+	movel	%d7,%d0			| restore as_fault_orig's return for our rts
+	moveml	%sp@+,%d2-%d7/%a2-%a6
+	unlk	%fp
+	rts
+
+	.balign 4
+
+	.data
+	.balign 4
+| ---------------------------------------------------------------------------
+| The i10a block -- read i10a_magic FIRST (a stale address does not fail, it returns
+| a plausible number), then 31 longs: `kpeek <i10a_magic address> 31`.  Everything is
+| a .data long so a run can re-aim with kpoke instead of a rebuild (the i10p_vmask
+| lesson).
+	.globl	i10a_magic
+i10a_magic:
+	.long	0x49314121		| "I1A!"
+| --- knobs ---
+	.globl	i10a_watchproc
+i10a_watchproc:
+	.long	0			| OPTIONAL proc filter: 0 = ANY process (ships this way);
+					| do NOT pin a proc pointer -- it is a table slot the
+					| wall's sh lands in differently each boot (the i10s lesson)
+	.globl	i10a_watchva
+i10a_watchva:
+	.long	0			| 0 = DORMANT (ships this way): watchva is the ARM gate.
+					| kpoke the address to audit; compared as
+					| (addr & watchmask) == watchva.  The marker write that
+					| vanishes was measured at user 0x800152A0 -- arm with
+					| 0x80015000 and watchmask 0xfffff000 to take its page.
+	.globl	i10a_watchmask
+i10a_watchmask:
+	.long	0xfffff000		| 0xfffff000 = any fault in that page, 0xffffffff = exact
+	.globl	i10a_watchrw
+i10a_watchrw:
+	.long	2			| the access class to audit: 1 = S_READ, 2 = S_WRITE
+					| (the marker store), 3 = S_EXEC
+| --- counters and latch state ---
+	.globl	i10a_seen_n
+i10a_seen_n:
+	.long	0			| as_fault calls seen while armed (uncapped)
+	.globl	i10a_match_n
+i10a_match_n:
+	.long	0			| ... which matched VA + rw AND the proc filter
+	.globl	i10a_vamatch_n
+i10a_vamatch_n:
+	.long	0			| ... which matched VA + rw REGARDLESS of proc
+	.globl	i10a_busy
+i10a_busy:
+	.long	0			| 1 while our own as_fault_orig call is running (re-entry guard)
+	.globl	i10a_latched
+i10a_latched:
+	.long	0			| 1 once the audit is complete -- read this FIRST after the
+					| magic: with it 0, every field below is ship-time state
+	.globl	i10a_proc
+i10a_proc:
+	.long	0			| curproc at the latch
+	.globl	i10a_comm0
+i10a_comm0:
+	.long	0			| u_comm, 16 bytes: the command running (expect "sh")
+	.globl	i10a_comm1
+i10a_comm1:
+	.long	0
+	.globl	i10a_comm2
+i10a_comm2:
+	.long	0
+	.globl	i10a_comm3
+i10a_comm3:
+	.long	0
+| --- the captured decision ---
+	.globl	i10a_addr
+i10a_addr:
+	.long	0			| arg2: the faulting address
+	.globl	i10a_type
+i10a_type:
+	.long	0			| arg4: fault type (1 = F_INVAL demand, 2 = F_PROT)
+	.globl	i10a_rw
+i10a_rw:
+	.long	0			| arg5: rw (1 = S_READ, 2 = S_WRITE)
+	.globl	i10a_as
+i10a_as:
+	.long	0			| arg1: the address space as_fault was called with
+	.globl	i10a_seg
+i10a_seg:
+	.long	0			| as_segat(as, page) BEFORE: 0 = NO covering segment (the
+					| FC_NOMAP cause); nonzero = a seg was found
+	.globl	i10a_segbase
+i10a_segbase:
+	.long	0			| that seg's s_base (valid only when i10a_seg != 0)
+	.globl	i10a_segsize
+i10a_segsize:
+	.long	0			| s_size: s_base + s_size <= addr means the seg is TOO
+					| SHORT to cover the address (a gap), distinct from no seg
+	.globl	i10a_seg_post
+i10a_seg_post:
+	.long	0			| as_segat(as, page) AFTER as_fault_orig: did a covering
+					| segment appear during the resolution?
+	.globl	i10a_ret
+i10a_ret:
+	.long	0			| as_fault's ACTUAL return: 3 = FC_NOMAP, 0 = resolved
+| --- the process break extent, so "brk did not grow" vs "grew but lookup misses" reads directly ---
+	.globl	i10a_uprocp
+i10a_uprocp:
+	.long	0			| u.u_procp -- must equal i10a_proc
+	.globl	i10a_brkbase
+i10a_brkbase:
+	.long	0			| p_brkbase (@52)
+	.globl	i10a_brksize
+i10a_brksize:
+	.long	0			| p_brksize (@56)
+	.globl	i10a_brkend
+i10a_brkend:
+	.long	0			| p_brkbase + p_brksize = the current break.  brkend <
+					| addr = the break never reached the write (brk did not
+					| grow / failed); brkend >= addr with i10a_seg = 0 = brk's
+					| bookkeeping grew but the segment lookup does not cover it
+	.globl	i10a_pas
+i10a_pas:
+	.long	0			| p_as (@124) -- should equal i10a_as for a user data fault
+| --- the as's segment-list head, for offline decode ---
+	.globl	i10a_a_segs
+i10a_a_segs:
+	.long	0			| as->a_segs (@4)
+	.globl	i10a_a_seglast
+i10a_a_seglast:
+	.long	0			| as->a_seglast (@8, the lookup cache)
+	.balign 4			| pad section to a 4-byte multiple (bss placement)
