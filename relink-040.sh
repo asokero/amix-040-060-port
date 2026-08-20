@@ -212,6 +212,13 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/legacysdt040.s" -o "$HERE/build/legacys
 # from hat_ptfree.  It CALLS retained hat_sdtfree -- hence the globalize below.
 # Contract: analyysirepo vm-map/ISSUE40-PTDAT-TEARDOWN-CONTRACT.md.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/ptdatfree040.s" -o "$HERE/build/ptdatfree040.o"
+# syncguard (2026-08-20): sync() walks vfssw[] through vsw_vfsops with no null
+# check, and xpanic calls sync() -- so ANY panic before vfsinit() has filled the
+# switch dereferences NULL, lands on low-memory vector 4 (the exec ROM trap stub
+# AmigaOS left there), and turns into DOUBLE PANIC before the first panic can be
+# read.  This override is the stock loop plus two null checks and a counter block.
+# CPU-independent: it is a defect in generic vfs code, not in anything 040.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/syncguard.s" -o "$HERE/build/syncguard.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
@@ -300,6 +307,7 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol prfastmapin \
 	--weaken-symbol haltsys \
 	--weaken-symbol rtnfirm \
+	--weaken-symbol sync \
 	"$HERE/build/unix-stage1"
 
 # Genuine 040 trap/fault runtime overrides (getfault040/userspace040/vtop040/wb040).
@@ -366,7 +374,8 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
 	"$HERE/build/config040.o" "$HERE/build/cb_icode040.o" "$HERE/build/kdbg040.o" \
 	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o" \
-	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o"
+	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o" \
+	"$HERE/build/syncguard.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
@@ -376,6 +385,7 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          ptd_keep0_n ptd_keepn_n ptd_meta_n ptd_badlink_n ptd_wake_n ptd_tblfreed_n \
          nullvect nullvect_orig kvp_magic kvp_on kvp_n kvp_user_n kvp_super_n kvp_over_n \
          kvp_last_vec kvp_last_pc kvp_vec \
+         sync syncg_magic syncg_calls syncg_skip_ops syncg_skip_fn syncg_last_i \
          fpsp060_top fpsp060_image fpsp060_vec11 f60_magic f60_entry_n f60_mem_n f60_real_n \
          f60_access_n f60_done_n f60_reserved_n f60_last_co f60_memfail_n f60_arith_n \
          f60_bsun_n f60_fline_n f60_trap_n f60_trace_n f60_fpudis_n f60_superdone_n \
@@ -425,6 +435,26 @@ if m68k-linux-gnu-nm "$OUT" | grep -E ' U hat_sdtfree$' >/dev/null 2>&1; then
 	echo "[FAIL] hat_sdtfree still UND after globalize -> the call would go to 0"; exit 1
 fi
 echo "[OK] ISSUE-40 ptdat edge bound: hat_ptdat_retire @0x$PRADDR -> retained hat_sdtfree @0x$SFADDR."
+
+# HARD CHECK (2026-08-20, ISSUE-46): syncguard.o replaces sync() so the panic path
+# survives a vfs switch that vfsinit has not filled yet.  This one fails QUIETLY in
+# the worst possible way: a missing --weaken-symbol, or the object dropped from the
+# link list, leaves the stock body strong, `ld -r` succeeds, and the kernel is
+# byte-plausible -- and then the next early panic destroys its own diagnosis exactly
+# as before, with nothing in the build output to say the fix was not in it.  So
+# assert both directions: our strong def must have MOVED OFF the stock address, and
+# the counter block must be there to read it by.
+SGADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="sync" && $2=="T" {print $1}')
+if [ -z "$SGADDR" ]; then
+	echo "[FAIL] sync is not a global T -> syncguard.o did not link"; exit 1
+fi
+if [ "$SGADDR" = "0005d21a" ]; then
+	echo "[FAIL] sync is still the stock body at 0x5d21a -> the weaken/override did not take"; exit 1
+fi
+if [ -z "$(m68k-linux-gnu-nm "$OUT" | awk '$3=="syncg_magic" && $2=="D" {print $1}')" ]; then
+	echo "[FAIL] syncg_magic missing -> syncguard.o's counter block is not in the image"; exit 1
+fi
+echo "[OK] ISSUE-46 panic-path guard bound: sync @0x$SGADDR (stock body was 0x5d21a)."
 
 # HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
 # remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired
