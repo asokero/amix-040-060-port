@@ -185,6 +185,7 @@ OVERRIDES = [
     ("usrxmemflt",       0x5aede, "usrxmemflt_orig",     "040 user fault path"),
     ("nullvect",         0x011b4, "nullvect_orig",       "kvecprobe wrapper"),
     ("sync",             0x5d21a, None,                  "ISSUE-46: stock sync() walks a NULL vsw_vfsops -- any pre-vfsinit panic double-faults"),
+    ("page_init",        0xaf42a, "page_init_orig",      "ISSUE-48: the page-frame database is mapped-in DRAM and nothing zeroes it"),
 ]
 print("## Override bindings")
 print()
