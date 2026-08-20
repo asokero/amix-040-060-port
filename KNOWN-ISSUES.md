@@ -4903,6 +4903,48 @@ looping walk is visible rather than silently reported as "not found".
 **Predicted before the run:** `smu_oncache = 1`, `smu_onfree = 0`. If both come back 0, the
 "stale bit" reading is right and the search narrows to a single missing `page_unfree`.
 
+### Second metal read 2026-08-21: stage 1 reproduced EXACTLY; stage 2 never ran (my bug)
+
+Kernel `68040-260821-04`. Every stage-1 field latched **identically** to the first run — same
+page `0x40073E28` (frame 3542), same `smu_why = 3`, same `addr == addr0 == 0x40440000`, same
+`pflags 0x33000002`, same bucket 556. Nothing drifted.
+
+**That reproducibility is itself a finding, and it is worth more than the run that produced it.**
+Two boots, on different kernels, with different DRAM garbage underneath (see the `pgz` numbers
+below), landed on the *same page frame* at the *same virtual address* with the *same flag word*.
+Whatever corrupts this page is **deterministic in address**, not a race and not a function of what
+was in memory beforehand. Any root-cause story that requires timing or luck is now excluded.
+
+Stage 2, however, returned all zeros — including both walk counters and `freemem`, which cannot
+be zero 22 s into a boot. The instrument did not walk and find nothing; **it never executed**, and
+the reason was a defect in this unit, not in the kernel:
+
+```
+db75c:  braw db81e <Lsmu_go>      <- the "page found" exit
+db81e:  Lsmu_lists == Lsmu_go     <- the same address
+```
+
+`Lsmu_lists:` had been written **after** the two list walks instead of before them, so it resolved
+to the same address as the exit label. Every path that mattered — including the "found" path this
+panic always takes — branched past the walks to the restore-and-tail-jump. Only the
+budget-exhausted path fell through into them, and that path never runs. The assembler cannot
+object: two labels on one address is legal, and the relink's hard check and the relocation
+validator both passed, because symbol binding was never the problem.
+
+Fixed by moving the label ahead of the walks, giving the freelist walk its own forward exit
+(`Lsmu_done2` — with the label moved, its old backward branches would have become an infinite
+loop inside a panic), and routing the two early exits through the walks as well.
+
+**And the lesson is now built into the unit:** `smu_s2ran` is written `"RAN!"` as the *first*
+instruction of the stage-2 block. An instrument whose silence is indistinguishable from a negative
+result is decoration — the same lesson ISSUE-44 recorded, re-learned here at the cost of one
+hardware run. A future all-zero stage-2 read now means "did not run" only if `smu_s2ran` is also
+zero.
+
+**ISSUE-48 confirmed a third time** in the same read: `pgz_held_n` = 1380, after 150 and 1225 on
+the two previous boots, and `pgz_hash_n` = 71 after 2. Both counts vary run to run exactly as an
+uninitialised-DRAM story predicts, and the boot gets past `kvm_init` every time.
+
 ## ⏳ ISSUE-50 (2026-08-20, DIAGNOSED — deliberately not fixed in this pass): the panic backtrace stops after one frame because its frame-pointer window is 64 KiB wide
 
 > **Ledger: OPEN, diagnosed, fix designed but not implemented.** Recorded now because it has cost
