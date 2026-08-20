@@ -1446,3 +1446,51 @@ The ring reads it directly: line up the 040 and 030 rings entry-by-entry for the
 `newbrk` sequence and compare `brkend`. The console dump (`test-tools/i10d.sh` ends by
 kpeek-ing the whole block to `/dev/console`) is the reliable readout; the slice publish is a
 backup.
+
+## 22. i10d extended — the data-segment extent (reserve-ahead vs grow-on-fault)
+
+The cross-CPU i10d run was decisive: **brk grants byte-exact (`newbrk == brkend`)
+identically on 040 and 030** (same sh, `brkbase 0x800114B4` both). So brk is exonerated —
+the only 040-vs-030 difference is that the 030 **honours** sh's write ~748 bytes past its
+logical break while the 040 drops it (`as_fault` seg=0 → SEGV_MAPERR). The fix design now
+needs to know **which** mechanism the 030 uses, so i10d's per-brk ring entry is extended
+from 6 to **9 longs** with the data-segment extent, captured through the same 100%-bound
+brk hook on both CPUs:
+
+- `[6] seg_end` = `s_base + s_size` of the segment covering `p_brkbase` (the data segment);
+- `[7] seg@brkend` = `as_segat(p_as, brkend)` (is the break page itself covered);
+- `[8] seg@(brkend+0x1000)` = `as_segat(p_as, brkend + 0x1000)` (does a segment reach PAST
+  the break).
+
+`as_segat` is the stock SVR4 leaf lookup (global `T` @ `0xadefc` in both the 040 build and
+the 030 base, so `jsr as_segat` binds by symbol via `ld -r`); it is fault-free, safe from
+the brk hook. `i10d_record` is now fully register-transparent (saves d0-d7/a0-a6) so it can
+call `as_segat` three times without disturbing the shared wrapper's i10b state. Ring is 16
+entries × 9 longs (still 576 bytes, `kpeek <magic> 157`); `i10d_stride` reads 9.
+
+**Decisive read.** On the 030, for the entry whose `brkend ≈ 0x80014FB4` (below the marker
+`0x800152A0`):
+
+- **(A) RESERVE-AHEAD** if `seg_end > 0x800152A0` (or `[8] seg@(brkend+0x1000) != 0`): the
+  data segment already reaches past the break, so sh's past-break write is in-segment and
+  never faults. **040 fix:** make brk/`as_map` reserve the segment ahead of the logical
+  break.
+- **(B) GROW-ON-FAULT** if `seg_end == round-up(break) = 0x80015000` with `[8] == 0`: the
+  segment is page-exact to the break and the 030 fault handler demand-grows it on the
+  past-break write. **040 fix:** restore that demand-grow in `as_fault`/`segvn`.
+
+On the 040, i10c already measured seg=0 for the marker page (page-exact, no reserve-ahead),
+so the 040 does neither — it just drops. Comparing the 040's `[6]/[8]` for the same break
+against the 030's names the mechanism the fix must reproduce.
+
+**Prediction.** I expect **(B) grow-on-fault**: sh's break is at `0x80014FB4`, its 4 KiB /
+2 KiB-rounded data segment ends at `round-up(0x80014FB4) = 0x80015000` on both CPUs, so the
+030's `seg_end` is `0x80015000` (page-exact, `[8] == 0`) and the write at `0x800152A0` is
+past it — the 030 grows it in on the fault, the 040's demand-fill fails. If instead the 030
+shows `seg_end > 0x800152A0` / `[8] != 0`, it reserves ahead and the fix is at brk/`as_map`
+instead. The ring reads it directly on each CPU.
+
+**Driver note.** `test-tools/i10d.sh`'s base-pick is now **grep-free** (the install miniroot
+has no `grep`): it captures each `kpeek` magic read into a variable and matches `49314421`
+with a `case` glob. Reset between runs by kpoking `i10d_head`/`i10d_n` to 0; the band filter
+`i10d_lo`/`i10d_hi` stays kpoke-able.

@@ -4600,41 +4600,80 @@ i10c_wbrep:
 | would otherwise share the ring.
 |
 | READ IT.  status-facts finds the block by i10d_magic; the whole block is
-| `kpeek <i10d_magic addr> 157` -- 13 header longs then 24 * 6 ring longs.  i10d_head is
-| the next write slot, i10d_n the total; entries [0..min(n,24)-1] chronological unless n>24,
-| when the oldest is at head and the newest at head-1.  Each entry is 6 longs:
-| newbrk, brkbase, brksize_pre, brksize_post, brkend (= brkbase + post), ret.
+| `kpeek <i10d_magic addr> 157` -- 13 header longs then 16 * 9 ring longs.  i10d_head is
+| the next write slot, i10d_n the total; entries [0..min(n,16)-1] chronological unless n>16,
+| when the oldest is at head and the newest at head-1.  Each entry is 9 longs:
+| newbrk, brkbase, brksize_pre, brksize_post, brkend (= brkbase + post), ret, seg_end,
+| seg@brkend, seg@(brkend+0x1000) -- the last three name the data-segment extent, which
+| tells reserve-ahead (seg reaches past the break) from grow-on-fault (page-exact).
 
 	.text
 	.balign 4
 | ---------------------------------------------------------------------------
-| i10d_record -- append the current brk to the ring.  in: d2 = newbrk, d3 = brksize_pre,
-| d5 = ret, d6 = brksize_post, a2 = proc (u.u_procp).  Preserves d2-d7/a2-a6; clobbers
-| only d0/d1/a0/a1, which it saves.
+| i10d_record -- append the current brk to the ring, INCLUDING the data-segment extent
+| that distinguishes reserve-ahead from grow-on-fault.  in: d2 = newbrk, d3 = brksize_pre,
+| d5 = ret, d6 = brksize_post, a2 = proc (u.u_procp).  Fully register-transparent (saves
+| and restores d0-d7/a0-a6), so it can call as_segat freely and the caller's d2-d7/a2-a6
+| survive for the i10b latch.  as_segat is a leaf lookup, fault-free -- safe from here.
+| Entry = 9 longs: newbrk, brkbase, pre, post, brkend, ret, seg_end, seg@brkend,
+| seg@(brkend+0x1000).  seg_end = s_base + s_size of the seg covering brkbase (the data
+| segment).  seg@(brkend+0x1000) nonzero = the segment reaches PAST the break = A
+| (reserve-ahead); seg_end == round-up(break) with seg@nextpage == 0 = B (grow-on-fault).
 	.globl	i10d_record
 i10d_record:
-	moveml	%d0-%d1/%a0-%a1,%sp@-
+	moveml	%d0-%d7/%a0-%a6,%sp@-
 	movel	%d2,%d0			| band filter on the requested new break
 	cmpl	i10d_lo,%d0
 	bcsw	Lidr_out		| newbrk < lo
 	cmpl	i10d_hi,%d0
 	bccw	Lidr_out		| newbrk >= hi (default hi = 0xffffffff -> all)
-	movel	i10d_head,%d0		| slot address = i10d_ring + head * 24
-	moveq	&24,%d1
-	mulsl	%d1,%d0
+| --- three leaf lookups against curproc's address space (p_as = a2@124) ---
+	movel	%a2@(52),%d0		| as_segat(p_as, brkbase) -> the data segment
+	movel	%d0,%sp@-
+	movel	%a2@(124),%sp@-
+	jsr	as_segat
+	addqw	&8,%sp
+	moveq	&0,%d4			| d4 = seg_end (0 if no covering segment)
+	tstl	%d0
+	beqs	Lidr_nseg
+	moveal	%d0,%a0
+	movel	%a0@(4),%d4
+	addl	%a0@(8),%d4		| seg_end = s_base + s_size
+Lidr_nseg:
+	movel	%a2@(52),%d7		| d7 = brkend = brkbase + brksize_after
+	addl	%d6,%d7
+	movel	%d7,%sp@-		| as_segat(p_as, brkend) -> seg covering the break
+	movel	%a2@(124),%sp@-
+	jsr	as_segat
+	addqw	&8,%sp
+	moveal	%d0,%a3			| a3 = seg@brkend (pointer, 0 = none)
+	movel	%d7,%d0			| as_segat(p_as, brkend + 0x1000) -> the page PAST the break
+	addil	&0x1000,%d0
+	movel	%d0,%sp@-
+	movel	%a2@(124),%sp@-
+	jsr	as_segat
+	addqw	&8,%sp
+	moveal	%d0,%a4			| a4 = seg@(brkend+0x1000): nonzero = reserve-ahead (A)
+| --- write the 9-long entry: slot = i10d_ring + head * 36 ---
+	movel	i10d_head,%d0
+	movel	%d0,%d1
+	lsll	&5,%d0			| head * 32
+	lsll	&2,%d1			| head * 4
+	addl	%d1,%d0			| head * 36
 	lea	i10d_ring,%a0
 	addal	%d0,%a0
 	movel	%d2,%a0@		| [0] newbrk
 	movel	%a2@(52),%a0@(4)	| [1] p_brkbase
 	movel	%d3,%a0@(8)		| [2] p_brksize before
 	movel	%d6,%a0@(12)		| [3] p_brksize after
-	movel	%a2@(52),%d0		| [4] brkend after = brkbase + brksize_after
-	addl	%d6,%d0
-	movel	%d0,%a0@(16)
+	movel	%d7,%a0@(16)		| [4] brkend after
 	movel	%d5,%a0@(20)		| [5] return code
-	movel	i10d_head,%d0		| advance head mod 24
+	movel	%d4,%a0@(24)		| [6] seg_end (of the data segment)
+	movel	%a3,%a0@(28)		| [7] seg@brkend
+	movel	%a4,%a0@(32)		| [8] seg@(brkend+0x1000)
+	movel	i10d_head,%d0		| advance head mod 16
 	addql	&1,%d0
-	cmpil	&24,%d0
+	cmpil	&16,%d0
 	bcss	Lidr_nw
 	moveq	&0,%d0
 Lidr_nw:
@@ -4646,14 +4685,15 @@ Lidr_nw:
 	movel	u+0x1c8,i10d_comm2
 	movel	u+0x1cc,i10d_comm3
 Lidr_out:
-	moveml	%sp@+,%d0-%d1/%a0-%a1
+	moveml	%sp@+,%d0-%d7/%a0-%a6
 	rts
 
 	.balign 4
 
 	.data
 	.balign 4
-| The i10d block -- read i10d_magic FIRST; whole block = `kpeek <magic> 157`.
+| The i10d block -- read i10d_magic FIRST; whole block = `kpeek <magic> 157`
+| (13 header longs + 16 entries * 9 longs).
 	.globl	i10d_magic
 i10d_magic:
 	.long	0x49314421		| "I1D!"
@@ -4662,16 +4702,17 @@ i10d_on:
 	.long	0			| 0 = DORMANT (ships this way).  kpoke 1 to arm the ring.
 	.globl	i10d_n
 i10d_n:
-	.long	0			| total brk calls recorded (the ring holds the last 24)
+	.long	0			| total brk calls recorded (the ring holds the last 16)
 	.globl	i10d_head
 i10d_head:
-	.long	0			| next write slot (0..23); if n>24 the oldest is here
+	.long	0			| next write slot (0..15); if n>16 the oldest is here
 	.globl	i10d_size
 i10d_size:
-	.long	24			| ring capacity (entries)
+	.long	16			| ring capacity (entries)
 	.globl	i10d_stride
 i10d_stride:
-	.long	6			| longs per entry: newbrk,brkbase,pre,post,brkend,ret
+	.long	9			| longs per entry: newbrk,brkbase,pre,post,brkend,ret,
+					| seg_end,seg@brkend,seg@(brkend+0x1000)
 	.globl	i10d_lo
 i10d_lo:
 	.long	0			| band filter: record only newbrk in [lo, hi).  Default all;
@@ -4693,7 +4734,7 @@ i10d_comm2:
 	.globl	i10d_comm3
 i10d_comm3:
 	.long	0
-| the ring: 24 entries * 6 longs.  One symbol; the reader indexes it by entry*24 bytes.
+| the ring: 16 entries * 9 longs.  One symbol; the reader indexes it by entry*36 bytes.
 	.globl	i10d_ring
 i10d_ring:
 	.space	576

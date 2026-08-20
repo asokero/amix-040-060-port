@@ -56,19 +56,19 @@
 LOG=/i10a.log
 
 # --- base 0x07000000 (this rig) ---
-IA=0710DD1C		# i10a_magic
-IAPROC=0710DD20		# i10a_watchproc  (filter: leave 0 = any proc)
-IAWVA=0710DD24		# i10a_watchva    (the ARM gate)
-IAMASK=0710DD28		# i10a_watchmask
-IARW=0710DD2C		# i10a_watchrw
-IAVAM=0710DD38		# i10a_vamatch_n
-IALAT=0710DD40		# i10a_latched
-IARET=0710DD78		# i10a_ret
+IA=0710DD74		# i10a_magic
+IAPROC=0710DD78		# i10a_watchproc  (filter: leave 0 = any proc)
+IAWVA=0710DD7C		# i10a_watchva    (the ARM gate)
+IAMASK=0710DD80		# i10a_watchmask
+IARW=0710DD84		# i10a_watchrw
+IAVAM=0710DD90		# i10a_vamatch_n
+IALAT=0710DD98		# i10a_latched
+IARET=0710DDD0		# i10a_ret
 # --- base 0x08000000 (accelerator; +0x01000000) ---
-IA8=0810DD1C
-IAPROC8=0810DD20
-IAWVA8=0810DD24
-IAMASK8=0810DD28
+IA8=0810DD74
+IAPROC8=0810DD78
+IAWVA8=0810DD7C
+IAMASK8=0810DD80
 
 # The marker write vanishes at user 0x800152A0 (page 0x80015000).  Pass 1 aims the
 # PAGE (mask fffff000, per the aim spec); pass 2 tightens to the EXACT address if pass

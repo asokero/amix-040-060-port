@@ -51,13 +51,13 @@
 LOG=/i10b.log
 
 # --- base 0x07000000 (this rig) ---
-IB=0710DD98		# i10b_magic
-IBON=0710DD9C		# i10b_on  (the ARM flag)
-IBLAT=0710DDA8		# i10b_latched
-WBF=0710CE44		# wbf_magic (the safety-net counter block)
+IB=0710DDF0		# i10b_magic
+IBON=0710DDF4		# i10b_on  (the ARM flag)
+IBLAT=0710DE00		# i10b_latched
+WBF=0710CE9C		# wbf_magic (the safety-net counter block)
 # --- base 0x08000000 (accelerator; +0x01000000) ---
-IB8=0810DD98
-IBON8=0810DD9C
+IB8=0810DDF0
+IBON8=0810DDF4
 
 exec > $LOG 2>&1
 

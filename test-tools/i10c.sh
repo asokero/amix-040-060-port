@@ -41,12 +41,12 @@
 LOG=/i10c.log
 
 # --- base 0x07000000 (this rig) ---
-IC=0710DDF4		# i10c_magic
-ICON=0710DDF8		# i10c_on  (the ARM flag)
-ICLAT=0710DE00		# i10c_latched
+IC=0710DE4C		# i10c_magic
+ICON=0710DE50		# i10c_on  (the ARM flag)
+ICLAT=0710DE58		# i10c_latched
 # --- base 0x08000000 (accelerator; +0x01000000) ---
-IC8=0810DDF4
-ICON8=0810DDF8
+IC8=0810DE4C
+ICON8=0810DE50
 
 exec > $LOG 2>&1
 
