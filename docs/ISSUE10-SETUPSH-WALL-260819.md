@@ -1173,12 +1173,30 @@ tail-jmps the per-page restorer (reached as `segvn_faultpage_prot` — a relink 
 `segvn_prot040.o`, so `segvn_prot040.s` is untouched and stays standalone-upstreamable). The real
 decision is still `segvn_prot040`'s; `i10s` only observes it. Chain:
 `segvn_faultpage` (i10s) → `segvn_faultpage_prot` (segvn_prot040) → `segvn_faultpage_orig` (0xac01a).
-It ships **dormant** (`i10s_watchproc = 0`, one `tstl` per `segvn_faultpage` call) and is armed with a
-single `kpoke` of the process; `test-tools/i10s.sh` is the driver. It captures `rw`, `seg`,
+It ships **dormant** (`i10s_watchva = 0`, one `tstl` per `segvn_faultpage` call) and is armed with a
+single `kpoke` of `i10s_watchva`; `test-tools/i10s.sh` is the driver. It captures `rw`, `seg`,
 `seg->s_base/s_size`, `svd`, `svd->pageprot`/`svd->prot`, the `vpage` pointer + its byte + decoded
 `vp_prot`, the `protchk`/`(vp_prot & protchk)` pair, whether `segvn_prot040`'s `FC_PROT` return is
 taken and its value, and the first 64 bytes of `segvn_data` (so the anon-map/`vpage` coverage can be
 decoded **offline** without a guessed on-box dereference).
+
+**The key is the VA, not the process** (corrected after the first bench run). §16.4 framed the aim as
+`proc = 0x4013BE00` and `VA = 0x800152A0`, and the first `i10s` build keyed on both — but that returned
+a **null that was a measurement-setup error, not a finding**: `i10s_seen_n = 0x313` (787
+`segvn_faultpage` entries) with `i10s_match_n = 0`, because `0x4013BE00` was PID 9's proc-table slot
+from the earlier i10r run on kernel `-43`, and this boot's wall-sh was **PID 40** in a different slot.
+A proc pointer is not stable across boots, so it is the wrong key. The instrument now **arms on
+`i10s_watchva`** (`0` = dormant) and makes `i10s_watchproc` an **optional** filter (`0` = any process,
+the default this run uses). The `0x800152A0` write is specific to the arena-growing `sh`, so **VA + rw
+is the stable key**. A new counter, **`i10s_vamatch_n`**, increments on every VA+rw match *regardless
+of proc*, which makes the re-run **decisive either way**:
+
+- **`vamatch_n > 0` and latched** → the fault reached `segvn_faultpage`; the decision fields below tell
+  protection from coverage (§17.2).
+- **`vamatch_n == 0` while the wall demonstrably fired** (the `-43` run reproduced the wall: `BUS ERROR
+  4AFC0003` flood, `I10S-PUBLISHED`) → the fatal write **never reaches `segvn_faultpage`**. `as_fault`
+  then fails **upstream, in the segment lookup** — consistent with i10r's `SEGV_MAPERR` reading (*no
+  segment covers the address*) — and the next probe targets `as_fault` / `as_segat`, not `segvn`.
 
 ### 17.2 The prediction — ranked, and what each outcome would mean
 

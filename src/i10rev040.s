@@ -3429,8 +3429,24 @@ i10r_r15:
 |     segvn_faultpage (i10s, here) -> segvn_faultpage_prot (segvn_prot040.s)
 |                                  -> segvn_faultpage_orig (0xac01a, stock body)
 |
-| WHAT IT CAPTURES, once, on the first call matching curproc == i10s_watchproc AND
-| (addr & i10s_watchmask) == i10s_watchva AND rw == i10s_watchrw (default S_WRITE):
+| ARMING AND MATCHING.  The ARM gate is i10s_watchva: 0 ships dormant, a kpoked VA
+| arms it.  A call MATCHES when (addr & i10s_watchmask) == i10s_watchva AND
+| rw == i10s_watchrw (default S_WRITE), AND EITHER i10s_watchproc == 0 (any process,
+| the default) OR curproc == i10s_watchproc.  The process is deliberately NOT the
+| primary key.  A proc pointer is a proc-table slot the wall's sh lands in DIFFERENTLY
+| every boot: the first bench run keyed on 0x4013BE00 (PID 9's slot from an earlier
+| kernel) and its filter never matched a boot whose wall-sh was PID 40, returning a
+| null that was a measurement-setup error and not a finding.  So the VA the marker
+| write targets (0x800152A0, specific to the arena-growing sh) is the stable key and
+| the proc filter is an optional narrowing.  i10s_vamatch_n counts VA+rw matches
+| REGARDLESS of proc, so even a proc-filtered or never-latching run separates "the
+| fault reached segvn_faultpage at this VA" from "it never got here": vamatch_n = 0
+| while the wall demonstrably fired means as_fault failed UPSTREAM, in the segment
+| lookup, before segvn_faultpage was ever called (consistent with i10r's SEGV_MAPERR
+| reading = no segment covers the address), and the next probe targets as_fault /
+| as_segat instead.
+|
+| WHAT IT CAPTURES, once, on the first matching call:
 |   * rw, the seg pointer, seg->s_base / seg->s_size (so the vpage/anon index range
 |     can be checked offline), and svd = seg->s_data;
 |   * svd->pageprot (@2) and svd->prot (@3) -- pageprot == 0 says the per-page path
@@ -3458,7 +3474,7 @@ i10r_r15:
 | i10s_addr -- two independent readings of the same decision, one predicted here and
 | one recorded by the code that actually makes it.
 |
-| SAFETY AND COST.  Ships dormant: i10s_watchproc = 0, so the wrapper is one tstl
+| SAFETY AND COST.  Ships dormant: i10s_watchva = 0, so the wrapper is one tstl
 | plus the tail jmp on every segvn_faultpage call until it is armed with a kpoke.
 | Armed, it saves and restores d0-d7/a0-a6 across the latch, so the ABI is
 | undisturbed: d0/d1/a0/a1 are scratch in the frameless-tail-call ABI segvn_prot040
@@ -3481,25 +3497,31 @@ i10r_r15:
 | rw = arg9 (fp@40).
 	.globl	segvn_faultpage
 segvn_faultpage:
-	tstl	i10s_watchproc
-	bnew	Lis_maybe		| armed: rare -- check the gate (d0/d1 scratch)
+	tstl	i10s_watchva
+	bnew	Lis_maybe		| armed (watchva != 0): rare -- check the gate
 Lis_tail:
 	jmp	segvn_faultpage_prot	| dormant OR done: the per-page wrapper decides
 Lis_maybe:
 	tstl	i10s_latched
 	bnew	Lis_tail		| one-shot: the audit is already complete
 	addql	&1,i10s_seen_n		| UNCAPPED: segvn_faultpage calls seen while armed
-	movel	curproc,%d0
-	cmpl	i10s_watchproc,%d0
-	bnew	Lis_tail		| not the watched process
+| --- VA + rw match FIRST, proc-independent: this is the stable key.  (d0/d1 scratch.)
 	movel	%sp@(8),%d0		| arg2 = the fault address
-	movel	%d0,%d1
-	andl	i10s_watchmask,%d1
-	cmpl	i10s_watchva,%d1
+	andl	i10s_watchmask,%d0
+	cmpl	i10s_watchva,%d0
 	bnew	Lis_tail		| not the watched address / page
 	movel	%sp@(36),%d0		| arg9 = rw
 	cmpl	i10s_watchrw,%d0
 	bnew	Lis_tail		| not the watched access class (default S_WRITE)
+	addql	&1,i10s_vamatch_n	| VA + rw matched, REGARDLESS of proc: the fault
+					| DID reach segvn_faultpage at this address
+| --- proc filter, OPTIONAL: watchproc 0 = any process (the default); else this one.
+	movel	i10s_watchproc,%d1
+	beqs	Lis_take		| watchproc 0 = any proc -> take it
+	movel	curproc,%d0
+	cmpl	%d1,%d0
+	bnew	Lis_tail		| watchproc set and curproc differs -> skip
+Lis_take:
 	addql	&1,i10s_match_n
 | --- MATCH: latch the decision once.  Build a frame so every callee-saved register
 |     is handed back untouched; segvn_faultpage_prot reloads all args from the stack
@@ -3597,7 +3619,7 @@ Lis_done:
 	.balign 4
 | ---------------------------------------------------------------------------
 | The i10s block -- read i10s_magic FIRST (a stale address does not fail, it
-| returns a plausible number), then 45 longs: `kpeek <i10s_magic address> 45`.
+| returns a plausible number), then 46 longs: `kpeek <i10s_magic address> 46`.
 | Everything is a .data long so a run can re-aim the audit with kpoke instead of a
 | rebuild, the i10p_vmask lesson.
 	.globl	i10s_magic
@@ -3606,12 +3628,19 @@ i10s_magic:
 | --- knobs ---
 	.globl	i10s_watchproc
 i10s_watchproc:
-	.long	0			| 0 = DORMANT (ships this way).  kpoke the process to
-					| audit -- the wall's sh, measured at 0x4013BE00
+	.long	0			| the OPTIONAL proc filter: 0 = ANY process (ships this
+					| way), nonzero = only that curproc.  Do NOT set this to
+					| a proc pointer for cross-boot work -- the wall's sh
+					| occupies a different proc-table slot each boot, so a
+					| pinned pointer (e.g. 0x4013BE00 from one boot) matches
+					| nothing on the next.  VA + rw is the stable key.
 	.globl	i10s_watchva
 i10s_watchva:
-	.long	0x80015000		| compared as (addr & watchmask) == watchva; the marker
-					| write that vanishes was measured at user 0x800152A0
+	.long	0			| 0 = DORMANT (ships this way): watchva is the ARM gate.
+					| kpoke the address to audit; compared as
+					| (addr & watchmask) == watchva.  The marker write that
+					| vanishes was measured at user 0x800152A0 -- arm with
+					| 0x80015000 and watchmask 0xfffff000 to take its page.
 	.globl	i10s_watchmask
 i10s_watchmask:
 	.long	0xfffff000		| 0xfffff000 = any fault in that page, 0xffffffff = the
@@ -3626,7 +3655,14 @@ i10s_seen_n:
 	.long	0			| segvn_faultpage calls seen while armed (uncapped)
 	.globl	i10s_match_n
 i10s_match_n:
-	.long	0			| ... of which matched watchproc + address + rw
+	.long	0			| ... of which matched VA + rw AND the proc filter
+	.globl	i10s_vamatch_n
+i10s_vamatch_n:
+	.long	0			| ... which matched VA + rw REGARDLESS of proc.  vamatch_n
+					| > 0 with match_n 0 = a proc filter rejected them; but
+					| vamatch_n == 0 while the wall demonstrably fired means
+					| the fatal write NEVER reached segvn_faultpage, i.e.
+					| as_fault failed upstream in the segment lookup
 	.globl	i10s_latched
 i10s_latched:
 	.long	0			| 1 once the audit is complete -- read this FIRST after
@@ -3634,7 +3670,8 @@ i10s_latched:
 					| state and says nothing about any fault
 	.globl	i10s_proc
 i10s_proc:
-	.long	0			| curproc at the latch (must equal i10s_watchproc)
+	.long	0			| curproc at the latch (equals i10s_watchproc when the
+					| proc filter is set; the real proc when it is 0 = any)
 	.globl	i10s_comm0
 i10s_comm0:
 	.long	0			| u_comm, 16 bytes: the command running (expect "sh")
