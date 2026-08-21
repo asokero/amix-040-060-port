@@ -5060,6 +5060,133 @@ anomaly spanning 149 of them, and it would cost a boot to learn that. The histog
 machinery and narrows the target first; if it comes back "targeted after all", the watch follows
 with a much better address to watch.
 
+### Fifth metal read 2026-08-21 — the histogram names the instruction
+
+`bitpop[0..7]` = 3, **149**, 1, 1, 3, **3688**, 1, 1 · `b0_ff` = 1 · `b0_20` = **3539** ·
+`imposs_n` = 3 · stage 1 back to `0x33000002`.
+
+**The population reconstructs exactly**, which is what says the reading is sound rather than
+plausible:
+
+| byte 0 | count | what it is |
+|---|---:|---|
+| `0x20` | 3539 | free pages — pristine `page_free` output, `p_free` and nothing else |
+| `0x22` | ~146 | **allocated** pages: `p_free` **stale** + `p_ref` set |
+| `0x33` | 2 | allocated + in transit (`p_intrans\|p_pagein`) — the segmap slot-0 cluster |
+| `0xFF` | 1 | every bit set — the one outlier, unexplained |
+
+3539 + 149 = 3688 exactly, and `bitpop[2]`/`[3]`/`[6]`/`[7]` all reading **1** is the single
+`0xFF` struct contributing to each.
+
+#### Only two operations in the cascade are observable, and they disagree
+
+A page arriving from the free list has byte 0 = `0x20`. Against that input, of the six operations
+`page_get`'s cascade performs on byte 0:
+
+| bit | field | cascade op | input | observable? | result |
+|---:|---|---|---:|---|---|
+| 5 | `p_free` | **`bfins {2:1}`** — clear | **1** | **YES** | **landed on 0 of 149** |
+| 1 | `p_ref` | **`orib #2`** — set | 0 | **YES** | **landed on 149 of 149** |
+| 2 | `p_mod` | `bfins {5:1}` — clear | 0 | no | — |
+| 4 | `p_intrans` | `bfins {3:1}` — clear | 0 | no | — |
+| 7 | `p_lock` | `bfins {0:1}` — clear | 0 | no | — |
+| 0 | `p_pagein` | `andib #-2` — clear | 0 | no | — |
+
+The other four clears act on bits that are already zero, so they prove nothing either way.
+
+#### Refinement: it is not "clears fail", it is "BFINS does not write"
+
+The one failing operation is a **bitfield** instruction; the one succeeding operation is a
+**byte** read-modify-write. "Clears vs sets" is not the axis the evidence supports — the only
+clear that could be seen is also the only `bfins` that could be seen.
+
+And the direction is pinned too: if `bfins` were writing **1**s (a `bfextu` returning garbage and
+feeding the chain), then `p_mod`, `p_intrans` and `p_lock` would each read ≈149. **They read 1, 3,
+1.** So `bfins` is not writing ones and not writing zeros — **its write is not landing at all**,
+while `ori.b`/`andi.b` to the *same byte* do land.
+
+That is not kernel logic. No sequencing of correct 68040 instructions produces it.
+
+#### The exact sequence one struct's byte 0 undergoes at acquisition
+
+`a2` = the page struct, reached through the **kernel's mapped window** — `pages` = `0x40040000`,
+which `kvm_init` obtained via `sptalloc(..., first_free_click, 0)` → `segkmem_mapin`, i.e. physical
+DRAM at click ≈`0x815C` mapped into `kvseg`. **MMU translation is active for this address and it is
+not covered by any transparent-translation register.** Encodings are from the shipped image:
+
+```
+b0254:  efd2 0141   bfins  %d0,%a2@{5:1}     ; p_mod     <- d0   (d0 = 0)
+b0258:  e9d2 0141   bfextu %a2@{5:1},%d0     ; d0 <- p_mod
+b025c:  efd2 0081   bfins  %d0,%a2@{2:1}     ; p_free    <- d0   *** THE ONE THAT FAILS ***
+b0260:  0212 00fe   andib  #-2,%a2@          ; p_pagein  <- 0
+b0264:  e9d2 01c1   bfextu %a2@{7:1},%d0     ; d0 <- p_pagein
+b0268:  efd2 00c1   bfins  %d0,%a2@{3:1}     ; p_intrans <- d0
+b026c:  e9d2 00c1   bfextu %a2@{3:1},%d0     ; d0 <- p_intrans
+b0270:  efd2 0001   bfins  %d0,%a2@{0:1}     ; p_lock    <- d0
+b0274:  0012 0002   orib   #2,%a2@           ; p_ref     <- 1    *** THIS ONE LANDS ***
+b0278:  357c 0001 0002  movew #1,%a2@(2)     ; p_keepcnt <- 1    (lands: keepcnt reads 1→2)
+```
+
+Every one of these is a read-modify-write of the **same byte**, at the same address, within nine
+instructions of each other. The byte ops take effect and the bitfield ops do not.
+
+### HANDOVER — minimal reproduction for the 68040 emulation core
+
+For whoever owns the accelerator's 68040 core. This needs **no hardware boot**: it is a host-harness
+test. AMIX is not required — the sequence is self-contained.
+
+**Claim to test:** `BFINS <Dn>,<mem>{offset:1}` does not take effect when the effective address is
+translated through the 68040 MMU (page-table translation, *not* transparent-translation), while
+`ORI.B`/`ANDI.B` to the same byte do.
+
+**Setup.** One 4 KiB page mapped through the page tables at a kernel-style address (the failing case
+uses `0x40040000`+), MMU on, TC enabled, the mapping **not** covered by ITT0/ITT1/DTT0/DTT1 — the
+distinction from a TTR-covered address is the thing most worth varying. Cache mode as the kernel's
+`kvseg` uses (copyback) for the primary run.
+
+**Body.** With `a2` pointing at a byte in that page:
+
+```
+    moveb  #0x20,%a2@          ; seed: bit 5 set, all others clear
+    moveq  #0,%d0
+    .word 0xefd2,0x0081        ; bfins %d0,%a2@{2:1}   -- clear bit 5
+    ; EXPECT  %a2@ == 0x00
+    ; PREDICT %a2@ == 0x20     (the write does not land)
+    orib   #2,%a2@             ; control: byte RMW, set bit 1
+    ; EXPECT  %a2@ == 0x02
+    ; PREDICT %a2@ == 0x22     (matches every allocated page on the card)
+```
+
+**Variations that isolate it, in priority order.**
+
+1. the same body at a **TTR-covered / untranslated** address — if it passes there and fails above,
+   the defect is in the bitfield path's address translation, not the instruction decode;
+2. **caches off** vs copyback — separates "write lost in the cache" from "write never issued";
+3. `bfins` with **width > 1**, and a field **crossing a byte boundary** — does any bitfield write
+   land?
+4. `bfins` to a **data register** destination — expected to pass; if it fails too, the defect is
+   decode-wide rather than memory-path;
+5. `bfclr`/`bfset`/`bfextu` on memory — `bfextu` reads are believed to work (the cascade's chain
+   would otherwise have propagated 1s, and the histogram says it did not), so a passing `bfextu`
+   with a failing `bfins` localises it to the write half.
+
+**Why this was never seen before.** The bench emulator implements these instructions; §9's firmware
+audit covered MMU enable, the TT registers, `PFLUSH`/`PTEST` and the access-error frame, but the
+bitfield-instruction path was never exercised, because nothing before this reached code that uses
+`bfins` on MMU-translated memory in anger. It is the same family as the ISSUE-10 write
+fabrication — a write that does not land where the instruction says it should.
+
+**Report back:** the observed byte after each step, per variation. If step 1 passes and the primary
+fails, that is the answer and the kernel needs no change at all.
+
+**No new kernel build was produced for this round** — the bit map confirmed the reading rather than
+refuting it, so `unix-040-minimal-i46-i48-i49e` (`68040-260821-10`) remains the current diagnostic
+kernel and is still the right one to boot if another read is wanted.
+
+**If the harness exonerates the core**, the fallback story is the mapped window itself — `p_free`
+living in DRAM reached through `segkmem_mapin` — and the next kernel-side instrument is a
+read-back-verify wrapper on the cascade rather than a write-watch.
+
 ## ⏳ ISSUE-50 (2026-08-20, DIAGNOSED — deliberately not fixed in this pass): the panic backtrace stops after one frame because its frame-pointer window is 64 KiB wide
 
 > **Ledger: OPEN, diagnosed, fix designed but not implemented.** Recorded now because it has cost
