@@ -5511,3 +5511,40 @@ they agree, the write lands correctly and something *later* clobbers USP between
 **No fix is proposed here, and no kernel was built for this round.** The lead this entry was
 built on is refuted, the field that appeared to confirm it was measured at the wrong moment, and
 guessing at a kernel-side change on that basis would be worse than saying so.
+
+### Round 2 instrument (2026-08-21): measure the handoff AT `setregs`, not at the fault
+
+`src/srgtrap.s` + `src/patch_srgtrap.py`. Two hooks, because one moment cannot answer it:
+
+1. **`srg_utraps`** — the `jsr u_trap` relocation at `0x11f0` is retargeted here. It records the
+   address of the slot `utraps` just pushed (`%sp + 20`: its own four saved registers plus the
+   `jsr` return address lands back on the pushed word) and tail-jumps into `u_trap` with the stack
+   untouched, so `u_trap`'s `%fp + 8` is unchanged and its `rts` still returns to `0x11f4`. It
+   fires on **every** user trap and is deliberately **not** once-only: it must track the *current*
+   trap, because the exec syscall's own frame is the one `setregs` runs inside.
+2. **`setregs`** — weakened, stock body retained as `setregs_orig` at `0x58b62`. The wrapper
+   latches `u.u_ar0` **before** the stock body, calls it with the same argument, then latches
+   `u_ar0[0]` (the word it just wrote), `u.u_ar0` again (to prove it did not move underneath), and
+   `u + 0`. The stock return value is carried in `d2` across the post-latch and restored to both
+   `d0` and `a0`.
+
+**`srg_match` is the verdict**, computed in the kernel so the readout needs no arithmetic: 1 if
+`u.u_ar0` equals the pushed-slot address, 0 if not.
+
+Execution stamps on both capture points per the standing rule — `srg_ut_stamp` = `"UTR!"`,
+`srg_stamp1` = `"PRE!"`, `srg_stamp2` = `"PST!"`. A missing stamp means the path was never taken,
+which is a different fact from a zero value; this entry has already been burned twice by not being
+able to tell those apart.
+
+#### The fork, registered before the run
+
+| outcome | meaning |
+|---|---|
+| **`srg_match == 0`** | `setregs`' write and the trap exit's USP restore address **different memory**. The mismatch is named; `srg_uar0_pre` vs `srg_slot_at` gives the size and direction, and the fix reconciles them |
+| **`srg_match == 1`** | the handoff is sound — `setregs` wrote the new SP into the exact word the trap exit loads USP from. Then something **clobbers USP between `setregs` and the `rte`**, and the search moves there. `srg_ar0_0` should read `0xC0800000`; if it does not, the write itself did not land, which is a third story |
+
+Also predicted: `srg_n` ≥ 1 with all three stamps set; `srg_uar0_pre` == `srg_uar0_post`;
+`srg_pcb0_post` == the `0xC0800000` already seen.
+
+Blast radius: the `utraps` hook is four stores on a path already entering the kernel; the
+`setregs` wrapper is a call-through. Neither changes behaviour.
