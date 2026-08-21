@@ -5548,3 +5548,64 @@ Also predicted: `srg_n` ≥ 1 with all three stamps set; `srg_uar0_pre` == `srg_
 
 Blast radius: the `utraps` hook is four stores on a path already entering the kernel; the
 `setregs` wrapper is a call-through. Neither changes behaviour.
+
+### Round 2 read (2026-08-21): BOTH registered forks die — exec never ran at all
+
+`magic=SRG! MATCH=0 ut_stamp=UTR! stamp1=0 stamp2=0 ut_n=1 n=0 pushslot=0x40001F44`, everything
+else zero.
+
+`u_trap` has **exactly one reference** in the unpatched stock image — the `jsr` at `0x11f0` inside
+`utraps`. Every user trap, syscall and fault alike, routes through it. So **`ut_n = 1` means one
+user trap in the entire boot**, and since the NOTICE is printed from `u_trap`'s fault path, that
+one trap *is* the fault.
+
+**The icode's `trap #0` never executed. exec never ran. `setregs` never ran** (`n = 0`, no `PRE!`,
+no `PST!`). `u_comm = 0` follows for free — exec is what would have written it. Both registered
+forks are dead, and so is the "exec errored out pre-`setregs` and returned to the icode" reading:
+that needs two traps and there was one.
+
+`pushslot = 0x40001F44` is the fault's own frame slot — the same number round 1 misread as
+`u_ar0`, now correctly identified.
+
+#### PID 1 died on its FIRST user instruction
+
+`main` maps and copies the icode to **`0x80800000`** (`as_map` `0x59972`, `copyout` `0x5998a`) and
+returns that address in `d0` (`0x599d2`). The initial user stack is `as_map(0xC07FF800, 0x800)`,
+top **`0xC0800000`** — exactly the `pcb0` already read. `_start` then builds the frame and returns
+to user:
+
+```
+44:  jsr   main          ; d0 = the user PC
+4e:  movew %d1,%sp@-     ; format word 0x0000 (4-word frame)
+50:  movel %d0,%sp@-     ; PC        (sets N from d0)
+52:  bmis  5c            ; 0x80800000 is negative -> the USER-mode arm
+5c:  movew %d1,%sp@-     ; SR = 0x0000
+5e:  rte
+```
+
+That is a correct format-0 frame and correct on the 68040. **But the fault was at PC
+`0x80000012`, not `0x80800000`.** The `rte` did not deliver the entry `main` computed, so the
+icode's first instruction — `lea %pc@(L%stack),%sp`, the one that establishes the user stack —
+never ran.
+
+**That inverts the last two rounds: the garbage USP is a *consequence*, not the cause.** `_start`
+never loads USP and does not need to, precisely because the icode sets its own stack; with the
+wrong PC that never happens, and USP keeps whatever it held (`0xCB7C0002`).
+
+#### Round 3 instrument
+
+`src/inittrap.s` + `src/patch_inittrap.py` retarget `_start`'s `jsr main` relocation at `0x46` to
+`ini_main`, which calls the real `main`, latches its return value, and hands it back in `d0`
+unchanged so the `bmis` and the frame build are bit-identical. Stamps `INI!` on entry and `RET!`
+after `main` returns.
+
+| outcome | meaning |
+|---|---|
+| `ini_ret == 0x80800000` | `main` is right; the corruption is in the `rte` or the frame it reads — a 68040 frame/format question |
+| `ini_ret == 0x80000012` | `main` computed the wrong entry; the search moves into its icode setup |
+| anything else | a third story, and the value names it |
+
+**Noted, not acted on:** the initial stack mapping is 2 KiB-shaped — base `0xC07FF800` is not
+4 KiB-aligned and the size is `0x800`. `as_map` rounds to page boundaries so it probably still
+covers `[0xC07FF000, 0xC0800000)`, but nothing in the Model-B patch tables appears to own that
+site. Worth a look once the entry-point question is settled.
