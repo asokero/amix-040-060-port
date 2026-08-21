@@ -134,6 +134,42 @@ as though it were a wrong sum. Harmless while a human reads the output; an autom
 report one wrong sum on a perfect run. Same family as everything else here: the check catching
 itself rather than the thing it is checking.
 
+## Step 7: power cut — 6/6, every byte intact
+
+The last step, and the documented order puts it last for a reason: it is destructive and it ends
+the session either way.
+
+Write phase on `68060-260819-13`: six 4 MiB copies into `/b2dt` (not `/tmp`, which the boot
+clears), two `sync`s, and an `EXPECT` file recording the count, the reference size, the kernel and
+**the uptime** — so the verify phase can tell whether the boundary was actually crossed.
+
+Then **a real power cut**, not `init 6`. The stronger variant, which is what `b2reboot-truth.sh`
+itself recommends for this.
+
+Both preconditions were checked by the tool and printed rather than assumed:
+
+```
+wrote-by:  uptime =  up  1:22    kernel = 68060-260819-13
+now:       uptime =  up 3 mins   kernel = 68060-260819-13
+B2RT preconditions OK: same kernel, and uptime shows a real reboot
+```
+
+Verification, `b2verify` recompiled from source on the fresh boot rather than reusing a binary
+left in `/b2dt` by an earlier session:
+
+```
+b2rt-f1 … b2rt-f6   CLASS=V0_COMPLETE_MATCH  size=4194304  crc=50250  read_total=4194304
+B2RT-RESULT PASS (6 files, every byte intact)
+```
+
+**Six of six, byte for byte, across a power cut.** This is the only test here that speaks to what
+survives on disk when the machine loses power mid-life, and the only one the emulator cannot
+substitute for.
+
+`fsck -F ufs -m` ran at boot. The serial capture shows no repair indicators — no `MODIFIED`, no
+`UNREF`, no `SALVAG`, no `CORRECT`. *Whether a full repair pass ran at all is not established from
+this capture*, only that nothing in it reports having repaired something.
+
 ## Three defects the procedure found in itself
 
 This is what the trial was for.
@@ -152,8 +188,8 @@ This is what the trial was for.
 
 ## What this does not establish
 
-* **No power cut.** Step 7 of the documented order was not run, so nothing here speaks to on-disk
-  durability after power loss. The burst suite (step 6) did run: 96/96.
+* ~~No power cut.~~ **All seven steps of the documented order were run.** Burst 96/96, power cut
+  6/6 byte-exact.
 * **This is a graphics variant**, not the base kernel. It is base + VA2000 driver + `dev_kvmap` +
   the census block, so the battery covers the base within it rather than the base alone.
 * **`fpenab060` and `ftest060` were not run**, so the enabled FP exception classes and Motorola's
