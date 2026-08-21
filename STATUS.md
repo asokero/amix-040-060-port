@@ -189,7 +189,9 @@ into. Codex's analysis found **no technical ceiling**; the blocker is that the b
 algorithm does not recognise A and B as one pool. Bounded boot/startup work, not a counter bump.
 
 **Zorro III.** The Z3 device aperture is not reachable by a driver (DTT0 covers 0–1 GB;
-`0x40000000` is a fill-on-fault kvseg). **The pattern is Commodore's own, not something a
+`0x40000000` is the fixed u-area, and the rest of region 1 is live kernel virtual space --
+**not** a "fill-on-fault kvseg", which this repository believed for months and which
+`docs/AMIGA-PHYSICAL-MEMORY-MAP.md` refutes from `segkmem_fault`). **The pattern is Commodore's own, not something a
 third-party driver invented**: their TIGA driver dereferences the `autocon()` board address
 directly as a kernel pointer (`amix-src` `sys/amiga/driver/tiga.c:45`, in its read/write path)
 and returns `phystopfn(board + offset)` from `timmap` (`:104`). So this is a stock limitation
@@ -329,6 +331,7 @@ hypothesis, but nothing new should be built on any of it.
 
 | Refuted claim | Where it still appears | What is actually true |
 |---|---|---|
+| `kvseg` is fill-on-fault, so an access to a Zorro III address lands on a zero page | `KNOWN-ISSUES.md`, `docs/archive/RESUME-HERE-260727.md`, `test-tools/b1-dcwt-verify-260723.txt` | `segkmem_fault` (`0xa83d6`) returns 0 only for `F_SOFTLOCK`/`F_SOFTUNLOCK` and **-1** for an ordinary `F_INVAL`; the 3B2 reference returns -1 unconditionally. Nothing there allocates a zero page. The symptom was real but the mechanism was wrong: **`0x40000000` is the fixed u-area**, so the read was serviced by a live kernel mapping. `docs/AMIGA-PHYSICAL-MEMORY-MAP.md` |
 | A null FSAVE frame means "no live FP state" on the 68060 | ISSUE-43 rounds 1–3 | Byte zero is the **source operand's exponent**; the discriminator is byte two |
 | DZ proved a null frame | ISSUE-43 round 1 | It proved its own operand was zero |
 | "7100 null saves per boot" | ISSUE-43 round 3 | Collected through the wrong predicate. Remeasured: 8048 null / 17 idle per boot on hardware |

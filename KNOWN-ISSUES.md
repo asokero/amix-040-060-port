@@ -3230,7 +3230,11 @@ Xsvga exp @39f6:  moveal %a1@(0,%d2:l),%a0   | a0 = cd_boardaddr
 Zorro II:lla se toimii koska **DTT0 = 0x003fc060 identity-mappaa 0x00000000–0x3FFFFFFF**.
 **Zorro III osoitteessa 0x40000000 ei ole identity-mappausta** — se VA-alue on kernelin
 **kvsegiä** ja aktiivisessa käytössä (havaitut VA:t 0x40440000–0x40449000).
-**Ja kvseg on fill-on-fault**, joten pääsy Z3-osoitteeseen **ei faulttaa** vaan osuu hiljaa
+**Ja pääsy Z3-osoitteeseen ei faulttaa** vaan osuu hiljaa
+[REFUTED 2026-08-20: tämä sanoi "kvseg on fill-on-fault". Se on väärin -- `segkmem_fault`
+palauttaa -1 tavalliselle F_INVAL/F_PROT-faultille. Oire on oikea, mekanismi oli väärä:
+`0x40000000` on KIINTEÄ U-AREA, eli luku palveltiin elävästä kernel-mappauksesta.
+Ks. `docs/AMIGA-PHYSICAL-MEMORY-MAP.md`.]
 kernelin muistiin: luku palauttaa nollia (→ "ei lautaa"), kirjoitus menisi kernelin dataan.
 
 **Mitä Z3-tuki siis vaatii:** kernelin on mapattava Z3-aukko kernel-VA:han ja ajurin on

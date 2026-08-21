@@ -6,8 +6,12 @@
 | A driver cannot reach a Zorro III board at all today.  Drivers dereference
 | `cd_BoardAddr` directly as a kernel address; DTT0 = 0x003fc060 identity-maps
 | only 0x00000000-0x3FFFFFFF (src/pstart040.s:326), so a Z3 board at 0x40000000+
-| lands in the kernel's OWN region-1 VA range, which is fill-on-fault -- the
-| access does not fault, it quietly hits kernel memory.  Widening DTT0 (or DTT1,
+| lands in the kernel's OWN region-1 VA range -- the access does not reach the
+| board, it quietly hits kernel memory.  (This comment said "which is
+| fill-on-fault" until 2026-08-20; that mechanism is refuted -- segkmem_fault
+| returns -1 for an ordinary F_INVAL.  VA 0x40000000 is the FIXED U-AREA, so the
+| classic symptom was a read serviced by a live kernel mapping, which is worse.
+| docs/AMIGA-PHYSICAL-MEMORY-MAP.md.)  Widening DTT0 (or DTT1,
 | 0x807fa060, which covers 0x80000000+) is not available: either widening would
 | swallow kvseg/segmap/sptmap, which live exactly there (src/prfastmap040.s:33).
 | A real kernel mapping is therefore the only route.
