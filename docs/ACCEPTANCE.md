@@ -171,8 +171,25 @@ usage line and does nothing, which an unattended driver will not notice.
 ⚠ `protfault`'s **case c has historically been dangerous** and belongs in a separate supervised
 run, not in the routine battery. Cases a and b are the ones the records report.
 
-`test-tools/README.md` documents what each program measures. Build on the guest with
-`cc -o NAME NAME.c` — they are compiled by the native 1991 SVR4 `cc`, so they are K&R C.
+`test-tools/README.md` documents what each program measures.
+
+### Building them on the guest: `/usr/ccs/bin/cc`, not `cc`
+
+**`cc` is wrong on the 68060 and will not tell you politely.** `/usr/bin/cc` is a shell wrapper
+around gcc 2.7.2.3, and gcc's own `cpp` and `cc1` contain 64-bit `muls.l` — which the 68060 does
+not implement, so the compiler itself dies on vector 61. Measured, not assumed: the console printed
+`SIGKILL sent to pid 263 (.../cpp ...) because of vector 0xF4`
+(`test-tools/mkall060.sh` header).
+
+Use the original AT&T SVR4 driver, which predates gcc's magic-multiply optimisation:
+
+```sh
+/usr/ccs/bin/cc -o NAME NAME.c
+```
+
+`test-tools/mkall6.sh` builds the whole battery that way and ends with `MKALL6-DONE`; require
+**12/12 built, 0 errors** before running anything. The sources are K&R C for that 1991 compiler —
+see `AGENTS.md`, "Code that runs on AMIX itself".
 
 ## 6. What the CPU adds
 
