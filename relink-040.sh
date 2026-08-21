@@ -280,6 +280,13 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/srgtrap.s" -o "$HERE/build/srgtrap.o"
 # question moved to what _start hands the initial rte.  This wraps `jsr main` and
 # latches main's return value, the user PC.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/inittrap.s" -o "$HERE/build/inittrap.o"
+# inituser (2026-08-21, ISSUE-52 round 4): round 3 proved exec never ran -- PID 1
+# died on its FIRST user instruction (fault PC 0x80000012 = icode base 0x80800000
+# with bit 23 dropped, +0x12).  main returns the right entry (ini_ret 0x80800000),
+# but the user-transition RTE delivered the wrong PC.  This island IS that RTE:
+# it rebuilds the exact frame from d0, latches d0 / SSP / USP / the frame words the
+# RTE reads back, then RTEs -- so a good kernel still launches PID 1 identically.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/inituser.s" -o "$HERE/build/inituser.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
@@ -456,7 +463,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o" \
 	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o" \
 	"$HERE/build/syncguard.o" "$HERE/build/pageinitzero.o" "$HERE/build/segmapdbg.o" \
-	"$HERE/build/btwalk.o" "$HERE/build/usptrap.o" "$HERE/build/srgtrap.o" "$HERE/build/inittrap.o" \
+	"$HERE/build/btwalk.o" "$HERE/build/usptrap.o" "$HERE/build/srgtrap.o" "$HERE/build/inittrap.o" "$HERE/build/inituser.o" \
 	"$HERE/build/i10rev040.o"
 
 echo
@@ -490,6 +497,8 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          setregs setregs_orig srg_utraps srg_magic srg_match srg_ut_stamp srg_stamp1 srg_stamp2 \
          srg_ut_n srg_n srg_pushslot srg_slot_at srg_uar0_pre srg_uar0_post srg_ar0_0 srg_pcb0_post \
          ini_main ini_magic ini_stamp1 ini_stamp2 ini_n ini_ret ini_pcb0 ini_uar0 \
+         ini_user_rte iur_magic iur_stamp1 iur_stamp2 iur_n iur_pc iur_a7 iur_usp \
+         iur_f_sr iur_f_pc iur_f_fmt \
          smu_addr smu_off smu_addr0 smu_vp smu_smoff smu_hashsz smu_pflags \
          pgz_have pgz_first_i pgz_first_w0 pgz_first_map pgz_first_lc pgz_hash_n pgz_hashsz \
          fpsp060_top fpsp060_image fpsp060_vec11 f60_magic f60_entry_n f60_mem_n f60_real_n \
@@ -898,6 +907,9 @@ run_step 2 python3 "$HERE/src/patch_srgtrap.py" "$OUT"
 
 echo "[*] ISSUE-52 round 3: latch the user PC _start hands to the initial rte"
 run_step 2 python3 "$HERE/src/patch_inittrap.py" "$OUT"
+
+echo "[*] ISSUE-52 round 4: capture the user-transition RTE (frame + SSP + USP)"
+run_step 1 python3 "$HERE/src/patch_inituser.py" "$OUT"
 
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/src/patch_framesz060.py" "$OUT"

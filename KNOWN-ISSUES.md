@@ -5609,3 +5609,48 @@ after `main` returns.
 4 KiB-aligned and the size is `0x800`. `as_map` rounds to page boundaries so it probably still
 covers `[0xC07FF000, 0xC0800000)`, but nothing in the Model-B patch tables appears to own that
 site. Worth a look once the entry-point question is settled.
+
+### Round 4 (2026-08-21): the firmware RTE probe reframes it again — catch the ONE user transition
+
+The Z3660 lane exonerated the RTE core on table-walked frames, and its metal probe (first 8
+u-block-window RTEs after MMU-on) showed **every one returning to supervisor kernel text** — `pc
+0x0800xxxx`/`0x080Dxxxx`, `SR` S-set, `fmt 0068`/`006C`, `usp 0x08003118` throughout. All eight
+are interrupt/fault churn *inside* `main()`. None is the user drop (no `SR=0x0000`, no
+`pc=0x80800000`, no `fmt=0`). Round 3 proved there is exactly one user trap in the whole boot (the
+fault), so the user transition happened once, later than the 8-cap, and delivered the wrong PC.
+
+**Where `_start`'s stack is, settled:** `0x3c` does `moveal #u+0x1FC0,%sp`, so the SSP is
+`0x40001FC0` — in the u-block. The captured RTEs at `0x40001Dxx`–`0x1Exx` are `main()`'s nested
+frames on that stack. So the firmware window is right; the user RTE is simply the 9th+.
+
+**The arithmetic that names the bug:** icode is mapped at `0x80800000`; the fault PC is
+`0x80000012` = `0x80800000` with **bit 23 (`0x00800000`) cleared**, plus `0x12`. PID 1 ran a
+couple of instructions from the wrong page (`0x80000000`) and faulted. So `main` computes the
+right entry (round 3's `ini_ret = 0x80800000`) but the user-transition RTE delivered it with bit
+23 gone.
+
+#### Instrument — the user RTE itself
+
+`src/inituser.s` + `src/patch_inituser.py` replace `_start`'s frame-build + user RTE
+(`0x4a`–`0x5f`, 22 bytes) with `bra.l ini_user_rte` + NOPs. The island **rebuilds the identical
+frame** from `d0` (so a good kernel launches PID 1 unchanged) and, on the first firing, latches
+`d0`, the SSP, USP, and the three frame words read straight back off the stack. `bra.l` not
+`bsr.l`: it pushes no return address, so the reported SSP is the true one the RTE pops from.
+
+**The decisive triple, in one boot** — `ini_ret` (round 3, what `main` returned), `iur_pc` (`d0`
+at the frame build), `iur_f_pc` (the PC longword actually in the frame):
+
+| reading | verdict |
+|---|---|
+| all three `0x80800000` | frame correct, **RTE delivered `0x80000000`** — back to the CPU core, but with the exact failing frame address (`iur_a7` ≈ `0x40001FB8`, u-block/table-walked) and the exact bit: the concrete case the "exact delivery on table-walked frames" exoneration did not cover |
+| `iur_pc = 0x80000000`, `ini_ret = 0x80800000` | `d0` lost bit 23 between `ini_main`'s `rts` and here — an ISSUE-49-family data-path bit-drop, **kernel-side fix** |
+| `iur_f_pc = 0x80000000`, `iur_pc = 0x80800000` | the `movel %d0,%sp@-` push truncated the store — a store bit-drop, the nearest cousin of ISSUE-49's BFINS finding |
+
+#### Predictions, registered
+
+`iur_stamp1 == "IUR!"`, `iur_stamp2 == "FRM!"`, `iur_n == 1`; `iur_f_sr == 0x0000` (user),
+`iur_f_fmt == 0x0000`, `iur_a7` in `0x4000xxxx`. The fork itself is genuinely open — prior is
+`iur_pc == iur_f_pc == 0x80800000` (frame correct, RTE delivers wrong) or a clean bit-23 drop at
+exactly one of the three points. `iur_usp` is captured too: it becomes PID 1's `a7` at the drop,
+before the icode's own `lea` would set it — which is why the earlier garbage-USP reads were a
+consequence, not the cause.
