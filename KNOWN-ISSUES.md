@@ -5744,3 +5744,67 @@ and the ring decides it — a wrong `srt_usp` with a correct `srt_pc[0]=+0xc` re
 RTE-to-user USP switch (emulator) or the kernel never loading USP before `_start`'s user RTE
 (kernel); a `srt_pc` that lands in the string with a *correct* `srt_usp` points at the syscall
 return-PC advance. No fix is proposed until the ring says which.
+
+### Round 6 read attempt (2026-08-21): all blocks zero = wrong address, and the analysis sharpens
+
+The metal read of i52f showed `PC:80800012` on HDMI (confirming the run-off-into-the-string) but
+**every counter block read `0x00000000`, including `pgz_magic`**. `pgz` populates at `kvm_init`
+on every boot (proven four times), so a zero *magic* cannot mean the block failed — it means the
+read address was wrong.
+
+**The cause is a build-line address mismatch, and it is a standing trap worth recording.** The
+main line carries the full instrument set (the ISSUE-10 `i10rev040` block and its neighbours);
+the minimal-delta line does not. That extra `.data` on main pushes every counter block to a
+higher runtime address. The addresses being read (`srg@0810DEF8`, `pgz@0810DDD4`, …) are the
+**main-line** build's; the card runs the **minimal-line** i52f, whose blocks sit ~8 KB lower.
+`tools/status-facts.sh` must be run on the *exact artifact booted* — the two lines are never
+interchangeable for counter addresses, and the specific numbers change every build, so they are
+not recorded here (per the repository's own rule against hand-carried volatile numbers).
+
+**What the fault reboots into.** The counter blocks live in `.data` (magic word plus zeroed
+counters), not `.bss`. `mlsetup`'s `bzero(edata, end)` clears `.bss` only, so it does **not** wipe
+them; they are reset only when `boot2` reloads the kernel image on the next warm boot. PID 1's
+fatal user fault → `SIGBUS` to init → init dies → the kernel panics ("init died") → `xpanic` →
+(ISSUE-46 guard) `sync` → `rtnfirm` → warm reboot, on the observed ~90 s cycle. So within a
+cycle, `pgz` is populated from `kvm_init` onward and `srt` from the init fault onward; both
+persist until the reload. A correct-address read at almost any time after early boot shows `pgz`
+non-zero.
+
+**The analysis sharpens — it is the SECOND user RTE that is corrupt.** The fault is at
+`PC=0x80800012` with `fa=0x40001FC0`. The icode's `lea` sets `SP=~0x8080002A`; for a string-byte
+"instruction" at `0x80800012` to touch `0x40001FC0`, **A7 must be `0x40001FC0` (the SSP), not the
+arg block** — so A7 was corrupted *after* the `lea`. The only thing between the `lea` and the
+fault is the `trap #0` (exece) and its return. Therefore the **syscall-return RTE** (the second
+kernel→user transition — the first being proc 1's launch) delivered **both** a wrong PC
+(`0x80800012` instead of `0x8080000C`) **and** a wrong A7 (`0x40001FC0` = the SSP, i.e. USP was
+left equal to the SSP). PID 1's launch RTE worked (it reached `0x80800000` and ran); the syscall
+return did not. That relocates the bug to how the syscall/exece return builds the user context
+(kernel) or how the RTE-from-syscall restores USP (emulator).
+
+#### HANDOVER — firmware-side capture of the user-drop RTEs (no `.data` race)
+
+For the accelerator's 68040 core. The kernel-side `srt` ring reads the same answer but is trapped
+behind the `.data`/reboot timing; the emulator can print it to serial the instant it happens.
+
+**Gate:** fire on any `RTE` whose popped frame drops the CPU to **user mode** — the SR word the
+RTE is about to load has the **S-bit (bit 13, mask `0x2000`) CLEAR**. At the `RTE`, `a7` points at
+the frame; read the SR word at `a7+0` and test `(sr & 0x2000) == 0`. Capture the first 4–8 such
+RTEs (there are normally very few this early).
+
+**Print, per firing, immediately to serial:**
+
+| field | source | expected / tell |
+|---|---|---|
+| seq | a firing counter | RTE #1 vs #2 |
+| `pc` | frame PC longword at `a7+2` | #1 = `0x80800000`; **#2 suspected `0x80800012`** (the wrong return) |
+| `sr` | frame SR word at `a7+0` | bit 13 clear (user) |
+| `ssp` | `a7` before the pop | the kernel stack |
+| **`usp`** | the USP register value now | **the decisive field — becomes PID 1's A7.** valid user SP = RTE fine; `0x40001FC0` (SSP) or `0x08003118` (stale) = PID 1 dropped onto a bad stack |
+| `fmt` | frame format/vector word at `a7+6` | format 0 (`0x0xxx`) |
+
+**Interpretation:** the **second** S-clear RTE is the syscall return from the icode's `trap #0`.
+If it shows `pc=0x80800012` and/or `usp=0x40001FC0`, the syscall-return context (PC + USP) is
+corrupt — which is exactly the observed fault. The first RTE (proc 1 launch) is the control: it
+should be clean (`pc=0x80800000`). This is emulator-side to *observe*; whether the *fix* is
+emulator (RTE USP restore) or kernel (syscall-return frame build) is what the two RTEs'
+`usp`/`pc` values decide.
