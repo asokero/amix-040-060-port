@@ -4569,3 +4569,72 @@ screen dead.
 
 The fix belongs in the driver and needs the Zorro III firmware's own passthrough contract, which is
 readable in `va2000.v` — not guessable from the Zorro II values that are there now.
+
+---
+
+## ⚠ ISSUE-49 (2026-08-21, OPEN): a 2048-aligned device mmap offset yields the NEXT page — and two bugs were cancelling to keep the test green
+
+> **Ledger: OPEN** — found by the first run of the documented acceptance battery, on
+> `68060-260819-13`. Canonical: [`STATUS.md`](STATUS.md) §4.
+
+`devmaptest` T1 failed:
+
+```
+T1 FAIL: /dev/mem same-offset identical=1, base+2048 aliases correctly=0
+DEVMAPTEST-RESULT FAIL
+```
+
+It has been passing since at least 2026-08-07 (`docs/REALHW-260807-11-ACCEPTANCE.md` §5 records
+`DEVMAPTEST-RESULT PASS`). **It was passing for the wrong reason.**
+
+### What the test asks
+
+That a device mapping at offset `base+2048` be the **same 4 KiB page** as one at `base`. That is
+correct 4 KiB semantics and the test says so at the site: "mmap maps WHOLE PAGES from the PFN
+d_mmap returns, so the sub-page 2048 is dropped".
+
+### Why it now fails, and why it did not before
+
+The retained 2 KiB `segdev` stepping calls `d_mmap` **twice per 4 KiB page**, and both calls write
+the same leaf, so **the second one wins**. That is not speculation — it is ISSUE-46's mechanism and
+it was measured as `+2` classification events per page in
+`docs/REALHW-Z3-CHANGE-D-260819.md`.
+
+| | map at `base` | map at `base+2048` | T1 |
+|---|---|---|---|
+| **before the ISSUE-46 fix** (`d_mmap` rounded up) | steps give pfn `n`, `n+1` → leaf **`n+1`** | steps give `n+1`, `n+1` → leaf **`n+1`** | identical → **PASS** |
+| **after the fix** (`d_mmap` truncates) | steps give `n`, `n` → leaf **`n`** | steps give `n`, `n+1` → leaf **`n+1`** | differ → **FAIL** |
+
+So the round-up made *both* mappings wrong in the same direction, which made them equal, which the
+test read as correct aliasing. **Two defects were cancelling into a green result.** Removing one
+exposed the other.
+
+### The remaining defect is the stepping, not the fix
+
+`patch_devmmap2.py` records the `segdev` family as **deliberately not converted** and argues its
+external crossings are benign, on the grounds that "because d_mmap now returns a 4 KiB PFN both
+calls carry the SAME pfn". That holds when the mapping offset is 4 KiB-aligned. It does **not**
+hold when the offset is 2048-aligned: the two steps then straddle a page boundary and the second
+call legitimately returns `n+1`, which overwrites `n`.
+
+The public mmap ABI admits 2048-aligned offsets (the five sites named in `devmaptest.c`'s header:
+`sysconfig 0x44e7c`, `mmap 0x583a6`, `MAP_FIXED 0x5844c`, `munmap 0x584f2`, `mprotect 0x58572`), so
+**a program can ask for one and will silently receive the following page.** Same family as
+ISSUE-46, reached by a different route, and equally silent.
+
+### Not the scenario the test's own header anticipated
+
+`devmaptest.c` warns that T1 will fail if the public five-site ABI is ever moved to 4 KiB, and that
+this would look like a regression without being one. That is a different case. This is a third one:
+the ABI has not moved; a producer stopped being wrong and the consumer's 2 KiB stepping became
+visible.
+
+### What to do — not decided
+
+Either convert the `segdev` family to 4 KiB as one unit (the `vpage` array size and every
+`seg_page()` index together, which `patch_devmmap2.py` declines as unjustified risk without a
+demonstrated defect — there is now a demonstrated defect), or reject non-page-aligned device mmap
+offsets at the ABI, or accept and document the behaviour. `devmaptest` T1's expectation is correct
+and should not be relaxed to make the red go away.
+
+**Do not "fix" this by restoring the round-up.** That would re-mask it and reinstate ISSUE-46.

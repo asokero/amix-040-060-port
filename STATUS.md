@@ -331,6 +331,7 @@ hypothesis, but nothing new should be built on any of it.
 
 | Refuted claim | Where it still appears | What is actually true |
 |---|---|---|
+| `devmaptest` T1 passing means device mmap PFNs are correct | acceptance records up to 2026-08-13 | It was green because two defects cancelled: `d_mmap`'s round-up made both the `base` and `base+2048` mappings land on the same wrong page. Removing the round-up (ISSUE-46) exposed ISSUE-49 — a 2048-aligned device mmap offset yields the NEXT page, because the retained 2 KiB `segdev` stepping's second `d_mmap` call overwrites the first |
 | `kvseg` is fill-on-fault, so an access to a Zorro III address lands on a zero page | `KNOWN-ISSUES.md`, `docs/archive/RESUME-HERE-260727.md`, `test-tools/b1-dcwt-verify-260723.txt` | `segkmem_fault` (`0xa83d6`) returns 0 only for `F_SOFTLOCK`/`F_SOFTUNLOCK` and **-1** for an ordinary `F_INVAL`; the 3B2 reference returns -1 unconditionally. Nothing there allocates a zero page. The symptom was real but the mechanism was wrong: **`0x40000000` is the fixed u-area**, so the read was serviced by a live kernel mapping. `docs/AMIGA-PHYSICAL-MEMORY-MAP.md` |
 | A null FSAVE frame means "no live FP state" on the 68060 | ISSUE-43 rounds 1–3 | Byte zero is the **source operand's exponent**; the discriminator is byte two |
 | DZ proved a null frame | ISSUE-43 round 1 | It proved its own operand was zero |
