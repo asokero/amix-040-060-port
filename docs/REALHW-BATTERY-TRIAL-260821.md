@@ -92,6 +92,48 @@ available here (line 36) and no working recipe is recorded; its six enabled-exce
 accepted on `68060-260812-06`. `ftest060` — needs the host-side build of Motorola's suite
 (`build-ftest060.sh`) and was not rebuilt for this image.
 
+## Step 6: burst suite — 96/96
+
+`burstloop11.sh 4` — sixteen bursts, each six concurrent 4 MiB copies with the fork/COW stressor
+running alongside, then `sum` over all six files. 384 MiB written and verified.
+
+```
+rounds=4
+good_sums (expect 24 per round):  96
+bad address:0   Bad address:0   read error:0   cannot open:0   can.t open:0
+No space:0      BUS ERROR:0     PANIC:0        Segmentation:0  Killed:0
+wrong sums: (none)
+BURSTLOOP11-DONE
+```
+
+**96/96, matching the recorded figure exactly**, with every anomaly pattern at zero.
+
+Counters diffed across the suite — and the informative half is what did **not** move:
+
+| block | delta | reading |
+|---|---|---|
+| `wbf_*` (25 longs) | **byte-identical** | no write-back denial in 384 MiB of concurrent I/O; the ISSUE-42 path is not something ordinary work reaches |
+| `i39_*` (14 longs) | **byte-identical** | no `hat_sdtalloc` contiguity failure under this load |
+
+### Two things the suite could not have told us about itself
+
+**The burst body was not in the repository.** `burstloop11.sh` is tracked and names `/tmp/burst4.sh`
+as a prerequisite; `burst4.sh` was not tracked and lived only on the NAS. A fresh clone could not
+run this step. Recovered and committed.
+
+**`hat_dup_cow` is still missing.** The fork/COW stressor every burst launches is a binary on the
+NAS with no source anywhere here. This run had NAS access so the suite was complete; a run without
+it would do the copies and the 24 integrity sums but none of the concurrent fork/COW pressure —
+which is what made ISSUE-40 visible — and would have to say so.
+
+### A self-match in the driver
+
+`burstloop11.sh`'s wrong-sums check is `grep '8192' | grep -v '1570 8192'`, and its own heading
+line contains `8192` without `1570`, so **the heading matches its own filter** and is echoed back
+as though it were a wrong sum. Harmless while a human reads the output; an automated count would
+report one wrong sum on a perfect run. Same family as everything else here: the check catching
+itself rather than the thing it is checking.
+
 ## Three defects the procedure found in itself
 
 This is what the trial was for.
@@ -110,8 +152,8 @@ This is what the trial was for.
 
 ## What this does not establish
 
-* **No burst suite and no power cut.** Steps 6 and 7 of the documented order were not run, so
-  nothing here speaks to sustained transfer integrity or to on-disk durability after power loss.
+* **No power cut.** Step 7 of the documented order was not run, so nothing here speaks to on-disk
+  durability after power loss. The burst suite (step 6) did run: 96/96.
 * **This is a graphics variant**, not the base kernel. It is base + VA2000 driver + `dev_kvmap` +
   the census block, so the battery covers the base within it rather than the base alone.
 * **`fpenab060` and `ftest060` were not run**, so the enabled FP exception classes and Motorola's
