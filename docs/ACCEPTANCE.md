@@ -191,6 +191,22 @@ Use the original AT&T SVR4 driver, which predates gcc's magic-multiply optimisat
 **12/12 built, 0 errors** before running anything. The sources are K&R C for that 1991 compiler —
 see `AGENTS.md`, "Code that runs on AMIX itself".
 
+**Not everything can be built on the guest, and the failures are not obvious.** Measured
+2026-08-21: `fp060probe` uses `__asm__ volatile`, which the 1991 compiler answers with "undefined
+symbol: `__asm__`"; `isp61ea_asm.s` and `fpenab060_asm.s` are GNU assembler syntax (`#`
+immediates) and `/usr/ccs/bin/as` answers "invalid instruction name". Those are **cross-built on
+the host and transferred as binaries**:
+
+```sh
+m68k-cbm-sysv4-gcc -m68040 -o fp060probe fp060probe.c
+m68k-linux-gnu-as  -m68040 isp61ea_asm.s -o isp61ea_asm.o
+m68k-cbm-sysv4-gcc -m68040 -o isp61ea isp61ea.c isp61ea_asm.o
+```
+
+`test-tools/mk060.sh` carries these notes at the site. `fpenab060_asm.s` does not assemble with
+the GNU assembler either and has no recorded recipe — if you need it, that is the first thing to
+solve.
+
 ## 6. What the CPU adds
 
 **68060 only:**
