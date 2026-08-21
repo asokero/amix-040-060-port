@@ -5352,3 +5352,105 @@ Three things make that the safe direction rather than the clever one:
 
 The ordering is worth keeping in view: ISSUE-46 made this fix safe, and this fix makes ISSUE-46's
 guard reachable on every panic instead of on a coin toss.
+
+## ⏳ ISSUE-52 (2026-08-21, OPEN — instrumented, predictions registered): PID 1 dies at exec with a kernel-shaped user stack pointer
+
+> **Ledger: OPEN.** With ISSUE-49 closed (an emulation-core defect, not a kernel one) the kernel
+> boots and runs, and the frontier is userland. The statics below are settled; the build carries a
+> latch that decides the rest in one boot. Not yet reflected in [`STATUS.md`](STATUS.md).
+
+### Symptom
+
+```
+NOTICE: User BUS ERROR at 40001FC0, PC:80000012 FAULT:6 PID:1 CMD:
+```
+
+The kernel survives and handles it correctly — this is a well-formed fault report, not a crash.
+
+### Settled from the image, without a boot
+
+* **`0x40001FC0` is `u + 0x1FC0`** — the exact constant `_start` loads into `%sp`
+  (`0x3e R_68K_32 u+0x00001fc0`), i.e. the kernel stack top inside the u-area. Not a random
+  address, and not one a user program can legitimately reach.
+* **`PC 0x80000012` is init's own text**, so the icode's `trap #0` exec **succeeded** and
+  `/bin/init` is mapped and running. The icode itself is intact: `icode+0` is
+  `lea %pc@(L%stack),%sp` (`4FFB0170`), `+8` `moveq #11,%d0`, `+10` `trap #0` — the SYS_exec call,
+  and `szicode` = 0x36.
+* **The user stack lives at `userstack` = 0xC0800000** (`patch_execstk.py`,
+  EXEC-INITIALSTK-PATCH-SPEC). A correct USP would be near there, not in the u-block.
+* **FAULT:6 = FLTBOUNDS** per the port's own SIGINFO translation.
+
+So init is running with a **kernel-shaped stack pointer** and dies on its first stack access,
+which lands on the supervisor-only u-area.
+
+### Thread 1 answered: the wb040 precedent is present, and this is not it
+
+`wb040.s` — "THE init-hang fix, 2026-06-24" — describes this class in its own header: *"init's
+`lea` never set USP → systrap read the syscall args from a stale kernel USP = garbage"*. That fix
+**is in the lineage**: `wb040.o` is in the base `ld -r` list of both the shipped `260818-02`
+kernel and this one, so the 68040 write-back replay is present on the bench and on the card alike.
+The icode's `lea` is intact in the image and exec demonstrably worked. **This is a second instance
+of the same class from a different cause**, not a missing fix.
+
+### Thread 2: the static lead — a field consumed on the syscall path and written only on the fault path
+
+The saved-register pointer `u.u_ar0` (absolute symbol `U_AR0` = `u + 0x864`) is written by exactly
+one routine and merely read by the rest:
+
+```
+u_trap  0x5a490:  movel  %d4,u+0x864     ; d4 = %fp + 8   -- SETS it
+systrap 0x5a940:  moveal u+0x864,%a5     --  only READS it
+```
+
+`setregs` (`0x58b62`), which exec calls to install the new user context, writes the new stack
+pointer **through that pointer** (`u_ar0[60]` at `0x58c12`) and the new PC at `u_ar0+66`
+(`0x58c22`). Meanwhile `utraps` saves and restores the user SP on the **kernel stack**
+(`0x11ea` push / `0x11f6` pop), so the two only agree if `u_ar0` points at that saved slot.
+
+**PID 1's first ever entry into the kernel is a syscall** — the icode's `trap #0`. If nothing
+established `u_ar0` for PID 1 before it, `setregs` writes the new SP through an inherited or stale
+pointer, the real saved-USP slot never receives it, and the trap exit restores the old value. That
+is the ISSUE-48 shape exactly: a field consumed but not written, harmless where memory happens to
+be favourable and fatal where it is not — which is also the shape of the bench/card divergence,
+since the bench boots these same bits to the installer prompt.
+
+**This is a lead, not a conclusion.** What is *not* established statically is whether some caller
+of `systrap` sets `u_ar0` first, and what value PID 1 actually carries. Both are runtime facts.
+
+### Instrument
+
+`src/usptrap.s` + `src/patch_usptrap.py` retarget the single `cmn_err` relocation at `0x5a640` —
+the NOTICE call itself — to `unt_latch`, which latches and tail-jumps into the real `cmn_err` so
+the message prints unchanged. Verified surgical: one relocation moved, the other 531 `cmn_err`
+sites untouched. Blast radius on a healthy kernel is zero — the only path here is one already
+reporting a fatal user fault. `unt_magic2` is stamped `"USP!"` as the first act of the latch body,
+so silence cannot be mistaken for a negative result (the ISSUE-49 stage-2 lesson).
+
+| latched | what it decides |
+|---|---|
+| `unt_usp` | the **actual** user stack pointer at the fault. Equal to the reported fault address ⇒ init is dereferencing its own SP and the stale-USP reading is confirmed outright |
+| `unt_uar0` | `u.u_ar0` as `setregs` saw it. Near `u+0x1FC0` ⇒ inherited from proc0; wild or zero ⇒ never established at all. **Different bugs, different fixes** |
+| `unt_comm0/1` | the first eight bytes of `u_comm` (`u + 0x3b0`) — the very argument the NOTICE printed as an empty CMD |
+| `unt_u0/u1` | the head of the u-area, as a cheap coherence check |
+
+### Reconciling the empty CMD, which is the sharpest of the four
+
+`u_comm` is `u + 0x3b0`, computed at `0x5a61a` and pushed as the `%s`. Its emptiness has two
+readings and `unt_comm0` separates them:
+
+* **zero** ⇒ `u_comm` was never written, and since `exec` sets it, that is independent evidence
+  that exec wrote through the wrong pointer — the same failure that would misplace the stack
+  pointer;
+* **ASCII** (`"/bin"` = `0x2F62696E`) ⇒ exec *did* write it, the emptiness is a reporting artefact,
+  and the `u_ar0` story is badly weakened.
+
+### Predictions, registered before the run
+
+* `unt_usp == 0x40001FC0`, matching the reported fault address exactly.
+* `unt_comm0 == 0`.
+* `unt_uar0` inside `0x4000xxxx`. A value outside the u-block **refutes** the inheritance reading.
+* `unt_n == 1`.
+
+**Nothing here is measured yet.** If the latch confirms the reading, the fix follows the ISSUE-48
+pattern — establish the field explicitly on the path that consumes it, rather than zero-filling
+every frame — and it will be a kernel-side fix in this port, unlike ISSUE-49.

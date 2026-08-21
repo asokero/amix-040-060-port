@@ -262,6 +262,12 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segmapdbg.s" -o "$HERE/build/segmapdbg.
 # bounds that make widening safe: strictly increasing frame pointers, and a hard
 # 64-frame cap.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/btwalk.s" -o "$HERE/build/btwalk.o"
+# usptrap (2026-08-21, ISSUE-52): PID 1 dies at exec with a kernel-shaped user
+# stack pointer (fa 0x40001FC0 == u+0x1FC0, the constant _start loads into %sp).
+# The island latches the actual USP, u.u_ar0 and u_comm at the NOTICE, then
+# tail-jumps into cmn_err so the message prints unchanged.  Only reachable from a
+# path already reporting a fatal user fault.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/usptrap.s" -o "$HERE/build/usptrap.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
@@ -436,7 +442,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o" \
 	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o" \
 	"$HERE/build/syncguard.o" "$HERE/build/pageinitzero.o" "$HERE/build/segmapdbg.o" \
-	"$HERE/build/btwalk.o" \
+	"$HERE/build/btwalk.o" "$HERE/build/usptrap.o" \
 	"$HERE/build/i10rev040.o"
 
 echo
@@ -466,6 +472,7 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          page_init page_init_orig pgz_magic pgz_calls pgz_npages pgz_dirty_n pgz_held_n \
          smu_panic_latch smu_magic smu_n smu_why smu_scan smu_bucket smu_want smu_pp \
          bt_frame_ok bt_magic bt_walks bt_frames bt_stops bt_laststop bt_prev bt_budget \
+         unt_latch unt_magic unt_n unt_magic2 unt_usp unt_uar0 unt_comm0 unt_comm1 unt_u0 unt_u1 \
          smu_addr smu_off smu_addr0 smu_vp smu_smoff smu_hashsz smu_pflags \
          pgz_have pgz_first_i pgz_first_w0 pgz_first_map pgz_first_lc pgz_hash_n pgz_hashsz \
          fpsp060_top fpsp060_image fpsp060_vec11 f60_magic f60_entry_n f60_mem_n f60_real_n \
@@ -865,6 +872,9 @@ run_step 1 python3 "$HERE/src/patch_btwalk.py" "$OUT"
 
 echo "[*] ISSUE-51: xpanic's sync gate reads uninitialised bits -- make it deterministic"
 run_step 1 python3 "$HERE/src/patch_xpanic_sync.py" "$OUT"
+
+echo "[*] ISSUE-52: latch USP/u_ar0/u_comm at the fatal user-fault NOTICE"
+run_step 2 python3 "$HERE/src/patch_usptrap.py" "$OUT"
 
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/src/patch_framesz060.py" "$OUT"
