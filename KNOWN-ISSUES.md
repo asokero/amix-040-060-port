@@ -5808,3 +5808,59 @@ corrupt — which is exactly the observed fault. The first RTE (proc 1 launch) i
 should be clean (`pc=0x80800000`). This is emulator-side to *observe*; whether the *fix* is
 emulator (RTE USP restore) or kernel (syscall-return frame build) is what the two RTEs'
 `usp`/`pc` values decide.
+
+### Firmware URTE read (2026-08-21): proc 1's launch is PERFECT — the icode derails on the CPU core
+
+The firmware `[URTE]` probe fired **once**: `pc=0x80800000 sr=0x0000 ssp=0x40001FB8 usp=0x08003118
+fmt=0x0000`. proc 1's launch RTE is flawless — correct entry, user mode (S clear), format 0, a
+plausible kernel stack. `usp=0x08003118` is a don't-care placeholder (the icode sets its own SP).
+**There is no second URTE** — PID 1 never returns from a syscall to user. So it faults *inside* the
+icode, in user mode, between the clean launch and `PC=0x80800012 / fa=0x40001FC0`.
+
+**Two facts settle where this lives.** First, the icode (`.text 0x36e..0x3a4`) is **byte-identical
+between the stock kernel and the 040 build** — the port does not patch it. Second, the bench
+(Amiberry's 040 core) boots this same miniroot to the installer prompt, so init runs there; and
+the same full-format PC-relative addressing is a 68020+ mode the 030 executes too. **The bytes are
+correct and run on two other cores. The divergence is the Z3660 card's 68040 execution of this
+instruction stream** — the same shape as ISSUE-49 (bitfield ops) and the bit-23 bus-misalign, both
+of which were advanced-040 gaps Amiberry handled and the Z3660 core did not, until fixed.
+
+**Prime suspect — the icode's first instruction.** `lea %pc@(L%stack),%sp` = `4ffb 0170 0000
+0028`, a **full-format** PC-relative EA (`ext 0x0170`: full format, base displacement long
+`0x00000028`, index suppressed, no memory indirect). A correct 68040 computes
+`A7 = 0x80800002 + 0x28 = 0x8080002A`. If the Z3660 core mis-decodes the full-format extension —
+wrong EA, or the wrong instruction length so the stream misaligns and the `trap #0` at `+0x0a` is
+never executed as a trap — PID 1 runs on into the icode data (`icode+0x12` is inside the
+`"/sbin/init"` string) with a bad A7, and a stray stack access faults. That is exactly the
+observed shape (no `trap #0` supervisor round-trip, no URTE2, a user fault at `+0x12`).
+
+**This is not the icode build and not exece's return path.** The icode build is ruled out (bytes
+identical to stock, runs on 030 + Amiberry). exece's return path is ruled out (no URTE2 means
+exece never returned to user — the derail is *before* the syscall completes).
+
+#### Cheapest confirmation, already aboard i52f — read the `srt` ring at the CORRECT addresses
+
+i52f's round-6 ring captured the first user traps. Read (minimal-line i52f addresses):
+`srt_vec[0]=0x0810C17C`, `srt_pc[0]=0x0810C18C`, `srt_usp[0]=0x0810C19C`, `srt_d0[0]=0x0810C1AC`
+(stamp `0x0810C174`). **`srt_vec[0]=0x7008`** (an access-error frame) with `srt_pc[0]=0x80800012`
+proves the icode faulted **before** ever trapping (derailed); **`srt_vec[0]=0x0080`** (a `trap #0`
+frame) would mean it reached the syscall. `srt_usp[0]` is A7 at that first trap.
+
+#### Decisive pinpoint — a firmware single-step probe (Z3660)
+
+If the ring is not enough, single-step the first ~8 user instructions. After the user-drop RTE
+that delivers `pc=0x80800000`, print per instruction: **PC, the opword at PC, A7, d0**.
+
+**Predictions (correct-core baseline):**
+* step 0: `PC=0x80800000 opword=0x4ffb A7=0x08003118` → **after: A7=0x8080002A** (the `lea`). If A7
+  does not become `0x8080002A`, the full-format PC-relative EA is mis-computed — the bug.
+* step 1: `PC=0x80800008 opword=0x700b` (moveq). **If PC is not `0x80800008`, the `lea` consumed
+  the wrong number of bytes** — the stream is misaligned, and the `trap #0` at `+0x0a` will be
+  skipped, which is what "no URTE2 + user fault at `+0x12`" means.
+* step 2: `PC=0x8080000a opword=0x4e40` (trap #0) → leaves user; a correct core stops the trace
+  here.
+
+The two decisive cells are **A7 after step 0** (did the `lea` compute the right SP?) and **PC at
+step 1** (did the `lea` consume the right length?). Either being wrong pins it to the Z3660 040
+core's handling of the full-format PC-relative `lea`. No kernel change is proposed — if confirmed,
+the fix is emulator-side.
