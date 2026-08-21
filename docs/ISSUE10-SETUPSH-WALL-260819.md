@@ -1497,3 +1497,159 @@ instead. The ring reads it directly on each CPU.
 has no `grep`): it captures each `kpeek` magic read into a variable and matches `49314421`
 with a `case` glob. Reset between runs by kpoking `i10d_head`/`i10d_n` to 0; the band filter
 `i10d_lo`/`i10d_hi` stays kpoke-able.
+
+## 23. THE CURE — `hgfault040`, and the measurement that moved its locus
+
+**2026-08-21 · EMU (Amiberry, 68040+MMU, 16 MB, load base `0x07000000`) · kernels
+`68040-260821-31` (control, no cure linked) and `68040-260821-32` (cure), plus a stock
+**68030** control on the same install medium.** Landed as `src/hgfault040.s`, behind `hg_on`.
+
+### 23.1 The as_fault locus is REFUTED — `as_fault` is never called for this fault
+
+The fix was designed as a wrapper on `as_fault`, because `as_fault` is where `FC_NOMAP` is
+returned when no segment covers the page. **That locus is inert, and the evidence for it was
+already on the bench.** `i10a` (§18) wraps `as_fault`; it was armed on the marker page and
+then on the exact address, the wall fired in both passes — and it recorded
+
+```
+i10a_vamatch_n = 0        with   i10a_seen_n = 417  (pass 1, page-aimed)
+i10a_vamatch_n = 0        with   i10a_seen_n = 1024 (pass 2, exact-aimed)
+```
+
+`as_fault` ran hundreds of times during the wall and **not once for `0x800152A0`**. §18's
+prediction table assumed the call happens; it does not.
+
+The stock body says why, and it is not an inference — `usrxmemflt` tests coverage **itself**
+before it ever reaches `as_fault` (addresses from `build/unix-040`, unchanged from stock):
+
+```
+5af5c  as_segat(as, addr)        -> fp@(-4)
+5afc2  tstl  %fp@(-4)            is anything mapped there?
+5afc6  bnew  5aff6                 yes -> as_fault(as, addr, 1, F_INVAL, rw)
+5afca  jsr   stackfault            no  -> is it the stack?
+5afda  beqw  5b02a                 no  -> si_signo = 11, si_code = 1, RETURN
+5afde  jsr   grow                  yes -> grow the stack, then as_fault
+```
+
+For an address one page past the break `as_segat` returns 0 and `stackfault` returns 0, so the
+body takes the `5b02a` shortcut. `fault_to_info(FC_NOMAP)` and that shortcut write the **same**
+`si_signo = 11 / si_code = 1`, which is why §16's `ret = 11`, `sicode = 1` reading could not
+tell the two apart — and why the design placed the fix one layer too low.
+
+**Correction to §18.3, and to a comment in `src/i10rev040.s`:** `F_INVAL` is **0**, not 1.
+`usrxmemflt` clears its type slot at `0x5af0c` and passes it at `0x5aff6`; the `F_PROT` call
+site at `0x5b0d0` passes literal 1; and `fbrelse`/`fbwrite` (`0x3fac4`, `0x3fb74`) pass 3 =
+`F_SOFTUNLOCK` against `as_fault`'s own softlock-undo arm at `0xae1f2`, which fixes the whole
+enumeration: `F_INVAL 0, F_PROT 1, F_SOFTLOCK 2, F_SOFTUNLOCK 3`.
+
+### 23.2 Where it hooks instead, and what it does
+
+`src/hgfault040.s` provides a strong **`usrxmemflt_orig`** — the routine `src/wb040.s` calls —
+and tail-calls the retained stock body, now aliased `usrxmemflt_stock`. That is the same split
+`krnxmemflt_orig` / `krnxmemflt_stock` already uses on the kernel side, so `wb040.s` is
+**unchanged** and does not know whether `*_orig` is ours or the vendor's. `as_fault` keeps its
+existing `i10a` wrapper; nothing about that binding changes.
+
+The policy, on the 68040 only: for a **user-mode WRITE** (trap-frame SR S-bit clear, 040 SSW
+bit 8 = 0) on a format-7 frame that the **stock resolver has already refused**, whose faulting
+page is **exactly** `round4k(p_brkbase + p_brksize)` and which no segment covers, extend the
+break by **one page** using `brk`'s own machinery and hand the same fault back to the stock
+body. The second pass finds the segment, takes the `F_INVAL` demand path, faults the zero-fill
+page in, and returns 0 — so `wb040.s`'s gate routes into `wb040_replay`, whose `pflusha` drops
+the stale ATC entry and whose `moves` loop lands the store. No siginfo is unpicked by hand:
+the second pass rewrites it (`fault_to_info(0)` clears `si_signo`).
+
+The grow mirrors `brk` field for field — `as_map(p_as, base, PAGESZ, segvn_create, *zfod_argsp)`
+(`0x58184`–`0x5819c`), `p_brksize = (base + PAGESZ) - p_brkbase` (`0x581f8`) — and mirrors its
+two admission tests, the `0xC0000000` ceiling (`0x58104`) and the data-size limit at `u+0x7b4`
+(`0x5811c`), so a fault can never grant what the syscall would refuse.
+
+**The `u+0x924 & 5` flag, answered.** `u+0x924` is the process memory-**lock** word: `proclock`
+ORs 1 (`0x43128`), `textlock` 2 (`0x42f5e`), `datalock` 4 (`0x42fe4`), `memcntl` 8 (`0x432fa`).
+So `& 5` is `PROCLOCK|DATLOCK` — "has this process `plock`ed its data". If so `brk` sets bit
+`0x20` of the address space's first byte, and **`as_map` reads exactly that bit** (`btst #5,%a2@`
+at `0xae578`) and calls `as_ctl(..., MC_LOCK, ...)` to lock what it just mapped. For ISSUE-10 it
+is a no-op — `sh` never calls `plock`, so the word is 0 — but the dance is replicated anyway:
+without it a `plock`ed process would get a fault-grown page that is **not** locked while every
+`brk`-grown page of the same heap is.
+
+### 23.3 What was measured
+
+**The controlled probe (`test-tools/hgpoc.c`, `past 0`) — the defect and the cure in two lines.**
+It writes one longword `0x2A0` past the page-rounded break, exactly `addblok`'s shape, and reads
+it back; its `SIGSEGV` handler grows and returns, imitating `sh`, so a dropped write-back shows
+up as a **zero read-back** rather than a dead process. Same binary, same address, two kernels:
+
+```
+68040-260821-31 (no cure)   past: break 80002eec target 800032a0 (0 KiB above)
+                            WARNING: unresolved fault dropped a pending write-back:
+                                     ctx=1 addr=800032A0 data 5A5A1234
+                            past: wrote 5a5a1234 read 0 (signals taken: 1)
+                            past: THE STORE WAS DROPPED
+68040-260821-32 (cure on)   past: break 80002eec target 800032a0 (0 KiB above)
+                            past: wrote 5a5a1234 read 5a5a1234 (signals taken: 0)
+                            past: the store landed
+```
+
+**The wall, and the in-boot A/B.** With the cure on, `sh -n /cdrom/install/bin/setup.sh` runs
+with **no `4AFC0003` flood and no "no space"** and `wbf_dropped_n` stays **0**. `kpoke hg_on 1
+-> 0` in the same boot brings both back within 55 s, byte-identical to the recorded signature
+(`NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 CMD:sh -n ...`, then
+`/cdrom/install/bin/setup.sh: no space`); the separate no-cure control kernel reproduces it the
+same way. So the wall's disappearance is **this code**.
+
+**The counters** (`kpeek <hg_magic> 16`; block found by its magic `48474621` = `HGF!`):
+
+```
+after boot + install-script start   grow_n 6    landed_n 6    mapfail_n 0  unres_n 0  far_n 0
+after the wall + the probes         grow_n 0x18 landed_n 0x18 mapfail_n 0  unres_n 0  far_n 1
+                                    cover_n 0   lim_n 0       far_addr 801032a0
+wbf_dropped_n                       0 throughout, then 1 -- the deliberate wild write
+```
+
+`hg_landed_n == hg_grow_n` on every reading, `hg_mapfail_n = 0`, `hg_unres_n = 0`. So §18.3(i)
+— "the grow's `as_map` is what fails" — is **refuted for the fault path**: `as_map` succeeds
+every time it is asked.
+
+**The negatives.** `hgpoc past 1024` (a store 1 MiB above the break) still dies by signal, ticks
+`hg_far_n` and `hg_far_addr = 0x801032A0`, does **not** tick `hg_grow_n`, and is correctly named
+by the `wbf_dropwarn` safety net. `hgpoc grow 24` (one byte per page, top-down, read back) is
+`24 pages, 0 bad` on **both** kernels — a non-regression check, not a cure proof, because
+`sbrk`ed pages were never the broken case. `hgpoc churn 64` (grow-and-give-back with a canary
+each round) is `0 bad`, break `0x80042eec`. Cold boot to the install prompt is **line-for-line
+identical** to the no-cure kernel including `Available Unix memory = 14475264`; only the build
+id differs.
+
+### 23.4 The acceptance criterion that was wrong, and the 68030 control
+
+The proof plan's step 1 said "PASS = ... clean exit". **`sh -n` on this script does not exit on
+any CPU.** On a **stock 68030** — the CPU this whole document calls the one that works — the
+identical parse of the identical medium ran **>9 minutes with no output and no error**, and the
+system was healthy afterwards (`^C` returned to the prompt immediately). The cured 68040 behaves
+the same way; the un-cured 68040 is the outlier, failing in under a minute. So the correct
+reading of step 1 is convergence, not termination:
+
+| kernel | `sh -n /…/setup.sh` |
+|---|---|
+| stock 68030 | runs > 9 min, no flood, no "no space" |
+| 68040, no cure | `4AFC0003` flood + "no space" in < 55 s |
+| 68040, `hg_on = 1` | runs > 13 min, no flood, no "no space" |
+| 68040, `hg_on = 0` (same boot) | `4AFC0003` flood + "no space" in < 55 s |
+
+Whether `sh -n` on a 77 KB script terminates at all is a CPU-independent question about `sh`
+and that script, and is **not** ISSUE-10.
+
+### 23.5 What is NOT established, and the open items
+
+* **Silicon.** Everything above is Amiberry. `wb040_replay` has panicked real 68040 silicon once
+  before (the pid-12 `sed` panic, 2026-07-11) precisely when the target was not already
+  resident — which is why the cure makes the page resident before returning — but that has not
+  been measured on metal. `hg_unres_n` and `wbf_dropped_n` are the sensors to read there.
+* **The 68060 is deliberately untouched** (`cputype == 40` gate) and its behaviour is byte-exact.
+* **The signal `sh` no longer receives.** With the cure the fault resolves before a signal is
+  chosen, so a process whose own `SIGSEGV` handler also updates internal bookkeeping no longer
+  sees it (`signals taken: 0` above). No divergence from the 68030 was observed, but a full
+  install run is the workload that would show one.
+* **Residual masking, accepted in writing:** inside the one-page window a genuine near-break
+  overrun **by user code** is serviced instead of signalled. Kernel-context `copyout` to a bad
+  user pointer is excluded by the S-bit gate and keeps its `EFAULT`. Reads are excluded.
