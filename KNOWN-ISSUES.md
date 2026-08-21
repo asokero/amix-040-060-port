@@ -5454,3 +5454,60 @@ readings and `unt_comm0` separates them:
 **Nothing here is measured yet.** If the latch confirms the reading, the fix follows the ISSUE-48
 pattern — establish the field explicitly on the path that consumes it, rather than zero-filling
 every frame — and it will be a kernel-side fix in this port, unlike ISSUE-49.
+
+### Latch read 2026-08-21 — the lead above is REFUTED, and two of the four fields say so
+
+`magic=UNT! n=1 have=1 magic2=USP!` · `usp=0xCB7C0002` · `uar0=0x40001F44` · `comm0=comm1=0` ·
+`u0=0xC0800000` · `u1=0`.
+
+**Correction 1 — the static lead in this entry is wrong.** `systrap` has exactly **one** caller,
+at `0x5a550`, which is `u_trap+0xd2`. Syscalls therefore arrive through `utraps` → `u_trap` →
+`systrap`, and `u_trap` sets `u.u_ar0 = %fp + 8` as its **first action** (`0x5a490`). So `u_ar0`
+*is* established on the syscall path. The "consumed but never written" reading was mistaken.
+
+**Correction 2 — `unt_uar0` is not diagnostic, and it is my instrument's fault.** The latch runs
+inside the NOTICE, which is inside `u_trap`, i.e. **after** `u_trap` has already overwritten
+`u_ar0` with the *fault's* frame pointer. `0x40001F44` is that frame, not the value `setregs`
+used at exec. Any reading built on it — including "the inheritance arm holds" — has to be
+withdrawn. Latching a field that the measuring path itself rewrites is the same error class as the
+stage-2 label bug in ISSUE-49, in a new disguise: **the value was real, the moment was wrong.**
+
+#### What the read does establish
+
+The pcb layout, read off the disassembly: 16 saved registers (USP, D0-D7, A0-A6) followed by the
+psw and the two PC words — so **`regsave[0]` is the saved USP**, `psw` is at +64 and the PC at
++66, which is exactly what `setregs` writes (`u_ar0[0]` ← new SP at `0x58c16`, `u_ar0+66` ← PC
+at `0x58c22`). The port's own `execmark.s` header states the same contract independently:
+*"systrap reads each syscall arg with lfuword(usp+off) where usp = u.u_ar0[0]"*.
+
+`struct user`'s first member is `pcb_t u_pcb`, so **`u0` is `u.u_pcb.regsave[0]` = `0xC0800000` =
+exactly `userstack`.** The correct user stack pointer was computed and stored into the u-area's own
+pcb. The value exists; what runs is `0xCB7C0002`.
+
+**Reconciling the fault address with the USP.** `0xCB7C0002` is garbage **and odd**. An odd stack
+pointer is fatal to any stack operation on the 68000 family and the reported fault address is
+derived from it, not equal to it — so `fa = 0x40001FC0` from the earlier boot and
+`usp = 0xCB7C0002` from this one are the *same* failure with different garbage, which is also why
+it varies per boot. The u-area-shaped `fa` of the first report was a coincidence of that boot's
+garbage, and reading meaning into it (as the first version of this entry did) was over-fitting.
+
+`comm0 = 0` still stands on its own: `u_comm` was never written, so exec's u-area writes did not
+all land where they were read from.
+
+#### What the next measurement must do differently
+
+The open question is unchanged but the moment is not: **does `setregs`' write and the trap exit's
+USP restore address the same memory?** That must be measured **at `setregs`**, not at the fault:
+
+* `u.u_ar0` as `setregs` sees it, and `u_ar0[0]` immediately after it writes;
+* the address of the USP slot `utraps` pushed (`%sp` at `0x11ec`), to compare against `u_ar0`;
+* `u.u_pcb.regsave[0]`, to see whether the surviving `0xC0800000` is the same word `setregs`
+  wrote or a second copy.
+
+If `u_ar0` and the pushed slot differ, the mismatch is named and the fix is to reconcile them. If
+they agree, the write lands correctly and something *later* clobbers USP between `setregs` and the
+`rte`, which is a different search.
+
+**No fix is proposed here, and no kernel was built for this round.** The lead this entry was
+built on is refuted, the field that appeared to confirm it was measured at the wrong moment, and
+guessing at a kernel-side change on that basis would be worse than saying so.
