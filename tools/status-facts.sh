@@ -182,7 +182,7 @@ OVERRIDES = [
     ("mprotect",         0x58550, "mprotect_orig",       "ISSUE-41 / XPAGE"),
     ("segvn_faultpage",  0xac01a, "segvn_faultpage_orig","ISSUE-41: per-page permission check"),
     ("krnxmemflt",       0x5b140, "krnxmemflt_stock",    "native 040 kernel fault resolver (krnxmemflt_orig binds to OURS on purpose)"),
-    ("usrxmemflt",       0x5aede, "usrxmemflt_orig",     "040 user fault path"),
+    ("usrxmemflt",       0x5aede, "usrxmemflt_stock",    "040 user fault path (usrxmemflt_orig binds to the ISSUE-10 cure on purpose, like krnxmemflt)"),
     ("nullvect",         0x011b4, "nullvect_orig",       "kvecprobe wrapper"),
     ("sync",             0x5d21a, None,                  "ISSUE-46: stock sync() walks a NULL vsw_vfsops -- any pre-vfsinit panic double-faults"),
     ("page_init",        0xaf42a, "page_init_orig",      "ISSUE-48: the page-frame database is mapped-in DRAM and nothing zeroes it"),
