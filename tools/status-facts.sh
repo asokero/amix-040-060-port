@@ -186,6 +186,7 @@ OVERRIDES = [
     ("nullvect",         0x011b4, "nullvect_orig",       "kvecprobe wrapper"),
     ("sync",             0x5d21a, None,                  "ISSUE-46: stock sync() walks a NULL vsw_vfsops -- any pre-vfsinit panic double-faults"),
     ("page_init",        0xaf42a, "page_init_orig",      "ISSUE-48: the page-frame database is mapped-in DRAM and nothing zeroes it"),
+    ("setregs",          0x58b62, "setregs_orig",        "ISSUE-52: measure the USP handoff at the moment setregs writes it"),
 ]
 print("## Override bindings")
 print()
