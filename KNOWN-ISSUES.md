@@ -5689,3 +5689,58 @@ plus: `iur_n ≥ 2`, `iur_super_n ≥ 1`, `iur_user_n == 1`, `iur_first_pc == 0x
 VA, a page-table-translated address — so if all three PCs read `0x80800000`, the bit-23 drop is
 in the RTE's read of the frame VALUE, not the address, and the exact translated frame address is
 in `iur_a7` for the harness).
+
+### Round 5 read + round 6 ring (2026-08-21): bit 23 FIXED (firmware) — the fault moved into user text
+
+The Z3660 bus-misalign fix (BDBA0BDE) delivered bit 23 correctly: the fault PC moved
+`0x80000012` → **`0x80800012`**, so PID 1 now launches at the right entry `0x80800000` and runs.
+That confirms the round-4/5 fork's "RTE delivered the value with bit 23 dropped" arm — it was the
+CPU core reading the frame, exactly as predicted, and it is now closed on the firmware side.
+
+But PID 1 still `User BUS ERROR`s, now `PC:80800012 FAULT:6 fa=40001FC0` (the same u-block SSP
+address). Disassembled, the icode is only 14 bytes of code:
+
+```
+icode+0x00  lea %pc@(L%stack),%sp   ; 8 bytes -> SP = icode+0x2A (the arg block)
+icode+0x08  moveq #11,%d0           ; SYS_exece
+icode+0x0a  trap #0
+icode+0x0c  bras .                  ; loop forever if exece returns
+icode+0x0e  "/sbin/init\0" ...      ; data
+```
+
+`icode+0x12` (`0x80800012`) is **inside the "/sbin/init" string**, four bytes past the `bras`
+self-loop. So PID 1's PC ran off the end of the code into data, and `fa=0x40001FC0` (the SSP)
+means the garbage it then executed touched the kernel stack — consistent with PID 1 running on
+the wrong A7.
+
+**The open questions, all runtime:** did the icode's `lea` set SP to `~0x8080002A`, or is PID 1 on
+the un-switched SSP (`0x40001FC0`) / a stale USP (`0x08003118`, seen in round 4)? Did the icode's
+`trap #0` execute at all, or did PID 1 fault before it? Did the syscall return advance the user PC
+to `+0x12` instead of `+0xc`?
+
+#### Round 6 instrument — the first four user traps, in order
+
+Round 2 proved every user trap (syscall *and* fault) routes through the `utraps → u_trap` edge
+(`srg_ut_n = 1` was the fault). Round 6 extends that existing hook into a **ring of the first four
+user traps**, reading each from the exception frame on the SSP: `srt_vec[i]` (frame fmt+vec word —
+`0x0080` for a `trap #0`, `0x7008` for an access error), `srt_pc[i]` (user PC), `srt_usp[i]`
+(A7 at the trap = the SP the `lea` set), `srt_d0[i]` (user d0). `srt_stamp` = `"SRT!"`.
+
+**Predictions, registered:**
+
+* if the icode reaches its syscall: `srt_vec[0] = 0x0080`, `srt_pc[0] ≈ 0x8080000C` (return past
+  `trap #0`), `srt_d0[0] = 0x0B` (exece), and `srt_usp[0] = 0x8080002A` **iff the `lea` ran and
+  A7 is the arg block**. Then `srt_vec[1] = 0x7008`, `srt_pc[1] = 0x80800012` — the fault.
+* if PID 1 faults before ever trapping: `srt_vec[0] = 0x7008`, `srt_pc[0] = 0x80800012`, and
+  `srt_usp[0]` tells the SP it faulted on — `0x40001FC0` (un-switched SSP) or `0x08003118` (stale
+  USP) names the mechanism directly.
+
+The decisive cell is `srt_usp[0]`: `0x8080002A` clears the RTE/lea and moves the hunt to why the
+syscall/return runs off into the string; `0x40001FC0`/`0x08003118` proves PID 1 is on the wrong
+stack, which is a kernel USP-load (or emulator RTE USP-switch) defect.
+
+**Emulator vs kernel, stated:** the bit-23 half was **emulator** (fixed). This half is undecided
+and the ring decides it — a wrong `srt_usp` with a correct `srt_pc[0]=+0xc` return points at the
+RTE-to-user USP switch (emulator) or the kernel never loading USP before `_start`'s user RTE
+(kernel); a `srt_pc` that lands in the string with a *correct* `srt_usp` points at the syscall
+return-PC advance. No fix is proposed until the ring says which.

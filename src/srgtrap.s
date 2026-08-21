@@ -91,6 +91,36 @@ srg_utraps:
 	movel	%sp,%d0
 	addil	&20,%d0			| 16 saved regs + 4 return address = the pushed slot
 	movel	%d0,srg_pushslot
+| --- ISSUE-52 round 6 ring: the first 4 user traps, so the SEQUENCE is visible.
+|     Round 2 proved every user trap (syscall AND fault) routes through this edge
+|     (srg_ut_n = 1 was the fault).  With bit 23 fixed, PID 1 may now reach its
+|     trap #0 before faulting, and the ring shows exactly what happens in order.
+|     Stack from here (after our 16-byte moveml):
+|       %sp+16 jsr retaddr   %sp+20 pushed USP (== A7 at the trap)
+|       %sp+24 frame SR.w    %sp+26 frame PC.l   %sp+30 frame fmt+vec.w
+|     (SR/PC/fmt sit at the same low offsets for a format-0 trap frame and a
+|      format-7 access-error frame alike.)  User d0 is our lowest saved reg (%sp@).
+	movel	srt_i,%d0
+	cmpil	&4,%d0
+	bccw	Lsrg_ut_done
+	movel	%d0,%d1
+	asll	&2,%d1			| d1 = index * 4
+	moveq	&0,%d0
+	movew	%sp@(30),%d0		| frame fmt+vec word -> vector*4 in low bits
+	lea	srt_vec,%a0
+	movel	%d0,%a0@(0,%d1:l)
+	movel	%sp@(26),%d0		| frame user PC
+	lea	srt_pc,%a0
+	movel	%d0,%a0@(0,%d1:l)
+	movel	%sp@(20),%d0		| pushed USP = A7 at the trap
+	lea	srt_usp,%a0
+	movel	%d0,%a0@(0,%d1:l)
+	movel	%sp@,%d0		| user d0 (syscall number on a trap #0)
+	lea	srt_d0,%a0
+	movel	%d0,%a0@(0,%d1:l)
+	addql	&1,srt_i
+	movel	&0x53525421,srt_stamp	| "SRT!"
+Lsrg_ut_done:
 	moveml	%sp@+,%d0-%d1/%a0-%a1
 | The stack is exactly as utraps left it, so u_trap's %fp+8 still names the pushed
 | USP slot and its rts still returns to 0x11f4.
@@ -204,4 +234,27 @@ srg_pcb0_pre:
 	.globl	srg_pcb0_post
 srg_pcb0_post:
 	.long	0
+| ---- ISSUE-52 round 6: ring of the first 4 user traps (syscall + fault), in order.
+| srt_vec[i] = frame fmt+vec word (vector*4 in the low 12 bits: trap #0 -> 0x0080,
+| access-error -> 0x7008); srt_pc[i] = user PC; srt_usp[i] = A7 at the trap (the SP
+| the icode's lea should have set to ~0x8080002A -- if it reads 0x40001FC0 or
+| 0x08003118, PID 1 is on the SSP / an unswitched USP); srt_d0[i] = user d0.
+	.globl	srt_stamp
+srt_stamp:
+	.long	0			| "SRT!" once the ring captured anything
+	.globl	srt_i
+srt_i:
+	.long	0
+	.globl	srt_vec
+srt_vec:
+	.long	0,0,0,0
+	.globl	srt_pc
+srt_pc:
+	.long	0,0,0,0
+	.globl	srt_usp
+srt_usp:
+	.long	0,0,0,0
+	.globl	srt_d0
+srt_d0:
+	.long	0,0,0,0
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
