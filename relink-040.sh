@@ -254,6 +254,14 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/pageinitzero.s" -o "$HERE/build/pageini
 # for the page it could not find, then tail-jumps into cmn_err so the panic prints
 # unchanged.  Only reachable from a path that was already panicking.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segmapdbg.s" -o "$HERE/build/segmapdbg.o"
+# btwalk (2026-08-21, ISSUE-50): backtrace accepted a frame pointer only inside a
+# 64 KiB window at the u-block base, and that test was the walk's ONLY terminator --
+# so the panic backtrace stopped at the first frame every time, twice costing this
+# campaign a hand-walked stack dump.  The island widens the range to the whole
+# u-block plus the kernel's own data+bss (where pstack lives) and adds the two
+# bounds that make widening safe: strictly increasing frame pointers, and a hard
+# 64-frame cap.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/btwalk.s" -o "$HERE/build/btwalk.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
@@ -428,6 +436,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o" \
 	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o" \
 	"$HERE/build/syncguard.o" "$HERE/build/pageinitzero.o" "$HERE/build/segmapdbg.o" \
+	"$HERE/build/btwalk.o" \
 	"$HERE/build/i10rev040.o"
 
 echo
@@ -456,6 +465,7 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          sync syncg_magic syncg_calls syncg_skip_ops syncg_skip_fn syncg_last_i \
          page_init page_init_orig pgz_magic pgz_calls pgz_npages pgz_dirty_n pgz_held_n \
          smu_panic_latch smu_magic smu_n smu_why smu_scan smu_bucket smu_want smu_pp \
+         bt_frame_ok bt_magic bt_walks bt_frames bt_stops bt_laststop bt_prev bt_budget \
          smu_addr smu_off smu_addr0 smu_vp smu_smoff smu_hashsz smu_pflags \
          pgz_have pgz_first_i pgz_first_w0 pgz_first_map pgz_first_lc pgz_hash_n pgz_hashsz \
          fpsp060_top fpsp060_image fpsp060_vec11 f60_magic f60_entry_n f60_mem_n f60_real_n \
@@ -845,6 +855,16 @@ run_step 4 python3 "$HERE/src/patch_dbgpublish.py" "$OUT"
 
 echo "[*] B2 page-release barrier: page_free + free_vp_pages choke-point hooks (CB-PAGE-LIFECYCLE-CLOSURE.md)"
 run_step 3 python3 "$HERE/src/patch_cb_release.py" "$OUT"
+
+# ISSUE-50 (2026-08-21): PC-relative like the cb_release hook above and for the same
+# reason -- an absolute byte-patched target would need loader rebasing.  Must run
+# after the core ld -r; the FPSP link that follows appends to $OUT and leaves our
+# .text where it is, so the displacement stays valid.
+echo "[*] ISSUE-50: backtrace frame test -> bt_frame_ok (range + order + cap)"
+run_step 1 python3 "$HERE/src/patch_btwalk.py" "$OUT"
+
+echo "[*] ISSUE-51: xpanic's sync gate reads uninitialised bits -- make it deterministic"
+run_step 1 python3 "$HERE/src/patch_xpanic_sync.py" "$OUT"
 
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/src/patch_framesz060.py" "$OUT"

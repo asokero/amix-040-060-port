@@ -5187,10 +5187,35 @@ kernel and is still the right one to boot if another read is wanted.
 living in DRAM reached through `segkmem_mapin` — and the next kernel-side instrument is a
 read-back-verify wrapper on the cascade rather than a write-watch.
 
-## ⏳ ISSUE-50 (2026-08-20, DIAGNOSED — deliberately not fixed in this pass): the panic backtrace stops after one frame because its frame-pointer window is 64 KiB wide
+### ✅ RESOLVED 2026-08-21 — it was not a kernel defect
 
-> **Ledger: OPEN, diagnosed, fix designed but not implemented.** Recorded now because it has cost
-> two investigations already and the diagnosis is the expensive half.
+The host-harness handover above was dispatched and the reproduction confirmed it: **the
+accelerator's 68040 emulation core mishandled bitfield operations**, executing them through the
+030 accessors, so `BFINS` to an MMU-translated address did not take effect while `ORI.B`/`ANDI.B`
+to the same byte did. Fixed in the firmware (`6e8e33a`) and **validated on metal 2026-08-21
+03:40**: the kernel boots, prints its banner and runs. `PANIC: segmap_unlock` is gone.
+
+**The kernel needed no change.** ISSUE-49 is therefore a **symptom record**, not a defect of this
+port — kept in full because the ladder that got here (which guard fired → which list → which
+population → which instruction) is the reusable part, and because two of its rounds were wrong in
+instructive ways: the "deterministic write to a fixed address" reading, retracted by the census,
+and the stage-2 probe that never ran, caught only because the next instrument was made to say
+whether it had.
+
+The frontier moved to userland (init's exec fault), which is a different lane.
+
+**Instrument retirement — candidates, not yet retired.** The ISSUE-46 (`syncg`) and ISSUE-48
+(`pgz`) counter blocks have each done their job and been confirmed on metal (three times for
+ISSUE-48). They are candidates for retirement once the userland case closes. **Do not retire them
+yet**: the pinned diagnostic medium still carries them usefully, ISSUE-48's fix itself must stay
+regardless (only its counters are optional), and `pgz_held_n` remains the cheapest live proof that
+boot memory arrives dirty on this machine.
+
+## ✅ ISSUE-50 (2026-08-20, FIXED 2026-08-21): the panic backtrace stopped after one frame because its frame-pointer window was 64 KiB wide
+
+> **Ledger: FIXED in the port tree 2026-08-21, NOT YET EXERCISED ON HARDWARE** (no panic has
+> occurred since it landed). Not yet reflected in [`STATUS.md`](STATUS.md). The diagnosis below is
+> unchanged; the fix is at the end.
 
 ### It is not a stall
 
@@ -5231,14 +5256,42 @@ bounds at once: accept the full u-block **and** the kernel's own data/bss range;
 frame pointer to **increase** each step (stacks grow down, so caller frames are at higher
 addresses — this alone kills every cycle); and cap the frame count outright.
 
-Not done in this pass on purpose: it would put a second, unproven variable into a kernel whose
-one job is to diagnose ISSUE-49. It is worth doing immediately afterwards — every future panic in
-this port pays for it, and two investigations have already paid for it once each.
+Not done in that pass on purpose: it would have put a second, unproven variable into a kernel
+whose one job was to diagnose ISSUE-49.
 
-## ⚠ ISSUE-51 (2026-08-21, DIAGNOSED — not fixed): `xpanic` decides whether to `sync()` from uninitialised bits
+### Fixed 2026-08-21, all three bounds together
 
-> **Ledger: OPEN, diagnosed.** Matters mainly because it decides how much to trust a
-> post-mortem counter, which is now a working diagnostic channel for this port.
+`src/btwalk.s` + `src/patch_btwalk.py`. The 26 bytes of the old test (`0x5960e`–`0x59627`) are
+replaced by `bsr.l bt_frame_ok` plus ten NOPs; the `tstl %d0 / beqw` at `0x59628` is untouched, so
+the island's contract is the old code's exactly — `d0 = 1` continue, `d0 = 0` stop. PC-relative for
+the same reason the `cb_release` hook is: a byte-patched absolute target would need loader
+rebasing. Verified before writing that **no branch in `backtrace` targets an address inside the
+replaced range**, and verified after linking that the displacement still resolves (`bsrl dba34
+<bt_frame_ok>`) — the FPSP `ld -r` that follows appends to `$OUT` and leaves our `.text` in place.
+
+| bound | test |
+|---|---|
+| RANGE | the whole u-block `[0x40000000, 0x40040000)` **or** `[edata, end)`, taken from the loader's own symbols so they cannot drift from the image |
+| ORDER | each frame pointer strictly **greater** than the last — stacks grow down, so this alone kills every cycle |
+| COUNT | hard cap of 64 frames per walk |
+
+Plus a free one: an **odd** frame pointer is refused, because the next thing the walk does with it
+is a longword read.
+
+**Arming needs no second hook.** `backtrace` seeds its first candidate with its own frame pointer
+(`0x595f2`), so the first call of every walk is the one where the candidate equals `%a6` — that is
+where the counters re-arm, and rule 2 guarantees no later frame can alias it. The island reads
+`%a6@(-4)` directly, since `bsr` builds no frame of its own.
+
+Output format, symbol lookup and print order are deliberately unchanged: a frame is still printed
+before it is judged, so the frame that *ended* the walk still appears. That address is itself
+diagnostic — it is what made this defect findable at all — and `bt_laststop` now latches it.
+
+## ✅ ISSUE-51 (2026-08-21, FIXED THE SAME DAY): `xpanic` decided whether to `sync()` from uninitialised bits
+
+> **Ledger: FIXED in the port tree 2026-08-21, NOT YET EXERCISED ON HARDWARE.** Not yet reflected
+> in [`STATUS.md`](STATUS.md). It mattered because it decided how much to trust a post-mortem
+> counter, which became a working diagnostic channel for this port during the 040 campaign.
 
 ### The observation that forced it
 
@@ -5281,9 +5334,21 @@ boots differ because `sysdump` returned different values.
   `sync()` would have walked the NULL `vfssw` and destroyed the ring that produced ISSUE-49's
   entire diagnosis. The guard remains load-bearing precisely because the gate is unpredictable.
 
-### The fix, when it is taken
+### Fixed 2026-08-21 — one instruction, same length
 
-Make the gate explicit rather than accidental: zero `d0`'s upper half before the `movew %sr,%d0`
-(or store the SR as a word and test a word field). One instruction's worth of change, but it
-alters panic-path behaviour on every panic, so it wants its own pass and its own A/B rather than
-riding into a kernel whose job is to diagnose ISSUE-49 — the same reason ISSUE-50 is still open.
+`src/patch_xpanic_sync.py` rewrites the store at `0x3e68e` from `movel %d0,%fp@(-4)` (`2d40 fffc`)
+to **`clrl %fp@(-4)`** (`42ae fffc`), so the field `bftst` reads is deterministically zero and the
+panic path **always** reaches `sync()`.
+
+Three things make that the safe direction rather than the clever one:
+
+* `%fp@(-4)` is read by nothing else in `xpanic` — the SR restore at `0x3e694` comes from `%d0`,
+  the register, which this does not touch;
+* always-sync is the intended SVR4 panic semantic (flush filesystems on the way out); skipping
+  would silently drop it;
+* `sync()` on the panic path is safe at any point in boot **since ISSUE-46** — it skips vfs switch
+  rows `vfsinit` has not filled instead of calling through NULL. Landing this without that guard
+  would be reckless; with it, it is the behaviour the code always meant to have.
+
+The ordering is worth keeping in view: ISSUE-46 made this fix safe, and this fix makes ISSUE-46's
+guard reachable on every panic instead of on a coin toss.
