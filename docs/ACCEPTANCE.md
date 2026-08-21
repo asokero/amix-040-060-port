@@ -42,10 +42,24 @@ A stale address does not fail. It returns a plausible number from whatever now l
    prints the runtime addresses and the magic read out of the artifact.
 3. If a magic does not match, **stop**. Every other reading from that block is noise.
 
-**The battery driver is generated for the image and its load base, never reused.** Counter
-addresses are `load_base + textsize + nm(.data offset)`, and the load base is not constant: a
-Mercury binds at `0x08000000` and an A3640 at `0x07000000`, so every address moves by 16 MiB
-between them. The generated driver aborts on a magic mismatch before reading a single counter.
+**The battery driver is image- and load-base-specific, prepared from generated status facts —
+never reused from an earlier run.** Counter addresses are `load_base + textsize + nm(.data offset)`,
+and the load base is not constant: a Mercury binds at `0x08000000` and an A3640 at `0x07000000`, so
+every address moves by 16 MiB between them. `tools/status-facts.sh` generates the addresses; the
+`batteryrun*.sh` drivers are then assembled or re-addressed by hand. There is no generator for the
+driver itself, and calling it "generated" claims more than exists.
+
+> ⚠ **The driver does not necessarily check every block it reads, and it says it does.**
+> `test-tools/batteryrun10.sh` reads **nine** counter blocks and verifies **eight** magic words —
+> `segvn_prot` at `0710B1F4` is read (lines 36 and 56) and never checked — while its own header
+> line 4 states "Each block's magic is checked before its counters are believed". This is a
+> regression rather than an omission: `batteryrun6.sh` did verify `segvn_prot_magic`
+> (`docs/REALHW-260807-11-ACCEPTANCE.md` §5).
+>
+> Consequence: `docs/REALHW-A3640-260813-ACCEPTANCE.md` §6 says "it did not abort, so all **nine**
+> blocks were addressed correctly". Eight were. **Count the magic checks against the blocks read
+> before trusting any driver**, and fix the driver rather than the sentence. This deserves a
+> numbered issue once the open branches converge.
 
 ## 3. Choose the level by blast radius
 
@@ -54,9 +68,15 @@ sessions.
 
 | what the change touches | what it needs |
 |---|---|
-| a variant relink script, or glue only that variant links | the host gates, and the variant builds clean |
-| shared tooling (`tools/`, `test-tools/`) | host gates + one emulator boot |
+| a variant relink script — build wiring only, no new executable code | the host gates, and the variant builds clean |
+| **glue a variant links** — MMU, FPSP, cache or device code | host gates **+ a boot of that variant + a test aimed at what the glue does** |
+| `tools/` (host build/verification) | host gates; a broken host tool cannot reach the kernel |
+| `test-tools/` (runs on the guest) | host gates + run the changed tool on the emulator; a wrong instrument reports a wrong result, which is worse than no result |
 | **the base** (`src/*.s`, patchers used by `relink-040.sh`) | **host gates + emulator on both CPUs + silicon** |
+
+The second row is the one that is easy to get wrong. "It only touches the variant" is a statement
+about *linkage*, not about *execution*: code that runs in supervisor mode on a real MMU needs a
+boot and a targeted test whichever script links it.
 
 Two standing rules for base changes, both checkable without hardware:
 
@@ -79,28 +99,77 @@ sh tools/status-facts.sh                   # exit 0 and bindings failing: 0
 `ld -r` does not fail on a missing override definition, so the exit status proves nothing on its
 own — `bindings failing: 0` is the evidence.
 
+**Then rebuild and diff** (`AGENTS.md`, end of the same section). Two builds of the same tree differ
+only in the build-id stamp. After any infrastructural change that byte-for-byte comparison is the
+regression test for the build system itself: a change that alters other bytes has done something
+unintended, and that is worth finding out before going further.
+
 ## 5. The battery
 
-Nine programs, run from a generated driver (`test-tools/batteryrun*.sh`). Each prints
-`<NAME>-RESULT PASS` or `FAIL`, so the reading is mechanical: **grep the log for `-RESULT` and
-require no `FAIL` anywhere.**
+### The pass oracle: match a per-test line, never a generic pattern
+
+**Do not grep for `-RESULT` and require no `FAIL`.** That rule is wrong and it fails the dangerous
+way — green on a broken battery. Checked against the sources:
+
+| tool | prints | why the generic rule misses it |
+|---|---|---|
+| `fputest` | `FPUTEST Test A PASS` / `... FAIL` | no `-RESULT` at all: a **failure is invisible** to a `-RESULT` grep |
+| `mul64test` | `MUL64-RESULT PASS` / `MUL64-RESULT WRONG` | the failure word is `WRONG`, so a `FAIL` grep misses it |
+| `msynctst`, `bigargv`, `leaktest` | no `RESULT` token anywhere | not covered by the convention at all |
+
+Every one of them also **`exit(0)` regardless of outcome**, and `batteryrun*.sh` does not stop on a
+test's exit status. So neither the exit code nor a generic grep is an oracle.
+
+**The rule is: each test has one expected success line, matched exactly; a missing line is a
+`FAIL`, not a pass.** These are the lines an accepted run actually produced
+(`docs/REALHW-260807-11-ACCEPTANCE.md` §5):
 
 ```
-  proctest        /proc process memory            T1-T7, both child cases
-  fputest         FP arithmetic                   "Test A PASS" on a 68040
-  msynctst        msync                           MSYNC-OK
-  bigargv         large argv/env                  45 args, 4500 bytes
-  ptracepoke      ptrace poke path
-  mul64test       64-bit multiply                 the 68060 vector-61 path
-  bmaptest        block map
-  exectest 20     exec across generations         data+bss verified each generation
-  leaktest 50 1   fork+exec pressure              fork_failures=0
+  PROCTEST-RESULT PASS
+  FPUTEST Test A PASS
+  MLOCKTEST-RESULT PASS
+  PTRACEPOKE-RESULT PASS
+  DEVMAPTEST-RESULT PASS
+  MUL64-RESULT PASS
+  MSYNC-OK path=/msync_test.dat sz=65536
+  MINCORE PASS
+  BIGARGV PASS 45 args 4500 bytes
+  BMAPTEST-RESULT PASS
+  EXECTEST-RESULT PASS (data+bss verified across every generation)
+  PROTFAULT-RESULT PASS  (a and b)
 ```
 
-Others are run when their area is touched rather than every time: `devmaptest` (device mmap page
-geometry), `mlocktest`, `mincoretst`, `xpagetest`, `codepub`, `protfault` (denied-write-back and
-partial-page protection), `swapls`, `segwrite`, `nfstruth` / `nfsreadtruth` (NFS integrity measured
-in **bytes from the server**, never in file size).
+The driver should end with a single `BATTERY-RESULT PASS|FAIL` derived from those matches, so that
+one line can be believed. It does not do that yet.
+
+### Which battery
+
+Two different sets have been called "the battery", and conflating them makes old records
+unreadable.
+
+**Historical `11/11`** — the recurring set, and what `11/11` means in every record that uses the
+phrase: `proctest`, `fputest`, `mlocktest`, `msynctst`, `mincoretst`, `bigargv`, `ptracepoke`,
+`bmaptest`, `devmaptest`, `exectest`, `mul64test`. `protfault` (a and b) is run alongside it.
+
+**The A3640 run's nine** (`docs/REALHW-A3640-260813-ACCEPTANCE.md` §6) was *that session's*
+configuration, not a standard: it drops `mlocktest`, `mincoretst` and `devmaptest` and adds
+`leaktest`. An earlier draft of this document presented it as the battery. It is not.
+
+**Current minimum common battery: the historical eleven.** Anything dropped from it in a given run
+is a deliberate choice and belongs in that run's record, with the reason.
+
+Run when their area is touched rather than every time: `xpagetest`, `codepub`, `swapls`,
+`segwrite`, `nfstruth` / `nfsreadtruth` (NFS integrity measured in **bytes from the server**, never
+in file size), `leaktest`.
+
+⚠ **`leaktest 50 1` with `fork_failures=0` does not establish that nothing leaks.** It establishes
+that fifty fork+exec pairs completed. A one-page leak per exec passes it. To make it a leak test,
+read `availrmem` before and after — that is the ISSUE-40 contract — and run both `50 0` and `50 1`
+so fork and exec are separated. It also requires both arguments; invoked without them it prints a
+usage line and does nothing, which an unattended driver will not notice.
+
+⚠ `protfault`'s **case c has historically been dangerous** and belongs in a separate supervised
+run, not in the routine battery. Cases a and b are the ones the records report.
 
 `test-tools/README.md` documents what each program measures. Build on the guest with
 `cc -o NAME NAME.c` — they are compiled by the native 1991 SVR4 `cc`, so they are K&R C.
@@ -132,8 +201,9 @@ extended NaN in `DEF_FPREGS`. Do not read its "failed" there as an FPSP defect.
   and `8/8` across sessions. This is the only test that speaks to write-back and cache-mode
   correctness under a real failure.
 
-Neither can be replaced by the emulator, which models neither the copyback data cache nor a power
-cut.
+The power-cut run is the only **post-power-loss on-disk durability** test here; it is not the only
+evidence about caches. Neither it nor the burst suite can be replaced by the emulator, which models
+neither the copyback data cache nor a power cut.
 
 ## 8. Graphics kernels
 
@@ -172,7 +242,9 @@ suites did not.
 A measurement without a document is a measurement that will be lost. Write
 `docs/REALHW-<image>-ACCEPTANCE-<date>.md` containing:
 
-* the machine, the CPU card, the image and its build id;
+* the machine, the CPU card, the image and its build id — **and the artifact's full SHA-256, the
+  repository commit it was built from, and the loader version**, because `uname -m` reports the CPU
+  rather than the image and two different builds can carry the same visible tag;
 * the identity readings — `uname -m` and the magic words — before anything else;
 * **the expectation, registered before the run**. A prediction that fails is the useful result; one
   written afterwards is not a prediction;
@@ -182,3 +254,21 @@ A measurement without a document is a measurement that will be lost. Write
 
 Refuted conclusions stay in the record, labelled refuted (`STATUS.md` §7). Do not tidy them away —
 the reason a hypothesis failed has repeatedly outlived the hypothesis here.
+
+## 11. Order of the run
+
+Order matters, and mostly for one reason: the destructive and the slow go last, so that a failure
+early does not cost the whole session.
+
+1. **Host gates, a second build, and a diff.** Archive the artifact's SHA-256 before it boots.
+2. **Boot identity**: `uname -m`, every magic word that will be used, and the counters' baseline.
+3. **The cheap common battery**, to catch gross breakage before anything expensive.
+4. **CPU- and change-specific tests**, each with its own counter delta rather than one delta for
+   everything.
+5. **Device and graphics tests.** `cmfcensus` with X stopped; `busbench -r` before any aperture.
+6. **Burst and stress.**
+7. **Power cut last.** The first actions of the next boot are identity, `fsck`, and the byte
+   comparison — in that order, before anything else touches the disk.
+
+`protfault` a and b can be run targeted, before the stress. Case c and any other probe known to be
+able to hang the machine belong in a separate supervised run.
