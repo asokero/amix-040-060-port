@@ -5654,3 +5654,38 @@ at the frame build), `iur_f_pc` (the PC longword actually in the frame):
 exactly one of the three points. `iur_usp` is captured too: it becomes PID 1's `a7` at the drop,
 before the icode's own `lea` would set it — which is why the earlier garbage-USP reads were a
 consequence, not the cause.
+
+### Round 4 read + round 5 fix (2026-08-21): the island caught the wrong RTE, and the miss named the mechanism
+
+Round 4 latched `n=2`, `f_sr=0x00002000` (supervisor), `pc=f_pc=0x080DA84C`, `a7=0x40001FC0`.
+`0x080DA84C` is **`sched`** (the scheduler, a port override); `a7` is exactly `_start`'s SSP. Not
+the user drop.
+
+**Why the island fired twice.** `main` has two return paths to its `rts`:
+`0x599d2 movel #0x80800000,%d0` and `0x59c0e movel #sched,%d0`. That is the SVR4 boot fork —
+`main` sets up proc 1 with `newproc` and "returns twice":
+
+* **proc 0** returns `&sched` → falls through `ini_main` into `_start 0x4a` → this island → `d0`
+  positive → supervisor arm → RTE into `sched`, which calls `swtch` (`0xda852`) and loops;
+* **proc 1**, context-switched in by `swtch`, resumes in `main`, returns `0x80800000` → the same
+  trampoline → `d0` negative → user arm → **the real user drop**.
+
+So the island is the launch trampoline for *both* processes, round 4's `have`-gate latched
+firing 1 (proc 0 → sched), and `ini_ret = 0x80800000` (round 3) is proc 1's return, written last.
+
+**The fix (round 5):** latch only the **user arm** (the pushed SR has S clear), once. Every
+non-user firing still builds its frame and RTEs, so proc 0 still reaches `sched` and proc 1 still
+drops to user — the boot is unchanged. The user arm is entered only by proc 1's drop, so
+"user arm + once" is unambiguous. One deliberate refinement over "S-clear **and** pc-in-range":
+the S-clear arm alone isolates the drop, so the latch there is **unconditional** and captures the
+drop even if the delivered PC is wildly corrupt — a pc-range *gate* could miss exactly the
+failure being hunted. The pc-in-range test is kept as a recorded flag (`iur_pc_inrange`), not the
+gate. `iur_first_pc`, `iur_super_n`, `iur_user_n` are added so the re-run confirms the
+two-firing story.
+
+Predictions unchanged from round 4 for the decisive triple (`ini_ret` / `iur_pc` / `iur_f_pc`),
+plus: `iur_n ≥ 2`, `iur_super_n ≥ 1`, `iur_user_n == 1`, `iur_first_pc == 0x080DA84C`,
+`iur_f_sr == 0x0000`, `iur_pc_inrange == 1`, `iur_a7 ~ 0x40001Fxx` (proc 1 kstack in the fixed u
+VA, a page-table-translated address — so if all three PCs read `0x80800000`, the bit-23 drop is
+in the RTE's read of the frame VALUE, not the address, and the exact translated frame address is
+in `iur_a7` for the harness).
