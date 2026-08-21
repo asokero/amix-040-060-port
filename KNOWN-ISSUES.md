@@ -4382,3 +4382,1429 @@ say something falsifiable, or it is decoration.
 **Byte-exact regression:** rebuilding the base after all of this yields an image differing from
 the pre-change build in exactly **two bytes**, both inside the build-id string (`260813-09` →
 `260814-01`). All six variant kernels build; all reloc checks pass against their own image.
+
+## ✅ ISSUE-46 (2026-08-20, FIXED THE SAME DAY): the panic path destroys its own diagnosis — `sync()` walks the vfs switch through a NULL pointer
+
+> **Ledger: FIXED, and CONFIRMED ON HARDWARE 2026-08-20** (same day). Not yet reflected
+> in [`STATUS.md`](STATUS.md). The hardware evidence is at the end of this entry; the
+> static acceptance that preceded it is kept as written, because the prediction it made
+> is what the run tested.
+
+**Not a 68040 defect.** It is in generic vfs code and it is available to any AMIX kernel on
+any CPU. It surfaced on the 040 line only because that is where a panic happened early enough
+to hit it.
+
+### Symptom
+
+A 68040 kernel booting on an accelerator card with its own RAM at `0x08000000` reached VM
+init and printed
+
+```
+PANIC: page_free
+DOUBLE PANIC ... vector=0x3
+```
+
+The second panic replaced the first one's diagnosis. Every hour spent on the address error,
+the Kickstart ROM and `ExecBase` was spent on the *second* panic; the bug is whatever caused
+the first one, and the second one is what stopped anybody reading it.
+
+### Mechanism, from this repository's own stock image
+
+Every address is `.text`-relative in the 2.1c image this port patches, taken from its
+disassembly or its relocation records.
+
+1. `panic` (`0x3eb58`) is a two-line wrapper on `xcmn_err(CE_PANIC, ...)`; `xcmn_err` prints
+   and calls `xpanic` (`0x3e668`, a file-local `t`).
+2. `xpanic` runs `backtrace`, `clkreld`, stores `panicstr`, calls `sysdump` — and then, at
+   relocation **`0x3e6a2 R_68K_32 sync`**, calls `sync()`, ahead of `mtcrchk`, `call_demon`
+   and `rtnfirm` (the orderly return to firmware). So a filesystem flush sits in the middle
+   of the panic path.
+3. `sync` (`0x5d21a`) is `for (i = 1; i < nfstype; i++) (*vfssw[i].vsw_vfsops->vfs_sync)(0, 0,
+   u.u_procp->p_cred);` — `moveal %a2@(8,%d0:l),%a0` (`vsw_vfsops`, +8 of a 16-byte
+   `struct vfssw`) then `moveal %a0@(16),%a0` (`vfs_sync`, the fifth pointer of
+   `struct vfsops`) then `jsr %a0@`. **Neither pointer is checked.** Offsets confirmed against
+   `<sys/vfs.h>`.
+4. `vsw_vfsops` is filled in at runtime. `vfsinit` (`0x5dab2`) sets row 0 to `vfs_strayops` and
+   then calls each row's `vsw_init`. The `.data` relocations of `vfssw` (`.data+0x913c`, 12
+   rows × 16 = `0xc0` bytes, `nfstype` = 12 at `.data+0x91fc`) show only row 0 with a link-time
+   `vsw_vfsops` (`0x9144 R_68K_32 vfs_strayops`); rows 1–11 carry `vsw_name` and `vsw_init`
+   relocations and nothing at +8. **`sync()`'s loop starts at row 1**, so before `vfsinit()`
+   the very first iteration dereferences NULL.
+5. `NULL+16` is absolute address `0x10` = **CPU exception vector 4** in the vector table
+   AmigaOS leaves in low memory. The "`vfs_sync`" the kernel then calls is an exec ROM trap
+   stub; it walks `ExecBase` (absolute 4, which AMIX repoints at its own pseudo-ExecBase) to
+   `ThisTask->tc_TrapCode`, finds a sentinel, and returns to an odd address — address error,
+   vector 3, into the kernel's own handler, which panics again.
+
+Steps 2–5 are kernel code plus the Kickstart ROM. Nothing in them depends on the accelerator,
+the emulator or the memory map, which is why a bench that never panics this early never sees
+it: the divergence is entirely in *what panicked*, not in what the panic path then does.
+
+### Fix
+
+`src/syncguard.s` — a whole-routine override (`--weaken-symbol sync` in `relink-040.sh`)
+carrying the stock loop instruction-for-instruction plus two null checks: skip the row if
+`vsw_vfsops` is NULL, skip it if `vfs_sync` is NULL. Skipping is not a loss of function — a
+filesystem whose switch row is empty has not been initialised and has nothing to flush.
+
+One deliberate reordering: stock pushes the three arguments and *then* loads `vfs_sync`; the
+override loads `vfs_sync` first, so a null one can be skipped without unwinding three pushes.
+The loads and the pushes do not alias, so the order between them is not observable.
+
+The unit carries a `syncg` counter block (`syncg_magic` = `"SYNG"`, `syncg_calls`,
+`syncg_skip_ops`, `syncg_skip_fn`, `syncg_last_i`). It exists to make the *absence* of a
+behaviour change measurable: on a kernel that reaches multiuser, `syncg_calls` climbs
+(`fsflush` calls `sync(2)` continuously) while both skip counters stay at zero. A passing boot
+would not demonstrate that; two counters that cannot both be true do.
+
+### Acceptance — static and build-time only
+
+* the override's assembled `.text` reproduces the stock routine's 23-instruction opcode sequence
+  exactly; the guards, the counters and the reordered `vfs_sync` load are the only additions;
+* exactly one strong `sync` in the linked image, off the stock address, with both call sites
+  (`xpanic` `0x3e6a2` and `syssync` `0x5d272` — the only two `R_68K_32 sync` references in the
+  whole image) rebinding to it. `relink-040.sh` asserts this; `tools/status-facts.sh` carries
+  the row, because `ld -r` links a missing override cleanly and the failure would be a kernel
+  that looks built and behaves like stock;
+* `TOTAL complaints: 0`, `bindings failing: 0`;
+* two builds of the tree differ in exactly **one byte**, inside the build-id string.
+
+**Not measured (at the time of writing):** no boot, on any platform, had yet run this code.
+`syncg_calls` had never been read. The claim was that the panic path can no longer fault on an
+empty switch, argued from the instruction stream rather than from a run. It was tested the same
+day — see below.
+
+### Measured on hardware, 2026-08-20 (68040 on an accelerator card, kernel `68040-260820-18`)
+
+The kernel panicked in early VM init exactly as before, and this time the console read:
+
+```
+PANIC: page_free
+Backtrace: 80F4964:
+```
+
+**No `DOUBLE PANIC`, no trap, no vector-3 entry in the firmware exception trace.** The counter
+block, read live at its build-specific address, says precisely what happened inside `sync()`:
+
+| counter | value | meaning |
+|---|---:|---|
+| `syncg_magic` | `SYNG` | the block is the one this build published |
+| `syncg_calls` | 1 | `sync()` was entered exactly once — from `xpanic` |
+| `syncg_skip_ops` | **11** | **all eleven** rows 1–11 had a NULL `vsw_vfsops` and were skipped |
+| `syncg_skip_fn` | 0 | no row had ops but a NULL `vfs_sync` |
+| `syncg_last_i` | 11 | the last row skipped, i.e. the loop ran to `nfstype`-1 |
+
+`syncg_skip_ops` = 11 with `nfstype` = 12 is the whole prediction, confirmed to the count: every
+row the loop visits was empty, the guard skipped every one of them, and `sync()` returned instead
+of calling through NULL. The static reading of the `vfssw` relocations — only row 0 populated at
+link time — is now a measurement.
+
+Two things that had never been observed before this boot: the panic path ran to completion, and
+the panic message survived long enough to be read and acted on. The `page_free` panic it exposed
+is ISSUE-48.
+
+**One defect this uncovered, not fixed here:** the kernel's own backtrace printer emitted a single
+frame address (`80F4964:`) and then stalled, so the `Backtrace:` line is a stub. The chain was
+recovered by dumping the boot stack and walking the frame pointers by hand. That is a separate
+(minor) defect of the panic printer, recorded here so it is not rediscovered as part of ISSUE-48.
+
+### What this unblocks, and one static correction to go with it
+
+With the panic path able to complete, an early panic keeps its own console output and reaches
+`rtnfirm` instead of dying in an unrelated second fault.
+
+Worth writing down while the addresses are fresh, because it narrows the *primary* bug and it
+was read from the stock image rather than from the machine: **`PANIC: page_free` is not one of
+`page_free`'s three assertions.** Those (`0xafa0a`, `0xafa2c`, `0xafa4e`) call `assfail`, which
+formats `"assertion failed: %s, file: %s, line: %d"` — `pp >= pages && pp < epages`,
+`pp->p_free == 0`, `pp->p_uown == NULL`, all in `vm_page.c` lines 622–624. The observed text is
+the bare format string of a **fourth** site, `cmn_err(CE_PANIC, "page_free")` at `0xafb00`,
+reached from four tests on the page being freed:
+
+| test | insn | field | offset |
+|---|---|---|---|
+| `0xafad6` | `tstw %a2@(2)` | `p_keepcnt` | +2 |
+| `0xafade` | `tstl %a2@(32)` | `p_mapping` | +32 |
+| `0xafae6` | `tstw %a2@(36)` | `p_lckcnt` | +36 |
+| `0xafaee` | `tstw %a2@(38)` | `p_cowcnt` | +38 |
+
+i.e. *the page being freed is still held*. The offsets are the measured AMIX layout, confirmed
+by three independently named asserts elsewhere in the same file (`pp->p_keepcnt == 0` →
+`tstw %a2@(2)` at `0xafde2`; `pp->p_vnode == vp` → `cmpal %a2@(4)` at `0xafc96`;
+`pp->p_mapping == NULL` → `tstl %a2@(32)` at `0xb01a2`) and consistent with `<vm/page.h>` once
+the bitfield unit is read as two bytes rather than four. **Which of the four is non-zero is
+still unmeasured** — that is a runtime fact, and it is exactly what the guard lets the next
+boot print alongside the backtrace.
+
+*(Resolved 2026-08-20, the same day, by the boot the guard made readable: the panic is reached
+from `memialloc` during `kvm_init`, and the four fields are not state at all — see ISSUE-48.
+The four branches converging on one `cmn_err` is why the panic text names no field, and is why
+the fix had to bring its own counters.)*
+
+## ⚠ ISSUE-47 (2026-08-20, RECORDED NOT FIXED): `config()`'s memory-sizing fallback is `0x07000000`-shaped and silently wrong at load base `0x08000000`
+
+> **Ledger: OPEN, deliberately not fixed in this pass.** Latent: the path has not been
+> observed to run. Recorded now because it is cheap to record and expensive to rediscover,
+> and because it fails in a shape that would be mistaken for a different bug entirely.
+
+### What it is
+
+`config()` (`0x18f5c`) seeds `MAINSTORE = end` / `VSIZOFMEM = 0` and then runs a fixpoint over
+`bootinfo.memory[]` (16 records of 32 bytes; `start` at +`0x14`, `end` at +`0x18`, base
+`bootinfo+0x440`, loop `0x19174`–`0x191ce`): it lowers `MAINSTORE` through any record that
+contains it, and extends `VSIZOFMEM` through any record that contains the current top,
+repeating while anything changed. That part is base-agnostic and derives the right answer at
+either `0x07000000` or `0x08000000`.
+
+Immediately after it there is a fallback, taken **only if `VSIZOFMEM` is still zero** — i.e.
+only if `bootinfo.memory[]` yielded nothing usable:
+
+```
+191d2:  tstl  VSIZOFMEM / bnew 19210   ; only when nothing was derived
+191dc:  movel #0x07000000,%d5          ; hardcoded
+191e2:  cmpil #end,%d5 / bccw 19210    ; only if 0x07000000 < end
+191ec:  movel #end,%d5
+191f2:  andil #0xF7C00000,%d5          ; round down -- this mask CLEARS bit 27
+191f8:  movel %d5,MAINSTORE
+191fe:  movel #0x08000000,%d5
+19204:  subl  MAINSTORE,%d5
+1920a:  movel %d5,VSIZOFMEM            ; VSIZOFMEM = 0x08000000 - MAINSTORE
+```
+
+It encodes one 1991 assumption: *the kernel lives in the A3000 motherboard-RAM window
+`[0x07000000, 0x08000000)`*. The mask `0xF7C00000` keeps bits 31–28 and 26–22 and clears
+**bit 27** — the `0x08000000` bit — and the terminus is the literal `0x08000000`.
+
+| kernel load base | `end` | `MAINSTORE = end & 0xF7C00000` | `VSIZOFMEM = 0x08000000 - MAINSTORE` |
+|---|---|---|---|
+| `0x07000000` (A3000 motherboard RAM) | `0x0710B930` | `0x07000000` ✔ | 16 MiB ✔ |
+| **`0x08000000` (an accelerator with its own RAM)** | `0x0810B930` | **`0x00000000`** | **`0x08000000` = 128 MiB** |
+
+At `0x08000000` the fallback declares main memory to be 128 MiB starting at zero and sizes the
+page-frame database for `[0, 0x08000000)` — which excludes **every byte of the machine's actual
+RAM**. `maxclick = btopr(MAINSTORE) + physmem` then covers a range no real page is in, and the
+first page handed to the allocator is outside `[pages, epages)`.
+
+### Why it is worth recording rather than fixing today
+
+The failure it produces is not obviously a memory-map failure. It is
+`assertion failed: pp >= pages && pp < epages, file: vm_page.c, line: 622` — a page-allocator
+assertion, in a subsystem that has nothing wrong with it. Anybody meeting that on a machine
+whose `bootinfo.memory[]` happened to arrive empty would start in the page allocator and stay
+there.
+
+**Inference, not measurement:** the 68040 boots on an accelerator card at `0x08000000` did *not*
+take this path, because the panic they produced is the held-page `cmn_err(CE_PANIC, "page_free")`
+at `0xafb00` (ISSUE-46), not the line-622 assertion this would cause. That is an argument from
+which panic fired, not a reading of `MAINSTORE`; the fallback's condition (`VSIZOFMEM` still zero
+after the fixpoint) has not been observed either way, and `MAINSTORE`/`VSIZOFMEM` have not been
+read out of a running kernel on that machine.
+
+### What a fix would have to do
+
+Both constants have to come from the memlist rather than from the 1991 assumption: the round-down
+mask must not clear a bit that a legal load base uses, and the terminus must be the top of the
+region the kernel was loaded into. The obvious minimal shape — mask with something that preserves
+bit 27, and take the terminus from the record `end` already walked — is a `config040.s` job
+(`config_orig` is already exposed at `0x18f5c` and the unit already wraps it for the ISSUE-21
+cache handoff), so the wiring cost is near zero. It is left undone here deliberately: it changes
+the memory sizing of every kernel this port builds, including the 030-based lines that boot from
+motherboard RAM today, and that is a change that wants its own A/B rather than a ride-along.
+
+## ✅ ISSUE-48 (2026-08-20): `PANIC: page_free` at boot — the page-frame database is mapped-in DRAM and **nothing zeroes it**
+
+> **Ledger: FIXED in the port tree, NOT YET CONFIRMED ON HARDWARE.** The diagnosis is static
+> and complete; the fix ships its own falsifier (`pgz_held_n`) and the next boot either proves
+> or refutes it. Not yet reflected in [`STATUS.md`](STATUS.md).
+
+**Not a 68040 defect either.** Like ISSUE-46 this is generic SVR4 VM code, and like ISSUE-46 the
+040 lane is simply where it finally got hit.
+
+### How it was found
+
+The first 68040 boot on an accelerator card whose panic path survived (ISSUE-46) printed
+`PANIC: page_free` and nothing else useful — the kernel's own backtrace printer stalls after one
+frame. The boot stack was dumped live and the frame chain walked by hand; symbolised against the
+booted image (`68040-260820-18`, load base `0x08000000`) it reads:
+
+| frame | return address | symbol |
+|---|---|---|
+| `080F49A0` | `080AFB06` | `page_free+0x11c` — immediately after the `cmn_err` at `.text+0xafb00` |
+| `080F49BC` | `08052930` | **`memialloc+0x94`** — the caller of `page_free` |
+| `080F49D8` | `08048EBC` | `kvm_init+0x28e` |
+| `080F4A30` | `08048B78` | `mlsetup+0xb0` |
+| `080F4A60` | `080D75D8` | `Lps_nopcr+0x2a` (`pstart040`, just after the MMU is enabled) |
+| `080F4AB0` | `08000030` | `stext+0x30` |
+
+Three of the frame arguments pin the state exactly, and they agree with the code: `0x8198` (the
+first free click), `0x9000` (`maxclick`) and `0x0E68` (`maxmem` = 3688 pages = `maxclick` − first
+free click). So this is boot-time VM setup, handing the page allocator its initial free memory.
+
+### The mechanism, from the stock image
+
+```c
+kvm_init():                                    /* .text+0x48c2e */
+    va = sptalloc(npages, 1, first_free_click, 0);   /* .text+0xa8bb6 */
+    page_hash = va + 60 * npages_estimate;
+    hat_init();
+    maxmem = maxclick - first_free_click;
+    page_init(va, maxmem, first_free_click);         /* .text+0xaf42a */
+    memialloc(first_free_click, maxclick);           /* .text+0x5289c */
+```
+
+* **`sptalloc` with a NON-ZERO third argument does not allocate.** It branches to
+  `segkmem_mapin` (the zero case goes to `segkmem_alloc`), i.e. it maps the physical memory that
+  is *already* at that click into kernel virtual space. Nothing is allocated and nothing is
+  cleared. The page-frame database is a window onto raw DRAM.
+* **`page_init` does not initialise the structs.** Its only write to the array is
+  `orib #-128,%a0@` per 60-byte struct — it ORs `p_lock` into byte 0 and touches nothing else.
+  It sets `pages`, `epages`, `pages_base`, `pages_end`, `max_page_get`, checks that
+  `page_hash`/`page_hashsz` are non-zero, and returns. **It never zeroes the structs and never
+  zeroes the hash buckets.** Both are *assumed* to arrive zero.
+* **`memialloc` then frees every one of them**: `page_free(pp, 1)` in 60-byte steps across
+  exactly the range `page_init` published.
+* **`page_free` refuses to free a held page**: `p_keepcnt` (+2), `p_mapping` (+32),
+  `p_lckcnt` (+36) and `p_cowcnt` (+38) must all be zero. All four branches converge on the same
+  `cmn_err(CE_PANIC, "page_free")` at `.text+0xafb00`, which is why the panic text names no field.
+
+At this point in boot **nothing has ever mapped, locked or held a managed page** — `hat_init()`
+has only just returned and no page has been handed out. A non-zero value in those four fields
+therefore cannot be state. It can only be what the DRAM already contained. The assertion is
+correct and is doing its job; the missing precondition is what is wrong.
+
+### Why the bench never sees it
+
+The emulator hands out zero-filled RAM, so "sptalloc'd physical memory is zero" is always true
+there. On metal the kernel is loaded by a program running under AmigaOS, out of the same Fast RAM
+pool AmigaOS allocates from, and the database lands about 1.4 MB above the load base — in memory
+AmigaOS was recently using. This is precisely the failure class `AGENTS.md` warns about: an
+untested path in the emulator is indistinguishable from a passing one.
+
+**Open question, deliberately not answered here:** the 68030 kernel runs on the same card, with
+the same AmigaOS-dirty DRAM, through this same generic code, and does not panic. Whether it
+escapes because its database lands somewhere AmigaOS happened to leave clean, or for some other
+reason, is **not determined**. It matters only for understanding the history — the fix does not
+depend on the answer, and zeroing memory that the code already requires to be zero cannot make
+the 030 line worse. (Anyone re-opening the intermittent early-boot failures recorded under
+ISSUE-21 may want this entry in view; that is a suggestion for a re-check, not a claim, and
+ISSUE-21 has its own measured root cause.)
+
+### Fix
+
+`src/pageinitzero.s` — a wrapper on `page_init` (`--weaken-symbol page_init` plus
+`--add-symbol page_init_orig=.text:0xaf42a`) that zeroes `60 * npages` bytes at the array and the
+`page_hashsz` 4-byte buckets at `page_hash`, then tail-jumps to the stock body with the stack
+untouched. **The bounds are `page_init`'s own arguments** — the same two values the stock body
+turns into `pages` and `epages = pages + 60*npages` — so there is no second opinion about how big
+the array is and no way for the two to drift apart. `page_init` has exactly one reference in the
+whole image (`kvm_init` at `0x48eaa`), which is also the entire blast radius.
+
+The hash is included because it is in the same `sptalloc`'d window and equally raw: a garbage
+bucket is a wild pointer that `page_find` would follow later. That half is reasoning, not a
+measured failure, and `pgz_hash_n` is there to turn it into one.
+
+### The fix carries its own falsifier
+
+`pageinitzero.s` reads every struct **before** it clears it:
+
+| counter | what a boot proves with it |
+|---|---|
+| `pgz_dirty_n` | structs with any non-zero byte |
+| `pgz_held_n` | structs `page_free` would have **refused** — i.e. the panic, counted |
+| `pgz_first_i`, `pgz_first_w0`, `pgz_first_map`, `pgz_first_lc` | the first such struct and its three field words, exactly as the DRAM held them |
+| `pgz_hash_n` | non-zero hash buckets, over `pgz_hashsz` of them |
+
+**Written down before the run:** on the card `pgz_held_n` > 0 and `pgz_first_*` names a page; on
+the bench every counter except `pgz_calls`, `pgz_npages` and `pgz_hashsz` reads 0. A boot that
+comes up with `pgz_held_n == 0` **refutes this entry** — the boot would then have been fixed for
+some other reason, and finding out which is worth more than the fix.
+
+### Acceptance so far — static and build-time only
+
+`TOTAL complaints: 0`; `bindings failing: 0` with the new row
+`| page_init | af42a | 000db6ac | page_init_orig=000af42a | ok |`; `pgz_magic` reads `PGZ!` out of
+the artifact. The zero loop and the scan loop cover the same 15 longs (60 bytes) per struct that
+`memialloc` steps over. **No boot has run this code.**
+
+## ⏳ ISSUE-49 (2026-08-20, OPEN — instrumented, predictions registered): `PANIC: segmap_unlock` at first root-mount I/O
+
+> **Ledger: OPEN.** The statics below are settled and are not worth re-deriving; what remains
+> is runtime state, and the build carries an instrument that answers it in one boot. Not yet
+> reflected in [`STATUS.md`](STATUS.md).
+
+### Symptom
+
+With ISSUE-46 and ISSUE-48 in, the 68040 kernel on the accelerator card boots past console init
+and dies ~10 s after MMU-on — where root-mount I/O begins. Recovered verbatim from the dead
+kernel's `putbuf` ring through the firmware debug console:
+
+```
+PANIC: segmap_unlock
+4.0 2.1c 0800430 Backtrace:
+40001DF4: 803E66C->80595
+```
+
+The version banner is in the ring, so the console `printf` path is alive; `0x0803E66C` is
+`xpanic`. The guest then warm-reboots cleanly — the ISSUE-46 guard doing its job — which is what
+makes the ring readable in the reset window at all. (The truncated `Backtrace:` is ISSUE-50, not
+this.)
+
+### What segmap_unlock actually asserts
+
+`segmap_unlock` (`.text+0xa8fec`) is the **F_SOFTUNLOCK** arm of `segmap_fault` — `type == 3`,
+dispatched at `0xa9170` — i.e. the release half of a softlock/softunlock pair. For each 4 KiB
+page in `[addr, addr+len)` it looks the page up in the page hash by `(vp, off)` and then:
+
+```c
+if (pp == NULL || pp->p_pagein || pp->p_free)
+        cmn_err(CE_PANIC, "segmap_unlock");
+```
+
+`btst #0` is `p_pagein`, `btst #5` is `p_free` — the byte-0 bitfield layout ISSUE-48 pinned. **All
+three guards branch to the same `cmn_err` at `0xa907e`**, so the panic text cannot name the
+condition. Exactly ISSUE-48's problem, and the reason this entry ships an instrument instead of
+another reading of the disassembly.
+
+### Settled statically — do not re-ask these
+
+* **Not an ISSUE-48 repeat.** `segmap_create` (`0xa8ea8`) takes both the segmap data and the whole
+  smap array from **`kmem_zalloc`**. segmap's own memory arrives zeroed; the dirty-DRAM story does
+  not apply here.
+* **The page-hash shift is uniform.** `page_find`, `page_exists`, `page_hashin`, `page_hashout`
+  and `segmap_unlock`'s inlined copy all use `>>11`. Insert and lookup agree, so the hash is
+  self-consistent; `>>11` under 4 KiB pages only halves the effective bucket count, which costs
+  distribution, not correctness. `src/detect_pagesize.py` lists `segmap_unlock@a901e` among its
+  deliberate exclusions for this reason, and that decision is **confirmed correct**. The
+  `moveq #12` in `page_hashout` (`0xb043c`) is the `p_hash` **field offset**, not a shift — the
+  "a page-size constant is not always a page size" trap, caught.
+* **The geometry is converted.** `segmap_unlock` steps 4096 per page (`0xa90f4`), `as_fault`
+  rounds to 4096 (`0xae156`, `0xae164`), slots are MAXBSIZE 8192 (`&0x1FFF`, `>>13`), and the two
+  halves are symmetric about `p_keepcnt`: the F_SOFTLOCK arm keeps `getpage`'s hold, and
+  `segmap_unlock`'s `subqw #1,%a2@(2)` releases it.
+
+So the geometry is right and the memory is initialised. What is left is that **at softunlock time
+the page is not where the softlock left it** — a fact about the running machine.
+
+### Instrument
+
+`src/segmapdbg.s` + `src/patch_segmapdbg.py` retarget the single `cmn_err` relocation at
+`0xa9080` to `smu_panic_latch` — the one-relocation idiom `patch_sdtfail.py` already uses. The
+island saves every register, latches, restores, and tail-jumps into the real `cmn_err`, so the
+panic prints unchanged. **Blast radius on a healthy kernel is zero**: the only path that reaches
+it was already calling `cmn_err(CE_PANIC)` on the next instruction. Verified surgical — exactly
+one relocation moved, the other 531 `cmn_err` call sites untouched.
+
+At the `jsr`, `segmap_unlock`'s registers are still live, so the state is read rather than
+reconstructed: `a2` = pp (or NULL), `a3` = smp, `a4` = seg, `d2` = the failing page address,
+`d3` = the offset looked up, `d4` = the `addr` argument, `d5` = rw, `d6` = len.
+
+**The discriminator** is what the unit is for: after latching it walks the *whole* page hash for
+`(vp, off)`.
+
+| `smu_scan` | means |
+|---|---|
+| 1 | the page **is** in the cache, in bucket `smu_bucket`, while `segmap_unlock` looked in `smu_want`. Differ → the bucket arithmetic disagrees between insert and lookup. Equal → the chain was mutated concurrently, i.e. a locking defect |
+| 0 | the page is genuinely **not** in the cache — freed, hashed out, or never entered; `smu_why` then separates the three guards |
+| 2 | the scan hit its own safety budget and proves nothing |
+
+The scan is bounded per-chain (1024) and in total (100000) because it runs inside a panic on a
+machine whose page structures are already suspect, and an unbounded walk through a corrupt chain
+is precisely how ISSUE-46 turned a panic into a dead machine.
+
+### Predictions, registered before the run
+
+* `smu_n == 1` and `smu_addr == smu_addr0` — it fails on the **first** page of the run. If
+  `smu_addr > smu_addr0` the failure is position-dependent and the run length matters, which is a
+  different bug.
+* `smu_why == 4` (pp NULL) or `2` (p_free). A `1` (p_pagein) would mean a page still being read in
+  under a softlock, which should be impossible.
+* `smu_scan == 0`. **If it comes back 1, this entry is wrong about the cause** and the hash bucket
+  arithmetic is where to look next.
+* `smu_vp != 0` and `smu_smoff` a plausible file offset. A zero or wild `vp` means the smap slot
+  itself was recycled under the softlock — a third story, which would move the investigation to
+  `segmap_getmap`/`segmap_release`.
+
+**Nothing here is measured yet.** The build has not been booted.
+
+### MEASURED on hardware 2026-08-21 — the latch fired, and it refutes two of my four predictions
+
+Kernel `68040-260821-02`, death ~22 s post-MMU, block read post-mortem from the reset window.
+
+| | | |
+|---|---|---|
+| `smu_n` | 1 | ✓ predicted |
+| `smu_addr` == `smu_addr0` | `0x40440000` | ✓ predicted — the **first** page of the run, and `0x40440000` is the base of `kvsegmap`, i.e. segmap slot 0 |
+| `smu_off` == `smu_smoff` == `smu_poff` | 0 | offset 0 of the vnode |
+| `smu_len` / `smu_rw` | `0x1000` / 0 | exactly one page |
+| `smu_why` | **3** | ✗ **predicted 4 or 2** — got `1|2` = **p_pagein AND p_free together** |
+| `smu_scan` | **1** | ✗ **predicted 0** — the page IS in the hash |
+| `smu_bucket` == `smu_want` | 556 | same bucket |
+| `smu_scanpp` == `smu_pp` | `0x40073E28` | the same page |
+| `smu_vp` == `smu_pvnode` | `0x40078B04` | identity intact |
+| `smu_hashsz` | 1024 | |
+| `smu_pflags` | `0x33000002` | byte0 `0x33` = **p_free, p_intrans, p_ref, p_pagein**; `p_keepcnt = 2` |
+
+`smu_pp - 0x40040000 = 0x33E28 = 212520`, and `212520 / 60 = 3542` **exactly** — so `pages[]` is at
+`0x40040000` and this is page index 3542 of 3688, click `0x8F6E`. The array length `60 * 0xE68 =
+0x36060` is the same `0x00036060` that appeared in ISSUE-48's stack frames. Three independent
+numbers agreeing is what says the decode is right.
+
+**Correction to this entry's own instrument.** The `smu_scan` interpretation table above was
+written for the `pp == NULL` case and is wrong as stated for this one: with `pp != NULL` the scan
+re-finding the same page in the same bucket proves nothing about locking — it simply confirms the
+hash is healthy and the page is exactly where it should be. The table should have said so. What
+the scan *did* establish is worth keeping: **the page hash is not the problem**, which was the
+hypothesis most worth killing.
+
+### The verdict
+
+Not wrong-bucket, not concurrent mutation, not not-in-cache. The page is precisely where it
+belongs, with the right identity, and **its flag state is the defect**: it is simultaneously
+marked as on a free list (`p_free`) and as a pagein in flight (`p_intrans | p_pagein`), while held
+twice (`p_keepcnt = 2`). `p_ref = 1` and `p_keepcnt` rising from 1 to 2 are exactly what
+`page_get` + a softlock hold produce, so everything about this page is normal **except `p_free`**.
+
+### What that single bit rules out, statically
+
+* **`page_get` never ran on it.** Its per-frame re-init at `0xb023c`–`0xb0278` is the compiled
+  form of `p_age = p_nc = p_mod = p_free = 0; p_pagein = p_intrans = p_lock = 0; p_ref = 1;
+  p_keepcnt = 1` — a `bfextu`/`bfins` cascade that **clears `p_free` at `0xb025c`**. Any page
+  through it is clean.
+* **`page_unfree` never ran on it** — the reclaim path (`0xaff3c`–`0xaff4c`) clears `p_free` by
+  the same idiom, and it is what `page_reclaim` (called from `page_lookup` at `0xaf85c`) uses.
+* **`free_vp_pages` did not put it there.** Before setting `p_free` (`orib #32` at `0xafe04`) it
+  asserts `p_free == 0` (line 753), `p_intrans == 0` (754) and `p_keepcnt == 0` (755). This page
+  violates all three, so it would have `assfail`ed three times over first.
+* **`page_abort` did not do it** — it asserts `p_free == 0` on entry (line 550) and returns early
+  if `p_keepcnt != 0` or `p_intrans` is set.
+* **The copyback release patch is not implicated.** `patch_cb_release.py` hook 2 rewrites
+  `addql #1,freemem` → `jsr cb_vpfree_enter` at `0xafd98`; the next instruction is `btst #5,%a2@`,
+  which sets its own condition codes, so the classic "a `jsr` where an `addql` set the CCR" trap
+  does not apply here. Checked because it is exactly the trap this repository documents.
+
+So `p_free` was set by `page_free` (`0xafb3a`, the only remaining setter, and its ISSUE-48 guard
+means `p_keepcnt` was 0 at that moment), and then **the page was taken for a pagein without ever
+being reclaimed** — neither `page_get`'s cascade nor `page_unfree` cleared the bit.
+
+### Stage 2, and what it decides
+
+The remaining question is which list the page is actually linked into, and it splits three ways.
+The island now walks both (`p_next` +16 / `p_prev` +20, circular, both budgeted):
+
+| outcome | meaning |
+|---|---|
+| `smu_oncache = 1` | it is on `page_cachelist` — a cache-list page taken for a pagein without `page_reclaim`. The acquirer is the bug |
+| `smu_onfree = 1` | worse: a genuinely free page is being paged into, i.e. the free list handed out a page that is still linked |
+| both 0 | **`p_free` is a stale bit** — the page was properly unlinked but the flag was never cleared, and the bug is one specific missing clear |
+
+`smu_cachesz`/`smu_freemem` and the two walk counts are latched alongside so a truncated or
+looping walk is visible rather than silently reported as "not found".
+
+**Predicted before the run:** `smu_oncache = 1`, `smu_onfree = 0`. If both come back 0, the
+"stale bit" reading is right and the search narrows to a single missing `page_unfree`.
+
+### Second metal read 2026-08-21: stage 1 reproduced EXACTLY; stage 2 never ran (my bug)
+
+Kernel `68040-260821-04`. Every stage-1 field latched **identically** to the first run — same
+page `0x40073E28` (frame 3542), same `smu_why = 3`, same `addr == addr0 == 0x40440000`, same
+`pflags 0x33000002`, same bucket 556. Nothing drifted.
+
+**That reproducibility is itself a finding, and it is worth more than the run that produced it.**
+Two boots, on different kernels, with different DRAM garbage underneath (see the `pgz` numbers
+below), landed on the *same page frame* at the *same virtual address* with the *same flag word*.
+Whatever corrupts this page is **deterministic in address**, not a race and not a function of what
+was in memory beforehand. Any root-cause story that requires timing or luck is now excluded.
+
+Stage 2, however, returned all zeros — including both walk counters and `freemem`, which cannot
+be zero 22 s into a boot. The instrument did not walk and find nothing; **it never executed**, and
+the reason was a defect in this unit, not in the kernel:
+
+```
+db75c:  braw db81e <Lsmu_go>      <- the "page found" exit
+db81e:  Lsmu_lists == Lsmu_go     <- the same address
+```
+
+`Lsmu_lists:` had been written **after** the two list walks instead of before them, so it resolved
+to the same address as the exit label. Every path that mattered — including the "found" path this
+panic always takes — branched past the walks to the restore-and-tail-jump. Only the
+budget-exhausted path fell through into them, and that path never runs. The assembler cannot
+object: two labels on one address is legal, and the relink's hard check and the relocation
+validator both passed, because symbol binding was never the problem.
+
+Fixed by moving the label ahead of the walks, giving the freelist walk its own forward exit
+(`Lsmu_done2` — with the label moved, its old backward branches would have become an infinite
+loop inside a panic), and routing the two early exits through the walks as well.
+
+**And the lesson is now built into the unit:** `smu_s2ran` is written `"RAN!"` as the *first*
+instruction of the stage-2 block. An instrument whose silence is indistinguishable from a negative
+result is decoration — the same lesson ISSUE-44 recorded, re-learned here at the cost of one
+hardware run. A future all-zero stage-2 read now means "did not run" only if `smu_s2ran` is also
+zero.
+
+**ISSUE-48 confirmed a third time** in the same read: `pgz_held_n` = 1380, after 150 and 1225 on
+the two previous boots, and `pgz_hash_n` = 71 after 2. Both counts vary run to run exactly as an
+uninitialised-DRAM story predicts, and the boot gets past `kvm_init` every time.
+
+### Third metal read 2026-08-21 — stage 2 answered, and it inverts the hypothesis
+
+`s2ran = "RAN!"` ✓, `oncache = 0`, `onfree = 0`, cache list empty (`cachesz = 0`, walk 0),
+freelist walk **3539** == `freemem` **3539** — the walk is internally consistent and the freelist
+is coherent at 3539 of 3688 frames. **The page is on neither list**: properly unlinked, correctly
+excluded from a healthy freelist, in the hash with the right identity, mid-pagein, held twice —
+with `p_free` stale. The third pre-registered outcome, exactly.
+
+That should have made this "find the acquisition path that forgot to clear `p_free`". It is not,
+and the audit is what says so.
+
+#### The 040 lane is exonerated for this, by a complete diff rather than by inspection
+
+A byte-for-byte diff of the built kernel against the stock image across `vm_page.c`, `seg_map.c`
+and `s5getapage` returns **44 changed runs, and every single one is a 2 KiB→4 KiB constant
+conversion** (`07ff`→`0fff`, `0800`→`1000`, `f8`→`f0`, `moveq #11`→`#12`) plus the two documented
+`cb_release` hooks (`page_free` `0xafb08`, `free_vp_pages` `0xafd98`). **Nothing in the port
+touches the flag code.** `patch_cb_release.py`'s `free_vp_pages` hook was separately cleared last
+round (the following instruction is a `btst`, which sets its own condition codes).
+
+#### And the stock flag code is correct — checked structurally, not by reading
+
+* **`page_get`'s cascade is unskippable.** The re-init at `0xb023c`–`0xb0278` (`p_age = p_nc =
+  p_mod = p_free = 0; p_pagein = p_intrans = p_lock = 0; p_ref = 1; p_keepcnt = 1`) sits in the
+  `dbf` loop, and the highest branch target anywhere in that loop body is `0xb022c` — **below the
+  cascade**. Every iteration falls through it. No page leaves `page_get` with `p_free` set.
+* **`page_unfree`** (`0xaff3c`) clears `p_free` by the same idiom, and it is what `page_reclaim`
+  uses.
+* **`page_enter`** (`0xaf87e`) is `page_exists` + `page_hashin` and touches no flags — correctly,
+  since its callers acquire through `page_get`. Its twelve call sites include one in the port's
+  own `hat_dup040.s`, which was checked: it takes its page from `page_get(4096,0)` first.
+
+#### The reframe
+
+There are exactly **two** instructions in the kernel that set `p_free`: `orib #32,%a2@` in
+`page_free` (`0xafb3a`) and in `free_vp_pages` (`0xafe04`). Both are guarded by assertions that
+this page violates — `page_free` by the four held-page tests (ISSUE-48), `free_vp_pages` by
+`p_free == 0`, `p_intrans == 0`, `p_keepcnt == 0` (lines 753–755). **Had either run on this page
+it would have produced a different panic, and it did not.**
+
+So `p_free` was **not left set by a missing clear. It was SET, after the page was legitimately
+acquired, by something that is not the page code.** Combined with stage 1 reproducing byte-identically
+across four boots — same frame 3542, same VA `0x40440000`, same flag word `0x33000002` — this is a
+**deterministic write to a fixed page-struct address** (`0x40073E28`), not a logic error and not a
+race. That is a different class of bug from the one this entry started with, and it puts it in the
+neighbourhood of the port's ISSUE-10 family (fixed-address poisoning) rather than the VM's.
+
+#### Stage 3: how many pages are in the impossible state
+
+One bounded pass over `pages..epages` counting flag bytes. `smu_freeset_n` should track
+`freemem` + cache list; `smu_imposs_n` counts pages that are **both free and in transit**, with
+the first one latched.
+
+**Predicted:** `smu_imposs_n == 1` and `smu_imposs_pp == 0x40073E28` — exactly one page, ours,
+i.e. a targeted write at a fixed address. `smu_freeset_n` ≈ 3540 (the coherent 3539 plus ours).
+**If `smu_imposs_n` is large, the reframe is wrong** and the free-list accounting is systemically
+broken, which would send this back to the VM after all.
+
+### Fourth metal read 2026-08-21 — the census fires, and it RETRACTS the previous entry
+
+`s3ran = "CEN!"`, `freeset_n = 3688`, `imposs_n = 2`, `imposs_i = 3541`,
+`imposs_pp = 0x40073DEC`, and stage 1 unchanged except `pflags` = **`0xFF000002`** where four
+earlier boots read `0x33000002`.
+
+**Census mask audited first, and it is correct.** The shipped encoding is
+`moveq #0,%d1 / moveb %a0@,%d1 / btst #5,%d1` — bit 5 of byte 0, the same bit `page_free`'s own
+assert tests (`btst #5,%a2@` ↔ `pp->p_free == 0`). `p_lock` is bit **7** and the census does not
+read it. So `freeset_n = 3688` is a real measurement, not a repeat of the stage-2 label bug.
+
+#### The three facts reconciled
+
+1. **The adjacency is not a corruption footprint.** A segmap slot is MAXBSIZE = 8192 = exactly
+   **two** 4 KiB pages, so frames 3541 and 3542 *are* the 2-page cluster of one `getpage` for slot
+   0. Nothing about that pairing needs a writer to explain it. (Correcting the premise as well:
+   this island latches the **first** hit — `tstl smu_imposs_pp / bnew` skips once set — so
+   `imposs_pp` is 3541, and 3542 is the second.)
+2. **`freeset_n = 3688` is the one that matters.** Every struct has `p_free` set, while the
+   freelist walk and `freemem` independently agree on 3539. **149 pages are off the free list with
+   `p_free` still set.** This page is not special — it is one of 149, and merely the first whose
+   `p_free` was ever checked in a fatal position.
+3. **`0xFF` is not a page-code value.** `page_free` leaves `0x20`, `page_get`'s cascade leaves
+   `0x02`. `0xFF` is every bit set. The address held across five boots; the value did not.
+
+#### Retraction
+
+**The previous section's conclusion — "a deterministic write to a fixed page-struct address" — is
+withdrawn.** It was built on stage 1 reproducing at one address, and the census shows the anomaly
+is population-wide. The address determinism is nothing more than boot determinism: segmap slot 0
+is always the first slot faulted, so it is always the first page where a stale `p_free` can kill.
+
+That reopens the question the previous section thought it had closed, and it reopens it against a
+structural proof that `page_get`'s cascade cannot be skipped. Two possibilities remain, and they
+are distinguished by measurement, not argument: either those 149 pages never went through
+`page_get`, or the cascade's writes are not landing in the page array.
+
+#### Stage 4: measure the population instead of reasoning about it
+
+One counter per flag bit across every struct, plus counts of the two byte-0 values that mean
+something — `0x20` (a clean free page, what `page_free` leaves) and `0xFF`.
+
+The cascade clears bits 7, 5, 4, 2 and 0 on every page it hands out, so:
+
+* `smu_bitpop[7]` (**p_lock**) large → the cascade did not take, and the defect is in the write
+  path to the page array, not in the page logic;
+* `smu_bitpop[7]` ≈ 0 with `bitpop[5]` = 3688 → the cascade ran and something set `p_free` back on
+  149 pages afterwards;
+* `smu_b0_20` ≈ 3539 with 149 others → the free population is clean and the allocated one is not;
+* `smu_b0_ff` large → a fill, and the story is memory corruption after all.
+
+**Deliberately not yet built: the standalone write-watch.** It was the agreed next step while the
+target looked like one fixed address. A watch on one address is the wrong instrument for an
+anomaly spanning 149 of them, and it would cost a boot to learn that. The histogram costs no new
+machinery and narrows the target first; if it comes back "targeted after all", the watch follows
+with a much better address to watch.
+
+### Fifth metal read 2026-08-21 — the histogram names the instruction
+
+`bitpop[0..7]` = 3, **149**, 1, 1, 3, **3688**, 1, 1 · `b0_ff` = 1 · `b0_20` = **3539** ·
+`imposs_n` = 3 · stage 1 back to `0x33000002`.
+
+**The population reconstructs exactly**, which is what says the reading is sound rather than
+plausible:
+
+| byte 0 | count | what it is |
+|---|---:|---|
+| `0x20` | 3539 | free pages — pristine `page_free` output, `p_free` and nothing else |
+| `0x22` | ~146 | **allocated** pages: `p_free` **stale** + `p_ref` set |
+| `0x33` | 2 | allocated + in transit (`p_intrans\|p_pagein`) — the segmap slot-0 cluster |
+| `0xFF` | 1 | every bit set — the one outlier, unexplained |
+
+3539 + 149 = 3688 exactly, and `bitpop[2]`/`[3]`/`[6]`/`[7]` all reading **1** is the single
+`0xFF` struct contributing to each.
+
+#### Only two operations in the cascade are observable, and they disagree
+
+A page arriving from the free list has byte 0 = `0x20`. Against that input, of the six operations
+`page_get`'s cascade performs on byte 0:
+
+| bit | field | cascade op | input | observable? | result |
+|---:|---|---|---:|---|---|
+| 5 | `p_free` | **`bfins {2:1}`** — clear | **1** | **YES** | **landed on 0 of 149** |
+| 1 | `p_ref` | **`orib #2`** — set | 0 | **YES** | **landed on 149 of 149** |
+| 2 | `p_mod` | `bfins {5:1}` — clear | 0 | no | — |
+| 4 | `p_intrans` | `bfins {3:1}` — clear | 0 | no | — |
+| 7 | `p_lock` | `bfins {0:1}` — clear | 0 | no | — |
+| 0 | `p_pagein` | `andib #-2` — clear | 0 | no | — |
+
+The other four clears act on bits that are already zero, so they prove nothing either way.
+
+#### Refinement: it is not "clears fail", it is "BFINS does not write"
+
+The one failing operation is a **bitfield** instruction; the one succeeding operation is a
+**byte** read-modify-write. "Clears vs sets" is not the axis the evidence supports — the only
+clear that could be seen is also the only `bfins` that could be seen.
+
+And the direction is pinned too: if `bfins` were writing **1**s (a `bfextu` returning garbage and
+feeding the chain), then `p_mod`, `p_intrans` and `p_lock` would each read ≈149. **They read 1, 3,
+1.** So `bfins` is not writing ones and not writing zeros — **its write is not landing at all**,
+while `ori.b`/`andi.b` to the *same byte* do land.
+
+That is not kernel logic. No sequencing of correct 68040 instructions produces it.
+
+#### The exact sequence one struct's byte 0 undergoes at acquisition
+
+`a2` = the page struct, reached through the **kernel's mapped window** — `pages` = `0x40040000`,
+which `kvm_init` obtained via `sptalloc(..., first_free_click, 0)` → `segkmem_mapin`, i.e. physical
+DRAM at click ≈`0x815C` mapped into `kvseg`. **MMU translation is active for this address and it is
+not covered by any transparent-translation register.** Encodings are from the shipped image:
+
+```
+b0254:  efd2 0141   bfins  %d0,%a2@{5:1}     ; p_mod     <- d0   (d0 = 0)
+b0258:  e9d2 0141   bfextu %a2@{5:1},%d0     ; d0 <- p_mod
+b025c:  efd2 0081   bfins  %d0,%a2@{2:1}     ; p_free    <- d0   *** THE ONE THAT FAILS ***
+b0260:  0212 00fe   andib  #-2,%a2@          ; p_pagein  <- 0
+b0264:  e9d2 01c1   bfextu %a2@{7:1},%d0     ; d0 <- p_pagein
+b0268:  efd2 00c1   bfins  %d0,%a2@{3:1}     ; p_intrans <- d0
+b026c:  e9d2 00c1   bfextu %a2@{3:1},%d0     ; d0 <- p_intrans
+b0270:  efd2 0001   bfins  %d0,%a2@{0:1}     ; p_lock    <- d0
+b0274:  0012 0002   orib   #2,%a2@           ; p_ref     <- 1    *** THIS ONE LANDS ***
+b0278:  357c 0001 0002  movew #1,%a2@(2)     ; p_keepcnt <- 1    (lands: keepcnt reads 1→2)
+```
+
+Every one of these is a read-modify-write of the **same byte**, at the same address, within nine
+instructions of each other. The byte ops take effect and the bitfield ops do not.
+
+### HANDOVER — minimal reproduction for the 68040 emulation core
+
+For whoever owns the accelerator's 68040 core. This needs **no hardware boot**: it is a host-harness
+test. AMIX is not required — the sequence is self-contained.
+
+**Claim to test:** `BFINS <Dn>,<mem>{offset:1}` does not take effect when the effective address is
+translated through the 68040 MMU (page-table translation, *not* transparent-translation), while
+`ORI.B`/`ANDI.B` to the same byte do.
+
+**Setup.** One 4 KiB page mapped through the page tables at a kernel-style address (the failing case
+uses `0x40040000`+), MMU on, TC enabled, the mapping **not** covered by ITT0/ITT1/DTT0/DTT1 — the
+distinction from a TTR-covered address is the thing most worth varying. Cache mode as the kernel's
+`kvseg` uses (copyback) for the primary run.
+
+**Body.** With `a2` pointing at a byte in that page:
+
+```
+    moveb  #0x20,%a2@          ; seed: bit 5 set, all others clear
+    moveq  #0,%d0
+    .word 0xefd2,0x0081        ; bfins %d0,%a2@{2:1}   -- clear bit 5
+    ; EXPECT  %a2@ == 0x00
+    ; PREDICT %a2@ == 0x20     (the write does not land)
+    orib   #2,%a2@             ; control: byte RMW, set bit 1
+    ; EXPECT  %a2@ == 0x02
+    ; PREDICT %a2@ == 0x22     (matches every allocated page on the card)
+```
+
+**Variations that isolate it, in priority order.**
+
+1. the same body at a **TTR-covered / untranslated** address — if it passes there and fails above,
+   the defect is in the bitfield path's address translation, not the instruction decode;
+2. **caches off** vs copyback — separates "write lost in the cache" from "write never issued";
+3. `bfins` with **width > 1**, and a field **crossing a byte boundary** — does any bitfield write
+   land?
+4. `bfins` to a **data register** destination — expected to pass; if it fails too, the defect is
+   decode-wide rather than memory-path;
+5. `bfclr`/`bfset`/`bfextu` on memory — `bfextu` reads are believed to work (the cascade's chain
+   would otherwise have propagated 1s, and the histogram says it did not), so a passing `bfextu`
+   with a failing `bfins` localises it to the write half.
+
+**Why this was never seen before.** The bench emulator implements these instructions; §9's firmware
+audit covered MMU enable, the TT registers, `PFLUSH`/`PTEST` and the access-error frame, but the
+bitfield-instruction path was never exercised, because nothing before this reached code that uses
+`bfins` on MMU-translated memory in anger. It is the same family as the ISSUE-10 write
+fabrication — a write that does not land where the instruction says it should.
+
+**Report back:** the observed byte after each step, per variation. If step 1 passes and the primary
+fails, that is the answer and the kernel needs no change at all.
+
+**No new kernel build was produced for this round** — the bit map confirmed the reading rather than
+refuting it, so `unix-040-minimal-i46-i48-i49e` (`68040-260821-10`) remains the current diagnostic
+kernel and is still the right one to boot if another read is wanted.
+
+**If the harness exonerates the core**, the fallback story is the mapped window itself — `p_free`
+living in DRAM reached through `segkmem_mapin` — and the next kernel-side instrument is a
+read-back-verify wrapper on the cascade rather than a write-watch.
+
+### ✅ RESOLVED 2026-08-21 — it was not a kernel defect
+
+The host-harness handover above was dispatched and the reproduction confirmed it: **the
+accelerator's 68040 emulation core mishandled bitfield operations**, executing them through the
+030 accessors, so `BFINS` to an MMU-translated address did not take effect while `ORI.B`/`ANDI.B`
+to the same byte did. Fixed in the firmware (`6e8e33a`) and **validated on metal 2026-08-21
+03:40**: the kernel boots, prints its banner and runs. `PANIC: segmap_unlock` is gone.
+
+**The kernel needed no change.** ISSUE-49 is therefore a **symptom record**, not a defect of this
+port — kept in full because the ladder that got here (which guard fired → which list → which
+population → which instruction) is the reusable part, and because two of its rounds were wrong in
+instructive ways: the "deterministic write to a fixed address" reading, retracted by the census,
+and the stage-2 probe that never ran, caught only because the next instrument was made to say
+whether it had.
+
+The frontier moved to userland (init's exec fault), which is a different lane.
+
+**Instrument retirement — candidates, not yet retired.** The ISSUE-46 (`syncg`) and ISSUE-48
+(`pgz`) counter blocks have each done their job and been confirmed on metal (three times for
+ISSUE-48). They are candidates for retirement once the userland case closes. **Do not retire them
+yet**: the pinned diagnostic medium still carries them usefully, ISSUE-48's fix itself must stay
+regardless (only its counters are optional), and `pgz_held_n` remains the cheapest live proof that
+boot memory arrives dirty on this machine.
+
+## ✅ ISSUE-50 (2026-08-20, FIXED 2026-08-21): the panic backtrace stopped after one frame because its frame-pointer window was 64 KiB wide
+
+> **Ledger: FIXED in the port tree 2026-08-21, NOT YET EXERCISED ON HARDWARE** (no panic has
+> occurred since it landed). Not yet reflected in [`STATUS.md`](STATUS.md). The diagnosis below is
+> unchanged; the fix is at the end.
+
+### It is not a stall
+
+`backtrace` (`.text+0x595a4`) prints each frame **before** it validates it (`printf(LC%4, fp)` at
+`0x595fa`–`0x59604`, validity test at `0x5960e`–`0x5962a`). The test is:
+
+```
+5960e:  cmpil #0x3FFFFFFF,%fp@(-4) / blsw  -> invalid
+5961a:  cmpil #0x4000FFFF,%fp@(-4) / bhiw  -> invalid
+59626:  moveq #1,%d0                       -> valid
+5962a:  beqw 5979a                         -> stop the walk
+```
+
+i.e. a frame pointer is accepted only in **`[0x40000000, 0x4000FFFF]`** — a 64 KiB window at the
+u-block base. So the printer emits the address, rejects it, and stops. That is the whole
+behaviour, and it explains both observations exactly:
+
+* ISSUE-48's boot printed `Backtrace: 80F4964:` and stopped — `0x080F4964` is the boot stack
+  `pstack`, which lives in `.bss` and is nowhere near the window.
+* ISSUE-49's boot printed `40001DF4: 803E66C->80595` — that frame **is** in the window, so it
+  printed the frame and its return address; the next frame pointer left the window.
+
+The window is too narrow for the kernel's real stacks: AMIX's u-block is `[0x40000000,
+0x40040000)` (256 KiB, four times the window), and the boot and interrupt stacks are in the
+kernel's own `.bss` entirely outside it.
+
+### Why this is not a two-constant byte patch
+
+**The window is the walk's only terminator.** The loop (`0x5978e`–`0x59796`) simply follows
+`*fp` back to the top; there is no frame counter and no monotonicity check. Widening the window
+without adding a bound would let a corrupt chain walk forever *inside a panic* — the exact
+failure mode ISSUE-46 exists to prevent, reintroduced by the fix meant to help.
+
+### The fix, when it is taken
+
+A whole-routine override of `backtrace` that keeps the existing output format and adds all three
+bounds at once: accept the full u-block **and** the kernel's own data/bss range; require the
+frame pointer to **increase** each step (stacks grow down, so caller frames are at higher
+addresses — this alone kills every cycle); and cap the frame count outright.
+
+Not done in that pass on purpose: it would have put a second, unproven variable into a kernel
+whose one job was to diagnose ISSUE-49.
+
+### Fixed 2026-08-21, all three bounds together
+
+`src/btwalk.s` + `src/patch_btwalk.py`. The 26 bytes of the old test (`0x5960e`–`0x59627`) are
+replaced by `bsr.l bt_frame_ok` plus ten NOPs; the `tstl %d0 / beqw` at `0x59628` is untouched, so
+the island's contract is the old code's exactly — `d0 = 1` continue, `d0 = 0` stop. PC-relative for
+the same reason the `cb_release` hook is: a byte-patched absolute target would need loader
+rebasing. Verified before writing that **no branch in `backtrace` targets an address inside the
+replaced range**, and verified after linking that the displacement still resolves (`bsrl dba34
+<bt_frame_ok>`) — the FPSP `ld -r` that follows appends to `$OUT` and leaves our `.text` in place.
+
+| bound | test |
+|---|---|
+| RANGE | the whole u-block `[0x40000000, 0x40040000)` **or** `[edata, end)`, taken from the loader's own symbols so they cannot drift from the image |
+| ORDER | each frame pointer strictly **greater** than the last — stacks grow down, so this alone kills every cycle |
+| COUNT | hard cap of 64 frames per walk |
+
+Plus a free one: an **odd** frame pointer is refused, because the next thing the walk does with it
+is a longword read.
+
+**Arming needs no second hook.** `backtrace` seeds its first candidate with its own frame pointer
+(`0x595f2`), so the first call of every walk is the one where the candidate equals `%a6` — that is
+where the counters re-arm, and rule 2 guarantees no later frame can alias it. The island reads
+`%a6@(-4)` directly, since `bsr` builds no frame of its own.
+
+Output format, symbol lookup and print order are deliberately unchanged: a frame is still printed
+before it is judged, so the frame that *ended* the walk still appears. That address is itself
+diagnostic — it is what made this defect findable at all — and `bt_laststop` now latches it.
+
+## ✅ ISSUE-51 (2026-08-21, FIXED THE SAME DAY): `xpanic` decided whether to `sync()` from uninitialised bits
+
+> **Ledger: FIXED in the port tree 2026-08-21, NOT YET EXERCISED ON HARDWARE.** Not yet reflected
+> in [`STATUS.md`](STATUS.md). It mattered because it decided how much to trust a post-mortem
+> counter, which became a working diagnostic channel for this port during the 040 campaign.
+
+### The observation that forced it
+
+Two panics on the same kernel family, both with ISSUE-46's guarded `sync()` linked in:
+
+* ISSUE-46's boot (`PANIC: page_free`): `syncg_calls = 1`, `syncg_skip_ops = 11` — `sync()` ran
+  and skipped all eleven unfilled `vfssw` rows.
+* ISSUE-49's boot (`PANIC: segmap_unlock`): **`syncg_calls = 0`** — `sync()` was never entered,
+  though the machine warm-rebooted cleanly and the `putbuf` ring was intact.
+
+### Why
+
+`xpanic` (`.text+0x3e668`) gates its `sync()` call like this:
+
+```
+3e688:  movew %sr,%d0            ; writes only the LOW word of d0
+3e68a:  movew #9216,%sr
+3e68e:  movel %d0,%fp@(-4)       ; stores the FULL LONG
+3e692:  movew %sr,%d1
+3e694:  movew %d0,%sr
+3e696:  bftst %fp@(-4),5,3       ; e8ee 0143 fffc -> offset 5, width 3
+3e69c:  bnew  3e6a6              ; non-zero -> SKIP sync
+3e6a0:  jsr   sync
+```
+
+`bftst {5:3}` on a memory operand counts from the MSB of the addressed byte, so it tests bits
+26–24 of the stored longword — i.e. bits 10–8 of **d0's high word**. `movew %sr,%d0` never writes
+that half. What is in it is whatever the preceding `jsr sysdump` (`0x3e682`) left in `d0`.
+
+**So the panic path's decision to flush filesystems is taken on uninitialised bits**, and the two
+boots differ because `sysdump` returned different values.
+
+### Consequences, which is the point of recording it
+
+* **`syncg_calls` is not a reliable indicator that the panic path ran.** A zero means "`sync()`
+  was not called this time", not "the panic path failed". For post-mortems the trustworthy signals
+  are the `putbuf` ring contents and a clean warm reboot.
+* **ISSUE-46's guard is not made redundant by this.** It was simply not exercised on the second
+  boot. Had those bits fallen the other way — a coin toss on every early panic — the unguarded
+  `sync()` would have walked the NULL `vfssw` and destroyed the ring that produced ISSUE-49's
+  entire diagnosis. The guard remains load-bearing precisely because the gate is unpredictable.
+
+### Fixed 2026-08-21 — one instruction, same length
+
+`src/patch_xpanic_sync.py` rewrites the store at `0x3e68e` from `movel %d0,%fp@(-4)` (`2d40 fffc`)
+to **`clrl %fp@(-4)`** (`42ae fffc`), so the field `bftst` reads is deterministically zero and the
+panic path **always** reaches `sync()`.
+
+Three things make that the safe direction rather than the clever one:
+
+* `%fp@(-4)` is read by nothing else in `xpanic` — the SR restore at `0x3e694` comes from `%d0`,
+  the register, which this does not touch;
+* always-sync is the intended SVR4 panic semantic (flush filesystems on the way out); skipping
+  would silently drop it;
+* `sync()` on the panic path is safe at any point in boot **since ISSUE-46** — it skips vfs switch
+  rows `vfsinit` has not filled instead of calling through NULL. Landing this without that guard
+  would be reckless; with it, it is the behaviour the code always meant to have.
+
+The ordering is worth keeping in view: ISSUE-46 made this fix safe, and this fix makes ISSUE-46's
+guard reachable on every panic instead of on a coin toss.
+
+## ⏳ ISSUE-52 (2026-08-21, OPEN — instrumented, predictions registered): PID 1 dies at exec with a kernel-shaped user stack pointer
+
+> **Ledger: OPEN.** With ISSUE-49 closed (an emulation-core defect, not a kernel one) the kernel
+> boots and runs, and the frontier is userland. The statics below are settled; the build carries a
+> latch that decides the rest in one boot. Not yet reflected in [`STATUS.md`](STATUS.md).
+
+### Symptom
+
+```
+NOTICE: User BUS ERROR at 40001FC0, PC:80000012 FAULT:6 PID:1 CMD:
+```
+
+The kernel survives and handles it correctly — this is a well-formed fault report, not a crash.
+
+### Settled from the image, without a boot
+
+* **`0x40001FC0` is `u + 0x1FC0`** — the exact constant `_start` loads into `%sp`
+  (`0x3e R_68K_32 u+0x00001fc0`), i.e. the kernel stack top inside the u-area. Not a random
+  address, and not one a user program can legitimately reach.
+* **`PC 0x80000012` is init's own text**, so the icode's `trap #0` exec **succeeded** and
+  `/bin/init` is mapped and running. The icode itself is intact: `icode+0` is
+  `lea %pc@(L%stack),%sp` (`4FFB0170`), `+8` `moveq #11,%d0`, `+10` `trap #0` — the SYS_exec call,
+  and `szicode` = 0x36.
+* **The user stack lives at `userstack` = 0xC0800000** (`patch_execstk.py`,
+  EXEC-INITIALSTK-PATCH-SPEC). A correct USP would be near there, not in the u-block.
+* **FAULT:6 = FLTBOUNDS** per the port's own SIGINFO translation.
+
+So init is running with a **kernel-shaped stack pointer** and dies on its first stack access,
+which lands on the supervisor-only u-area.
+
+### Thread 1 answered: the wb040 precedent is present, and this is not it
+
+`wb040.s` — "THE init-hang fix, 2026-06-24" — describes this class in its own header: *"init's
+`lea` never set USP → systrap read the syscall args from a stale kernel USP = garbage"*. That fix
+**is in the lineage**: `wb040.o` is in the base `ld -r` list of both the shipped `260818-02`
+kernel and this one, so the 68040 write-back replay is present on the bench and on the card alike.
+The icode's `lea` is intact in the image and exec demonstrably worked. **This is a second instance
+of the same class from a different cause**, not a missing fix.
+
+### Thread 2: the static lead — a field consumed on the syscall path and written only on the fault path
+
+The saved-register pointer `u.u_ar0` (absolute symbol `U_AR0` = `u + 0x864`) is written by exactly
+one routine and merely read by the rest:
+
+```
+u_trap  0x5a490:  movel  %d4,u+0x864     ; d4 = %fp + 8   -- SETS it
+systrap 0x5a940:  moveal u+0x864,%a5     --  only READS it
+```
+
+`setregs` (`0x58b62`), which exec calls to install the new user context, writes the new stack
+pointer **through that pointer** (`u_ar0[60]` at `0x58c12`) and the new PC at `u_ar0+66`
+(`0x58c22`). Meanwhile `utraps` saves and restores the user SP on the **kernel stack**
+(`0x11ea` push / `0x11f6` pop), so the two only agree if `u_ar0` points at that saved slot.
+
+**PID 1's first ever entry into the kernel is a syscall** — the icode's `trap #0`. If nothing
+established `u_ar0` for PID 1 before it, `setregs` writes the new SP through an inherited or stale
+pointer, the real saved-USP slot never receives it, and the trap exit restores the old value. That
+is the ISSUE-48 shape exactly: a field consumed but not written, harmless where memory happens to
+be favourable and fatal where it is not — which is also the shape of the bench/card divergence,
+since the bench boots these same bits to the installer prompt.
+
+**This is a lead, not a conclusion.** What is *not* established statically is whether some caller
+of `systrap` sets `u_ar0` first, and what value PID 1 actually carries. Both are runtime facts.
+
+### Instrument
+
+`src/usptrap.s` + `src/patch_usptrap.py` retarget the single `cmn_err` relocation at `0x5a640` —
+the NOTICE call itself — to `unt_latch`, which latches and tail-jumps into the real `cmn_err` so
+the message prints unchanged. Verified surgical: one relocation moved, the other 531 `cmn_err`
+sites untouched. Blast radius on a healthy kernel is zero — the only path here is one already
+reporting a fatal user fault. `unt_magic2` is stamped `"USP!"` as the first act of the latch body,
+so silence cannot be mistaken for a negative result (the ISSUE-49 stage-2 lesson).
+
+| latched | what it decides |
+|---|---|
+| `unt_usp` | the **actual** user stack pointer at the fault. Equal to the reported fault address ⇒ init is dereferencing its own SP and the stale-USP reading is confirmed outright |
+| `unt_uar0` | `u.u_ar0` as `setregs` saw it. Near `u+0x1FC0` ⇒ inherited from proc0; wild or zero ⇒ never established at all. **Different bugs, different fixes** |
+| `unt_comm0/1` | the first eight bytes of `u_comm` (`u + 0x3b0`) — the very argument the NOTICE printed as an empty CMD |
+| `unt_u0/u1` | the head of the u-area, as a cheap coherence check |
+
+### Reconciling the empty CMD, which is the sharpest of the four
+
+`u_comm` is `u + 0x3b0`, computed at `0x5a61a` and pushed as the `%s`. Its emptiness has two
+readings and `unt_comm0` separates them:
+
+* **zero** ⇒ `u_comm` was never written, and since `exec` sets it, that is independent evidence
+  that exec wrote through the wrong pointer — the same failure that would misplace the stack
+  pointer;
+* **ASCII** (`"/bin"` = `0x2F62696E`) ⇒ exec *did* write it, the emptiness is a reporting artefact,
+  and the `u_ar0` story is badly weakened.
+
+### Predictions, registered before the run
+
+* `unt_usp == 0x40001FC0`, matching the reported fault address exactly.
+* `unt_comm0 == 0`.
+* `unt_uar0` inside `0x4000xxxx`. A value outside the u-block **refutes** the inheritance reading.
+* `unt_n == 1`.
+
+**Nothing here is measured yet.** If the latch confirms the reading, the fix follows the ISSUE-48
+pattern — establish the field explicitly on the path that consumes it, rather than zero-filling
+every frame — and it will be a kernel-side fix in this port, unlike ISSUE-49.
+
+### Latch read 2026-08-21 — the lead above is REFUTED, and two of the four fields say so
+
+`magic=UNT! n=1 have=1 magic2=USP!` · `usp=0xCB7C0002` · `uar0=0x40001F44` · `comm0=comm1=0` ·
+`u0=0xC0800000` · `u1=0`.
+
+**Correction 1 — the static lead in this entry is wrong.** `systrap` has exactly **one** caller,
+at `0x5a550`, which is `u_trap+0xd2`. Syscalls therefore arrive through `utraps` → `u_trap` →
+`systrap`, and `u_trap` sets `u.u_ar0 = %fp + 8` as its **first action** (`0x5a490`). So `u_ar0`
+*is* established on the syscall path. The "consumed but never written" reading was mistaken.
+
+**Correction 2 — `unt_uar0` is not diagnostic, and it is my instrument's fault.** The latch runs
+inside the NOTICE, which is inside `u_trap`, i.e. **after** `u_trap` has already overwritten
+`u_ar0` with the *fault's* frame pointer. `0x40001F44` is that frame, not the value `setregs`
+used at exec. Any reading built on it — including "the inheritance arm holds" — has to be
+withdrawn. Latching a field that the measuring path itself rewrites is the same error class as the
+stage-2 label bug in ISSUE-49, in a new disguise: **the value was real, the moment was wrong.**
+
+#### What the read does establish
+
+The pcb layout, read off the disassembly: 16 saved registers (USP, D0-D7, A0-A6) followed by the
+psw and the two PC words — so **`regsave[0]` is the saved USP**, `psw` is at +64 and the PC at
++66, which is exactly what `setregs` writes (`u_ar0[0]` ← new SP at `0x58c16`, `u_ar0+66` ← PC
+at `0x58c22`). The port's own `execmark.s` header states the same contract independently:
+*"systrap reads each syscall arg with lfuword(usp+off) where usp = u.u_ar0[0]"*.
+
+`struct user`'s first member is `pcb_t u_pcb`, so **`u0` is `u.u_pcb.regsave[0]` = `0xC0800000` =
+exactly `userstack`.** The correct user stack pointer was computed and stored into the u-area's own
+pcb. The value exists; what runs is `0xCB7C0002`.
+
+**Reconciling the fault address with the USP.** `0xCB7C0002` is garbage **and odd**. An odd stack
+pointer is fatal to any stack operation on the 68000 family and the reported fault address is
+derived from it, not equal to it — so `fa = 0x40001FC0` from the earlier boot and
+`usp = 0xCB7C0002` from this one are the *same* failure with different garbage, which is also why
+it varies per boot. The u-area-shaped `fa` of the first report was a coincidence of that boot's
+garbage, and reading meaning into it (as the first version of this entry did) was over-fitting.
+
+`comm0 = 0` still stands on its own: `u_comm` was never written, so exec's u-area writes did not
+all land where they were read from.
+
+#### What the next measurement must do differently
+
+The open question is unchanged but the moment is not: **does `setregs`' write and the trap exit's
+USP restore address the same memory?** That must be measured **at `setregs`**, not at the fault:
+
+* `u.u_ar0` as `setregs` sees it, and `u_ar0[0]` immediately after it writes;
+* the address of the USP slot `utraps` pushed (`%sp` at `0x11ec`), to compare against `u_ar0`;
+* `u.u_pcb.regsave[0]`, to see whether the surviving `0xC0800000` is the same word `setregs`
+  wrote or a second copy.
+
+If `u_ar0` and the pushed slot differ, the mismatch is named and the fix is to reconcile them. If
+they agree, the write lands correctly and something *later* clobbers USP between `setregs` and the
+`rte`, which is a different search.
+
+**No fix is proposed here, and no kernel was built for this round.** The lead this entry was
+built on is refuted, the field that appeared to confirm it was measured at the wrong moment, and
+guessing at a kernel-side change on that basis would be worse than saying so.
+
+### Round 2 instrument (2026-08-21): measure the handoff AT `setregs`, not at the fault
+
+`src/srgtrap.s` + `src/patch_srgtrap.py`. Two hooks, because one moment cannot answer it:
+
+1. **`srg_utraps`** — the `jsr u_trap` relocation at `0x11f0` is retargeted here. It records the
+   address of the slot `utraps` just pushed (`%sp + 20`: its own four saved registers plus the
+   `jsr` return address lands back on the pushed word) and tail-jumps into `u_trap` with the stack
+   untouched, so `u_trap`'s `%fp + 8` is unchanged and its `rts` still returns to `0x11f4`. It
+   fires on **every** user trap and is deliberately **not** once-only: it must track the *current*
+   trap, because the exec syscall's own frame is the one `setregs` runs inside.
+2. **`setregs`** — weakened, stock body retained as `setregs_orig` at `0x58b62`. The wrapper
+   latches `u.u_ar0` **before** the stock body, calls it with the same argument, then latches
+   `u_ar0[0]` (the word it just wrote), `u.u_ar0` again (to prove it did not move underneath), and
+   `u + 0`. The stock return value is carried in `d2` across the post-latch and restored to both
+   `d0` and `a0`.
+
+**`srg_match` is the verdict**, computed in the kernel so the readout needs no arithmetic: 1 if
+`u.u_ar0` equals the pushed-slot address, 0 if not.
+
+Execution stamps on both capture points per the standing rule — `srg_ut_stamp` = `"UTR!"`,
+`srg_stamp1` = `"PRE!"`, `srg_stamp2` = `"PST!"`. A missing stamp means the path was never taken,
+which is a different fact from a zero value; this entry has already been burned twice by not being
+able to tell those apart.
+
+#### The fork, registered before the run
+
+| outcome | meaning |
+|---|---|
+| **`srg_match == 0`** | `setregs`' write and the trap exit's USP restore address **different memory**. The mismatch is named; `srg_uar0_pre` vs `srg_slot_at` gives the size and direction, and the fix reconciles them |
+| **`srg_match == 1`** | the handoff is sound — `setregs` wrote the new SP into the exact word the trap exit loads USP from. Then something **clobbers USP between `setregs` and the `rte`**, and the search moves there. `srg_ar0_0` should read `0xC0800000`; if it does not, the write itself did not land, which is a third story |
+
+Also predicted: `srg_n` ≥ 1 with all three stamps set; `srg_uar0_pre` == `srg_uar0_post`;
+`srg_pcb0_post` == the `0xC0800000` already seen.
+
+Blast radius: the `utraps` hook is four stores on a path already entering the kernel; the
+`setregs` wrapper is a call-through. Neither changes behaviour.
+
+### Round 2 read (2026-08-21): BOTH registered forks die — exec never ran at all
+
+`magic=SRG! MATCH=0 ut_stamp=UTR! stamp1=0 stamp2=0 ut_n=1 n=0 pushslot=0x40001F44`, everything
+else zero.
+
+`u_trap` has **exactly one reference** in the unpatched stock image — the `jsr` at `0x11f0` inside
+`utraps`. Every user trap, syscall and fault alike, routes through it. So **`ut_n = 1` means one
+user trap in the entire boot**, and since the NOTICE is printed from `u_trap`'s fault path, that
+one trap *is* the fault.
+
+**The icode's `trap #0` never executed. exec never ran. `setregs` never ran** (`n = 0`, no `PRE!`,
+no `PST!`). `u_comm = 0` follows for free — exec is what would have written it. Both registered
+forks are dead, and so is the "exec errored out pre-`setregs` and returned to the icode" reading:
+that needs two traps and there was one.
+
+`pushslot = 0x40001F44` is the fault's own frame slot — the same number round 1 misread as
+`u_ar0`, now correctly identified.
+
+#### PID 1 died on its FIRST user instruction
+
+`main` maps and copies the icode to **`0x80800000`** (`as_map` `0x59972`, `copyout` `0x5998a`) and
+returns that address in `d0` (`0x599d2`). The initial user stack is `as_map(0xC07FF800, 0x800)`,
+top **`0xC0800000`** — exactly the `pcb0` already read. `_start` then builds the frame and returns
+to user:
+
+```
+44:  jsr   main          ; d0 = the user PC
+4e:  movew %d1,%sp@-     ; format word 0x0000 (4-word frame)
+50:  movel %d0,%sp@-     ; PC        (sets N from d0)
+52:  bmis  5c            ; 0x80800000 is negative -> the USER-mode arm
+5c:  movew %d1,%sp@-     ; SR = 0x0000
+5e:  rte
+```
+
+That is a correct format-0 frame and correct on the 68040. **But the fault was at PC
+`0x80000012`, not `0x80800000`.** The `rte` did not deliver the entry `main` computed, so the
+icode's first instruction — `lea %pc@(L%stack),%sp`, the one that establishes the user stack —
+never ran.
+
+**That inverts the last two rounds: the garbage USP is a *consequence*, not the cause.** `_start`
+never loads USP and does not need to, precisely because the icode sets its own stack; with the
+wrong PC that never happens, and USP keeps whatever it held (`0xCB7C0002`).
+
+#### Round 3 instrument
+
+`src/inittrap.s` + `src/patch_inittrap.py` retarget `_start`'s `jsr main` relocation at `0x46` to
+`ini_main`, which calls the real `main`, latches its return value, and hands it back in `d0`
+unchanged so the `bmis` and the frame build are bit-identical. Stamps `INI!` on entry and `RET!`
+after `main` returns.
+
+| outcome | meaning |
+|---|---|
+| `ini_ret == 0x80800000` | `main` is right; the corruption is in the `rte` or the frame it reads — a 68040 frame/format question |
+| `ini_ret == 0x80000012` | `main` computed the wrong entry; the search moves into its icode setup |
+| anything else | a third story, and the value names it |
+
+**Noted, not acted on:** the initial stack mapping is 2 KiB-shaped — base `0xC07FF800` is not
+4 KiB-aligned and the size is `0x800`. `as_map` rounds to page boundaries so it probably still
+covers `[0xC07FF000, 0xC0800000)`, but nothing in the Model-B patch tables appears to own that
+site. Worth a look once the entry-point question is settled.
+
+### Round 4 (2026-08-21): the firmware RTE probe reframes it again — catch the ONE user transition
+
+The Z3660 lane exonerated the RTE core on table-walked frames, and its metal probe (first 8
+u-block-window RTEs after MMU-on) showed **every one returning to supervisor kernel text** — `pc
+0x0800xxxx`/`0x080Dxxxx`, `SR` S-set, `fmt 0068`/`006C`, `usp 0x08003118` throughout. All eight
+are interrupt/fault churn *inside* `main()`. None is the user drop (no `SR=0x0000`, no
+`pc=0x80800000`, no `fmt=0`). Round 3 proved there is exactly one user trap in the whole boot (the
+fault), so the user transition happened once, later than the 8-cap, and delivered the wrong PC.
+
+**Where `_start`'s stack is, settled:** `0x3c` does `moveal #u+0x1FC0,%sp`, so the SSP is
+`0x40001FC0` — in the u-block. The captured RTEs at `0x40001Dxx`–`0x1Exx` are `main()`'s nested
+frames on that stack. So the firmware window is right; the user RTE is simply the 9th+.
+
+**The arithmetic that names the bug:** icode is mapped at `0x80800000`; the fault PC is
+`0x80000012` = `0x80800000` with **bit 23 (`0x00800000`) cleared**, plus `0x12`. PID 1 ran a
+couple of instructions from the wrong page (`0x80000000`) and faulted. So `main` computes the
+right entry (round 3's `ini_ret = 0x80800000`) but the user-transition RTE delivered it with bit
+23 gone.
+
+#### Instrument — the user RTE itself
+
+`src/inituser.s` + `src/patch_inituser.py` replace `_start`'s frame-build + user RTE
+(`0x4a`–`0x5f`, 22 bytes) with `bra.l ini_user_rte` + NOPs. The island **rebuilds the identical
+frame** from `d0` (so a good kernel launches PID 1 unchanged) and, on the first firing, latches
+`d0`, the SSP, USP, and the three frame words read straight back off the stack. `bra.l` not
+`bsr.l`: it pushes no return address, so the reported SSP is the true one the RTE pops from.
+
+**The decisive triple, in one boot** — `ini_ret` (round 3, what `main` returned), `iur_pc` (`d0`
+at the frame build), `iur_f_pc` (the PC longword actually in the frame):
+
+| reading | verdict |
+|---|---|
+| all three `0x80800000` | frame correct, **RTE delivered `0x80000000`** — back to the CPU core, but with the exact failing frame address (`iur_a7` ≈ `0x40001FB8`, u-block/table-walked) and the exact bit: the concrete case the "exact delivery on table-walked frames" exoneration did not cover |
+| `iur_pc = 0x80000000`, `ini_ret = 0x80800000` | `d0` lost bit 23 between `ini_main`'s `rts` and here — an ISSUE-49-family data-path bit-drop, **kernel-side fix** |
+| `iur_f_pc = 0x80000000`, `iur_pc = 0x80800000` | the `movel %d0,%sp@-` push truncated the store — a store bit-drop, the nearest cousin of ISSUE-49's BFINS finding |
+
+#### Predictions, registered
+
+`iur_stamp1 == "IUR!"`, `iur_stamp2 == "FRM!"`, `iur_n == 1`; `iur_f_sr == 0x0000` (user),
+`iur_f_fmt == 0x0000`, `iur_a7` in `0x4000xxxx`. The fork itself is genuinely open — prior is
+`iur_pc == iur_f_pc == 0x80800000` (frame correct, RTE delivers wrong) or a clean bit-23 drop at
+exactly one of the three points. `iur_usp` is captured too: it becomes PID 1's `a7` at the drop,
+before the icode's own `lea` would set it — which is why the earlier garbage-USP reads were a
+consequence, not the cause.
+
+### Round 4 read + round 5 fix (2026-08-21): the island caught the wrong RTE, and the miss named the mechanism
+
+Round 4 latched `n=2`, `f_sr=0x00002000` (supervisor), `pc=f_pc=0x080DA84C`, `a7=0x40001FC0`.
+`0x080DA84C` is **`sched`** (the scheduler, a port override); `a7` is exactly `_start`'s SSP. Not
+the user drop.
+
+**Why the island fired twice.** `main` has two return paths to its `rts`:
+`0x599d2 movel #0x80800000,%d0` and `0x59c0e movel #sched,%d0`. That is the SVR4 boot fork —
+`main` sets up proc 1 with `newproc` and "returns twice":
+
+* **proc 0** returns `&sched` → falls through `ini_main` into `_start 0x4a` → this island → `d0`
+  positive → supervisor arm → RTE into `sched`, which calls `swtch` (`0xda852`) and loops;
+* **proc 1**, context-switched in by `swtch`, resumes in `main`, returns `0x80800000` → the same
+  trampoline → `d0` negative → user arm → **the real user drop**.
+
+So the island is the launch trampoline for *both* processes, round 4's `have`-gate latched
+firing 1 (proc 0 → sched), and `ini_ret = 0x80800000` (round 3) is proc 1's return, written last.
+
+**The fix (round 5):** latch only the **user arm** (the pushed SR has S clear), once. Every
+non-user firing still builds its frame and RTEs, so proc 0 still reaches `sched` and proc 1 still
+drops to user — the boot is unchanged. The user arm is entered only by proc 1's drop, so
+"user arm + once" is unambiguous. One deliberate refinement over "S-clear **and** pc-in-range":
+the S-clear arm alone isolates the drop, so the latch there is **unconditional** and captures the
+drop even if the delivered PC is wildly corrupt — a pc-range *gate* could miss exactly the
+failure being hunted. The pc-in-range test is kept as a recorded flag (`iur_pc_inrange`), not the
+gate. `iur_first_pc`, `iur_super_n`, `iur_user_n` are added so the re-run confirms the
+two-firing story.
+
+Predictions unchanged from round 4 for the decisive triple (`ini_ret` / `iur_pc` / `iur_f_pc`),
+plus: `iur_n ≥ 2`, `iur_super_n ≥ 1`, `iur_user_n == 1`, `iur_first_pc == 0x080DA84C`,
+`iur_f_sr == 0x0000`, `iur_pc_inrange == 1`, `iur_a7 ~ 0x40001Fxx` (proc 1 kstack in the fixed u
+VA, a page-table-translated address — so if all three PCs read `0x80800000`, the bit-23 drop is
+in the RTE's read of the frame VALUE, not the address, and the exact translated frame address is
+in `iur_a7` for the harness).
+
+### Round 5 read + round 6 ring (2026-08-21): bit 23 FIXED (firmware) — the fault moved into user text
+
+The Z3660 bus-misalign fix (BDBA0BDE) delivered bit 23 correctly: the fault PC moved
+`0x80000012` → **`0x80800012`**, so PID 1 now launches at the right entry `0x80800000` and runs.
+That confirms the round-4/5 fork's "RTE delivered the value with bit 23 dropped" arm — it was the
+CPU core reading the frame, exactly as predicted, and it is now closed on the firmware side.
+
+But PID 1 still `User BUS ERROR`s, now `PC:80800012 FAULT:6 fa=40001FC0` (the same u-block SSP
+address). Disassembled, the icode is only 14 bytes of code:
+
+```
+icode+0x00  lea %pc@(L%stack),%sp   ; 8 bytes -> SP = icode+0x2A (the arg block)
+icode+0x08  moveq #11,%d0           ; SYS_exece
+icode+0x0a  trap #0
+icode+0x0c  bras .                  ; loop forever if exece returns
+icode+0x0e  "/sbin/init\0" ...      ; data
+```
+
+`icode+0x12` (`0x80800012`) is **inside the "/sbin/init" string**, four bytes past the `bras`
+self-loop. So PID 1's PC ran off the end of the code into data, and `fa=0x40001FC0` (the SSP)
+means the garbage it then executed touched the kernel stack — consistent with PID 1 running on
+the wrong A7.
+
+**The open questions, all runtime:** did the icode's `lea` set SP to `~0x8080002A`, or is PID 1 on
+the un-switched SSP (`0x40001FC0`) / a stale USP (`0x08003118`, seen in round 4)? Did the icode's
+`trap #0` execute at all, or did PID 1 fault before it? Did the syscall return advance the user PC
+to `+0x12` instead of `+0xc`?
+
+#### Round 6 instrument — the first four user traps, in order
+
+Round 2 proved every user trap (syscall *and* fault) routes through the `utraps → u_trap` edge
+(`srg_ut_n = 1` was the fault). Round 6 extends that existing hook into a **ring of the first four
+user traps**, reading each from the exception frame on the SSP: `srt_vec[i]` (frame fmt+vec word —
+`0x0080` for a `trap #0`, `0x7008` for an access error), `srt_pc[i]` (user PC), `srt_usp[i]`
+(A7 at the trap = the SP the `lea` set), `srt_d0[i]` (user d0). `srt_stamp` = `"SRT!"`.
+
+**Predictions, registered:**
+
+* if the icode reaches its syscall: `srt_vec[0] = 0x0080`, `srt_pc[0] ≈ 0x8080000C` (return past
+  `trap #0`), `srt_d0[0] = 0x0B` (exece), and `srt_usp[0] = 0x8080002A` **iff the `lea` ran and
+  A7 is the arg block**. Then `srt_vec[1] = 0x7008`, `srt_pc[1] = 0x80800012` — the fault.
+* if PID 1 faults before ever trapping: `srt_vec[0] = 0x7008`, `srt_pc[0] = 0x80800012`, and
+  `srt_usp[0]` tells the SP it faulted on — `0x40001FC0` (un-switched SSP) or `0x08003118` (stale
+  USP) names the mechanism directly.
+
+The decisive cell is `srt_usp[0]`: `0x8080002A` clears the RTE/lea and moves the hunt to why the
+syscall/return runs off into the string; `0x40001FC0`/`0x08003118` proves PID 1 is on the wrong
+stack, which is a kernel USP-load (or emulator RTE USP-switch) defect.
+
+**Emulator vs kernel, stated:** the bit-23 half was **emulator** (fixed). This half is undecided
+and the ring decides it — a wrong `srt_usp` with a correct `srt_pc[0]=+0xc` return points at the
+RTE-to-user USP switch (emulator) or the kernel never loading USP before `_start`'s user RTE
+(kernel); a `srt_pc` that lands in the string with a *correct* `srt_usp` points at the syscall
+return-PC advance. No fix is proposed until the ring says which.
+
+### Round 6 read attempt (2026-08-21): all blocks zero = wrong address, and the analysis sharpens
+
+The metal read of i52f showed `PC:80800012` on HDMI (confirming the run-off-into-the-string) but
+**every counter block read `0x00000000`, including `pgz_magic`**. `pgz` populates at `kvm_init`
+on every boot (proven four times), so a zero *magic* cannot mean the block failed — it means the
+read address was wrong.
+
+**The cause is a build-line address mismatch, and it is a standing trap worth recording.** The
+main line carries the full instrument set (the ISSUE-10 `i10rev040` block and its neighbours);
+the minimal-delta line does not. That extra `.data` on main pushes every counter block to a
+higher runtime address. The addresses being read (`srg@0810DEF8`, `pgz@0810DDD4`, …) are the
+**main-line** build's; the card runs the **minimal-line** i52f, whose blocks sit ~8 KB lower.
+`tools/status-facts.sh` must be run on the *exact artifact booted* — the two lines are never
+interchangeable for counter addresses, and the specific numbers change every build, so they are
+not recorded here (per the repository's own rule against hand-carried volatile numbers).
+
+**What the fault reboots into.** The counter blocks live in `.data` (magic word plus zeroed
+counters), not `.bss`. `mlsetup`'s `bzero(edata, end)` clears `.bss` only, so it does **not** wipe
+them; they are reset only when `boot2` reloads the kernel image on the next warm boot. PID 1's
+fatal user fault → `SIGBUS` to init → init dies → the kernel panics ("init died") → `xpanic` →
+(ISSUE-46 guard) `sync` → `rtnfirm` → warm reboot, on the observed ~90 s cycle. So within a
+cycle, `pgz` is populated from `kvm_init` onward and `srt` from the init fault onward; both
+persist until the reload. A correct-address read at almost any time after early boot shows `pgz`
+non-zero.
+
+**The analysis sharpens — it is the SECOND user RTE that is corrupt.** The fault is at
+`PC=0x80800012` with `fa=0x40001FC0`. The icode's `lea` sets `SP=~0x8080002A`; for a string-byte
+"instruction" at `0x80800012` to touch `0x40001FC0`, **A7 must be `0x40001FC0` (the SSP), not the
+arg block** — so A7 was corrupted *after* the `lea`. The only thing between the `lea` and the
+fault is the `trap #0` (exece) and its return. Therefore the **syscall-return RTE** (the second
+kernel→user transition — the first being proc 1's launch) delivered **both** a wrong PC
+(`0x80800012` instead of `0x8080000C`) **and** a wrong A7 (`0x40001FC0` = the SSP, i.e. USP was
+left equal to the SSP). PID 1's launch RTE worked (it reached `0x80800000` and ran); the syscall
+return did not. That relocates the bug to how the syscall/exece return builds the user context
+(kernel) or how the RTE-from-syscall restores USP (emulator).
+
+#### HANDOVER — firmware-side capture of the user-drop RTEs (no `.data` race)
+
+For the accelerator's 68040 core. The kernel-side `srt` ring reads the same answer but is trapped
+behind the `.data`/reboot timing; the emulator can print it to serial the instant it happens.
+
+**Gate:** fire on any `RTE` whose popped frame drops the CPU to **user mode** — the SR word the
+RTE is about to load has the **S-bit (bit 13, mask `0x2000`) CLEAR**. At the `RTE`, `a7` points at
+the frame; read the SR word at `a7+0` and test `(sr & 0x2000) == 0`. Capture the first 4–8 such
+RTEs (there are normally very few this early).
+
+**Print, per firing, immediately to serial:**
+
+| field | source | expected / tell |
+|---|---|---|
+| seq | a firing counter | RTE #1 vs #2 |
+| `pc` | frame PC longword at `a7+2` | #1 = `0x80800000`; **#2 suspected `0x80800012`** (the wrong return) |
+| `sr` | frame SR word at `a7+0` | bit 13 clear (user) |
+| `ssp` | `a7` before the pop | the kernel stack |
+| **`usp`** | the USP register value now | **the decisive field — becomes PID 1's A7.** valid user SP = RTE fine; `0x40001FC0` (SSP) or `0x08003118` (stale) = PID 1 dropped onto a bad stack |
+| `fmt` | frame format/vector word at `a7+6` | format 0 (`0x0xxx`) |
+
+**Interpretation:** the **second** S-clear RTE is the syscall return from the icode's `trap #0`.
+If it shows `pc=0x80800012` and/or `usp=0x40001FC0`, the syscall-return context (PC + USP) is
+corrupt — which is exactly the observed fault. The first RTE (proc 1 launch) is the control: it
+should be clean (`pc=0x80800000`). This is emulator-side to *observe*; whether the *fix* is
+emulator (RTE USP restore) or kernel (syscall-return frame build) is what the two RTEs'
+`usp`/`pc` values decide.
