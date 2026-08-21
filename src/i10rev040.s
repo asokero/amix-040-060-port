@@ -3886,7 +3886,7 @@ Lia_take:
 	movel	u+0x1cc,i10a_comm3
 | --- as_fault's own arguments ---
 	movel	%fp@(12),i10a_addr	| arg2 = the faulting address
-	movel	%fp@(20),i10a_type	| arg4 = fault type (1 = F_INVAL, 2 = F_PROT)
+	movel	%fp@(20),i10a_type	| arg4 = fault type (0 = F_INVAL, 1 = F_PROT)
 	movel	%fp@(24),i10a_rw	| arg5 = rw
 	movel	%fp@(8),i10a_as		| arg1 = the address space
 | --- as_segat(as, pagebase) BEFORE the resolver: is there a covering segment? ---
@@ -4011,7 +4011,7 @@ i10a_addr:
 	.long	0			| arg2: the faulting address
 	.globl	i10a_type
 i10a_type:
-	.long	0			| arg4: fault type (1 = F_INVAL demand, 2 = F_PROT)
+	.long	0			| arg4: fault type (0 = F_INVAL demand, 1 = F_PROT)
 	.globl	i10a_rw
 i10a_rw:
 	.long	0			| arg5: rw (1 = S_READ, 2 = S_WRITE)

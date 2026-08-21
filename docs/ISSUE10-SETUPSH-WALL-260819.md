@@ -155,9 +155,18 @@ Worth writing down carefully, because ISSUE-10 has been without a reliable one s
   syntactically-complete 4 KiB chunk sixteen times parses **clean** at every step from 8 to 64 KiB
   — each repeat redefines rather than grows the parse tree. What matters is how far `sh`'s arena
   has to grow, not how many bytes went past the lexer.
-* **The threshold is sharp.** Truncated to 34 KiB the script parses clean; at 38 KiB and beyond it
-  walls, every time. (36 KiB lands on a truncation syntax error and aborts the parse early, so it
-  says nothing.)
+* **The threshold is sharp — and it is a CODE budget, not a file-size one.** Truncated to 34 KiB the
+  script parses clean; at 38 KiB and beyond it walls, every time. (36 KiB lands on a truncation
+  syntax error and aborts the parse early, so it says nothing.) Those KiB figures are a *stand-in*
+  for the quantity that actually runs out, and the substitution was tested rather than assumed: a
+  comment-and-blank-line strip of the whole script — a **3.2× byte reduction**, leaving **26,880 B
+  of code** — walls exactly as before, with a console capture **byte-identical** to the unstripped
+  run. Against that, the 34 KiB truncation that parses clean carries **8,517 B of code**. So the
+  budget is spent by code that builds parse tree; comments, which the lexer discards, buy nothing
+  at all, and shrinking the file without shrinking the code does not move the threshold by one
+  fault. Quote the pair — **~8.5 KB of code clean vs ~26.9 KB of code walled** — and never the file
+  size. This is §14.6 restated from the other side: the fatal grow is early and is not proportional
+  to parse volume, which is also why a strip that removes two thirds of the bytes changes nothing.
 * **The flood is thousands of faults deep, not the "11–20" recorded this morning.** That figure
   was the number of `NOTICE` lines a console page holds. `i10p_n` counts them: **8048** in the
   capture run, and 16096 in another. Every one is at the same address — `i10p_fa` and
@@ -1300,8 +1309,8 @@ i10r's `SEGV_MAPERR`:
    `as_map`/`segvn_create`/anon-reservation returns an error, so `brk` returns `ENOMEM` (sh's
    "no space"), `p_brksize` is not advanced to reach `0x800152A0`, and the data segment is never
    extended. `as_segat` therefore finds no covering segment and `as_fault` returns `FC_NOMAP`.
-   **Predicted `i10a`: `i10a_ret = 3`, `i10a_seg = 0`, `i10a_brkend < 0x800152A0`, `i10a_type = 1`
-   (F_INVAL), `i10a_pas = i10a_as`.**
+   **Predicted `i10a`: `i10a_ret = 3`, `i10a_seg = 0`, `i10a_brkend < 0x800152A0`, `i10a_type = 0`
+   (F_INVAL — corrected from 1; see §23.1), `i10a_pas = i10a_as`.**
 2. **(iii) — sh writes past its break; the fault-driven grow other platforms rely on is what the 040
    store-drop breaks.** Same `as_fault` signature as (i) — `brkend < addr`, `seg = 0`, `ret = 3` — but
    here `brk` was never asked to cover the address. Distinguished from (i) only with knowledge of
@@ -1536,7 +1545,8 @@ body takes the `5b02a` shortcut. `fault_to_info(FC_NOMAP)` and that shortcut wri
 `si_signo = 11 / si_code = 1`, which is why §16's `ret = 11`, `sicode = 1` reading could not
 tell the two apart — and why the design placed the fix one layer too low.
 
-**Correction to §18.3, and to a comment in `src/i10rev040.s`:** `F_INVAL` is **0**, not 1.
+**Correction to §18.3 and to two comments — `src/i10rev040.s` and `test-tools/i10a.sh` (all three
+now carry the corrected value):** `F_INVAL` is **0**, not 1.
 `usrxmemflt` clears its type slot at `0x5af0c` and passes it at `0x5aff6`; the `F_PROT` call
 site at `0x5b0d0` passes literal 1; and `fbrelse`/`fbwrite` (`0x3fac4`, `0x3fb74`) pass 3 =
 `F_SOFTUNLOCK` against `as_fault`'s own softlock-undo arm at `0xae1f2`, which fixes the whole

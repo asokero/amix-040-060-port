@@ -22,7 +22,7 @@
 #                  SHORT to cover the address (a gap), distinct from no segment at all
 #   i10a_seg_post  as_segat AFTER: did a covering segment appear during resolution?
 #   i10a_ret       as_fault's ACTUAL return: 3 = FC_NOMAP (expected), 0 = resolved
-#   i10a_type      1 = F_INVAL demand, 2 = F_PROT
+#   i10a_type      0 = F_INVAL demand, 1 = F_PROT  (2 = F_SOFTLOCK, 3 = F_SOFTUNLOCK)
 #   i10a_brkbase / i10a_brksize / i10a_brkend   the process break as brk keeps it:
 #                  brkend = brkbase + brksize.  brkend < addr = the break never reached
 #                  the write (brk did not grow / failed -- hypothesis i / iii); brkend
