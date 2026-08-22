@@ -4726,11 +4726,18 @@ some other reason, and finding out which is worth more than the fix.
 the artifact. The zero loop and the scan loop cover the same 15 longs (60 bytes) per struct that
 `memialloc` steps over. **No boot has run this code.**
 
-## ⏳ ISSUE-49 (2026-08-20, OPEN — instrumented, predictions registered): `PANIC: segmap_unlock` at first root-mount I/O
+## ✅ ISSUE-49 (2026-08-20, CLOSED 2026-08-21 — a symptom record, not a defect of this port): `PANIC: segmap_unlock` at first root-mount I/O
 
-> **Ledger: OPEN.** The statics below are settled and are not worth re-deriving; what remains
-> is runtime state, and the build carries an instrument that answers it in one boot. Not yet
-> reflected in [`STATUS.md`](STATUS.md).
+> **Ledger: CLOSED 2026-08-21 — symptom record, no kernel change.** The defect was in the
+> accelerator card's 68040 emulation core, which ran bitfield operations through the 68030
+> accessors, and it was fixed there; validated on metal the same day. The resolution is at the
+> end of this entry, and the platform it belongs to is described in
+> [`docs/PLATFORM-Z3660.md`](docs/PLATFORM-Z3660.md). The note below stood while the entry was
+> open and is kept as it was written:
+>
+> > **Ledger: OPEN.** The statics below are settled and are not worth re-deriving; what remains
+> > is runtime state, and the build carries an instrument that answers it in one boot. Not yet
+> > reflected in [`STATUS.md`](STATUS.md).
 
 ### Symptom
 
@@ -5353,11 +5360,20 @@ Three things make that the safe direction rather than the clever one:
 The ordering is worth keeping in view: ISSUE-46 made this fix safe, and this fix makes ISSUE-46's
 guard reachable on every panic instead of on a coin toss.
 
-## ⏳ ISSUE-52 (2026-08-21, OPEN — instrumented, predictions registered): PID 1 dies at exec with a kernel-shaped user stack pointer
+## ✅ ISSUE-52 (2026-08-21, CLOSED 2026-08-21 — a symptom record, not a defect of this port): PID 1 dies at exec with a kernel-shaped user stack pointer
 
-> **Ledger: OPEN.** With ISSUE-49 closed (an emulation-core defect, not a kernel one) the kernel
-> boots and runs, and the frontier is userland. The statics below are settled; the build carries a
-> latch that decides the rest in one boot. Not yet reflected in [`STATUS.md`](STATUS.md).
+> **Ledger: CLOSED 2026-08-21 — symptom record, no kernel change.** Two defects in the
+> accelerator card's 68040 emulation, both fixed there and validated on metal the same day: the
+> access-error frame stacked the write-back status words without clearing them, so a stale
+> write-back was replayed against the current fault's address; and `mmufixup[1]` was never
+> cleared at reset, so the first bus fault of a session zeroed `copyout`'s source register. Both
+> are described in [`docs/PLATFORM-Z3660.md`](docs/PLATFORM-Z3660.md) §2. The prediction ladder
+> below is kept in full, including the rounds it got wrong — the note as it stood while the entry
+> was open:
+>
+> > **Ledger: OPEN.** With ISSUE-49 closed (an emulation-core defect, not a kernel one) the kernel
+> > boots and runs, and the frontier is userland. The statics below are settled; the build carries a
+> > latch that decides the rest in one boot. Not yet reflected in [`STATUS.md`](STATUS.md).
 
 ### Symptom
 
