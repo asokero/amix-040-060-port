@@ -31,11 +31,8 @@
 #   capture-hdrmismatch    header rec_count and the `ring end n=` disagree.
 #   capture-noend          the capture stops inside the ring.
 #   capture-mangled        an `S` line that is not the frozen fixed-width form.
-#   capture-badmagic       magic=Z3P2.
+#   capture-badmagic       magic=Z3P2 in a version=1 header: the two disagree.
 #   capture-badversion     version=9: a version no firmware has ever emitted.
-#   capture-v2ring         version=2 in a ring header -- the announced-but-unpublished
-#   capture-v2stats        version=2 in a stats dump.  Both must be refused with the reason
-#                          and a pointer at the seam, not read under version-1 rules.
 #   capture-badrecsize     rec_size=12.
 #   capture-badmodel       TRANSITIONS the probe-landing model cannot reproduce.
 #   capture-030            the 68030 path: tier-0 page-cache counters absent, not zero.
@@ -49,6 +46,42 @@
 #                          not repairable, and must still be refused.
 #   capture-atcbroken      ATC_HIT + FAULTS != XLATE.
 #   capture-tier0broken    IPAGE_MISS + DPAGE_RMISS + DPAGE_WMISS != XLATE.
+#
+# WIRE VERSION 2 -- the same discipline against the three numbers v1 mislabelled.  Each of
+# these is built so that a tool still applying v1's rules produces a DIFFERENT answer rather
+# than an error, because that is the failure mode being guarded against:
+#
+#   capture-v2valid        a complete v2 capture: probe priced per TRANSITION, the tail
+#                          split four ways summing to 20.00%, id 12 XLATE_OK and id 19 a
+#                          real ATC_HIT with DIFFERENT values, and a probe-landing model
+#                          that reproduces TRANSITIONS to the digit.
+#   capture-v2bsp          clk=bsp -- the clock is the compile-time BSP constant and the
+#                          wrap cross-check is structurally blind to it.
+#   capture-v2clkodd       a clk= value no version defines: unsafe by default, but named as
+#                          unrecognised rather than reported as `bsp`.
+#   capture-v2probeover    TRANSITIONS x probe_cyc EXCEEDS total_cyc.  v2 must withhold and
+#                          report; clamping is what made v1's 2x over-pricing look like a
+#                          result.
+#   capture-v2tailmismatch the firmware's own '[PROF] t' line disagreeing with the four
+#                          bucket rows it is computed from.
+#   capture-v2atcbroken    ATC_HIT + ATC_MISS EXCEEDING XLATE: a partition summing to more
+#                          than the set it partitions.
+#   capture-v2atcshort     the same sum SHORT by more than FAULTS.  A shortfall is legal
+#                          (translates that faulted before the walk decision) but is bounded
+#                          by FAULTS, because every one of them threw.
+#   capture-v2-030         the 68030 path: no tier-0 counters AND no XLATE_OK site.  Both
+#                          read zero and zero means ABSENT -- a printed "0.00% returned an
+#                          address" would claim every translate faulted.
+#
+#   capture-v2magic1       version=2 carrying magic=Z3P1.
+#   capture-v1v2grammar    ver=2 written in the version-1 grammar.
+#   capture-v2v1grammar    ver=1 written in the version-2 grammar.  All three are captures
+#                          that answer the version question twice and disagree with
+#                          themselves; none is corrupt, and all must be refused rather than
+#                          resolved in favour of one field.
+#   capture-v2bootv1       a v1 boot line above a v2 dump with no probe_cyc of its own --
+#                          one capture spanning a reflash.  The boot line's per-PAIR figure
+#                          must NOT be fed to a per-TRANSITION rule.
 #
 #   kernel.nm / kernel.elf the same symbol table two ways, so both symbol paths are
 #                          exercised.  A branch that never ran is not a branch that works.
@@ -89,6 +122,20 @@ COUNTER_NAMES = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                  "IPAGE_HIT", "IPAGE_MISS", "DPAGE_RHIT", "DPAGE_RMISS",
                  "DPAGE_WHIT", "DPAGE_WMISS", "XLATE", "ATC_HIT", "ATC_MISS",
                  "MISALIGN_R", "MISALIGN_W", "FAULTS", "TRANSITIONS", "STACK_OVF"]
+
+# Version 2 renames two ids and appends four.  The generator carries BOTH name tables in
+# full rather than patching one into the other, because the symbolizer's name-drift check
+# compares them entry for entry -- and a fixture built by mutating the v1 list would agree
+# with a tool that had made the same mutation, which is not a test of anything.
+BUCKET_NAMES_V2 = ["LOOP", "FETCHOP", "FETCHEX", "READ", "WRITE",
+                   "XLATE", "WALK", "HANDLER", "TAILADV", "FAULT", "PROF",
+                   "TAILSAMP", "TAILPOLL", "TAILSPEC"]
+COUNTER_NAMES_V2 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
+                    "IPAGE_HIT", "IPAGE_MISS", "DPAGE_RHIT", "DPAGE_RMISS",
+                    "DPAGE_WHIT", "DPAGE_WMISS", "XLATE", "XLATE_OK", "ATC_MISS",
+                    "MISALIGN_R", "MISALIGN_W", "FAULTS", "TRANSITIONS", "STACK_OVF",
+                    "ATC_HIT"]
+MAGICS = {1: "Z3P1", 2: "Z3P2"}
 
 # Flag bases.  SUPER|MMU|AMIX|CPU040 is an AMIX kernel sample on the 68040 run loop.
 K = 0x000F          # kernel:  SUPER MMU AMIX CPU040
@@ -137,8 +184,63 @@ def counters(insns=1000000, fetch=1600000, read=700000, write=300000,
             transitions, stack_ovf]
 
 
+def counters_v2(insns=1000000, fetch=1600000, read=700000, write=300000,
+                ipage=(1560000, 40000), dpr=(680000, 20000), dpw=(290000, 10000),
+                walks=7000, misalign=(1200, 400), faults=25,
+                transitions=None, stack_ovf=0, xlate=None, xlate_ok=None, atc_hit=None):
+    """The version-2 counter block: id 12 is XLATE_OK, id 19 is a REAL ATC_HIT.
+
+    The two are given SEPARATE defaults on purpose, and they differ, because that
+    difference is the whole v1 defect:
+
+        XLATE_OK = XLATE - FAULTS      translates that returned an address
+        ATC_HIT  = XLATE - ATC_MISS    translates served without a walk
+
+    In v1 the second quantity did not exist and the first was printed under its name.  A
+    fixture that set them equal would let a tool reading id 12 as an ATC rate pass, which is
+    exactly the bug being guarded against."""
+    if xlate is None:
+        xlate = ipage[1] + dpr[1] + dpw[1]
+    if xlate_ok is None:
+        xlate_ok = xlate - faults
+    if atc_hit is None:
+        atc_hit = xlate - walks
+    if transitions is None:
+        # v2 nests TAILSAMP and TAILPOLL inside the tail and both are entered once per
+        # instruction, so the split adds exactly four transitions per instruction to v1's
+        # count -- which is the figure the firmware's own documentation prices it at.
+        entries = (insns                    # FETCHOP
+                   + max(fetch - insns, 0)  # FETCHEX
+                   + read + write
+                   + xlate                  # XLATE
+                   + walks                  # WALK
+                   + insns                  # HANDLER
+                   + insns                  # TAILADV
+                   + faults                 # FAULT
+                   + insns                  # TAILSAMP
+                   + insns)                 # TAILPOLL   (TAILSPEC is spcflags-gated: 0)
+        transitions = 2 * entries
+    return [insns, int(insns * 0.35), fetch, read, write,
+            ipage[0], ipage[1], dpr[0], dpr[1], dpw[0], dpw[1],
+            xlate, xlate_ok, walks, misalign[0], misalign[1], faults,
+            transitions, stack_ovf, atc_hit]
+
+
 BUCKETS = [60000000, 120000000, 70000000, 150000000, 70000000,
            90000000, 40000000, 220000000, 68000000, 2000000, 10000000]
+
+# The v2 bucket set is NOT the v1 one with the tail split: it is sized so that the probe
+# subtraction at a realistic per-transition price leaves every bucket positive, because the
+# clean case has to be clean before an over-priced one means anything.  v2 carries ~43%
+# more transitions than v1 for the same work (the tail split's four per instruction), so a
+# fixture that reused v1's cycle totals would clamp on arrival and never exercise the
+# ordinary path.  The whole tail is 400M of 2000M = exactly 20.00%, which is the share the
+# C2 attack map measured and could not break down.
+BUCKETS_V2 = [420000000, 200000000, 110000000, 260000000, 120000000,
+              90000000, 40000000, 340000000, 150000000, 8000000, 12000000,
+              120000000, 110000000, 20000000]
+PROBE_CYC_V2 = 46          # per TRANSITION; metal's own figure, and inside the 45.5..58
+                           # window the firmware's documentation predicts
 
 
 def fw_pct(part, whole):
@@ -185,11 +287,91 @@ def stats_dump(buckets=None, cnts=None, build=0x04, probe_cyc=11, hz=HZ, version
     return out
 
 
+def stats_dump_v2(buckets=None, cnts=None, build=0x04, probe_cyc=PROBE_CYC_V2, hz=HZ,
+                  clk="cfg", version=2, tail_cyc=None, grammar=2):
+    """The version-2 PROFD block, emitted exactly as the firmware writes it.
+
+    `grammar` exists to build the one capture that must be REFUSED without being corrupt:
+    a dump whose `ver=` line declares one version while being written in the other's
+    format.  That is not a hypothetical -- it is what a hand-edited capture, or a fixture
+    generator that bumped a number without bumping a format, produces -- and the two
+    grammars price `probe_cyc` in different units, so a reader that reconciles them instead
+    of refusing gets a plausible number rather than an error."""
+    buckets = BUCKETS_V2 if buckets is None else buckets
+    cnts = counters_v2() if cnts is None else cnts
+    total = sum(buckets)
+    # Sized so the buckets account for 90% of the elapsed span, same shape as the v1
+    # fixture: a run-loop residency of exactly 100% would say core1 never once left the run
+    # loop, which no real capture shows and which would make the shape check meaningless.
+    wall_ticks = 1111111111
+    out = ["[PROF] === stage attribution ==="]
+    if grammar == 2:
+        out.append("[PROF] ver=%d build=0x%02X cpu_hz=%d clk=%s hz=%d period_cyc=%d "
+                   "probe_cyc_per_transition=%d"
+                   % (version, build, CPU_HZ, clk, hz, PERIOD, probe_cyc))
+    else:
+        out.append("[PROF] ver=%d build=0x%02X cpu_hz=%d hz=%d period_cyc=%d probe_cyc=%d"
+                   % (version, build, CPU_HZ, hz, PERIOD, probe_cyc))
+    out.append("[PROF] total_cyc=%d wall_ticks=%d wall_hz=%d" % (total, wall_ticks, WALL_HZ))
+    for i, name in enumerate(BUCKET_NAMES_V2):
+        out.append("[PROF] b %-2d %-8s cyc=%-16s %s%%"
+                   % (i, name, buckets[i], fw_pct(buckets[i], total)))
+    # The whole-tail rollup: the firmware's OWN sum of ids 8+11+12+13, printed so a v2
+    # capture can be laid beside a v1 one.  `tail_cyc` overrides it to build the capture
+    # where that line and the bucket rows disagree -- which cannot happen on a board and is
+    # therefore proof the two came off different states.
+    tail = sum(buckets[i] for i in (8, 11, 12, 13)) if tail_cyc is None else tail_cyc
+    out.append("[PROF] t whole tail (TAILADV+TAILSAMP+TAILPOLL+TAILSPEC) cyc=%d %s%% "
+               "-- this is what v1 reported as TAIL" % (tail, fw_pct(tail, total)))
+    # PER TRANSITION in v2, and the firmware's line and this tool's arithmetic agree.
+    # Omitted entirely when there is no calibration, exactly as the firmware omits it.
+    probe = cnts[17] * probe_cyc
+    if probe_cyc > 0 and total:
+        out.append("[PROF] probe overhead inside the totals: %d cyc = %s%% (%d transitions "
+                   "x %d cyc/TRANSITION, out-of-line calibrated) -- subtract per bucket by "
+                   "its share of transitions" % (probe, fw_pct(probe, total).strip(),
+                                                 cnts[17], probe_cyc))
+        if probe > total:
+            out.append("[PROF] WARNING: the modelled probe cost EXCEEDS the measured total. "
+                       "The calibration or the transition count is wrong; do not subtract.")
+    out.append("[PROF] === counters ===")
+    for i, name in enumerate(COUNTER_NAMES_V2):
+        out.append("[PROF] c %-2d %-12s %d" % (i, name, cnts[i]))
+    ih, im = cnts[5], cnts[6]
+    out.append("[PROF] r ipagecache hit %s%%" % fw_pct(ih, ih + im).strip())
+    out.append("[PROF] r dpagecache read hit %s%%" % fw_pct(cnts[7], cnts[7] + cnts[8]).strip())
+    out.append("[PROF] r dpagecache write hit %s%%" % fw_pct(cnts[9], cnts[9] + cnts[10]).strip())
+    xl, xo, am, ah = cnts[11], cnts[12], cnts[13], cnts[19]
+    out.append("[PROF] r of %d translates, %s%% had to walk the tables"
+               % (xl, fw_pct(am, xl).strip()))
+    out.append("[PROF] r ...and %s%% were satisfied from the ATC without a walk"
+               % fw_pct(ah, xl).strip())
+    # Silent on the 68030, where XLATE_OK has no site at all.  A printed 0.00% would read
+    # as "every translate faulted", which is a worse answer than no answer.
+    if xo:
+        out.append("[PROF] r ...and %s%% returned an address (the rest faulted)"
+                   % fw_pct(xo, xl).strip())
+    if xl and ah + am != xl:
+        out.append("[PROF] r note: ATC_HIT+ATC_MISS=%d vs XLATE=%d -- the difference is "
+                   "translates that faulted before the walk decision" % (ah + am, xl))
+    out.append("[PROF] r supervisor instructions %s%% of %d"
+               % (fw_pct(cnts[1], cnts[0]).strip(), cnts[0]))
+    out.append("[PROF] === end ===")
+    return out
+
+
 # ------------------------------------------------------------------------- the ring dump
 
-def ring_dump(samples, rec_count=None, promised=None, magic="Z3P1", version=1,
+def ring_dump(samples, rec_count=None, promised=None, magic=None, version=1,
               rec_size=8, drops=0, taken=None, cyc_span=None, wall_ticks=None,
-              build=0x04, hz=HZ, noise=(), noise_after=None, end=True):
+              build=0x04, hz=HZ, noise=(), noise_after=None, end=True,
+              probe_cyc=PROBE_CYC_V2, clk="cfg"):
+    # The magic ENCODES the version, so it defaults from it and is only ever passed
+    # explicitly to build a header that contradicts itself -- which is a case the
+    # symbolizer must refuse rather than resolve in favour of one field.
+    # A version with no magic of its own (9, say) gets "Z3P" + digit anyway, so that the
+    # unknown-version fixture is refused for its VERSION and not incidentally for its magic.
+    magic = MAGICS.get(version, "Z3P%d" % version) if magic is None else magic
     n = len(samples) if rec_count is None else rec_count
     taken = n if taken is None else taken
     if cyc_span is None:
@@ -200,11 +382,15 @@ def ring_dump(samples, rec_count=None, promised=None, magic="Z3P1", version=1,
         cyc_span = w * PERIOD
     if wall_ticks is None:
         wall_ticks = cyc_span * WALL_HZ // CPU_HZ
+    # v2 spends v1's two reserved header words on probe_cyc and clk_src; the header stays
+    # 80 bytes and every earlier field keeps its offset, so the ASCII line is purely
+    # additive after `build=`.
+    tail = (" probe_cyc=%d clk=%s" % (probe_cyc, clk)) if version >= 2 else ""
     out = ["[PROF] ring hdr magic=%s version=%d rec_size=%d rec_count=%d ring_entries=%d "
            "hz=%d period_cyc=%d cpu_hz=%d"
            % (magic, version, rec_size, n, RING_ENTRIES, hz, PERIOD, CPU_HZ),
            "[PROF] ring hdr samples=%d drops=%d cyc_span=%d wall_ticks=%d wall_hz=%d "
-           "build=0x%02X" % (taken, drops, cyc_span, wall_ticks, WALL_HZ, build),
+           "build=0x%02X%s" % (taken, drops, cyc_span, wall_ticks, WALL_HZ, build, tail),
            "[PROF] ring begin"]
     for i, s in enumerate(samples):
         out.append(s)
@@ -218,6 +404,23 @@ def ring_dump(samples, rec_count=None, promised=None, magic="Z3P1", version=1,
 BOOT = ("[PROF] profiling build: ARM clock %d Hz (measured), enter/exit pair 11 cyc, "
         "ring %d x 8 B" % (CPU_HZ, RING_ENTRIES))
 ARMED = "[PROF] armed: %d Hz (%d cyc/tick), buckets ON" % (HZ, PERIOD)
+
+
+def boot_v2(clk="cfg", probe_cyc=PROBE_CYC_V2):
+    """The v2 boot line: every unit spelled out and the clock's SOURCE on it.
+
+    Both were scars.  v1 printed `enter/exit pair 91 cyc` next to a per-transition count,
+    and `ARM clock 666667585 Hz (measured)` seven seconds after the same console announced
+    a PLL configured for 1100 MHz.  Neither was catchable from the line itself, and the
+    line is the only place a reader looks."""
+    lines = ["[PROF] profiling build v2: ARM clock %d Hz (clk=%s, PMU:wall 2.00), "
+             "probe %d cyc/transition (%d cyc/pair), ring %d x 8 B"
+             % (CPU_HZ, clk, probe_cyc, probe_cyc * 2, RING_ENTRIES)]
+    if clk != "cfg":
+        lines.append("[PROF] WARNING: clk=bsp -- core0 published no ARM rate, so this is "
+                     "the COMPILE-TIME constant. If the board retuned its PLL, every Hz "
+                     "and every seconds figure below is wrong by that ratio.")
+    return lines
 
 
 # ------------------------------------------------------------------------ sample sets
@@ -398,14 +601,100 @@ def main():
     write(d, "capture-badmagic.txt", [BOOT] + ring_dump(small_samples(8), magic="Z3P2"))
     write(d, "capture-badrecsize.txt", [BOOT] + ring_dump(small_samples(8), rec_size=12))
 
-    # A version nobody has announced, and the version that IS announced.  They are different
-    # refusals on purpose: the first is "this tool implements version 1 only", the second has
-    # to say what version 2 changes and where the seam that will accept it is, because
-    # reading a v2 dump under v1 rules would halve an already-corrected probe figure and read
-    # renamed counters under their old ids -- a plausible-looking wrong number, not an error.
+    # A version nobody has announced: refused as unknown, naming the number.
     write(d, "capture-badversion.txt", [BOOT] + ring_dump(small_samples(8), version=9))
-    write(d, "capture-v2ring.txt", [BOOT] + ring_dump(small_samples(8), version=2))
-    write(d, "capture-v2stats.txt", [BOOT] + stats_dump(version=2))
+
+    # ------------------------------------------------------------------ wire version 2
+    #
+    # v2 is implemented, so the interesting fixtures are no longer refusals -- they are the
+    # three numbers v1 got wrong, each built so that a tool still applying v1's rules gets a
+    # visibly different answer:
+    #
+    #   the probe is priced PER TRANSITION      a v1 reader halves it and reports half the
+    #                                           instrument's weight
+    #   id 12 is XLATE_OK, id 19 is ATC_HIT     a v1 reader takes the ATC rate off id 12,
+    #                                           which is a rate about something else
+    #   id 8 is the tail RESIDUE, not the tail   a v1 reader reports 7.5% where the tail is
+    #                                           20.0%, and calls it an improvement
+    v2 = valid_samples()
+    write(d, "capture-v2valid.txt",
+          ["Z3660 firmware boot"] + boot_v2() + [ARMED] + stats_dump_v2()
+          + ring_dump(v2, version=2)
+          + ["[PROF] stopped: %d samples, 0 dropped (data KEPT -- PROFD/PROFR read it)"
+             % len(v2)])
+
+    # clk=bsp: the ARM clock is the compile-time BSP constant.  Every Hz below it is
+    # suspect, AND the wrap cross-check is structurally unable to notice -- CPU:global-timer
+    # is a fixed 2:1, so both spans scale together and the error cancels out of the ratio.
+    # The capture must say that where the clean cross-check result is, not only in passing.
+    write(d, "capture-v2bsp.txt",
+          boot_v2(clk="bsp") + stats_dump_v2(clk="bsp")
+          + ring_dump(small_samples(40), version=2, clk="bsp"))
+
+    # A clk= value this version does not define: a wire drift the version field did not
+    # catch.  It must be treated as the unsafe case -- an unrecognised provenance is not
+    # evidence of a good clock -- but NAMED as unrecognised rather than reported as `bsp`,
+    # which would assert something specific this tool cannot know.
+    write(d, "capture-v2clkodd.txt",
+          boot_v2(clk="pll") + stats_dump_v2(clk="pll"))
+
+    # An impossible subtraction at the firmware's OWN price: 13354050 transitions x 200 cyc
+    # = 2670810000 against a 2000000000-cycle run.  v1 answered this shape by clamping each
+    # overflowing bucket at zero, which is how an over-priced probe produced a full and
+    # plausible table.  v2 must WITHHOLD and report: the instrument claiming more cycles
+    # than the run contains is a fault in the instrument, not a rounding detail.
+    write(d, "capture-v2probeover.txt",
+          boot_v2(probe_cyc=200) + stats_dump_v2(probe_cyc=200))
+
+    # The firmware's own whole-tail line disagreeing with the four bucket rows it is
+    # computed from.  This cannot happen on a board -- both come off the same accumulators
+    # in the same dump -- so it is proof the capture's `b` lines and its `t` line were taken
+    # from different states, and the cross-check exists to say so.
+    write(d, "capture-v2tailmismatch.txt",
+          boot_v2() + stats_dump_v2(tail_cyc=399000000))
+
+    # ATC_HIT + ATC_MISS EXCEEDING XLATE.  Those two partition the translates, so their sum
+    # cannot be larger than the set they partition; a shortfall is legal (translates that
+    # faulted before the walk decision) and an overshoot is not.
+    write(d, "capture-v2atcbroken.txt",
+          boot_v2() + stats_dump_v2(cnts=counters_v2(atc_hit=90000)))
+
+    # A shortfall LARGER than FAULTS.  The missing translates faulted before the walk
+    # decision, every one of them threw, and every throw reached the run loop's CATCH -- so
+    # the shortfall cannot exceed FAULTS.  This is a check the firmware does not make.
+    write(d, "capture-v2atcshort.txt",
+          boot_v2() + stats_dump_v2(cnts=counters_v2(atc_hit=40000)))
+
+    # The 68030 path under v2.  Two absences, not one: no tier-0 counters at all, and no
+    # XLATE_OK site either -- the 030 translate is a bare ATC probe called from fourteen
+    # accessors with no single success point.  Both read zero, and zero means ABSENT: a
+    # printed "0.00% returned an address" would say every translate faulted.  ATC_HIT (id
+    # 19) on the 030 was always genuine, so the ATC rate is real here.
+    write(d, "capture-v2-030.txt",
+          boot_v2() + stats_dump_v2(cnts=counters_v2(ipage=(0, 0), dpr=(0, 0), dpw=(0, 0),
+                                                     xlate=2600000, walks=40000,
+                                                     xlate_ok=0)))
+
+    # ------------------------------------------------- captures that disagree with themselves
+    #
+    # Neither of these is corrupt: every field is present and well formed.  They are
+    # captures that answer the version question twice and give different answers, and the
+    # only safe reading of one is to refuse it -- v1 and v2 price probe_cyc in different
+    # units and disagree about what two ids are called, so picking a side does not raise an
+    # error further down, it produces a plausible wrong number.
+    write(d, "capture-v2magic1.txt",
+          [BOOT] + ring_dump(small_samples(8), version=2, magic="Z3P1"))
+    write(d, "capture-v1v2grammar.txt",
+          [BOOT] + stats_dump_v2(version=2, grammar=1))
+    write(d, "capture-v2v1grammar.txt",
+          [BOOT] + stats_dump_v2(version=1, grammar=2))
+
+    # A v1 boot line above a v2 dump whose own probe_cyc is absent (0) -- one capture
+    # spanning a reflash.  The boot line's probe figure is per PAIR and the dump's rules are
+    # per TRANSITION, so the fallback must DECLINE rather than convert: this is the same
+    # class of error v2 exists to fix, and a stated "unavailable" costs a column while a
+    # silent conversion costs the answer.
+    write(d, "capture-v2bootv1.txt", [BOOT] + stats_dump_v2(probe_cyc=0))
 
     # A TRANSITIONS count the probe-landing model cannot reproduce: the adjusted columns
     # must be withheld rather than printed from a model that does not hold.
