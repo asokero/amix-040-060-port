@@ -21,6 +21,20 @@
 # samples instead of summing WEIGHT still produces a full, well-formatted, confidently wrong
 # profile, and nothing else in this file would catch it: fixture_hot has ten times the
 # samples of fixture_stall and a twentieth of the time.
+#
+# Three later cases are here because the tool got each of them wrong against real metal
+# captures, and each wrong answer looked like a right one:
+#
+#   * the probe subtraction inherited the firmware's 2x over-pricing (probe_cyc prices a
+#     PAIR; TRANSITIONS counts each enter and each exit), which made the correction demand
+#     more cycles out of LOOP than LOOP contains;
+#   * the translation cross-check computed ATC_HIT + ATC_MISS, a sum with no meaning in
+#     this format, so it fired on every intact dump and named the wrong cause;
+#   * seven provably-intact captures were refused over a logger's timestamps and a header
+#     line whose "[PROF] " the UART ate, while their payloads were complete.
+#
+# The refusals must survive all three repairs, which is why capture-hdrgone (the same damage
+# with a field actually missing) sits next to capture-dirty.
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 TOOL="$HERE/tools/prof-symbolize.py"
@@ -74,6 +88,7 @@ has   "  ...and says which magic"               "1" "magic is 'Z3P2', not 'Z3P1'
 
 run capture-badversion.txt
 check "unknown version is refused"              "1" "$st"
+has   "  ...and names it"                       "1" "reports version 9"
 has   "  ...and refuses rather than guesses"    "1" "Refusing rather than guessing"
 
 run capture-badrecsize.txt
@@ -81,6 +96,21 @@ check "a different rec_size is refused"         "1" "$st"
 
 run capture-nodumps.txt
 check "a capture with no dump is an error"      "1" "$st"
+
+echo
+echo "-- the version seam: v2 is announced, not implemented, and must say so -----------"
+# Reading a v2 dump under v1 rules would halve an already-corrected probe figure and read
+# renamed counters under their old ids.  Both produce a full report and a wrong number, so
+# the refusal has to be specific enough that nobody is tempted to force it.
+
+run capture-v2ring.txt
+check "a v2 ring header is refused"             "1" "$st"
+has   "  ...saying what v2 changes"             "1" "changes what a dump PRINTS"
+has   "  ...and where the seam is"              "1" "fill in WIRE_VERSIONS\[2\] in this file"
+
+run capture-v2stats.txt
+check "a v2 stats dump is refused too"          "1" "$st"
+has   "  ...by the same seam"                   "1" "fill in WIRE_VERSIONS\[2\] in this file"
 
 echo
 echo "-- truncation: a lost serial line must never become a shorter profile ------------"
@@ -101,6 +131,32 @@ has   "  ...says it was never closed"           "1" "never closed by a"
 run capture-mangled.txt
 check "a mangled sample line is fatal"          "1" "$st"
 has   "  ...and quotes the line"                "1" "S 0800000 4e71 0101"
+
+echo
+echo "-- delivered dirty: repair what is intact, refuse what is missing ----------------"
+# capture-dirty is capture-valid's own bytes with a logger timestamp on every line and a
+# 'ring hdr' line run together with the console echo, its '[PROF] ' eaten -- the two defects
+# every metal C1 capture arrived with.  Nothing is missing, so the report must be the same
+# report; that identity, not a spot check, is the assertion.
+
+run capture-dirty.txt $K
+check "a timestamped, header-damaged capture parses" "0" "$st"
+has   "  ...announcing the stripped line prefix" "1" "carry a logger line prefix"
+has   "  ...and the repaired header line"       "1" "arrived without its literal '\[PROF\] ' prefix"
+has   "  ...and it is still checked afterwards" "1" "cross-checks still have to pass"
+sed -n '/supervisor flat profile/,/TOTAL (/p' "$TMP/o" > "$TMP/dirty-profile"
+sed -n '/stage attribution \/ counters/,/^-- WEIGHT histogram/p' "$TMP/o" > "$TMP/dirty-body"
+run capture-valid.txt $K
+sed -n '/supervisor flat profile/,/TOTAL (/p' "$TMP/o" > "$TMP/clean-profile"
+sed -n '/stage attribution \/ counters/,/^-- WEIGHT histogram/p' "$TMP/o" > "$TMP/clean-body"
+check "the repaired profile is the clean one"   "same" \
+      "$(cmp -s "$TMP/dirty-profile" "$TMP/clean-profile" && echo same || echo DIFFERENT)"
+check "  ...and so are its buckets and coverage" "same" \
+      "$(cmp -s "$TMP/dirty-body" "$TMP/clean-body" && echo same || echo DIFFERENT)"
+
+run capture-hdrgone.txt $K
+check "the same damage with a field LOST is refused" "1" "$st"
+has   "  ...and says the payload is what is gone" "1" "one lost payload, which nothing in the"
 
 echo
 echo "-- WEIGHT: the failure that produces a confident wrong answer -------------------"
@@ -178,9 +234,35 @@ echo "-- stage buckets and the probe-cost subtraction --------------------------
 has   "the probe model reproduces TRANSITIONS"  "1" "9354050 transitions predicted from the counters vs 9354050 measured"
 has   "  ...so the subtraction is applied"      "1" "within tolerance, subtraction applied"
 # The subtraction must MOVE a share.  LOOP pays for every exit back into it, so its share
-# falls from 6.67% to 1.18%; a distribution proportional to cycles could not do that.
+# falls from 6.67% to 4.09%; a distribution proportional to cycles could not do that.
 has   "LOOP raw share"                          "1" "LOOP                   60000000    6.67%"
-has   "  ...and its adjusted share differs"     "1" "9399725    1.18%"
+has   "  ...and its adjusted share differs"     "1" "34699863    4.09%"
+
+# THE UNIT.  probe_cyc=11 prices an enter/exit PAIR and TRANSITIONS=9354050 counts each
+# enter and each exit, so the priced quantity is 4677025 pairs and the overhead is
+# 4677025 x 11 = 51447275 cyc -- not the 102894550 the firmware's own line prints.  Both
+# numbers are on the report, labelled, because the firmware's is what a reader coming from
+# the console has in front of them.
+has   "the probe total prices PAIRS, not transitions" "1" "probe overhead inside the totals: 51447275 cyc"
+has   "  ...showing the division and the unit"  "1" "(9354050 transitions / 2 = 4677025 enter/exit pairs x 11 cyc/pair"
+has   "  ...and the per-transition cost"        "1" "= 5.50 cyc per transition; one enter/exit pair is 2 transitions"
+has   "  ...and the firmware's doubled figure, named as such" "1" \
+      "prints TRANSITIONS x probe_cyc = 102894550 cyc"
+has   "  ...saying by how much it double-counts" "1" "double-counts by exactly 2x"
+# and the parts sum to the whole: 900000000 - 51447275, up 2 cycles of per-bucket integer
+# truncation.  At the old doubled figure this row could not balance at all -- the LOOP
+# subtraction alone exceeded LOOP, and the clamp absorbed the difference invisibly.
+has   "the adjusted column sums to total - probe" "1" "51447275        848552727"
+has   "  ...and nothing was clamped at this price" "0" "CLAMPED"
+
+# The clamp is how an over-priced probe announces itself, so it must not be silent: at the
+# firmware's own doubled figure it was, which is what let 82.65% of a run look subtractable
+# out of buckets that did not contain it.
+run capture-valid.txt $K --probe-cost 200
+has   "an impossible subtraction is disclosed"   "1" "2 bucket(s) were CLAMPED at zero"
+has   "  ...as evidence about the PRICE"         "1" "evidence the probe PRICE is too high"
+has   "  ...and it reaches the warnings"         "1" "bucket(s) clamped at zero"
+has   "  ...with the price attributed to the override" "1" "price from --probe-cost"
 
 run capture-badmodel.txt
 has   "a model that does not hold is withheld"  "1" "adjusted' columns are WITHHELD"
@@ -198,10 +280,34 @@ has   "ipagecache hit rate"                     "1" "ipagecache hit             
 has   "dpagecache read hit rate"                "1" "dpagecache read hit                   97.14%"
 has   "ATC hit rate"                            "1" "ATC hit                               90.00%"
 has   "table walk rate"                         "1" "tier 2 -- table walk rate             10.00%"
+has   "  ...derived without ATC_HIT"            "1" "= (XLATE - ATC_MISS) / XLATE"
+
+# The old check computed ATC_HIT + ATC_MISS and called a mismatch "the two tiers disagree".
+# In this format that sum has no meaning -- ATC_HIT counts translates that SUCCEEDED -- so
+# the check fired on every intact dump and named a cause that was not the cause.
+has   "the two identities that do hold are checked" "1" "ATC_HIT + FAULTS == XLATE"
+has   "  ...and the tier-0 one with them"       "1" "IPAGE_MISS + DPAGE_RMISS + DPAGE_WMISS == XLATE"
+has   "  ...and ATC_HIT is named as the misnomer" "1" "ATC_HIT is a version-1 misnomer"
+has   "the meaningless sum is not computed"     "1" "ATC_HIT + ATC_MISS is therefore a meaningless sum"
+has   "  ...and its wrong reason is gone"       "0" "the two tiers disagree"
+
+run capture-atcbroken.txt
+check "a broken ATC_HIT identity still reports" "0" "$st"
+has   "  ...as a MISMATCH on that identity"     "1" "ATC_HIT + FAULTS == XLATE *MISMATCH  *12370 vs 70000"
+present "  ...with the right reason"                "ATC_HIT counts translates that SUCCEEDED"
+present "  ...and the rates said not to depend on it" "do not depend on it"
+has   "  ...and the tier-0 identity still passes" "1" "DPAGE_WMISS == XLATE *ok"
+
+run capture-tier0broken.txt
+check "a broken tier-0 identity still reports"  "0" "$st"
+has   "  ...as a MISMATCH on that identity"     "1" "DPAGE_WMISS == XLATE *MISMATCH  *71000 vs 70000"
+present "  ...naming what XLATE counts"             "XLATE counts the calls into mmu_translate"
+has   "  ...and the ATC_HIT identity still passes" "1" "ATC_HIT + FAULTS == XLATE *ok"
 
 run capture-030.txt
 has   "68030: tier 0 is absent, not zero"       "3" "no tier-0 page-cache counters on the 68030 path"
 has   "  ...but the ATC tiers are still there"  "1" "ATC hit                               98.46%"
+has   "  ...and its identity is n/a, not a mismatch" "1" "DPAGE_WMISS == XLATE *n/a"
 
 echo
 echo "-- several dumps in one capture ------------------------------------------------"

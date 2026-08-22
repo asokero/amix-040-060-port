@@ -32,11 +32,23 @@
 #   capture-noend          the capture stops inside the ring.
 #   capture-mangled        an `S` line that is not the frozen fixed-width form.
 #   capture-badmagic       magic=Z3P2.
-#   capture-badversion     version=2.
+#   capture-badversion     version=9: a version no firmware has ever emitted.
+#   capture-v2ring         version=2 in a ring header -- the announced-but-unpublished
+#   capture-v2stats        version=2 in a stats dump.  Both must be refused with the reason
+#                          and a pointer at the seam, not read under version-1 rules.
 #   capture-badrecsize     rec_size=12.
 #   capture-badmodel       TRANSITIONS the probe-landing model cannot reproduce.
 #   capture-030            the 68030 path: tier-0 page-cache counters absent, not zero.
 #   capture-stackovf       STACK_OVF non-zero, and a profiling build of the DIAGNOSTIC loop.
+#   capture-dirty          INTACT but delivered dirty, exactly as the metal captures were:
+#                          a logger timestamp on every line AND a `ring hdr` line whose
+#                          literal "[PROF] " the UART ate, run together with the console
+#                          echo ahead of it.  Same bytes as capture-valid otherwise, so the
+#                          repaired report must be identical to capture-valid's.
+#   capture-hdrgone        the same header damage with a FIELD missing from the payload:
+#                          not repairable, and must still be refused.
+#   capture-atcbroken      ATC_HIT + FAULTS != XLATE.
+#   capture-tier0broken    IPAGE_MISS + DPAGE_RMISS + DPAGE_WMISS != XLATE.
 #
 #   kernel.nm / kernel.elf the same symbol table two ways, so both symbol paths are
 #                          exercised.  A branch that never ran is not a branch that works.
@@ -92,13 +104,20 @@ def S(pc, op, base, weight):
 
 def counters(insns=1000000, fetch=1600000, read=700000, write=300000,
              ipage=(1560000, 40000), dpr=(680000, 20000), dpw=(290000, 10000),
-             atc=(63000, 7000), misalign=(1200, 400), faults=25,
-             transitions=None, stack_ovf=0, xlate=None):
+             walks=7000, misalign=(1200, 400), faults=25,
+             transitions=None, stack_ovf=0, xlate=None, atc_hit=None):
     # XLATE is by definition the tier-0 miss traffic: a page-cache hit never reaches
     # mmu_translate.  On the 68030 path there is no tier 0 at all, so the caller passes
     # XLATE explicitly -- every access translates there.
     if xlate is None:
         xlate = ipage[1] + dpr[1] + dpw[1]
+    # ATC_HIT is misnamed in the version-1 wire format: it counts translates that
+    # SUCCEEDED, so ATC_HIT + FAULTS == XLATE and it carries no ATC information at all.
+    # The fixtures encode that, because a fixture that encoded the name instead would make
+    # the tool's cross-check pass on data no firmware produces.  `walks` (ATC_MISS) is the
+    # independent quantity, and the real ATC hit rate is (XLATE - ATC_MISS) / XLATE.
+    if atc_hit is None:
+        atc_hit = xlate - faults
     if transitions is None:
         # The probe-landing model's own prediction: two transitions (an enter and an exit)
         # for every time a bucket is entered.  Setting TRANSITIONS to exactly this makes the
@@ -107,14 +126,14 @@ def counters(insns=1000000, fetch=1600000, read=700000, write=300000,
                    + max(fetch - insns, 0)  # FETCHEX
                    + read + write
                    + xlate                  # XLATE
-                   + atc[1]                 # WALK
+                   + walks                  # WALK
                    + insns                  # HANDLER
                    + insns                  # TAIL
                    + faults)                # FAULT
         transitions = 2 * entries
     return [insns, int(insns * 0.35), fetch, read, write,
             ipage[0], ipage[1], dpr[0], dpr[1], dpw[0], dpw[1],
-            xlate, atc[0], atc[1], misalign[0], misalign[1], faults,
+            xlate, atc_hit, walks, misalign[0], misalign[1], faults,
             transitions, stack_ovf]
 
 
@@ -131,18 +150,22 @@ def fw_pct(part, whole):
     return "%3u.%02u" % (h // 100, h % 100)
 
 
-def stats_dump(buckets=None, cnts=None, build=0x04, probe_cyc=11, hz=HZ):
+def stats_dump(buckets=None, cnts=None, build=0x04, probe_cyc=11, hz=HZ, version=1):
     buckets = BUCKETS if buckets is None else buckets
     cnts = counters() if cnts is None else cnts
     total = sum(buckets)
     out = ["[PROF] === stage attribution ===",
-           "[PROF] ver=1 build=0x%02X cpu_hz=%d hz=%d period_cyc=%d probe_cyc=%d"
-           % (build, CPU_HZ, hz, PERIOD, probe_cyc)]
+           "[PROF] ver=%d build=0x%02X cpu_hz=%d hz=%d period_cyc=%d probe_cyc=%d"
+           % (version, build, CPU_HZ, hz, PERIOD, probe_cyc)]
     wall_ticks = 500000000
     out.append("[PROF] total_cyc=%d wall_ticks=%d wall_hz=%d" % (total, wall_ticks, WALL_HZ))
     for i, name in enumerate(BUCKET_NAMES):
         out.append("[PROF] b %-2d %-8s cyc=%-16s %s%%"
                    % (i, name, buckets[i], fw_pct(buckets[i], total)))
+    # The firmware's own overhead line, reproduced with its own 2x over-pricing:
+    # probe_cyc prices an enter/exit PAIR while TRANSITIONS counts each enter and each exit,
+    # so TRANSITIONS x probe_cyc counts every pair twice.  The fixture carries what the
+    # firmware really prints; the symbolizer is what has to be right about it.
     probe = cnts[17] * probe_cyc
     out.append("[PROF] probe overhead inside the totals: %d cyc = %s%% (%d transitions x "
                "%d cyc) -- subtract per bucket by its share of transitions"
@@ -318,12 +341,12 @@ def main():
     os.makedirs(d, exist_ok=True)
 
     v = valid_samples()
-    write(d, "capture-valid.txt",
-          ["Z3660 firmware boot", BOOT, ARMED]
-          + stats_dump()
-          + ring_dump(v, noise=["[Z3660] piscsi: unit 6 read 4 blocks",
-                                "z3660eth: link up 100BaseTX"], noise_after=25)
-          + ["[PROF] stopped: %d samples, 0 dropped" % len(v)])
+    valid_lines = (["Z3660 firmware boot", BOOT, ARMED]
+                   + stats_dump()
+                   + ring_dump(v, noise=["[Z3660] piscsi: unit 6 read 4 blocks",
+                                         "z3660eth: link up 100BaseTX"], noise_after=25)
+                   + ["[PROF] stopped: %d samples, 0 dropped" % len(v)])
+    write(d, "capture-valid.txt", valid_lines)
 
     write(d, "capture-weighted.txt", [BOOT] + ring_dump(weighted_samples()))
 
@@ -373,8 +396,16 @@ def main():
     write(d, "capture-mangled.txt", [BOOT] + bad)
 
     write(d, "capture-badmagic.txt", [BOOT] + ring_dump(small_samples(8), magic="Z3P2"))
-    write(d, "capture-badversion.txt", [BOOT] + ring_dump(small_samples(8), version=2))
     write(d, "capture-badrecsize.txt", [BOOT] + ring_dump(small_samples(8), rec_size=12))
+
+    # A version nobody has announced, and the version that IS announced.  They are different
+    # refusals on purpose: the first is "this tool implements version 1 only", the second has
+    # to say what version 2 changes and where the seam that will accept it is, because
+    # reading a v2 dump under v1 rules would halve an already-corrected probe figure and read
+    # renamed counters under their old ids -- a plausible-looking wrong number, not an error.
+    write(d, "capture-badversion.txt", [BOOT] + ring_dump(small_samples(8), version=9))
+    write(d, "capture-v2ring.txt", [BOOT] + ring_dump(small_samples(8), version=2))
+    write(d, "capture-v2stats.txt", [BOOT] + stats_dump(version=2))
 
     # A TRANSITIONS count the probe-landing model cannot reproduce: the adjusted columns
     # must be withheld rather than printed from a model that does not hold.
@@ -382,14 +413,47 @@ def main():
           [BOOT] + stats_dump(cnts=counters(transitions=3000000)))
 
     # The 68030 path: tier-0 page-cache counters are absent upstream, not zero by accident.
+    # The tier-0 identity is therefore unverifiable here and must report n/a, not MISMATCH.
     write(d, "capture-030.txt",
           [BOOT] + stats_dump(cnts=counters(ipage=(0, 0), dpr=(0, 0), dpw=(0, 0),
-                                            xlate=2600000, atc=(2560000, 40000))))
+                                            xlate=2600000, walks=40000)))
 
     # STACK_OVF non-zero, in a profiling build of the DIAGNOSTIC loop rather than the lean
     # one -- two independent reasons to distrust the dump, and both must be said out loud.
     write(d, "capture-stackovf.txt",
           [BOOT] + stats_dump(cnts=counters(stack_ovf=3), build=0x07))
+
+    # The two translation identities, broken one at a time.  Each is a counter set that
+    # cannot have come off one span, and the warning has to say WHICH identity failed and
+    # why it holds -- the old `ATC_HIT + ATC_MISS == XLATE` check said neither, and fired on
+    # every intact dump because that sum has no meaning in this format.
+    write(d, "capture-atcbroken.txt",
+          [BOOT] + stats_dump(cnts=counters(atc_hit=12345)))
+    write(d, "capture-tier0broken.txt",
+          [BOOT] + stats_dump(cnts=counters(ipage=(1560000, 41000), xlate=70000)))
+
+    # ---------------------------------------------------------------- delivered dirty
+    #
+    # Both defects the metal C1 captures arrived with, in one file, over the SAME bytes as
+    # capture-valid: a logger timestamp ahead of every line, and a `ring hdr` line run
+    # together with the console echo of the command that asked for the dump, its literal
+    # "[PROF] " eaten by the collision in the one UART.  Nothing is missing, so the report
+    # must be identical to capture-valid's -- that identity is the assertion.
+    def ts(i):      # a logger clock that advances, so no line's prefix is special
+        s = 18 * 3600 + 26 * 60 + 11 + i // 6
+        return "%02d:%02d:%02d " % (s // 3600, (s // 60) % 60, s % 60)
+
+    dirty = list(valid_lines)
+    hdr_i = next(i for i, ln in enumerate(dirty) if "ring hdr magic=" in ln)
+    dirty[hdr_i] = ("PROF RING (full) requested: up to 65535 samples, ~2 min of seri[lROF] "
+                    + dirty[hdr_i].split("[PROF] ")[1])
+    write(d, "capture-dirty.txt", [ts(i) + ln for i, ln in enumerate(dirty)])
+
+    # The same damage with a field actually missing from the payload.  A repair that could
+    # absorb this would be worse than a refusal: it would turn a hard error into a profile.
+    gone = list(valid_lines)
+    gone[hdr_i] = dirty[hdr_i].replace(" rec_count=%d" % len(v), "")
+    write(d, "capture-hdrgone.txt", gone)
 
     write_nm(os.path.join(d, "kernel.nm"))
     write_elf(os.path.join(d, "kernel.elf"))

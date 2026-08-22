@@ -43,10 +43,18 @@
 #      middle.  The dump grammar is fixed-width for this reason, and a lost line is a hard
 #      error naming the capture line that proves it -- never a quietly shorter profile.
 #
-# THE FORMAT IS FROZEN AT VERSION 1 by the firmware and an unknown magic or version is
-# refused rather than guessed at.  The contract lives in the firmware tree as
-# Z3660_emu/src/uae/z3660_prof.h and docs/profiler.md; this file is written against it and
-# does not have to be rebuilt in step with the firmware.
+#      A capture that is INTACT but delivered dirty is a different thing and is repaired,
+#      not refused: a logger's timestamp prefix on every line, and a `ring hdr` line whose
+#      literal "[PROF] " the UART lost while its whole key=value payload survived.  Both
+#      are announced in the warnings.  The refusal is for data that is actually missing.
+#
+# THE WIRE FORMAT IS VERSIONED and an unknown magic or version is refused rather than
+# guessed at.  Version 1 is what is implemented; see THE VERSION SEAM below, which is also
+# where the two version-1 defects this tool corrects for are written down (the firmware
+# over-prices the probe by exactly 2x, and its ATC_HIT counter does not count what its name
+# says).  The contract lives in the firmware tree as Z3660_emu/src/uae/z3660_prof.h and
+# docs/profiler.md; this file is written against it and does not have to be rebuilt in step
+# with the firmware.
 #
 # Standard library only, and no cross toolchain: a capture is often read on a machine that
 # has neither.  The kernel ELF is parsed here directly (see SymbolTable) and `--symbols`
@@ -97,9 +105,110 @@ BUILD_PROBES, BUILD_PERF, BUILD_PROF = 0x01, 0x02, 0x04
 
 TWO32 = 1 << 32
 
+# --------------------------------------------------------------------------------------
+# THE VERSION SEAM.
+#
+# Two things about a dump cannot be read out of the dump: what `probe_cyc` PRICES, and what
+# a counter MEANS where its name is wrong about it.  Both are properties of the firmware
+# that emitted the dump, both are versioned by the header's `version` field, and both are
+# known to change in the next version -- so they live here, in one table, instead of being
+# spelled inline at the places that use them.
+#
+# VERSION 1 -- what is implemented.
+#
+#   `probe_cyc` prices an enter/exit PAIR.  z3660_prof_calibrate_probe() times 256
+#   iterations of enter() followed by exit() and divides the total by 256.  `TRANSITIONS`,
+#   meanwhile, counts each enter AND each exit separately -- z3660_prof_enter() and
+#   z3660_prof_exit() each do one TRANSITIONS++.  So `TRANSITIONS x probe_cyc`, which the
+#   firmware itself prints and which this tool used to inherit, prices every pair twice.
+#   The priced quantity is TRANSITIONS / 2 pairs, and the per-transition cost is
+#   probe_cyc / 2.  The same 2 appears in probe_landing() for the same reason: one bucket
+#   visit is one enter plus one exit, which is why the landing model's transition total is
+#   twice its entry total.
+#
+#   `ATC_HIT` does not count ATC lookups that hit.  It counts translates that SUCCEEDED.
+#   Two identities hold exactly on an intact version-1 dump, confirmed on four independent
+#   metal spans of seven-digit size:
+#
+#       IPAGE_MISS + DPAGE_RMISS + DPAGE_WMISS  ==  XLATE
+#       ATC_HIT + FAULTS                        ==  XLATE
+#
+#   so XLATE is exactly the tier-0 miss count -- the calls into mmu_translate -- and
+#   ATC_HIT carries no ATC information whatsoever.  `ATC_HIT + ATC_MISS` is a meaningless
+#   sum and is not computed here.  The ATC hit rate is (XLATE - ATC_MISS) / XLATE and the
+#   walk rate is ATC_MISS / XLATE; neither needs ATC_HIT.
+#
+# VERSION 2 -- the seam, deliberately empty.
+#
+#   The firmware lane is fixing both defects, and either fix changes what a dump PRINTS:
+#   correcting the probe pricing changes the reported overhead, and renaming a counter is a
+#   version bump because the ids are append-only.  A version-2 capture is therefore refused
+#   with a message that says what is missing rather than read with version-1 rules -- an
+#   already-corrected probe figure halved again, or a renamed counter read under its old
+#   id, is exactly the plausible-looking wrong number this tool exists to not produce.
+#
+#   Filling in WIRE_VERSIONS[2] from the firmware's z3660_prof.h is the entire change
+#   needed for everything keyed on the version number here: the probe unit, the name-drift
+#   check's tables, and the translation identities all read this table.  What a new entry
+#   does NOT cover, and what has to be re-read from the firmware alongside it, is
+#   BUCKET_PARENT -- that is the interpreter's nesting shape rather than a wire fact, and a
+#   version that adds or re-parents a stage changes it.
+# --------------------------------------------------------------------------------------
+
+WIRE_VERSIONS = {
+    1: {
+        "probe_unit": "enter/exit pair",
+        "probe_unit_short": "pair",
+        "transitions_per_probe_unit": 2,
+        "bucket_names": BUCKET_NAMES,
+        "counter_names": COUNTER_NAMES,
+        "atc_hit_means": "translates that SUCCEEDED, not ATC lookups that hit",
+        "atc_hit_identity": "ATC_HIT + FAULTS == XLATE",
+        "tier0_identity": "IPAGE_MISS + DPAGE_RMISS + DPAGE_WMISS == XLATE",
+    },
+}
+
+# Versions the firmware lane has said are coming but has not published a contract for.
+# These get a refusal that names what is missing and where to put it; anything else gets
+# the generic "this tool implements version 1 only".
+WIRE_VERSIONS_PENDING = {
+    2: ("        Version 2 is the firmware lane's fix for the two version-1 defects this "
+        "tool\n"
+        "        documents -- the 2x probe over-pricing and the misnamed ATC_HIT counter "
+        "-- and\n        each of those fixes changes what a dump PRINTS.  Its contract has "
+        "not been\n        published, so there is nothing here to read it with."),
+}
+
 
 class CaptureError(Exception):
     """A capture that cannot be trusted.  Always carries the line that proves it."""
+
+
+def wire_semantics(version, no, what):
+    """The version-keyed semantics for a dump, or a refusal naming which unknown this is.
+
+    `what` names the line that carried the version, because every refusal in this tool has
+    to be traceable to a line of the capture."""
+    sem = WIRE_VERSIONS.get(version)
+    if sem is not None:
+        return sem
+    implemented = ", ".join(str(v) for v in sorted(WIRE_VERSIONS))
+    pending = WIRE_VERSIONS_PENDING.get(version)
+    if pending is not None:
+        raise CaptureError(
+            "capture line %d: %s reports version %d; this tool implements version %s "
+            "only.\n%s\n"
+            "        Refusing rather than guessing: fill in WIRE_VERSIONS[%d] in this file "
+            "from\n        the firmware's z3660_prof.h and docs/profiler.md once it lands "
+            "-- the seam is\n        one table entry, and every version-dependent decision "
+            "here reads it."
+            % (no, what, version, implemented, pending, version))
+    raise CaptureError(
+        "capture line %d: %s reports version %d; this tool implements version %s only.\n"
+        "        Refusing rather than guessing -- the record layout, the flag bits and the\n"
+        "        dump grammar are all versioned by that one number, so a guess would "
+        "silently\n        relabel every row of the dump."
+        % (no, what, version, implemented))
 
 
 # --------------------------------------------------------------------------------------
@@ -479,6 +588,69 @@ RE_BUCKET = re.compile(r"^\[PROF\] b (\d+)\s+(\S+)\s+cyc=(\d+)\s+(\d+\.\d+)%\s*$
 RE_COUNTER = re.compile(r"^\[PROF\] c (\d+)\s+(\S+)\s+(\d+)\s*$")
 RE_KV = re.compile(r"([A-Za-z_]+)=(\S+)")
 
+# --------------------------------------------------------------------------------------
+# Two repairs, for captures that are INTACT but were delivered dirty.  Both are narrow on
+# purpose: a repair that can absorb a real loss is worse than a refusal, because it turns a
+# hard error into a plausible number.  Neither of these can -- the record count, the header
+# and the `ring end n=` terminator are still cross-checked afterwards, and they are what
+# actually proves a dump whole.
+#
+# 1. A LOGGER LINE PREFIX.  A serial console captured through a logger (the KVM's, for one)
+#    carries "HH:MM:SS " ahead of the firmware's own output on every line.  Only a
+#    timestamp-shaped prefix is stripped, and only from a line that is firmware output
+#    without it -- so a line with arbitrary bytes in front of it is still not a line this
+#    tool will parse.
+#
+# 2. A `ring hdr` LINE THAT LOST ITS "[PROF] ".  The console echo of the command that
+#    requested the dump and the firmware's first header line collide in the one UART, and
+#    what arrives is the header with its literal prefix eaten or run together with the echo
+#    ("...~2 min of seri[lROF] ring hdr magic=Z3P1 ...").  The payload is what carries the
+#    dump's identity, and it is repairable only when it is COMPLETE: the recovered
+#    key=value set has to be exactly one of the two header lines the format defines.  A
+#    payload missing a field is not repaired: the line is not recognised as a header at
+#    all, and _check_ring_header() then refuses the dump naming the fields that never
+#    arrived.
+# --------------------------------------------------------------------------------------
+
+RE_LOG_PREFIX = re.compile(r"^\[?(?:\d{4}-\d{2}-\d{2}[T ])?"
+                           r"\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,6})?\]?[ \t]+")
+RE_HDR_SALVAGE = re.compile(r"ring hdr (\S+=\S+(?: \S+=\S+)*)\s*$")
+
+# The two `ring hdr` lines version 1 emits, by their exact field sets.  "Complete" means
+# equal to one of these -- not "contains", so a truncated payload cannot pass as one.
+HDR_KEYS = [
+    frozenset(("magic", "version", "rec_size", "rec_count",
+               "ring_entries", "hz", "period_cyc", "cpu_hz")),
+    frozenset(("samples", "drops", "cyc_span", "wall_ticks", "wall_hz", "build")),
+]
+
+
+def _strip_log_prefix(line):
+    """Return (payload, prefix): a timestamp prefix removed only when what remains is
+    recognisably firmware output.  Nothing in the prefix is ever used."""
+    m = RE_LOG_PREFIX.match(line)
+    if not m:
+        return line, ""
+    rest = line[m.end():]
+    if (rest.startswith("[PROF]") or rest.startswith("S ")
+            or re.match(r"^S[0-9a-f ]", rest) or "ring hdr " in rest):
+        return rest, m.group(0)
+    return line, ""
+
+
+def _salvage_hdr(line):
+    """The key=value payload of a `ring hdr` line whose "[PROF] " did not survive, or None.
+
+    Returned only when the recovered field set is exactly one of the two the format
+    defines; a wrong `magic` is deliberately NOT filtered here, because the caller's magic
+    check gives a far better error than "the capture starts mid-dump" would."""
+    m = RE_HDR_SALVAGE.search(line)
+    if not m:
+        return None
+    payload = m.group(1)
+    kv = dict(RE_KV.findall(payload))
+    return payload if frozenset(kv) in HDR_KEYS else None
+
 
 class Ring(object):
     def __init__(self):
@@ -487,6 +659,7 @@ class Ring(object):
         self.first_line = 0
         self.last_line = 0
         self.noise_lines = []      # non-sample lines seen between begin and end
+        self.sem = None            # WIRE_VERSIONS entry, from the header's version field
 
 
 class Stats(object):
@@ -494,6 +667,7 @@ class Stats(object):
         self.first_line = 0
         self.last_line = 0
         self.ver = None
+        self.sem = None            # WIRE_VERSIONS entry, from the ver= line
         self.build = 0
         self.cpu_hz = 0
         self.hz = 0
@@ -519,11 +693,19 @@ def parse_capture(path):
     pending_hdr = {}
     pending_hdr_line = 0
 
+    prefixed, first_prefix, first_prefix_line = 0, "", 0
+
     with open(path, "r", errors="replace") as fh:
         lines = fh.read().split("\n")
     lines = [ln.rstrip("\r") for ln in lines]
 
-    for no, line in enumerate(lines, 1):
+    for no, raw in enumerate(lines, 1):
+        line, prefix = _strip_log_prefix(raw)
+        if prefix:
+            prefixed += 1
+            if not first_prefix:
+                first_prefix, first_prefix_line = prefix, no
+
         if ring is not None:
             m = RE_SAMPLE.match(line)
             if m:
@@ -560,8 +742,19 @@ def parse_capture(path):
             continue
 
         m = RE_HDR.match(line)
-        if m:
-            kv = dict(RE_KV.findall(m.group(1)))
+        payload = m.group(1) if m else None
+        if payload is None:
+            payload = _salvage_hdr(line)
+            if payload is not None:
+                warnings.append(
+                    "capture line %d: a 'ring hdr' line arrived without its literal "
+                    "'[PROF] ' prefix (%r). Its key=value payload is complete -- exactly "
+                    "the fields this format defines -- so the line is REPAIRED here rather "
+                    "than the capture refused. Nothing ahead of 'ring hdr' was used, and "
+                    "the header/terminator/record-count cross-checks still have to pass."
+                    % (no, raw[:72]))
+        if payload is not None:
+            kv = dict(RE_KV.findall(payload))
             if not pending_hdr:
                 pending_hdr_line = no
             pending_hdr.update(kv)
@@ -590,29 +783,28 @@ def parse_capture(path):
                 st.ver, st.build = int(m.group(1)), int(m.group(2), 16)
                 st.cpu_hz, st.hz = int(m.group(3)), int(m.group(4))
                 st.period_cyc, st.probe_cyc = int(m.group(5)), int(m.group(6))
-                if st.ver != VERSION:
-                    raise CaptureError(
-                        "capture line %d: stats dump reports version %d; this tool "
-                        "implements version %d only.\n"
-                        "        Refusing rather than guessing: bucket and counter ids are "
-                        "append-only,\n        so a different version silently relabels "
-                        "every row." % (no, st.ver, VERSION))
+                st.sem = wire_semantics(st.ver, no, "stats dump ver= line")
                 continue
             m = RE_TOTAL.match(line)
             if m:
                 st.total_cyc, st.wall_ticks, st.wall_hz = (int(m.group(1)), int(m.group(2)),
                                                            int(m.group(3)))
                 continue
+            # The name tables come from the version seam, not from a global: a version that
+            # renames a counter is caught by swapping its table entry, and a name arriving
+            # under an id it does not belong to in THAT version is what this check is for.
+            sem = st.sem or WIRE_VERSIONS[VERSION]
+            sver = st.ver if st.ver is not None else VERSION
             m = RE_BUCKET.match(line)
             if m:
                 bid, name, cyc = int(m.group(1)), m.group(2), int(m.group(3))
-                _check_name(bid, name, BUCKET_NAMES, "bucket", no, warnings)
+                _check_name(bid, name, sem["bucket_names"], "bucket", no, sver, warnings)
                 st.buckets[bid] = cyc
                 continue
             m = RE_COUNTER.match(line)
             if m:
                 cid, name, val = int(m.group(1)), m.group(2), int(m.group(3))
-                _check_name(cid, name, COUNTER_NAMES, "counter", no, warnings)
+                _check_name(cid, name, sem["counter_names"], "counter", no, sver, warnings)
                 st.counters[cid] = val
                 continue
             if RE_STATS_END.match(line):
@@ -638,48 +830,59 @@ def parse_capture(path):
         raise CaptureError("%s: no '[PROF]' dump found.  A capture with no ring header and "
                            "no stage attribution block has nothing to symbolize -- check "
                            "that the console log covers the PROFD/PROFR output." % path)
+    if prefixed:
+        warnings.append(
+            "%d capture line(s) carry a logger line prefix ahead of the firmware's own "
+            "output (first at line %d: %r). It is stripped before parsing and nothing in "
+            "it is used. Only a timestamp-shaped prefix on a line that is firmware output "
+            "without it is tolerated, so this does not weaken the truncation checks."
+            % (prefixed, first_prefix_line, first_prefix))
     return rings, stats, boot, len(lines), warnings
 
 
-def _check_name(idx, name, table, what, no, warnings):
+def _check_name(idx, name, table, what, no, ver, warnings):
     if idx >= len(table):
-        warnings.append("capture line %d: %s id %d is beyond the %d this version defines "
+        warnings.append("capture line %d: %s id %d is beyond the %d version %d defines "
                         "(%s) -- reported but not interpreted."
-                        % (no, what, idx, len(table), name))
+                        % (no, what, idx, len(table), ver, name))
     elif table[idx] != name:
         warnings.append("capture line %d: %s id %d is named %r here but %r in version %d. "
                         "The ids are append-only, so this is a wire-format drift the "
                         "version field did not catch; every row of this dump is suspect."
-                        % (no, what, idx, name, table[idx], VERSION))
+                        % (no, what, idx, name, table[idx], ver))
 
 
 def _check_ring_header(ring, no):
     h = ring.hdr
+    # Completeness first, so a header line that did not arrive is reported as a header line
+    # that did not arrive.  A damaged-but-complete line is repaired upstream by
+    # _salvage_hdr(); reaching here with fields missing means the payload itself was lost,
+    # and that is not repairable from anything in the capture.
+    missing = [k for k in sorted(set().union(*HDR_KEYS) - set(("build",)))
+               if k not in h]
+    if missing:
+        named = ", ".join(repr(k) for k in missing[:4])
+        if len(missing) > 4:
+            named += " and %d more" % (len(missing) - 4)
+        raise CaptureError(
+            "capture line %d: ring header is missing %s.\n"
+            "        Both '[PROF] ring hdr' lines are required, and the capture lost one or "
+            "lost part\n        of one.  A `ring hdr` line that merely lost its '[PROF] ' "
+            "prefix is repaired; this\n        one lost payload, which nothing in the "
+            "capture can reconstruct." % (no, named))
     magic = h.get("magic")
     if magic != MAGIC:
         raise CaptureError(
             "capture line %d: ring header magic is %r, not %r.\n"
             "        Refusing.  This is either not a z3660 profiler dump or it is a "
             "format\n        this tool has never seen." % (no, magic, MAGIC))
-    ver = int(h.get("version", -1))
-    if ver != VERSION:
-        raise CaptureError(
-            "capture line %d: ring header version is %d; this tool implements version %d "
-            "only.\n        Refusing rather than guessing -- the record layout, the flag "
-            "bits and the\n        dump grammar are all versioned by that one number."
-            % (no, ver, VERSION))
+    ring.sem = wire_semantics(int(h.get("version", -1)), no, "ring header")
     rs = int(h.get("rec_size", -1))
     if rs != REC_SIZE:
         raise CaptureError(
             "capture line %d: rec_size is %d, not %d.  Version 1 pins the sample record at "
             "%d bytes\n        (pc:u32 opcode:u16 flags:u16); a different size means a "
             "different record." % (no, rs, REC_SIZE, REC_SIZE))
-    for k in ("rec_count", "ring_entries", "hz", "period_cyc", "cpu_hz",
-              "samples", "drops", "cyc_span", "wall_ticks", "wall_hz"):
-        if k not in h:
-            raise CaptureError("capture line %d: ring header is missing %r.  Both "
-                               "'[PROF] ring hdr' lines are required; the capture lost one."
-                               % (no, k))
 
 
 def _close_ring(ring, promised, no, line, warnings):
@@ -775,7 +978,12 @@ def bucket_entries(c):
 
 
 def probe_landing(entries):
-    """How many probe bodies each bucket pays for.
+    """How many probe TRANSITIONS each bucket pays for -- enters and exits, counted apart.
+
+    The unit matters and is the same unit TRANSITIONS is counted in, which is half the unit
+    `probe_cyc` is priced in: see THE VERSION SEAM.  A bucket visit contributes two
+    transitions here, one enter and one exit, so this function's total is exactly twice its
+    argument's -- which is why it can be compared to the firmware's TRANSITIONS directly.
 
     Read out of the firmware's enter()/exit(), not assumed.  Both stamp `last = now` BEFORE
     the rest of the probe body runs, so the probe's own cycles elapse after the stamp and
@@ -844,9 +1052,19 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
                    "Numbers below are suspect.")
         warn.append("stats dump #%d: build=0x%02X does not claim a profiler (bit 2 clear)."
                     % (idx, bf))
+    sem = st.sem or WIRE_VERSIONS[VERSION]
+    ver = st.ver if st.ver is not None else VERSION
+    probe_unit = sem["probe_unit"]
+    unit = sem["probe_unit_short"]
+    per_unit = sem["transitions_per_probe_unit"]
+
     out.append("cpu_hz          %d Hz (measured at arm time, not configured)" % st.cpu_hz)
     out.append("sampler         %d Hz (period %d cyc)" % (st.hz, st.period_cyc))
-    out.append("probe cost      %d cyc per enter/exit pair   [%s]" % (probe_cyc, probe_src))
+    out.append("probe cost      %d cyc per %s   [%s]" % (probe_cyc, probe_unit, probe_src))
+    if per_unit != 1:
+        out.append("                = %.2f cyc per transition; one %s is %d transitions "
+                   "(one enter, one exit)" % (float(probe_cyc) / per_unit, probe_unit,
+                                              per_unit))
 
     c = st.counters
     total = sum(st.buckets.values())
@@ -865,18 +1083,34 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
         entries = bucket_entries(c)
         land = probe_landing(entries)
         modelled = sum(land.values())
-        probe_total = trans * probe_cyc
+        # THE UNIT.  `probe_cyc` prices one probe_unit (version 1: an enter/exit PAIR);
+        # TRANSITIONS counts each enter and each exit.  The priced quantity is therefore
+        # trans / per_unit, not trans.  Multiplying first keeps the integer division to a
+        # single truncation at the end.
+        probe_units = trans // per_unit
+        probe_total = trans * probe_cyc // per_unit
         resid = trans - modelled
         resid_pct = abs(pct(resid, trans)) if trans else 100.0
         usable = trans > 0 and probe_cyc > 0 and modelled > 0 and resid_pct <= 25.0
 
         adj = {}
+        clamped, clamped_cyc = 0, 0
         if usable:
             # Distribute the firmware's EXACT probe total by the modelled landing shape, so
             # the parts sum to the measured whole even where the model is imperfect.
+            #
+            # A bucket whose modelled probe cost EXCEEDS its measured cycles is clamped at
+            # zero, and that is counted rather than swallowed: it is arithmetically
+            # impossible and therefore evidence that the probe price is too high, which is
+            # exactly how the firmware's 2x over-pricing announced itself -- LOOP was asked
+            # for half again as many cycles as it contained.
             for b in range(len(BUCKET_NAMES)):
                 p = probe_total * land[b] // modelled
-                adj[b] = max(st.buckets.get(b, 0) - p, 0)
+                raw = st.buckets.get(b, 0)
+                if p > raw:
+                    clamped += 1
+                    clamped_cyc += p - raw
+                adj[b] = max(raw - p, 0)
             adj_total = sum(adj.values())
 
         out.append("  id  name       cycles                 share   probe cyc          "
@@ -902,11 +1136,35 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
         out.append("")
         out.append("  probe overhead inside the totals: %d cyc = %s of the measured total"
                    % (probe_total, fpct(probe_total, total)))
-        out.append("    (%d transitions x %d cyc, both measured by the firmware)"
-                   % (trans, probe_cyc))
+        out.append("    (%d transitions / %d = %d %ss x %d cyc/%s, %s)"
+                   % (trans, per_unit, probe_units, probe_unit, probe_cyc, unit,
+                      "count measured by the firmware, price from --probe-cost"
+                      if probe_src == "--probe-cost" else "both measured by the firmware"))
+        if per_unit != 1:
+            out.append("    the firmware's own line prints TRANSITIONS x probe_cyc = %d cyc "
+                       "(%s of the total)," % (trans * probe_cyc,
+                                               fpct(trans * probe_cyc, total).strip()))
+            out.append("    which double-counts by exactly %dx: probe_cyc prices a %s while "
+                       "TRANSITIONS counts" % (per_unit, unit))
+            out.append("    each enter and each exit.  This tool prices the %ss.  [wire "
+                       "version %d]" % (unit, ver))
+        if usable and clamped:
+            out.append("  *** %d bucket(s) were CLAMPED at zero: the modelled probe cost "
+                       "exceeded the cycles" % clamped)
+            out.append("  *** actually measured in them, by %d in total.  That is "
+                       "arithmetically impossible," % clamped_cyc)
+            out.append("  *** so it is evidence the probe PRICE is too high -- not that "
+                       "those stages are empty.")
+            out.append("  *** The 'adjusted' column absorbs the excess and no longer sums "
+                       "to total - probe.")
+            warn.append("stats dump #%d: %d bucket(s) clamped at zero -- the modelled probe "
+                        "cost exceeded their measured cycles by %d in total. The "
+                        "subtraction is arithmetically impossible at this probe price; the "
+                        "adjusted column absorbs the excess and the shares derived from it "
+                        "are not trustworthy." % (idx, clamped, clamped_cyc))
         out.append("  probe-landing model: %d transitions predicted from the counters vs "
                    "%d measured" % (modelled, trans))
-        out.append("    residual %+d (%.2f%% of measured) -- %s"
+        out.append("    residual %+d (%.4f%% of measured) -- %s"
                    % (resid, resid_pct,
                       "within tolerance, subtraction applied" if usable
                       else "OUT OF TOLERANCE"))
@@ -952,6 +1210,7 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
     rh, rm = c.get(C_DPAGE_RHIT, 0), c.get(C_DPAGE_RMISS, 0)
     wh, wm = c.get(C_DPAGE_WHIT, 0), c.get(C_DPAGE_WMISS, 0)
     xl, ah, am = c.get(C_XLATE, 0), c.get(C_ATC_HIT, 0), c.get(C_ATC_MISS, 0)
+    fa = c.get(C_FAULTS, 0)
 
     def tier0(label, hit, miss):
         if hit + miss == 0:
@@ -964,22 +1223,62 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
     out.append(tier0("ipagecache hit", ih, im))
     out.append(tier0("dpagecache read hit", rh, rm))
     out.append(tier0("dpagecache write hit", wh, wm))
+    # Tier 1 is derived from XLATE and ATC_MISS and NOT from ATC_HIT, which in version 1
+    # does not count what its name says (see THE VERSION SEAM).  The identities below are
+    # the cross-check that used to be spelled `ATC_HIT + ATC_MISS == XLATE` -- a sum with
+    # no meaning, which therefore fired on every intact dump and gave a wrong reason for a
+    # real defect.
     out.append("  tier 1 -- the 4-way ATC inside mmu_translate")
     if xl:
-        out.append("  %-34s %8.2f%%   %d hit / %d miss of %d translates"
-                   % ("ATC hit", pct(ah, xl), ah, am, xl))
+        out.append("  %-34s %8.2f%%   %d of %d translates did not walk"
+                   % ("ATC hit", pct(xl - am, xl), xl - am, xl))
+        out.append("%s= (XLATE - ATC_MISS) / XLATE" % (" " * 49))
         out.append("  %-34s %8.2f%%   %d of %d translates walked the tables"
                    % ("tier 2 -- table walk rate", pct(am, xl), am, xl))
     else:
         out.append("  %-34s %9s   no translates recorded" % ("ATC hit", "n/a"))
-    if ah + am != xl and xl:
-        out.append("  *** ATC_HIT + ATC_MISS (%d) != XLATE (%d): the two tiers disagree, "
-                   "which they cannot" % (ah + am, xl))
-        out.append("  *** if both were counted over the same span.  Treat this dump's "
+
+    out.append("  cross-checks -- the identities an intact version-%d dump satisfies" % ver)
+    idrow = "    %-49s %-9s %s"
+    t0_seen = ih + im + rh + rm + wh + wm
+    t0miss = im + rm + wm
+    if not t0_seen:
+        out.append(idrow % (sem["tier0_identity"], "n/a",
+                            "no tier-0 counters on the 68030 path"))
+    elif t0miss == xl:
+        out.append(idrow % (sem["tier0_identity"], "ok", "%d == %d" % (t0miss, xl)))
+    else:
+        out.append(idrow % (sem["tier0_identity"], "MISMATCH", "%d vs %d" % (t0miss, xl)))
+        out.append("  *** XLATE counts the calls into mmu_translate and every tier-0 miss "
+                   "makes exactly one,")
+        out.append("  *** so these cannot disagree over one span.  Treat this dump's "
                    "translation rows as suspect.")
-        warn.append("stats dump #%d: ATC_HIT + ATC_MISS (%d) != XLATE (%d). Every "
-                    "translate is either an ATC hit or a walk, so these cannot disagree "
-                    "over one span." % (idx, ah + am, xl))
+        warn.append("stats dump #%d: %s -- measured %d vs %d. XLATE counts the calls into "
+                    "mmu_translate and every tier-0 miss makes exactly one, so these "
+                    "cannot disagree over one span; this dump's counters were not all "
+                    "taken over the same span."
+                    % (idx, sem["tier0_identity"], t0miss, xl))
+    if xl:
+        if ah + fa == xl:
+            out.append(idrow % (sem["atc_hit_identity"], "ok", "%d == %d" % (ah + fa, xl)))
+            out.append("    ATC_HIT is a version-%d misnomer: it counts %s."
+                       % (ver, sem["atc_hit_means"]))
+            out.append("    ATC_HIT + ATC_MISS is therefore a meaningless sum, and is not "
+                       "computed above.")
+        else:
+            out.append(idrow % (sem["atc_hit_identity"], "MISMATCH",
+                                "%d vs %d" % (ah + fa, xl)))
+            out.append("  *** ATC_HIT counts %s, so"
+                       % sem["atc_hit_means"])
+            out.append("  *** an intact dump satisfies that identity.  ATC_HIT is suspect "
+                       "here; the two rates")
+            out.append("  *** above come from XLATE and ATC_MISS and do not depend on it.")
+            warn.append("stats dump #%d: %s -- measured %d vs %d. In wire version %d "
+                        "ATC_HIT counts %s, so an intact dump satisfies that identity. "
+                        "ATC_HIT is suspect here; the ATC hit rate and the walk rate are "
+                        "computed from XLATE and ATC_MISS and do not depend on it."
+                        % (idx, sem["atc_hit_identity"], ah + fa, xl, ver,
+                           sem["atc_hit_means"]))
     out.append("  supervisor share")
     out.append("  %-34s %8.2f%%   %d of %d instructions"
                % ("INSNS_SUPER / INSNS", pct(c.get(C_INSNS_SUPER, 0), insns),
@@ -1358,7 +1657,8 @@ def _flat(out, title, how, table, total_w, total_n, top, syms, what):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="Symbolize a Z3660 [PROF] serial capture (wire format version 1).",
+        description="Symbolize a Z3660 [PROF] serial capture (wire format version 1; a "
+                    "version this tool does not implement is refused, not guessed at).",
         epilog="The load base is not always 0x08000000: an accelerator with its own RAM "
                "uses that, an A3640 running from A3000 motherboard RAM uses 0x07000000. "
                "Read tvaddr from the loader's boot line rather than assuming.")
@@ -1376,7 +1676,9 @@ def main(argv=None):
     ap.add_argument("--user-base", metavar="ADDR", default="0",
                     help="base to add to --user symbol values (default 0)")
     ap.add_argument("--probe-cost", metavar="N", type=int,
-                    help="enter/exit pair cost in ARM cycles; overrides the capture")
+                    help="cost of one enter/exit PAIR in ARM cycles, the same unit the "
+                         "firmware calibrates and prints; overrides the capture. In wire "
+                         "version 1 a pair is two TRANSITIONS, and the tool divides")
     ap.add_argument("--top", metavar="N", type=int, default=25,
                     help="flat-profile entries to print (default 25)")
     ap.add_argument("--opcodes", metavar="N", type=int, default=20,

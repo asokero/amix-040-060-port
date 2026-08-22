@@ -6,14 +6,23 @@ functions the 68k interpreter is spending its time in, which opcodes it is dispa
 where inside the interpreter that time goes.
 
 The firmware emits raw records and nothing else; symbolization belongs here because this is
-where the kernel artifact and its symbol table live. The wire format is **frozen at version
-1** by the firmware and this tool **refuses a version it does not know** rather than guessing
-— the record layout, the flag bits and the ASCII dump grammar are all versioned by that one
-number, so a guess would silently relabel a whole profile.
+where the kernel artifact and its symbol table live. The wire format is versioned; **version
+1 is what this tool implements**, and it **refuses a version it does not know** rather than
+guessing — the record layout, the flag bits and the ASCII dump grammar are all versioned by
+that one number, so a guess would silently relabel a whole profile.
 
 The contract lives on the firmware side, in `Z3660_emu/src/uae/z3660_prof.h` and
 `docs/profiler.md` of the Z3660 firmware tree. This tool is written against it and does not
 have to be rebuilt in step with the firmware.
+
+**Version 1 has two defects that this tool corrects for, and both change numbers you would
+otherwise read straight off the console.** The firmware over-prices the probe by exactly 2×,
+and its `ATC_HIT` counter does not count what its name says. Both are described below, and
+both live behind one table — `WIRE_VERSIONS` in `tools/prof-symbolize.py`, "THE VERSION
+SEAM" — so that the firmware's own fix, which is a version bump, is one table entry here
+rather than a rewrite. Until that entry exists a version-2 capture is **refused with the
+reason**, because reading it under version-1 rules would halve an already-corrected probe
+figure and read renamed counters under their old ids: a full report, and a wrong one.
 
 ```
 python3 tools/prof-symbolize.py CAPTURE [--kernel build/unix-040] [--load-base 0x08000000]
@@ -49,6 +58,30 @@ afterwards:
   but an A3640 running from A3000 motherboard RAM binds at `0x07000000` and every address
   would be off by 16 MiB. Read `tvaddr` from the loader's own boot output and pass
   `--load-base`; `tools/status-facts.sh` takes the same argument for the same reason.
+
+### Dirty is not the same as damaged
+
+A capture can be *intact* and still not be what the firmware wrote, and the two ways that
+happens in practice are both repaired here rather than refused. Each repair is announced in
+the warnings, and the record-count checks that actually prove a dump whole still have to
+pass afterwards:
+
+* **A logger's line prefix.** A console captured through a logger carries `HH:MM:SS ` ahead
+  of every line. Only a *timestamp-shaped* prefix is stripped, and only from a line that is
+  firmware output without it — so a line with arbitrary bytes in front of it is still not a
+  line this tool will parse.
+* **A `ring hdr` line that lost its literal `[PROF] `.** The console echo of the command
+  that asked for the dump and the firmware's first header line collide in the one UART, and
+  what arrives is the header run together with the echo, or with its prefix partly eaten
+  (`…~2 min of seri[lROF] ring hdr magic=Z3P1 …`). The line is repaired **only when its
+  payload is complete** — the recovered `key=value` set has to be exactly one of the two
+  header lines the format defines. A payload that is *missing a field* is not repaired; it
+  is refused, naming what is gone.
+
+These two together are why the tool refused all seven captures of the first metal profiling
+session while every one of them was provably intact. Nothing about the repair weakens the
+truncation checks: a repair that could absorb a real loss would be worse than a refusal,
+because it turns a hard error into a plausible profile.
 
 ---
 
@@ -105,6 +138,43 @@ count, so the inflation is computable — but it reports **one global** transiti
 *per-bucket* subtraction has to be modelled. This tool models it from the mechanism rather
 than by apportionment:
 
+#### The unit: `probe_cyc` prices a *pair*, `TRANSITIONS` counts *each half*
+
+`probe_cyc` is calibrated over 256 iterations of `enter()` **followed by** `exit()`, divided
+by 256 — so it is the cost of a **pair**. `TRANSITIONS` is incremented **once by `enter()`
+and once by `exit()`** — so it counts each half separately. `TRANSITIONS × probe_cyc`,
+which is what the firmware itself prints, therefore prices every pair twice:
+
+```
+probe total  =  TRANSITIONS / 2  ×  probe_cyc          per transition: probe_cyc / 2
+```
+
+The report prints the division, the pair count and the per-transition cost explicitly, and
+prints the firmware's doubled figure beside it and labelled, because that is the number a
+reader coming from the console has in front of them. On the first metal session's stage
+dump this is the difference between 41.33 % and 82.65 % of the run — and 82.65 % is not
+merely wrong, it is **impossible**: it demands 43.80 G cycles of probe out of a `LOOP`
+bucket that contains 28.03 G, so the subtraction clamps at zero and silently absorbs the
+excess. The corrected figure leaves every bucket positive and the adjusted column summing
+to `total − probe`. Two independent measurements agree with it: the A/B table prices the
+whole bucket-arming step at 38.22 %, and the ~3 % remainder is the call-and-test overhead
+paid even when the buckets are off.
+
+**`docs/C2-ATTACK-MAP.md` was written against this corrected arithmetic, derived
+independently while the tool still had the defect. The shipped tool now reproduces that
+document's §2.1 and §2.3 tables cell for cell** — every raw cycle, every probe column, every
+corrected share, and the 966 092 170 vs 966 080 190 model residual.
+
+The `--probe-cost` override is in the same unit the firmware calibrates and prints: **the
+cost of one pair**, not of one transition.
+
+A bucket whose modelled probe cost exceeds the cycles measured in it is clamped at zero, and
+the report now **says so and how much it absorbed**. That clamp is not a rounding detail: it
+is how an over-priced probe announces itself, and while it was silent the impossible 82.65 %
+subtraction looked like an ordinary result. A clamp means the *price* is too high, not that
+the stage is empty, and when one fires the adjusted column no longer sums to `total −
+probe`.
+
 * `enter()` and `exit()` both stamp `last = now` *before* the rest of the probe body runs, so
   the probe's own cycles elapse after the stamp and are charged at the next transition to
   whichever bucket is current by then. `enter(b)` therefore lands its cost in `b`; `exit()`
@@ -135,6 +205,32 @@ Three tiers of address translation are separately visible: the tier-0 page cache
 ATC, and the tier-2 descriptor table walk. On the **68030** path the tier-0 counters do not
 exist upstream at all, so the report prints `n/a` with the reason rather than `0.00%` — the
 row is *absent*, not zero-valued by accident.
+
+#### `ATC_HIT` does not count ATC hits
+
+In version 1 the counter named `ATC_HIT` counts **translates that succeeded**. It carries no
+ATC information whatsoever. Two identities hold exactly on an intact dump — measured on four
+independent metal spans, at seven digits, with no slack:
+
+```
+IPAGE_MISS + DPAGE_RMISS + DPAGE_WMISS  ==  XLATE
+ATC_HIT + FAULTS                        ==  XLATE
+```
+
+So `XLATE` is exactly the tier-0 miss count — the calls into `mmu_translate` — and
+`ATC_HIT + ATC_MISS` is a sum of two unrelated quantities. The report therefore derives both
+tier-1 and tier-2 rates **without `ATC_HIT`**:
+
+```
+ATC hit rate = (XLATE - ATC_MISS) / XLATE        walk rate = ATC_MISS / XLATE
+```
+
+and cross-checks the two identities above instead, naming which one failed when one does.
+The check this replaced compared `ATC_HIT + ATC_MISS` against `XLATE` and reported "the two
+tiers disagree" — which fired on **every** intact dump, because that sum has no meaning
+here, and named a cause that was not the cause. The underlying defect is real and is the
+firmware's: fixing the counter is a rename, and a rename of an append-only id is a version
+bump, which is why the corrected reading is recorded per-version in the seam.
 
 `build=0x04` is the shipped profiling combination: the lean hot loop plus the profiler. A
 `build=0x07` dump is a profiling build of the *diagnostic* loop, and its stage map describes
@@ -172,11 +268,26 @@ instrument would make the ranking look like a measurement.
 sh tools/test-prof-symbolize.sh          # exit 0
 ```
 
-No board, no kernel image and no cross toolchain required. `tools/prof-fixtures.py` builds
-the synthetic captures into a temporary directory — valid, truncated, wrapped, weighted, and
-one per refusal — together with a small hand-assembled m68k ELF and the equivalent `nm` dump,
-so **both** symbol paths are executed and asserted to produce the same profile. Each fixture
-encodes one property, named in the generator next to the numbers that produce it.
+113 checks. No board, no kernel image and no cross toolchain required.
+`tools/prof-fixtures.py` builds the synthetic captures into a temporary directory — valid,
+truncated, wrapped, weighted, and one per refusal — together with a small hand-assembled
+m68k ELF and the equivalent `nm` dump, so **both** symbol paths are executed and asserted to
+produce the same profile. Each fixture encodes one property, named in the generator next to
+the numbers that produce it.
+
+Three of the fixtures exist because the tool got these wrong against real captures, and each
+wrong answer looked like a right one:
+
+* `capture-dirty` is `capture-valid`'s own bytes with a logger timestamp on every line *and*
+  a header line run together with the console echo. Nothing is missing, so the assertion is
+  that the report is **byte-identical** to the clean one — not a spot check. `capture-hdrgone`
+  is the same damage with a field genuinely lost, and must still be refused.
+* the probe arithmetic is pinned end to end on `capture-valid`: `9354050 / 2 = 4677025` pairs
+  × 11 cyc = `51447275`, the firmware's doubled `102894550` printed and labelled beside it,
+  and the adjusted column summing to `total − probe`.
+* `capture-atcbroken` and `capture-tier0broken` break one translation identity each, and the
+  suite asserts that the *other* one still passes and that the warning names the right cause.
+  It also asserts that the old text ("the two tiers disagree") appears nowhere.
 
 If `build/unix-040` happens to be present the test additionally runs the ELF parser against
 the real artifact. That case reports **SKIP**, not a pass, when the image is absent: it is
