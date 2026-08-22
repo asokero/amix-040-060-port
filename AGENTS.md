@@ -174,18 +174,27 @@ from where it was written.
 ## Before you claim you are finished
 
 ```sh
-sh tools/check-env.sh              # exit 0
-sh tools/test-build-step.sh        # exit 0
-python3 tools/check-verbatim.py    # exit 0 = 0 unexplained.  Exit 2 means it could NOT check
-sh relink-040.sh                   # exit 0, and TOTAL complaints: 0 in the output
-sh tools/status-facts.sh           # exit 0, and bindings failing: 0
+git ls-files --others --exclude-standard   # must print nothing -- see below
+sh tools/check-env.sh                     # exit 0
+sh tools/test-build-step.sh               # exit 0
+python3 tools/check-verbatim.py           # exit 0 = 0 unexplained.  Exit 2 means it could NOT check
+sh relink-040.sh                          # exit 0, and TOTAL complaints: 0 in the output
+sh tools/status-facts.sh                  # exit 0, and bindings failing: 0
 ```
 
-Two of those need care rather than a glance:
+Three of those need care rather than a glance:
 
+* **A file that is untracked but not ignored is the dangerous state**, and it does not look
+  dangerous. `git status` mentions it in passing, no check that reads the index sees it, and then
+  `git add -A` sweeps it in. That is how a reference source tree, a kernel binary, or a copy of
+  the reader's AMIX installation gets published — none of which can be recalled once someone has
+  cloned it. `git ls-files --others --exclude-standard` must print nothing before you stage.
 * **`tools/check-verbatim.py` only sees files git tracks.** A new file you have not added is not
   checked, so `git add` it before you trust the result. And **exit 2 is not a pass** — it means
-  the reference trees are not on this machine and nothing was compared.
+  the reference trees are not on this machine and nothing was compared. Note how this rule and the
+  previous one pull in opposite directions: an untracked file is invisible to the verbatim gate
+  *and* liable to be staged wholesale. Neither is safe. Decide, per file, whether it belongs in
+  the repository or in `.gitignore`, and leave nothing in between.
 * **`relink-040.sh` prints `TOTAL complaints` from the relocation validator.** A non-zero count
   means the kernel would be rejected at boot. The validator exits non-zero and runs through
   `run_step`, so the build should already have stopped — if you ever see `[OK] built` together

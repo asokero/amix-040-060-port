@@ -325,7 +325,7 @@ judge the right ones.
 
 | Repository | What |
 |---|---|
-| `amix-unix-boot` | the patched AmigaOS bootstrap — **required** to boot anything built here |
+| [`amix-unix-boot`](https://github.com/asokero/amix-unix-boot) | the patched AmigaOS bootstrap — **required** to boot anything built here |
 | `va2000-amix` | MNT VA2000 RTG driver |
 | `xrtg-amix` | Xsvga / X11 for Piccolo and Picasso II |
 | [`gcc-cross-amix`](https://github.com/isoriano1968/gcc-cross-amix) | the `m68k-cbm-sysv4` cross toolchain this build needs |
