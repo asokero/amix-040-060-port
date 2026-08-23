@@ -46,6 +46,15 @@ block** were *appended* rather than bumped. See
 particular turn a corrected bucket share from an upper bound into a number, and retire the
 `2 × IFETCH_CALLS` estimate that preceded them.
 
+**And then one meaning *did* move while the version stayed at 2.** The firmware's rung 1d
+brackets three stages out of the dispatch loop into ids 14–16, so **bucket id 0 stops being
+the loop and becomes its residue** — and the firmware moves the printed *name* with the
+meaning (`LOOP` → `LOOPRES`) instead of bumping, exactly as v1's `TAIL` became v2's
+`TAILADV`. The version field therefore cannot tell you which shape you have and **the dump's
+own id-0 name is the only thing that can**. See
+[The LOOP split](#the-loop-split-rung-1d-and-the-ten-points-it-puts-within-reach); it is the
+one place in this format where reading the version number is not enough.
+
 ```
 python3 tools/prof-symbolize.py CAPTURE [--kernel build/unix-040] [--load-base 0x08000000]
                                         [--user BIN] [--probe-cost N] [--top N]
@@ -118,6 +127,9 @@ pass afterwards:
   clock, clock source, sampler rate and probe price, in a fixed-width grammar that is
   version-checked. So the dump is opened from *that* line, and a capture that lost the `ver=`
   line as well is **still refused** — that is the line whose absence actually costs something.
+  Because the repair keys on `[PROF] ver=` and **never on the banner**, it cannot care what
+  shape of dump follows it: the self-test applies the same damage to a rung-1d capture and
+  asserts the repaired report is byte-identical to the clean one there too.
 
 These three together are why the tool refused all seven captures of the first metal profiling
 session, and five of the campaign's, while every one of them was provably intact. Nothing
@@ -295,6 +307,11 @@ accumulators the `b` lines come from. The tool does not need it to add four numb
 **cross-checks against it**, because the two cannot disagree over one span, and if they do
 the capture's `b` lines and its `t` line were taken from different states.
 
+The same move was made again one bucket over, against a bucket that had grown larger than the
+tail ever was — see
+[The LOOP split](#the-loop-split-rung-1d-and-the-ten-points-it-puts-within-reach). The report
+prints a rollup for that one too, and for the same reason.
+
 The landing model gains two entries for v2: `TAILSAMP` and `TAILPOLL` are each entered once
 per instruction (their probe brackets sit *outside* the cadence gate, so the gate skips the
 work and not the transition), which is exactly the four extra transitions per instruction
@@ -440,6 +457,12 @@ report. Three gates, each a way the block could be present and wrong:
 span (it is not a probe transition and has never been in `TRANSITIONS`), so it is
 over-reported rather than under-reported — the safe direction, at the ~0.06 % it measures.
 
+> **A corrected `LOOP` share quoted from before rung 1d is the WHOLE dispatch loop.** The
+> metal figure this block produced — 24.80 % @39 .. 25.11 % @50 — is `LOOPRES + DOPCFIND +
+> DOPCFILL + BLKREC` on any capture that names id 0 `LOOPRES`. Read
+> [The LOOP split](#the-loop-split-rung-1d-and-the-ten-points-it-puts-within-reach) before
+> laying a new capture's id 0 beside it.
+
 #### The `2 × IFETCH_CALLS` method is retired here, and it was refuted rather than bettered
 
 Before the spans, the fetch buckets' transition count was estimated as two per
@@ -539,6 +562,141 @@ the switch log.
 
 ---
 
+## The LOOP split (rung 1d), and the ten points it puts within reach
+
+Everything above this heading is a version that grew. This one is a **version that stayed
+still while a meaning moved**, and it is the only place in the format where reading the
+version number is not enough.
+
+The firmware's rung 1d brackets three stages out of the dispatch loop:
+
+| id | name | what it is |
+|---|---|---|
+| 14 | `DOPCFIND` | the decoded-op cache **lookup** — set index, generation compare, tag compares, and the extension-window arm/disarm. **Every dispatch.** |
+| 15 | `DOPCFILL` | the decoded-op cache **fill**. The miss path only. |
+| 16 | `BLKREC` | `z3660_blk_run()`, the block-idiom recognizer — the residual test, and the whole serviced chunk when it fires |
+| 0 | `LOOPRES` | what is left: the flag snapshot, `mmu_restart`, `m68k_getpc()`, `do_cycles()`, the handler selection, the back edge |
+
+**The version is still 2, and deliberately so.** The ids are append-only, the header and the
+sample record are untouched, every id 0–13 sits where it did, and a tool that does not know
+about 14–16 reports them uninterpreted rather than mis-labelled — so a bump would make every
+existing tool refuse a capture it can read correctly. What moved is what **id 0** means, and
+the firmware handles that the way v2 handled `TAIL`: **by moving the name with the meaning.**
+
+> A dump that says `LOOP` at id 0 holds the whole dispatch loop.
+> A dump that says `LOOPRES` holds the residue.
+
+That name is the **only** signal. The magic is `Z3P2` either way, the `ver=` line says 2
+either way, and the `s` block, the counters and every other row are identical in shape. So
+the tool keys on the dump's own id-0 name (`BUCKET_SHAPES` in the seam), resolves the whole
+bucket-name table from it, and reports what follows against *that*.
+
+### Why this is worth a section: the mistake is ten points wide and looks like a saving
+
+The C2 attack map ranks `LOOP` first at **26.38–26.54 %** of the interpreter — the
+best-measured share on the page, and the only one with a sub-point bracket. Rung 1d then took
+three stages out of that bucket. On the self-test fixture, sized against exactly that figure:
+
+| | share of the measured total |
+|---|---|
+| the **rollup** `LOOPRES + DOPCFIND + DOPCFILL + BLKREC` | **26.53 %** — the quantity the map measured |
+| **id 0 alone** (`LOOPRES`) | **15.92 %** |
+
+Laying id 0 beside the map's number reports a **10.61-point fall that no code change
+produced**, and *nothing else in the report objects*: the arithmetic balances, the share is
+real, the identities hold. Only the name says the two numbers are about different things.
+So the report **leads with the rollup, prints the four parts beneath it, and prints the guard
+next to both** — and on a pre-rung-1d dump it says so explicitly, that id 0 *is* the whole
+loop there and can be laid beside the map's figures directly. (On a **version 1** dump it
+says something different again: id 0 is the whole loop *and* the sampler hook, so it is not
+the map's quantity either, and the excess is instrument rather than interpreter.)
+
+### The split's own cost, so two captures can be compared at all
+
+A share measured under rung 1d is measured on a run loop that pays **two more transitions per
+dispatch** than every earlier capture was taken on. The firmware prints that cost on its own
+`[PROF] l` line, computed from the three buckets' **own spans** rather than from a
+per-instruction estimate, and the report carries it beside the rollup:
+
+```
+added transitions            4000054   23.05% of all transitions
+  two per span of DOPCFIND (1000025), DOPCFILL (100002) and BLKREC (900000)
+re-priced without the split 13354050   TRANSITIONS - the cost above
+```
+
+Subtracting it re-prices the capture **as though the decomposition had not been taken**,
+which is the only honest way to lay a share here beside a share from an older capture. On the
+fixtures that subtraction reproduces the pre-split fixture's `TRANSITIONS` exactly.
+
+**The buckets are not re-priced and must not be.** The three new ones did not exist on the
+older run loop; moving their cycles back into id 0 would invent a measurement rather than
+recover one. The rollup is the comparable *quantity*; the re-priced count is the comparable
+*denominator*.
+
+### Four identities, stated over spans and not over counters
+
+```
+tcnt[DOPCFIND] == DOPC_HIT + DOPC_MISS      cache ON: one lookup per dispatch
+tcnt[DOPCFIND] == INSNS + FAULTS            every dispatch enters the bracket
+tcnt[DOPCFILL] == DOPC_MISS                 cache ON: one fill per miss
+tcnt[BLKREC]   <= tcnt[DOPCFIND]            at most one recognizer call per dispatch
+```
+
+`tcnt` is the bucket's **own span count from the `[PROF] s` block**, and nothing else will
+do — an entry count taken from a counter that merely correlates with it is the method the
+spans retired, by 1.97×. Without a usable `s` block the report says these are **unavailable**
+rather than assuming they hold.
+
+The first three are *exact*: neither the lookup nor the fill touches guest memory, so neither
+span can be abandoned by an unwind. That is why the firmware **warns** rather than notes when
+they fail, and why the report treats a mismatch as a defect claim. The second of them is also
+the one that **survives the cache switch in both arms** — a dispatch enters the lookup bracket
+whichever way the switch is set — so it is what scopes the bucket when the counters cannot.
+
+**The fourth is the one whose bracket is not pure.** On a *decline* — the common case — the
+bucket holds three masked compares and a return; on a *fire* it holds the whole serviced
+chunk, which can nest bracketed accessors and charge the bucket more spans than there were
+calls. The identity is over **calls**, so the report scopes any excess by `BLK_HIT`: with
+`BLK_HIT == 0` the bucket *is* the residual test, its spans are exactly its calls, and an
+excess is a real defect — which is the only case that warns.
+
+### A cache-off arm is a measurement, not a defect
+
+With the decoded-op cache **off**, two of the four legitimately diverge and the firmware says
+so on a `[PROF] l note:` line rather than a `WARNING`:
+
+* the lookup returns before it counts, so `DOPC_HIT + DOPC_MISS` is **0** while `DOPCFIND`
+  goes on being entered every pass;
+* `DOPCFILL`'s bracket sits on the now-universal miss arm, so it prices the fill's own
+  **switch test** per dispatch instead of per miss.
+
+Those two buckets then read as the price of the two switch tests — a real number, and not the
+one a cache-on capture reports. The report marks both identities **n/a**, explains the
+mechanism, and **warns about nothing**: warning there would send a reader to fix a switch
+setting they chose on purpose. `tcnt[DOPCFIND] == INSNS + FAULTS` survives the switch in both
+arms, because a dispatch enters the bracket whichever way it is set, and it is what scopes
+the bucket when the counters cannot.
+
+### What the firmware said, quoted rather than paraphrased
+
+The board checks these identities too, and it is the one party that saw the state they were
+taken from. Its `[PROF] l WARNING:` and `l note:` lines are printed **verbatim** (wrapped,
+never reflowed) with the capture line they came from, and a `WARNING` is repeated into the
+warnings block so it cannot be lost in a long report. A `note` is not: it is the cache-off
+arm stating a fact about the switch.
+
+### One modelling gap, named where a reader would look for it
+
+The probe-landing model gains `DOPCFIND` (once per dispatch) and `DOPCFILL` (once per miss)
+from the `DOPC_` counters — and from the *dispatch count* instead when the cache is off,
+where those counters read a true zero while both brackets are still entered. `BLKREC` has
+**no counter for calls** (`BLK_HIT` counts the recognizer *firing*), so it is modelled at
+**zero**, which under-predicts a rung-1d dump by two transitions per call. The report names
+that next to the residual and sizes it from the spans, because a reader told only "residual
+10.4 %" will go looking for a cause that is not there.
+
+---
+
 ### Counters and rates
 
 The counters are exact regardless of what the timing instruments are doing — they are not
@@ -616,7 +774,7 @@ instrument would make the ranking look like a measurement.
 sh tools/test-prof-symbolize.sh          # exit 0
 ```
 
-276 checks. No board, no kernel image and no cross toolchain required.
+341 checks. No board, no kernel image and no cross toolchain required.
 `tools/prof-fixtures.py` builds the synthetic captures into a temporary directory — valid,
 truncated, wrapped, weighted, and one per refusal — together with a small hand-assembled
 m68k ELF and the equivalent `nm` dump, so **both** symbol paths are executed and asserted to
@@ -680,6 +838,35 @@ two *legal version-2 captures* carrying different numbers of rows are read diffe
   banner eaten by the console echo, and the assertion is again an **identity**: the repaired
   report body must equal the clean one. `capture-v2bannerident` loses the `ver=` line too and
   must still be refused.
+
+**The rung-1d fixtures are a fourth kind, and the only one where the wrong answer is
+available without the capture being unusual at all.** Every one of them is a perfectly
+ordinary version-2 dump; the only thing that says id 0 stopped meaning the dispatch loop is
+that it is now printed `LOOPRES`. They are built so that a tool keying on anything else —
+the version, the magic, the row count — produces a clean, complete, wrong report:
+
+* `capture-v21d` is sized against the figure the mistake would be scored against: its rollup
+  is **26.53 %**, inside the C2 map's 26.38–26.54 %, while id 0 alone is **15.92 %**. The
+  suite pins the rollup, the four parts, the guard text, and the split cost — `4000054` =
+  2 × (1000025 + 100002 + 900000) — and asserts that `17354104 − 4000054 = 13354050` is
+  exactly `capture-v2spans`'s `TRANSITIONS`, i.e. the count this run would have had before
+  the split. It also asserts the capture warns about **nothing**.
+* `capture-v21doff` is the same shape with the cache off, where two identities legitimately
+  diverge. The suite asserts both read `n/a`, that the mechanism is explained, that the
+  firmware's own `note:` is quoted — and, most importantly, that the report warns about
+  **nothing**.
+* `capture-v21dskew` breaks the lookup bracket against the dispatch counters with the cache
+  on. Both this tool's `MISMATCH` and the **board's own** `[PROF] l WARNING` must appear, the
+  second attributed to the board.
+* `capture-v21dloopmismatch` disagrees with its own `[PROF] l` rollup; `capture-v21dspanslost`
+  loses the `DOPCFIND` span row, so the identities must read **unavailable** rather than being
+  derived from a correlate, while the rollup and the guard survive.
+* `capture-v21dnameclash` answers the shape question twice — `LOOP` at id 0, `DOPCFIND` at
+  id 14. No firmware writes that. Neither answer may win: the id-0 name stands, ids 14–16 stay
+  uninterpreted, and the contradiction is named on both the bucket rows and the `l` line.
+* `capture-v21dbanner` applies the console-echo damage to the rung-1d bytes, because the
+  repair keys on `[PROF] ver=` and must not care which shape follows the banner. The assertion
+  is the same **identity** as the pre-split one.
 
 If `build/unix-040` happens to be present the test additionally runs the ELF parser against
 the real artifact. That case reports **SKIP**, not a pass, when the image is absent: it is

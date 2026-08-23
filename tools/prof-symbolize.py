@@ -62,6 +62,17 @@
 #   * bucket id 8 is the WHOLE run-loop tail in v1 and its RESIDUE in v2, which splits the
 #     rest across new ids 11..13.  Reading v2's id 8 as "the tail" understates the tail.
 #
+# AND ONE MEANING HAS MOVED WITHOUT A VERSION BUMP, so the version field cannot tell you
+# about it and the dump's own NAMES have to.  Bucket id 0 was the whole dispatch loop until
+# the firmware's rung 1d bracketed the decoded-op lookup, the decoded-op fill and the
+# block-idiom recognizer out of it into ids 14..16, leaving id 0 as the RESIDUE.  The
+# firmware moved the name with the meaning rather than bumping -- exactly as v1's `TAIL`
+# became v2's `TAILADV` -- so a dump that prints `LOOP` at id 0 is the old shape and one that
+# prints `LOOPRES` is the new one, and both are wire version 2.  This tool keys on that name,
+# reports the four parts AND their rollup, and refuses to lay id 0 alone beside a `LOOP`
+# figure quoted from an older capture: on the shape the C2 map measured that mistake is worth
+# about ten points of share, in the direction that looks like a saving.
+#
 # Because the magic encodes the version ('Z3P' + digit), a header whose magic and version
 # field disagree is refused as a mismatch rather than resolved in favour of one of them; the
 # same goes for a `ver=` line written in one version's grammar while declaring the other's.
@@ -125,10 +136,42 @@ BUCKET_NAMES_V1 = ["LOOP", "FETCHOP", "FETCHEX", "READ", "WRITE",
 BUCKET_NAMES_V2 = ["LOOP", "FETCHOP", "FETCHEX", "READ", "WRITE",
                    "XLATE", "WALK", "HANDLER", "TAILADV", "FAULT", "PROF",
                    "TAILSAMP", "TAILPOLL", "TAILSPEC"]
+# The same wire version 2 after the firmware's rung 1d, which is a SHAPE and not a version:
+# ids 14..16 are a pure append and id 0's name moved with its meaning.  See BUCKET_SHAPES.
+BUCKET_NAMES_V2_1D = ["LOOPRES", "FETCHOP", "FETCHEX", "READ", "WRITE",
+                      "XLATE", "WALK", "HANDLER", "TAILADV", "FAULT", "PROF",
+                      "TAILSAMP", "TAILPOLL", "TAILSPEC",
+                      "DOPCFIND", "DOPCFILL", "BLKREC"]
 B_LOOP, B_FETCHOP, B_FETCHEX, B_READ, B_WRITE, \
     B_XLATE, B_WALK, B_HANDLER, B_TAIL, B_FAULT, B_PROF, \
-    B_TAILSAMP, B_TAILPOLL, B_TAILSPEC = range(14)
-N_BUCKETS = 14                # the widest version; a narrower one simply has fewer rows
+    B_TAILSAMP, B_TAILPOLL, B_TAILSPEC, \
+    B_DOPCFIND, B_DOPCFILL, B_BLKREC = range(17)
+N_BUCKETS = 17                # the widest shape; a narrower one simply has fewer rows
+# The four ids that are the dispatch loop once rung 1d has taken it apart, in the order the
+# firmware's own rollup line names them.
+LOOP_IDS_1D = (B_LOOP, B_DOPCFIND, B_DOPCFILL, B_BLKREC)
+SPLIT_IDS = (B_DOPCFIND, B_DOPCFILL, B_BLKREC)
+
+# THE SHAPE INSIDE A VERSION, decided by the dump's OWN id-0 name.
+#
+# The firmware's rule for a bump is that a MEANING moves under a reader's feet, and rung 1d
+# moved one -- id 0 went from the whole dispatch loop to its residue -- yet the version is
+# deliberately still 2.  The reasoning is v2's own for `TAIL`: the ids are append-only, the
+# header and the sample record are untouched, every id 0..13 sits where it did, and a tool
+# that does not know about ids 14..16 reports them uninterpreted rather than mis-labelled.
+# What moved is carried by the NAME instead, which is a channel the wire has always had and
+# which a version field cannot corrupt: a dump that says `LOOP` at id 0 holds the whole loop,
+# and one that says `LOOPRES` holds the residue with DOPCFIND/DOPCFILL/BLKREC beside it.
+#
+# So the shape is read out of the dump rather than declared by it, exactly as the counter
+# append is (see COUNTER_APPEND_BASE), and this table is the only place that mapping lives.
+# `loop_ids` travels with the shape because it is the same fact stated as arithmetic: the
+# quantity an older capture called `LOOP` is the sum of these ids.
+BUCKET_SHAPES = {
+    1: {"LOOP": ("version 1", BUCKET_NAMES_V1, (B_LOOP,))},
+    2: {"LOOP": ("pre-rung-1d", BUCKET_NAMES_V2, (B_LOOP,)),
+        "LOOPRES": ("rung 1d", BUCKET_NAMES_V2_1D, LOOP_IDS_1D)},
+}
 
 COUNTER_NAMES_V1 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "IPAGE_HIT", "IPAGE_MISS", "DPAGE_RHIT", "DPAGE_RMISS",
@@ -275,6 +318,15 @@ TWO32 = 1 << 32
 #   COUNTER_APPEND_BASE for the one thing that costs: a missing row means "lost" below id 20
 #   and "the firmware predates it" at or above.
 #
+#   THEN ONE MEANING DID MOVE, AND THE NAME MOVED WITH IT INSTEAD OF THE VERSION.  Rung 1d
+#   brackets the decoded-op lookup (14), the decoded-op fill (15) and the block-idiom
+#   recognizer (16) out of the dispatch loop, so id 0 stops being the loop and becomes its
+#   RESIDUE -- and the firmware prints it as `LOOPRES` rather than bumping to a version 3
+#   that every existing tool would refuse.  This entry therefore describes two SHAPES of one
+#   version, and `bucket_shapes` is where the dump's own id-0 name selects between them.
+#   Everything downstream reads the resolved shape (bucket_names_of / loop_ids_of) and not
+#   this table's `bucket_names`, which is the default for a dump that has not said yet.
+#
 # WHAT A NEW ENTRY HERE DOES NOT COVER, and what has to be re-read from the firmware
 # alongside it: BUCKET_PARENT and bucket_entries().  Those are the interpreter's nesting
 # shape and its entry counts rather than wire facts, and a version that adds or re-parents
@@ -301,6 +353,8 @@ WIRE_VERSIONS = {
         "hdr_extra_keys": (),
         "has_clk": False,
         "tail_ids": (B_TAIL,),
+        "loop_ids": (B_LOOP,),
+        "bucket_shapes": BUCKET_SHAPES[1],
         "tail_instrument_id": None,
         "atc_hit_id": None,             # no counter in v1 counts ATC hits
         "id12_name": "ATC_HIT",         # what the wire spells id 12 in this version
@@ -320,6 +374,8 @@ WIRE_VERSIONS = {
         "hdr_extra_keys": ("probe_cyc", "clk"),
         "has_clk": True,
         "tail_ids": (B_TAIL, B_TAILSAMP, B_TAILPOLL, B_TAILSPEC),
+        "loop_ids": (B_LOOP,),          # the default shape; rung 1d's is four -- see above
+        "bucket_shapes": BUCKET_SHAPES[2],
         "tail_instrument_id": B_TAILSAMP,
         "atc_hit_id": C_ATC_HIT,        # id 19, and it counts what its name says
         "id12_name": "XLATE_OK",        # the same counter v1 spells ATC_HIT
@@ -807,6 +863,25 @@ RE_COUNTER = re.compile(r"^\[PROF\] c (\d+)\s+(\S+)\s+(\d+)\s*$")
 # four numbers -- but to be CROSS-CHECKED against the four bucket rows, which is a free
 # check that the dump's `b` lines and its `t` line came off the same span.
 RE_TAIL = re.compile(r"^\[PROF\] t whole tail \(([A-Z+]+)\) cyc=(\d+)\s+(\d+\.\d+)%")
+# Rung 1d's `l` block, and it is three different lines rather than one.
+#
+#   the ROLLUP     the same service `[PROF] t` performs one bucket over: the quantity an
+#                  older capture called `LOOP`, printed outright because the map quotes it
+#                  and id 0 no longer means it.  Its NAME LIST is parsed too -- it is a
+#                  second statement of the dump's shape, and one this tool can cross-check
+#                  against the id-0 name it keyed on.
+#   the COST       what the split charged to get the parts, computed on the board from the
+#                  three buckets' OWN spans.  Parsed because subtracting it from TRANSITIONS
+#                  re-prices a rung-1d capture as if the decomposition had not been taken,
+#                  which is the only way a share here and a share from an older capture can
+#                  be laid side by side.
+#   WARNING/note   the firmware's own verdict on the identities.  A WARNING is a defect
+#                  claim and is surfaced as one; a `note:` is the cache-off arm saying its
+#                  two counter identities do not apply, which is a fact about the switch.
+RE_LOOP = re.compile(r"^\[PROF\] l whole loop \(([A-Z+]+)\) cyc=(\d+)\s+(\d+\.\d+)%")
+RE_LOOP_SPLIT = re.compile(r"^\[PROF\] l split cost: (\d+) transitions "
+                           r"\((\d+\.\d+)% of (\d+)\)")
+RE_LOOP_SAYS = re.compile(r"^\[PROF\] l (WARNING|note): (.*?)\s*$")
 # The per-bucket transition spans -- the `s` block.  This is the number the dump has always
 # told the reader to subtract by and never supplied: a bucket's OWN span count, incremented
 # at exactly the two sites that charge cycles to it.  With it, a corrected share is a number
@@ -922,6 +997,23 @@ class Stats(object):
         self.counters = {}         # id -> value
         self.tail_cyc = None       # v2: the firmware's own whole-tail sum, for cross-check
         self.tail_line = 0
+        # Which SHAPE of its version this dump is, read out of its own id-0 bucket name.
+        # None until a `b`/`s` row says; every consumer falls back to the version's default
+        # through bucket_names_of() / loop_ids_of() rather than testing this directly.
+        self.bshape = None         # the shape's label, e.g. "rung 1d"
+        self.bnames = None         # the resolved bucket-name table
+        self.loop_ids = None       # the ids whose sum is what an older capture called LOOP
+        self.shape_conflict = None  # set where a dump answers the shape question twice
+        # The `[PROF] l` block (rung 1d).  `loop_cyc` is the firmware's own rollup and is
+        # cross-checked rather than reported; `split_*` is the decomposition's own price.
+        self.loop_cyc = None
+        self.loop_names = None     # the rollup line's own name list, e.g. LOOPRES+DOPCFIND+..
+        self.loop_line = 0
+        self.split_trans = None    # transitions rung 1d's own brackets added
+        self.split_of = None       # the TRANSITIONS the firmware measured that share against
+        self.split_line = 0
+        # The board's own verdicts: [(kind, text, capture line)], kind in WARNING/note.
+        self.loop_says = []
         # The `[PROF] s` block (appended to v2).  `spans` is the measurement; the other
         # three are the firmware's own arithmetic over it, kept so this tool can check it
         # rather than reproduce it and hope.
@@ -1124,6 +1216,19 @@ def parse_capture(path):
             if m:
                 st.tail_cyc, st.tail_line = int(m.group(2)), no
                 continue
+            m = RE_LOOP.match(line)
+            if m:
+                st.loop_names, st.loop_cyc, st.loop_line = m.group(1), int(m.group(2)), no
+                continue
+            m = RE_LOOP_SPLIT.match(line)
+            if m:
+                st.split_trans, st.split_of, st.split_line = (int(m.group(1)),
+                                                              int(m.group(3)), no)
+                continue
+            m = RE_LOOP_SAYS.match(line)
+            if m:
+                st.loop_says.append((m.group(1), m.group(2), no))
+                continue
             m = RE_SPAN_HDR.match(line)
             if m:
                 st.span_price = int(m.group(1))
@@ -1148,13 +1253,15 @@ def parse_capture(path):
             m = RE_BUCKET.match(line)
             if m:
                 bid, name, cyc = int(m.group(1)), m.group(2), int(m.group(3))
-                _check_name(bid, name, sem["bucket_names"], "bucket", no, sver, warnings)
+                _resolve_shape(st, sem, bid, name, no, warnings)
+                _check_name(bid, name, bucket_names_of(st, sem), "bucket", no, sver, warnings)
                 st.buckets[bid] = cyc
                 continue
             m = RE_SPAN.match(line)
             if m:
                 bid, name = int(m.group(1)), m.group(2)
-                _check_name(bid, name, sem["bucket_names"], "bucket", no, sver, warnings)
+                _resolve_shape(st, sem, bid, name, no, warnings)
+                _check_name(bid, name, bucket_names_of(st, sem), "bucket", no, sver, warnings)
                 st.spans[bid] = int(m.group(3))
                 st.span_corrected[bid] = int(m.group(4))
                 continue
@@ -1211,6 +1318,57 @@ def parse_capture(path):
                 "this capture." % cal["cal_line"])
         boot["cal"] = cal
     return rings, stats, boot, len(lines), warnings
+
+
+def bucket_names_of(st, sem):
+    """This dump's bucket-name table: its own shape where it has declared one.
+
+    A dump declares its shape by naming id 0, and until it has, the version's default
+    stands.  Every consumer goes through here rather than reading `sem["bucket_names"]`,
+    because the version's table is right about a version and can be wrong about a dump."""
+    return st.bnames if st.bnames is not None else sem["bucket_names"]
+
+
+def loop_ids_of(st, sem):
+    """The ids whose sum is the quantity an older capture called `LOOP`.
+
+    One id before rung 1d and four after it, and which of those is true is a property of the
+    DUMP rather than of its version -- see BUCKET_SHAPES."""
+    return st.loop_ids if st.loop_ids is not None else sem["loop_ids"]
+
+
+def _resolve_shape(st, sem, bid, name, no, warnings):
+    """Decide which shape of its version this dump is, from its own id-0 bucket name.
+
+    THE NAME IS THE ONLY CHANNEL THAT CARRIES THIS.  Rung 1d moved what id 0 means without
+    moving the version -- deliberately, so that a tool which does not know about ids 14..16
+    still reads the rest of the capture correctly -- and moved the printed name with the
+    meaning instead.  So `LOOP` at id 0 is the whole dispatch loop and `LOOPRES` is its
+    residue, and nothing else in the dump says which.
+
+    A dump that answers the question TWICE and disagrees -- `LOOP` at id 0 while carrying
+    DOPCFIND at id 14 -- is not resolved in favour of either answer.  The shape it declared
+    stands, the split ids fall through to _check_name's "reported but not interpreted", and
+    the contradiction is warned about by name: that is a wire drift, and picking a side would
+    turn it into a plausible rollup."""
+    shapes = sem.get("bucket_shapes") or {}
+    if bid == 0:
+        shape = shapes.get(name)
+        if shape is not None and st.bshape is None:
+            st.bshape, st.bnames, st.loop_ids = shape
+        return
+    if (bid in SPLIT_IDS and st.bnames is not None
+            and bid >= len(st.bnames) and name == BUCKET_NAMES_V2_1D[bid]
+            and st.shape_conflict is None):
+        st.shape_conflict = no
+        warnings.append(
+            "capture line %d: this dump names id 0 %r -- the shape in which the dispatch "
+            "loop is NOT split -- and then carries %r at id %d, which only exists where it "
+            "is. The two cannot both be true, so the id-0 name stands and ids %s are "
+            "reported uninterpreted rather than folded into a rollup. A dump written by one "
+            "firmware says one or the other."
+            % (no, st.bnames[0], name, bid,
+               "/".join(str(b) for b in SPLIT_IDS)))
 
 
 def _check_name(idx, name, table, what, no, ver, warnings):
@@ -1329,6 +1487,24 @@ def fpct(part, whole):
     return "%6.2f%%" % pct(part, whole)
 
 
+def _wrap(text, width):
+    """Break a line of somebody else's words at spaces, keeping every word.
+
+    Used for text this tool quotes verbatim (the firmware's own `l` verdicts).  A word
+    longer than the width is emitted over-long rather than broken: the alternative is
+    inventing a hyphen inside a number somebody has to read."""
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if cur and len(cur) + 1 + len(w) > width:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = w if not cur else cur + " " + w
+    if cur:
+        lines.append(cur)
+    return lines or [""]
+
+
 def rule(ch="-", n=88):
     return ch * n
 
@@ -1356,6 +1532,10 @@ BUCKET_PARENT = {
     B_HANDLER: B_LOOP, B_TAIL: B_LOOP, B_PROF: B_LOOP, B_FAULT: B_LOOP,
     B_WALK: B_XLATE,
     B_TAILSAMP: B_TAIL, B_TAILPOLL: B_TAIL, B_TAILSPEC: B_TAIL,
+    # Rung 1d's three: all bracketed at their CALL SITES in the dispatch loop, so the loop
+    # pays their exits exactly as it pays every other stage's.  Listing them for a dump that
+    # has no split is harmless -- their entry counts are zero there and they land nothing.
+    B_DOPCFIND: B_LOOP, B_DOPCFILL: B_LOOP, B_BLKREC: B_LOOP,
     # XLATE is entered from whichever accessor missed the page cache; its exits are split
     # across the four of them in proportion to their own entry counts.
     B_XLATE: None,
@@ -1363,7 +1543,7 @@ BUCKET_PARENT = {
 XLATE_CALLERS = (B_FETCHOP, B_FETCHEX, B_READ, B_WRITE)
 
 
-def bucket_entries(c, sem):
+def bucket_entries(c, names):
     """Model the number of times each bucket is ENTERED, from the exact counters.
 
     Every one of these is a counter the firmware increments on the same code path that
@@ -1379,7 +1559,16 @@ def bucket_entries(c, sem):
 
     TAILSPEC is modelled at ZERO and that is a stated gap, not an oversight.  It is entered
     only when regs.spcflags is set, there is no counter for it, and it is rare per
-    instruction; the residual check below is what would catch a run where it is not."""
+    instruction; the residual check below is what would catch a run where it is not.
+
+    RUNG 1d ADDS THREE ENTRIES AND ONE MORE STATED GAP.  DOPCFIND is entered once per
+    dispatch and DOPCFILL once per miss, both of which the DOPC_ counters give exactly --
+    and with the cache OFF neither counter moves while both brackets go on being entered,
+    which is why the off arm is modelled from the dispatch count instead.  BLKREC is the gap:
+    it is entered whenever the cached idiom verdict did not veto the call, there is no
+    counter for that, and BLK_HIT counts the recognizer FIRING rather than being called.  So
+    it is modelled at zero, which UNDER-states the model's transition total by two per call
+    -- the residual says by how much, and the `s` block measures what the model cannot."""
     insns = c.get(C_INSNS, 0)
     fetch = c.get(C_FETCH, 0)
     e = {
@@ -1395,10 +1584,22 @@ def bucket_entries(c, sem):
         B_FAULT: c.get(C_FAULTS, 0),
         B_PROF: 0,                                    # dumps only; negligible and bounded
     }
-    if len(sem["bucket_names"]) > B_TAILSAMP:
+    if len(names) > B_TAILSAMP:
         e[B_TAILSAMP] = insns                         # the sampler hook: every instruction
         e[B_TAILPOLL] = insns                         # the interrupt poll: likewise
         e[B_TAILSPEC] = 0                             # spcflags-gated; no counter, and rare
+    if len(names) > B_DOPCFIND:
+        disp = c.get(C_DOPC_HIT, 0) + c.get(C_DOPC_MISS, 0)
+        if disp:
+            e[B_DOPCFIND] = disp                      # one lookup per dispatch
+            e[B_DOPCFILL] = c.get(C_DOPC_MISS, 0)     # one fill per miss
+        else:
+            # The cache-off arm.  The lookup returns before it counts and the fill's bracket
+            # sits on the now-universal miss arm, so both are entered once per dispatch and
+            # the DOPC_ counters -- which read a true zero -- cannot say so.
+            disp = insns + c.get(C_FAULTS, 0)
+            e[B_DOPCFIND] = e[B_DOPCFILL] = disp
+        e[B_BLKREC] = 0                               # no counter for CALLS; see above
     return e
 
 
@@ -1729,7 +1930,7 @@ def _report_spans(st, idx, sem, total, probe_cyc, lo, hi, bracket_src, out, warn
     as "at most X", and the two ends of the price bracket gave two different at-mosts 5.8
     points apart.  With the spans it is a number, and the bracket collapses to the width the
     PRICE alone accounts for."""
-    names = sem["bucket_names"]
+    names = bucket_names_of(st, sem)
     c = st.counters
     out.append(sec("per-bucket transition spans -- the corrected shares, measured"))
     out.append("  A SPAN IS NOT A CALL INTO THE BUCKET.  Every transition ends one span and "
@@ -1883,7 +2084,7 @@ def _report_tail(st, idx, sem, ver, total, usable, probe_of, out, warn):
         the same accumulators the `b` lines are printed from, so if it disagrees with the
         four rows this tool added up, the dump's lines did not come off one span."""
     ids = sem["tail_ids"]
-    names = sem["bucket_names"]
+    names = bucket_names_of(st, sem)
     inst_id = sem["tail_instrument_id"]
     tail = sum(st.buckets.get(b, 0) for b in ids)
 
@@ -1948,6 +2149,386 @@ def _report_tail(st, idx, sem, ver, total, usable, probe_of, out, warn):
 
 
 IDROW = "    %-49s %-9s %s"
+
+# What the C2 attack map quotes `LOOP` at, and the sections it quotes it in.  Carried here
+# because the whole point of this section is that id 0 must not be scored against it once
+# rung 1d has taken three stages out of id 0.
+MAP_LOOP_LO, MAP_LOOP_HI = "26.38", "26.54"
+MAP_LOOP_WHERE = "the C2 attack map (v3, sections 15 and 17)"
+
+
+def _report_loop(st, idx, sem, ver, total, spans_ok, probe_cyc, probe_of, out, warn):
+    """The dispatch loop: one number before rung 1d, four after it, and the same quantity.
+
+    THIS SECTION EXISTS TO STOP ONE SUBTRACTION FROM BEING MADE BY HABIT.  The attack map
+    ranks `LOOP` first at 26.38-26.54 % of the interpreter -- the best-measured share on the
+    page, and the only one with a sub-point bracket.  Rung 1d then took the decoded-op
+    lookup, the decoded-op fill and the block-idiom recognizer out of that bucket and left
+    the residue behind under the same id.  A reader who lays the next capture's id 0 beside
+    that 26.4 % is comparing a residue with a whole and will report a saving that did not
+    happen, and NOTHING ELSE IN THIS REPORT WOULD CATCH IT: the arithmetic balances, the
+    share is real, and only the name says the two numbers are about different things.
+
+    So the rollup leads, the four parts sit under it, and the guard is printed next to both.
+
+    The identities are the second reason the section is here.  Neither the lookup nor the
+    fill touches guest memory, so neither span can be abandoned by an unwind and both counts
+    are EXACT -- which is why the firmware warns rather than notes when they fail, and why
+    this tool checks them from the `s` block's spans rather than trusting the four cycle
+    rows to be about what they say."""
+    ids = loop_ids_of(st, sem)
+    names = bucket_names_of(st, sem)
+    loop = sum(st.buckets.get(b, 0) for b in ids)
+    split = len(ids) > 1
+
+    out.append(sec("dispatch-loop rollup (the quantity a pre-rung-1d capture reported as "
+                   "LOOP)"))
+    if not split:
+        out.append("  this dump has NO loop split: it names id 0 %r, so id 0 IS the whole "
+                   "dispatch loop." % names[B_LOOP])
+        if ver < 2:
+            out.append("  %s quotes LOOP at %s-%s %% of the"
+                       % (MAP_LOOP_WHERE[0].upper() + MAP_LOOP_WHERE[1:],
+                          MAP_LOOP_LO, MAP_LOOP_HI))
+            out.append("  interpreter -- but in WIRE VERSION 1 this bucket also holds "
+                       "TAILSAMP, the profiler's")
+            out.append("  own sampler hook, which no version-1 capture can separate out.  "
+                       "So it is not that")
+            out.append("  quantity either, and what it holds in excess of it is instrument "
+                       "and not interpreter.")
+        else:
+            out.append("  That is the quantity %s quotes at" % MAP_LOOP_WHERE)
+            out.append("  %s-%s %% of the interpreter, so this row can be laid beside those "
+                       "figures directly."
+                       % (MAP_LOOP_LO, MAP_LOOP_HI))
+        out.append("  A rung-1d capture names id 0 LOOPRES and carries DOPCFIND/DOPCFILL/"
+                   "BLKREC at ids 14..16;")
+        out.append("  this one carries neither, which is what says which firmware took it.")
+    out.append("  id  name       cycles                 of total    of loop")
+    out.append("  --  --------  ---------------------  ---------  ---------")
+    for b in ids:
+        cyc = st.buckets.get(b, 0)
+        out.append("  %2d  %-8s  %21d  %9s  %9s"
+                   % (b, names[b], cyc, fpct(cyc, total), fpct(cyc, loop)))
+    if split:
+        out.append("      %-8s  %21d  %9s  %9s"
+                   % ("LOOP", loop, fpct(loop, total), "100.00%"))
+        res = st.buckets.get(B_LOOP, 0)
+        out.append("")
+        out.append("  DO NOT SCORE ID 0 ALONE AGAINST A QUOTED `LOOP` FIGURE.  The C2 "
+                   "attack map (v3,")
+        out.append("  sections 15 and 17) quotes LOOP at %s-%s %% of the interpreter, and "
+                   "the quantity" % (MAP_LOOP_LO, MAP_LOOP_HI))
+        out.append("  it measures there is the ROLLUP above (%s here) -- NOT id 0 (%s), "
+                   "which is" % (fpct(loop, total).strip(), fpct(res, total).strip()))
+        out.append("  now the RESIDUE the split left behind.  Reporting the residue against "
+                   "those figures")
+        out.append("  would claim a %.2f-point fall that no code change produced."
+                   % (pct(loop, total) - pct(res, total)))
+
+    # The firmware's own rollup, cross-checked exactly as the tail's is -- and its NAME LIST
+    # checked too, because that list is the dump stating its shape a second time and this
+    # tool keyed on the first statement.
+    if st.loop_cyc is not None:
+        if st.loop_cyc == loop:
+            out.append("  cross-check: the firmware's own '[PROF] l' line agrees -- %d == %d"
+                       % (st.loop_cyc, loop))
+        else:
+            out.append("  *** CROSS-CHECK FAILED: the firmware's '[PROF] l' line says %d, "
+                       "the rows above sum" % st.loop_cyc)
+            out.append("  *** to %d -- a difference of %+d.  Both are printed from the same "
+                       "accumulators in" % (loop, loop - st.loop_cyc))
+            out.append("  *** the same dump, so they cannot disagree over one span.")
+            warn.append("stats dump #%d: the firmware's own whole-loop line (capture line "
+                        "%d) reports %d cyc but bucket ids %s sum to %d, a difference of "
+                        "%+d. Both are printed from the same accumulators in the same dump "
+                        "and cannot disagree over one span; this dump's bucket rows and its "
+                        "loop line did not come off the same state."
+                        % (idx, st.loop_line, st.loop_cyc,
+                           "+".join(str(b) for b in ids), loop, loop - st.loop_cyc))
+        want = "+".join(names[b] for b in ids)
+        if st.loop_names and st.loop_names != want:
+            out.append("  *** and its name list is %r where this dump's own bucket names "
+                       "give %r." % (st.loop_names, want))
+            warn.append("stats dump #%d: the firmware's '[PROF] l' line rolls up %r while "
+                        "this dump's bucket rows name %r. The rollup line and the bucket "
+                        "names are two statements of the same shape and they disagree, so "
+                        "one of them is not from this firmware."
+                        % (idx, st.loop_names, want))
+    elif split:
+        out.append("  (this dump carried no '[PROF] l' line, so the rollup above is this "
+                   "tool's own sum)")
+
+    if split and spans_ok:
+        p = sum(probe_of(b) for b in ids)
+        out.append("  the loop with the probe taken off: %d cyc = %s of the measured total"
+                   % (max(loop - p, 0), fpct(max(loop - p, 0), total)))
+        out.append("    (the four loop buckets carry %d cyc of probe cost between them, and "
+                   "three of the" % p)
+        out.append("     four are ones the split itself created -- see the split cost "
+                   "below.)")
+
+    if split:
+        _report_loop_cost(st, idx, spans_ok, probe_cyc, out, warn)
+        _report_loop_identities(st, idx, spans_ok, out, warn)
+    _report_loop_says(st, idx, out, warn)
+
+
+def _report_loop_cost(st, idx, spans_ok, probe_cyc, out, warn):
+    """What the decomposition charged, and the count a pre-rung-1d capture would have had.
+
+    A share measured under rung 1d is measured on a run loop that pays two more transitions
+    per dispatch than the one every earlier capture was taken on, so laying the two side by
+    side needs the difference stated rather than assumed.  The firmware computes it from the
+    three buckets' OWN spans -- not from a per-instruction estimate -- so it is measured on
+    this capture, and subtracting it from TRANSITIONS re-prices the capture as though the
+    split had not been taken."""
+    trans = st.counters.get(C_TRANSITIONS, 0)
+    mine = 2 * sum(st.spans.get(b, 0) for b in SPLIT_IDS) if spans_ok else None
+    if st.split_trans is None and mine is None:
+        return
+    cost = st.split_trans if st.split_trans is not None else mine
+    out.append("")
+    out.append("  WHAT THE SPLIT ITSELF COST, measured on this capture rather than asserted")
+    out.append("    %-34s %14d   %s of all transitions"
+               % ("added transitions", cost, fpct(cost, trans).strip()))
+    if spans_ok:
+        out.append("    two per span of DOPCFIND (%d), DOPCFILL (%d) and BLKREC (%d)"
+                   % (st.spans.get(B_DOPCFIND, 0), st.spans.get(B_DOPCFILL, 0),
+                      st.spans.get(B_BLKREC, 0)))
+    if st.split_trans is not None and mine is not None and st.split_trans != mine:
+        out.append("  *** the firmware's own figure is %d and this dump's spans give %d.  "
+                   "The firmware" % (st.split_trans, mine))
+        out.append("  *** computes it from those same spans, so the `l` line and the `s` "
+                   "block did not come")
+        out.append("  *** off the same state.")
+        warn.append("stats dump #%d: the firmware's split cost is %d transitions but 2 x the "
+                    "DOPCFIND/DOPCFILL/BLKREC spans in the same dump give %d. The firmware "
+                    "computes that line from those spans, so the `l` line and the `s` block "
+                    "did not come off the same state."
+                    % (idx, st.split_trans, mine))
+    if st.split_of is not None and trans and st.split_of != trans:
+        out.append("  *** the `l` line prices that share against %d transitions and the "
+                   "counter block says %d." % (st.split_of, trans))
+        warn.append("stats dump #%d: the split-cost line at capture line %d takes its share "
+                    "against %d transitions while counter id %d says %d. Both are the same "
+                    "quantity in the same dump."
+                    % (idx, st.split_line, st.split_of, C_TRANSITIONS, trans))
+    if trans and cost <= trans:
+        out.append("    %-34s %14d   TRANSITIONS - the cost above"
+                   % ("re-priced without the split", trans - cost))
+        out.append("    A capture taken before rung 1d has none of these transitions, so "
+                   "that is the count")
+        out.append("    to price this run's probe at when comparing a share here against a "
+                   "share there.")
+        if probe_cyc > 0:
+            out.append("      probe at the full count  %14d cyc" % (trans * probe_cyc))
+            out.append("      probe re-priced          %14d cyc   (%d x %d cyc/transition)"
+                       % ((trans - cost) * probe_cyc, trans - cost, probe_cyc))
+        out.append("    The BUCKETS are not re-priced here and must not be: the three new "
+                   "ones did not")
+        out.append("    exist on the older run loop, and moving their cycles back into id 0 "
+                   "would invent a")
+        out.append("    measurement.  The rollup above is the comparable quantity; this is "
+                   "the comparable")
+        out.append("    denominator.")
+
+
+def _report_loop_identities(st, idx, spans_ok, out, warn):
+    """The four identities rung 1d's brackets exist to be checked by.
+
+        tcnt[DOPCFIND] == DOPC_HIT + DOPC_MISS      cache ON: one lookup per dispatch
+        tcnt[DOPCFIND] == INSNS + FAULTS            every dispatch enters the bracket
+        tcnt[DOPCFILL] == DOPC_MISS                 cache ON: one fill per miss
+        tcnt[BLKREC]   <= tcnt[DOPCFIND]            at most one recognizer call per dispatch
+
+    `tcnt` is the bucket's OWN span count from the `[PROF] s` block, and nothing else will
+    do: an entry count derived from a counter that merely correlates with it is the method
+    the spans retired, by 1.97x.  So without a usable `s` block these are UNAVAILABLE rather
+    than assumed to hold.
+
+    WITH THE CACHE OFF THE FIRST AND THIRD DO NOT APPLY, and that is a fact about the switch
+    rather than a defect.  The lookup returns before it counts, so `DOPC_HIT + DOPC_MISS` is
+    zero while the bracket goes on being entered every pass; and the fill's bracket sits on
+    the now-universal miss arm, so it prices the fill's own switch test per dispatch instead
+    of per miss.  Those two read as the price of the two switch tests -- a real number, and
+    not the one a cache-on capture reports.  They are reported n/a and NOT warned about.
+
+    The second survives the switch in both arms, because a dispatch enters the lookup bracket
+    whichever way the switch is set.  The fourth is an inequality and is checked always -- but
+    it is the one bracket that is not pure: on a FIRE the recognizer's bucket holds the whole
+    serviced chunk, which can nest bracketed accessors and charge the bucket more spans than
+    there were calls.  So it is only a defect claim where `BLK_HIT` is zero and the bucket IS
+    the residual test."""
+    c = st.counters
+    out.append("")
+    out.append("  cross-checks -- the identities these three brackets exist to be checked by")
+    if not spans_ok:
+        out.append("    UNAVAILABLE: they are stated over each bucket's own SPAN count, and "
+                   "this dump has no")
+        out.append("    usable `[PROF] s` block.  They are not assumed to hold: an entry "
+                   "count taken from a")
+        out.append("    counter that merely correlates with it is the method the spans "
+                   "retired, by 1.97x.")
+        return
+    find = st.spans.get(B_DOPCFIND, 0)
+    fill = st.spans.get(B_DOPCFILL, 0)
+    brec = st.spans.get(B_BLKREC, 0)
+    hit, miss = c.get(C_DOPC_HIT), c.get(C_DOPC_MISS)
+    insns, fa = c.get(C_INSNS, 0), c.get(C_FAULTS, 0)
+    have_dopc = hit is not None and miss is not None
+    disp = (hit or 0) + (miss or 0)
+    cache_on = have_dopc and disp > 0
+
+    def _id(label, ok, detail, why=()):
+        out.append(IDROW % (label, "ok" if ok else "MISMATCH", detail))
+        if not ok:
+            for ln in why:
+                out.append("  *** " + ln)
+
+    # In the order the firmware's own documentation states them, so a reader with both open
+    # can go down the two lists together.
+    if not have_dopc:
+        out.append(IDROW % ("tcnt[DOPCFIND] == DOPC_HIT + DOPC_MISS", "n/a",
+                            "this firmware carries no DOPC_ counters"))
+    elif not cache_on:
+        out.append(IDROW % ("tcnt[DOPCFIND] == DOPC_HIT + DOPC_MISS", "n/a",
+                            "cache OFF: %d spans vs 0" % find))
+    else:
+        ok = find == disp
+        _id("tcnt[DOPCFIND] == DOPC_HIT + DOPC_MISS", ok,
+            "%d %s %d + %d" % (find, "==" if ok else "vs", hit, miss),
+            ["The lookup touches no guest memory, so its span cannot be abandoned by an "
+             "unwind and",
+             "this count is EXACT.  A divergence is a defect -- the bracket and the counters "
+             "are not",
+             "on the same path -- unless the window spans the cache switch moving."])
+        if not ok:
+            warn.append("stats dump #%d: DOPCFIND spans=%d against DOPC_HIT + DOPC_MISS=%d, "
+                        "%+d apart. The lookup is entered exactly once per dispatch and "
+                        "touches no guest memory, so on a window taken entirely with the "
+                        "cache on this is exact."
+                        % (idx, find, disp, find - disp))
+    ok = find == insns + fa
+    _id("tcnt[DOPCFIND] == INSNS + FAULTS", ok,
+        "%d %s %d + %d" % (find, "==" if ok else "vs", insns, fa),
+        ["Every dispatch enters the lookup bracket and every dispatch either retires "
+         "(INSNS) or",
+         "throws (FAULTS).  This one survives the cache switch in BOTH arms -- the bracket "
+         "is",
+         "entered whichever way the switch is set -- so it is the identity that scopes the "
+         "bucket",
+         "when the counters cannot."])
+    if not ok:
+        warn.append("stats dump #%d: DOPCFIND spans=%d against INSNS + FAULTS=%d, %+d apart. "
+                    "Every dispatch enters the lookup bracket and either retires or throws, "
+                    "and that holds with the cache off as well as on."
+                    % (idx, find, insns + fa, find - (insns + fa)))
+    if not have_dopc:
+        out.append(IDROW % ("tcnt[DOPCFILL] == DOPC_MISS", "n/a",
+                            "this firmware carries no DOPC_ counters"))
+    elif not cache_on:
+        out.append(IDROW % ("tcnt[DOPCFILL] == DOPC_MISS", "n/a",
+                            "cache OFF: %d spans vs 0" % fill))
+    else:
+        ok = fill == miss
+        _id("tcnt[DOPCFILL] == DOPC_MISS", ok,
+            "%d %s %d" % (fill, "==" if ok else "vs", miss),
+            ["The fill runs on the miss path only, and touches no guest memory either.  "
+             "This count",
+             "is exact for the same reason, and a divergence means the same thing."])
+        if not ok:
+            warn.append("stats dump #%d: DOPCFILL spans=%d against DOPC_MISS=%d, %+d apart. "
+                        "The fill bracket sits on the miss path and is entered once per "
+                        "miss." % (idx, fill, miss, fill - miss))
+    ok = brec <= find
+    out.append(IDROW % ("tcnt[BLKREC]   <= tcnt[DOPCFIND]", "ok" if ok else "MISMATCH",
+                        "%d %s %d" % (brec, "<=" if ok else ">", find)))
+    blk = c.get(C_BLK_HIT)
+    if not ok:
+        out.append("  *** The recognizer is called at most once per dispatch, so its span "
+                   "count cannot")
+        out.append("  *** exceed the lookup's -- with ONE exception, and this dump says "
+                   "which case it is:")
+        if blk:
+            out.append("  *** BLK_HIT is %d, so the fast path FIRED here.  On a fire the "
+                       "bucket holds the whole" % blk)
+            out.append("  *** serviced chunk, which can nest bracketed accessors and charge "
+                       "the bucket more")
+            out.append("  *** spans than there were calls.  That is the bracket's known "
+                       "impurity, not a defect,")
+            out.append("  *** and it is why this row is an inequality over CALLS and not "
+                       "over spans.")
+        else:
+            out.append("  *** BLK_HIT is 0, so the recognizer never fired and this bucket "
+                       "IS the residual")
+            out.append("  *** test -- nothing nests inside it and its spans ARE its calls.  "
+                       "There is no")
+            out.append("  *** impurity left to explain the excess with.")
+            warn.append("stats dump #%d: BLKREC spans=%d exceed DOPCFIND spans=%d while "
+                        "BLK_HIT is 0. With no fire, the recognizer bucket is the residual "
+                        "test alone, nothing nests inside it, and it is entered at most once "
+                        "per dispatch -- so it cannot be charged more spans than the lookup."
+                        % (idx, brec, find))
+    elif blk:
+        out.append("    (BLK_HIT is %d: on a FIRE this bucket holds the whole serviced "
+                   "chunk, so its spans" % blk)
+        out.append("     are not its calls.  The inequality is over calls and holds anyway; "
+                   "read the bucket's")
+        out.append("     CYCLES against BLK_INSNS rather than as a per-call price.)")
+    elif blk == 0:
+        out.append("    (BLK_HIT is 0: the recognizer never fired, so this bucket is the "
+                   "residual test alone")
+        out.append("     and its spans are exactly its calls.)")
+    if have_dopc and not cache_on:
+        out.append("")
+        out.append("    THE CACHE WAS OFF FOR THIS WINDOW, so the two identities stated over "
+                   "the DOPC_ counters")
+        out.append("    are NOT expected to hold and their divergence is not a defect.  The "
+                   "lookup returns")
+        out.append("    before it counts, so DOPC_HIT + DOPC_MISS is zero while DOPCFIND is "
+                   "entered every")
+        out.append("    pass; and DOPCFILL's bracket sits on the now-universal miss arm, "
+                   "pricing the fill's")
+        out.append("    own switch test per dispatch instead of per miss.  Those two buckets "
+                   "are then the")
+        out.append("    price of the two switch tests and nothing else -- a real number, and "
+                   "not the one a")
+        out.append("    cache-on capture reports.  The firmware says so on a `note:` line "
+                   "rather than a")
+        out.append("    WARNING, and so does this: it is a NOTE, not a warning, and nothing "
+                   "here needs fixing.")
+
+
+def _report_loop_says(st, idx, out, warn):
+    """The firmware's own `[PROF] l` verdicts, surfaced rather than re-derived.
+
+    The board checks these identities too, and it is the one party that saw the state they
+    were taken from.  A `WARNING:` is its defect claim and is repeated into the warnings
+    block so it cannot be lost in a long report; a `note:` is the cache-off arm saying its
+    counter identities do not apply, which is a measurement fact and is not warned about.
+    Both are printed VERBATIM: paraphrasing the instrument's own words is how two accounts of
+    one dump start to drift."""
+    if not st.loop_says:
+        return
+    out.append("")
+    out.append("  what the FIRMWARE said about them on its own `[PROF] l` lines")
+    for kind, text, no in st.loop_says:
+        head_ = "    %-8s capture line %d:" % (kind + ":", no)
+        # Wrapped, not truncated and not reflowed: the words are the board's own and the
+        # break points are the only thing this adds.  A 150-column line in a fixed-width
+        # report is how a reader stops reading a report.
+        for i, ln in enumerate(_wrap(text, 74)):
+            out.append("%s %s" % (head_ if i == 0 else " " * len(head_), ln))
+        if kind == "WARNING":
+            warn.append("stats dump #%d: the firmware's own '[PROF] l WARNING' at capture "
+                        "line %d: %s. The board checked that identity against the state it "
+                        "measured, so this is its verdict and not this tool's inference."
+                        % (idx, no, text))
+    out.append("    A WARNING here is the BOARD's verdict on the state it measured, which "
+               "this tool cannot")
+    out.append("    see; a note is the cache-off arm saying its two counter identities do "
+               "not apply.")
 
 
 def _report_ifetch(st, idx, out, warn):
@@ -2323,7 +2904,7 @@ def report_stats(st, idx, probe_cyc, probe_src, bracket, out, warn):
                     "probe_cyc and about the names of counter id 12 and bucket id 8; if this "
                     "capture is not v%d, this dump is mislabelled throughout."
                     % (idx, VERSION_ASSUMED, VERSION_ASSUMED))
-    bucket_names = sem["bucket_names"]
+    bucket_names = bucket_names_of(st, sem)
     counter_names = sem["counter_names"]
     probe_unit = sem["probe_unit"]
     unit = sem["probe_unit_short"]
@@ -2335,6 +2916,16 @@ def report_stats(st, idx, probe_cyc, probe_src, bracket, out, warn):
     # single figure would answer whichever one the reader assumed it meant.
     out.append("wire version    %d  (%d buckets, %d counters defined; this dump carries %d)"
                % (ver, len(bucket_names), len(counter_names), len(st.counters)))
+    # WHICH SHAPE OF THAT VERSION, which the version number cannot say.  Printed only where
+    # the dump is the newer one, because that is the case a reader has to know about: the
+    # older shape is what every quoted `LOOP` figure was measured on.
+    if len(bucket_names) > B_DOPCFIND:
+        out.append("                the %s bucket set: id 0 prints as LOOPRES and is the "
+                   "dispatch loop's" % (st.bshape or "rung 1d"))
+        out.append("                RESIDUE, with DOPCFIND/DOPCFILL/BLKREC broken out of it "
+                   "at ids 14..16.")
+        out.append("                Same wire version, same header, same record -- the NAME "
+                   "is what moved.")
     if sem["has_clk"]:
         out.append("cpu_hz          %d Hz (the RUNTIME clock -- see clock source below)"
                    % st.cpu_hz)
@@ -2365,7 +2956,7 @@ def report_stats(st, idx, probe_cyc, probe_src, bracket, out, warn):
                     "is no stage attribution in this dump. The counters are unaffected."
                     % idx)
     else:
-        entries = bucket_entries(c, sem)
+        entries = bucket_entries(c, bucket_names)
         land = probe_landing(entries)
         modelled = sum(land.values())
         # MEASURED SPANS BEAT THE MODEL, and this is where that is decided.  The model
@@ -2584,6 +3175,24 @@ def report_stats(st, idx, probe_cyc, probe_src, bracket, out, warn):
             why = ("within tolerance; the model is fine -- the subtraction is withheld "
                    "because the probe exceeds the total")
         out.append("    residual %+d (%.4f%% of measured) -- %s" % (resid, resid_pct, why))
+        # The one modelling gap this shape adds, named where the residual is, because that
+        # is where a reader would otherwise go looking for a cause that is not there.
+        if len(bucket_names) > B_DOPCFIND:
+            out.append("    A KNOWN PART OF THAT RESIDUAL IS BLKREC: the model has no counter "
+                       "for the recognizer's")
+            out.append("    CALLS -- BLK_HIT counts it FIRING -- so it models them at zero "
+                       "and under-predicts a")
+            if st.spans:
+                out.append("    rung-1d dump by two transitions per call.  The `s` block "
+                           "measures what it cannot:")
+                out.append("    BLKREC spans %d, i.e. %d of the %d transitions above."
+                           % (st.spans.get(B_BLKREC, 0), 2 * st.spans.get(B_BLKREC, 0),
+                              trans))
+            else:
+                out.append("    rung-1d dump by two transitions per call.  Nothing in this "
+                           "dump measures that:")
+                out.append("    it carries no `[PROF] s` block, so the gap can be named and "
+                           "not sized.")
         if measured is None and st.spans:
             out.append("    (this dump carries `[PROF] s` lines but they could not be used "
                        "-- see above.)")
@@ -2610,6 +3219,8 @@ def report_stats(st, idx, probe_cyc, probe_src, bracket, out, warn):
         out.append("  build's and the two are not comparable.  See docs/PROFILER-SYMBOLIZE.md.")
 
         _report_tail(st, idx, sem, ver, total, usable, probe_of, out, warn)
+        _report_loop(st, idx, sem, ver, total, measured is not None, probe_cyc, probe_of,
+                     out, warn)
 
         if measured is not None:
             _report_spans(st, idx, sem, total, probe_cyc, br_lo, br_hi, br_src, out, warn)

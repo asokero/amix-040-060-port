@@ -130,6 +130,15 @@ COUNTER_NAMES = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
 BUCKET_NAMES_V2 = ["LOOP", "FETCHOP", "FETCHEX", "READ", "WRITE",
                    "XLATE", "WALK", "HANDLER", "TAILADV", "FAULT", "PROF",
                    "TAILSAMP", "TAILPOLL", "TAILSPEC"]
+# The rung-1d bucket set: the SAME wire version 2, appended to and renamed at id 0.  Carried
+# in full for the same reason as the two above, and with one extra reason of its own -- the
+# only thing that distinguishes this shape from the one above is the id-0 NAME, so a fixture
+# that built it by appending three entries to the v2 list would silently keep `LOOP` at id 0
+# and be exactly the dump the symbolizer must not see.
+BUCKET_NAMES_V2_1D = ["LOOPRES", "FETCHOP", "FETCHEX", "READ", "WRITE",
+                      "XLATE", "WALK", "HANDLER", "TAILADV", "FAULT", "PROF",
+                      "TAILSAMP", "TAILPOLL", "TAILSPEC",
+                      "DOPCFIND", "DOPCFILL", "BLKREC"]
 COUNTER_NAMES_V2 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "IPAGE_HIT", "IPAGE_MISS", "DPAGE_RHIT", "DPAGE_RMISS",
                     "DPAGE_WHIT", "DPAGE_WMISS", "XLATE", "XLATE_OK", "ATC_MISS",
@@ -198,7 +207,8 @@ def counters(insns=1000000, fetch=1600000, read=700000, write=300000,
 def counters_v2(insns=1000000, fetch=1600000, read=700000, write=300000,
                 ipage=(1560000, 40000), dpr=(680000, 20000), dpw=(290000, 10000),
                 walks=7000, misalign=(1200, 400), faults=25,
-                transitions=None, stack_ovf=0, xlate=None, xlate_ok=None, atc_hit=None):
+                transitions=None, stack_ovf=0, xlate=None, xlate_ok=None, atc_hit=None,
+                loop_split=None):
     """The version-2 counter block: id 12 is XLATE_OK, id 19 is a REAL ATC_HIT.
 
     The two are given SEPARATE defaults on purpose, and they differ, because that
@@ -209,7 +219,13 @@ def counters_v2(insns=1000000, fetch=1600000, read=700000, write=300000,
 
     In v1 the second quantity did not exist and the first was printed under its name.  A
     fixture that set them equal would let a tool reading id 12 as an ATC rate pass, which is
-    exactly the bug being guarded against."""
+    exactly the bug being guarded against.
+
+    `loop_split` is rung 1d's three ENTRY counts (DOPCFIND, DOPCFILL, BLKREC).  They go into
+    TRANSITIONS at two apiece, because that is what the split actually charges the run loop
+    and because sum(spans) == TRANSITIONS has to hold on the fixture the way it holds on a
+    board -- a rung-1d capture whose transition count was still the pre-1d one would have its
+    whole `s` block refused before any identity in it could be checked."""
     if xlate is None:
         xlate = ipage[1] + dpr[1] + dpw[1]
     if xlate_ok is None:
@@ -230,6 +246,8 @@ def counters_v2(insns=1000000, fetch=1600000, read=700000, write=300000,
                    + faults                 # FAULT
                    + insns                  # TAILSAMP
                    + insns)                 # TAILPOLL   (TAILSPEC is spcflags-gated: 0)
+        if loop_split is not None:
+            entries += sum(loop_split)      # DOPCFIND + DOPCFILL + BLKREC (rung 1d)
         transitions = 2 * entries
     return [insns, int(insns * 0.35), fetch, read, write,
             ipage[0], ipage[1], dpr[0], dpr[1], dpw[0], dpw[1],
@@ -298,6 +316,64 @@ BUCKETS_V2 = [420000000, 200000000, 110000000, 260000000, 120000000,
 PROBE_CYC_V2 = 46          # per TRANSITION; metal's own figure, and inside the 45.5..58
                            # window the firmware's documentation predicts
 
+# ---------------------------------------------------------------- the rung-1d LOOP split
+#
+# THE ENTRY COUNTS ARE NOT FREE PARAMETERS.  Every one of them is pinned by an identity the
+# firmware states and the symbolizer checks, so the fixture is built from the identities
+# outwards rather than from round numbers inwards:
+#
+#   DOPCFIND spans == DOPC_HIT + DOPC_MISS == INSNS + FAULTS   1000025  -- one lookup per
+#                                                              dispatch, and a dispatch
+#                                                              either retires or throws
+#   DOPCFILL spans == DOPC_MISS                                 100002  -- one fill per miss
+#   BLKREC   spans <= DOPCFIND spans                            900000  -- at most one
+#                                                              recognizer call per dispatch
+#
+# A fixture whose identities merely happened to hold could not tell a tool that checks them
+# from one that does not; these hold because they are where the numbers came from.
+DOPC_FIND_SPANS = 1000025
+DOPC_FILL_SPANS = 100002
+BLKREC_SPANS = 900000
+SPLIT_ENTRIES = (DOPC_FIND_SPANS, DOPC_FILL_SPANS, BLKREC_SPANS)
+
+# The residue's own span count.  Entering a nested stage CLOSES a span in its parent, so each
+# of the three costs the loop one span of its own as well as one of the callee's -- which is
+# exactly the "two transitions per span of the three" the firmware prices the split at.  The
+# pre-split figure is SPANS_V2[0].
+SPANS_V2_1D = ([SPANS_V2[0] + sum(SPLIT_ENTRIES)] + SPANS_V2[1:]
+               + [DOPC_FIND_SPANS, DOPC_FILL_SPANS, BLKREC_SPANS])
+
+# And the cycles.  TWO constraints, and the second is what forces the totals to be bigger
+# than the pre-split fixture's rather than a re-slicing of them:
+#
+#   the ROLLUP lands at 800000000 / 3016000000 -- 26.52 % as the firmware truncates it and
+#   26.53 % as the report rounds it, either way inside the 26.38-26.54 % the C2 attack map
+#   quotes LOOP at.  So the report's guard is demonstrated against the real figure and not
+#   against an invented one.  Id 0 alone is 15.92 %, and the ten-point gap between those two
+#   numbers IS the mistake this shape makes available.
+#
+#   every bucket stays POSITIVE at the TOP of the price bracket (57 cyc/span).  LOOPRES
+#   carries 7043877 spans -- the three new stages' exits land on it -- which is 401500989 cyc
+#   of probe on its own, so a residue sized like the pre-split fixture's LOOP would clamp on
+#   arrival and the clean case would never be clean.
+BUCKETS_V2_1D = [480000000,                                        # 0  LOOPRES
+                 280000000, 150000000, 360000000, 170000000,       # 1..4
+                 130000000, 56000000, 480000000, 210000000,        # 5..8
+                 11000000, 17000000,                               # 9..10
+                 170000000, 154000000, 28000000,                   # 11..13
+                 210000000, 50000000, 60000000]                    # 14..16 the split
+
+# The cache-OFF arm of the same shape.  Both new brackets are then entered once per DISPATCH
+# -- the lookup returns before it can count, and the fill's bracket sits on the now-universal
+# miss arm -- so DOPCFILL's span count jumps to the dispatch count while DOPC_MISS reads a
+# true zero.  That divergence is the whole point of the fixture: it is a fact about the
+# switch, and a tool that warns about it is wrong.
+SPANS_V2_1D_OFF = ([SPANS_V2[0] + 2 * DOPC_FIND_SPANS + BLKREC_SPANS] + SPANS_V2[1:]
+                   + [DOPC_FIND_SPANS, DOPC_FIND_SPANS, BLKREC_SPANS])
+BUCKETS_V2_1D_OFF = (BUCKETS_V2_1D[:14]
+                     + [BUCKETS_V2_1D[14], 70000000, BUCKETS_V2_1D[16]])
+BUCKETS_V2_1D_OFF[0] = 520000000        # 7943900 spans x 57 = 452802300; keep it positive
+
 
 def fw_pct(part, whole):
     """The firmware's own integer percentage, reproduced so the fixture looks like a dump
@@ -343,7 +419,7 @@ def stats_dump(buckets=None, cnts=None, build=0x04, probe_cyc=11, hz=HZ, version
     return out
 
 
-def _span_block(buckets, spans, price, trans, drop_rows=(), stated_sum=None):
+def _span_block(buckets, spans, price, trans, drop_rows=(), stated_sum=None, names=None):
     """The `[PROF] s` block exactly as the firmware writes it.
 
     The firmware prices these rows at the SAME probe_cyc its aggregate line uses, so the two
@@ -359,7 +435,7 @@ def _span_block(buckets, spans, price, trans, drop_rows=(), stated_sum=None):
            "to the boot line's in-bucket figure) ===" % price]
     corr = [max(buckets[i] - spans[i] * price, 0) for i in range(len(buckets))]
     ctotal = sum(corr)
-    for i, name in enumerate(BUCKET_NAMES_V2):
+    for i, name in enumerate(names or BUCKET_NAMES_V2):
         if i in drop_rows:
             continue
         out.append("[PROF] s %-2d %-8s spans=%-14s corrected_cyc=%-16s %s%%"
@@ -370,10 +446,50 @@ def _span_block(buckets, spans, price, trans, drop_rows=(), stated_sum=None):
     return out
 
 
+def _loop_block(buckets, spans, cnts, appended, loop_cyc=None):
+    """The `[PROF] l` block exactly as the firmware writes it: rollup, cost, and verdict.
+
+    All three are computed from the same arrays the `b` and `s` rows are printed from,
+    because that is what the board does -- the rollup out of the accumulators, the cost out
+    of the three buckets' OWN spans, and the identities out of the spans against the DOPC_
+    counters.  A fixture that computed any of them independently would be able to disagree
+    with its own rows, which is a state no firmware can produce and therefore not a test
+    case.  `loop_cyc` overrides the rollup to build the one capture that IS that state.
+
+    The verdict line is the firmware's own branch: with the cache ON a broken identity is a
+    WARNING, and with it OFF the two counter identities do not apply at all and the line is a
+    `note:` saying so."""
+    total = sum(buckets)
+    trans = cnts[17]
+    loop = sum(buckets[i] for i in (0, 14, 15, 16)) if loop_cyc is None else loop_cyc
+    find, fill, brec = spans[14], spans[15], spans[16]
+    split = 2 * (find + fill + brec)
+    out = ["[PROF] l whole loop (LOOPRES+DOPCFIND+DOPCFILL+BLKREC) cyc=%d %s%% -- this is "
+           "what v2 reported as LOOP" % (loop, fw_pct(loop, total)),
+           "[PROF] l split cost: %d transitions (%s%% of %d) -- 2 per span of the three; a "
+           "capture taken before rung 1d has none of them"
+           % (split, fw_pct(split, trans).strip(), trans)]
+    hi = appended[4] if appended is not None and len(appended) > 5 else 0
+    mi = appended[5] if appended is not None and len(appended) > 5 else 0
+    if hi + mi:
+        if find != hi + mi:
+            out.append("[PROF] l WARNING: DOPCFIND spans=%d but DOPC_HIT+DOPC_MISS=%d -- the "
+                       "lookup bracket and the dispatch counters disagree" % (find, hi + mi))
+        if fill != mi:
+            out.append("[PROF] l WARNING: DOPCFILL spans=%d but DOPC_MISS=%d -- the fill "
+                       "bracket and the miss counter disagree" % (fill, mi))
+    elif find:
+        out.append("[PROF] l note: DOPCFIND spans=%d with DOPC_HIT+DOPC_MISS=0 -- the cache "
+                   "was OFF for this window, so these two buckets price the two switch tests "
+                   "and nothing else" % find)
+    return out
+
+
 def stats_dump_v2(buckets=None, cnts=None, build=0x04, probe_cyc=PROBE_CYC_V2, hz=HZ,
                   clk="cfg", version=2, tail_cyc=None, grammar=2,
                   appended=None, spans=None, drop_span_rows=(), span_sum=None,
-                  span_trans=None):
+                  span_trans=None, rung1d=False, loop_cyc=None, wall_ticks=None,
+                  bnames=None):
     """The version-2 PROFD block, emitted exactly as the firmware writes it.
 
     `grammar` exists to build the one capture that must be REFUSED without being corrupt:
@@ -381,14 +497,24 @@ def stats_dump_v2(buckets=None, cnts=None, build=0x04, probe_cyc=PROBE_CYC_V2, h
     format.  That is not a hypothetical -- it is what a hand-edited capture, or a fixture
     generator that bumped a number without bumping a format, produces -- and the two
     grammars price `probe_cyc` in different units, so a reader that reconciles them instead
-    of refusing gets a plausible number rather than an error."""
-    buckets = BUCKETS_V2 if buckets is None else buckets
+    of refusing gets a plausible number rather than an error.
+
+    `rung1d` selects the SHAPE rather than the version: the same wire version 2 with the
+    dispatch loop decomposed, which is carried by the bucket NAMES and by nothing else.
+    `bnames` overrides that table outright, and exists for one fixture -- the dump that
+    answers the shape question twice by naming id 0 `LOOP` while carrying `DOPCFIND` at
+    id 14.  No firmware writes that, which is exactly why a generator has to be able to."""
+    if bnames is None:
+        bnames = BUCKET_NAMES_V2_1D if rung1d else BUCKET_NAMES_V2
+    if buckets is None:
+        buckets = BUCKETS_V2_1D if rung1d else BUCKETS_V2
     cnts = counters_v2() if cnts is None else cnts
     total = sum(buckets)
     # Sized so the buckets account for 90% of the elapsed span, same shape as the v1
     # fixture: a run-loop residency of exactly 100% would say core1 never once left the run
     # loop, which no real capture shows and which would make the shape check meaningless.
-    wall_ticks = 1111111111
+    if wall_ticks is None:
+        wall_ticks = total * 10 // 18
     out = ["[PROF] === stage attribution ==="]
     if grammar == 2:
         out.append("[PROF] ver=%d build=0x%02X cpu_hz=%d clk=%s hz=%d period_cyc=%d "
@@ -398,7 +524,7 @@ def stats_dump_v2(buckets=None, cnts=None, build=0x04, probe_cyc=PROBE_CYC_V2, h
         out.append("[PROF] ver=%d build=0x%02X cpu_hz=%d hz=%d period_cyc=%d probe_cyc=%d"
                    % (version, build, CPU_HZ, hz, PERIOD, probe_cyc))
     out.append("[PROF] total_cyc=%d wall_ticks=%d wall_hz=%d" % (total, wall_ticks, WALL_HZ))
-    for i, name in enumerate(BUCKET_NAMES_V2):
+    for i, name in enumerate(bnames):
         out.append("[PROF] b %-2d %-8s cyc=%-16s %s%%"
                    % (i, name, buckets[i], fw_pct(buckets[i], total)))
     # The whole-tail rollup: the firmware's OWN sum of ids 8+11+12+13, printed so a v2
@@ -408,6 +534,12 @@ def stats_dump_v2(buckets=None, cnts=None, build=0x04, probe_cyc=PROBE_CYC_V2, h
     tail = sum(buckets[i] for i in (8, 11, 12, 13)) if tail_cyc is None else tail_cyc
     out.append("[PROF] t whole tail (TAILADV+TAILSAMP+TAILPOLL+TAILSPEC) cyc=%d %s%% "
                "-- this is what v1 reported as TAIL" % (tail, fw_pct(tail, total)))
+    # Rung 1d's own block, printed where the firmware prints it: after the tail rollup and
+    # before the probe line.  It exists only on a dump that HAS the split -- the firmware
+    # that has no ids 14..16 has no `l` line either, which is what makes the older captures
+    # still readable and still comparable.
+    if rung1d and spans is not None:
+        out.extend(_loop_block(buckets, spans, cnts, appended, loop_cyc))
     # PER TRANSITION in v2, and the firmware's line and this tool's arithmetic agree.
     # Omitted entirely when there is no calibration, exactly as the firmware omits it.
     probe = cnts[17] * probe_cyc
@@ -422,7 +554,7 @@ def stats_dump_v2(buckets=None, cnts=None, build=0x04, probe_cyc=PROBE_CYC_V2, h
     if spans is not None:
         out.extend(_span_block(buckets, spans, probe_cyc,
                                cnts[17] if span_trans is None else span_trans,
-                               drop_span_rows, span_sum))
+                               drop_span_rows, span_sum, bnames))
     out.append("[PROF] === counters ===")
     names = list(COUNTER_NAMES_V2)
     vals = list(cnts)
@@ -924,6 +1056,82 @@ def main():
           + stats_dump_v2(appended=counters_appended(
               iv=(700, 100, 20, 0, 0, 0, 0, 180, 480, 20))))
 
+    # ------------------------------------------------------- rung 1d: the LOOP split
+    #
+    # THE SAME WIRE VERSION, AND THE ONLY THING THAT SAYS SO IS A NAME.  Rung 1d brackets the
+    # decoded-op lookup, the decoded-op fill and the block-idiom recognizer out of the
+    # dispatch loop into ids 14..16 and leaves id 0 holding the residue -- so id 0 stops
+    # meaning what every earlier capture's id 0 meant, and the firmware deliberately does NOT
+    # bump the version for it.  It moves the printed name instead (`LOOP` -> `LOOPRES`),
+    # exactly as v1's `TAIL` became v2's `TAILADV`, because a bump would make every existing
+    # tool refuse a capture it can read correctly.
+    #
+    # These fixtures are therefore built to break a tool that keys on the version number: the
+    # magic is Z3P2, the `ver=` line says 2, the header and the sample record are untouched,
+    # and the ONLY difference is three appended rows and one renamed one.
+    #
+    # The cycle totals are sized so the ROLLUP lands at 26.52 % -- inside the 26.38-26.54 %
+    # the C2 attack map quotes LOOP at -- while id 0 alone is 15.91 %.  A tool that reports id
+    # 0 against the map's figure gets a clean, well-formatted, ten-point saving that no code
+    # change produced, and no arithmetic anywhere in its report objects.
+    cnt1d = counters_v2(loop_split=SPLIT_ENTRIES)
+    lines_1d = (["Z3660 firmware boot"] + boot_v2() + probe_cal() + [ARMED]
+                + stats_dump_v2(cnts=cnt1d, appended=full, spans=SPANS_V2_1D, rung1d=True))
+    write(d, "capture-v21d.txt", lines_1d)
+
+    # The cache OFF, in the rung-1d shape.  Two of the four identities then do NOT hold and
+    # neither divergence is a defect: the lookup returns before it can count, so DOPCFIND
+    # goes on being entered every pass against a DOPC_HIT+DOPC_MISS of zero, and DOPCFILL's
+    # bracket sits on the now-universal miss arm and prices the fill's own switch test per
+    # dispatch instead of per miss.  The firmware says so on a `note:` line rather than a
+    # WARNING, and a tool that warns here is telling the reader to go and fix a switch
+    # setting they chose on purpose.  `tcnt[DOPCFIND] == INSNS + FAULTS` still holds, because
+    # a dispatch enters the bracket whichever way the switch is set.
+    write(d, "capture-v21doff.txt",
+          boot_v2() + probe_cal()
+          + stats_dump_v2(cnts=counters_v2(loop_split=(DOPC_FIND_SPANS, DOPC_FIND_SPANS,
+                                                       BLKREC_SPANS)),
+                          appended=counters_appended(dopc=(0, 0, 0, 0)),
+                          buckets=BUCKETS_V2_1D_OFF, spans=SPANS_V2_1D_OFF, rung1d=True))
+
+    # A lookup bracket that does not agree with the dispatch counters, with the cache ON.
+    # The lookup touches no guest memory, so its span cannot be abandoned by an unwind and
+    # the count is EXACT -- which is why the firmware WARNS here rather than noting, and why
+    # the tool must surface the board's own warning as well as failing the identity itself.
+    # The 50000 spans are moved to LOOPRES rather than deleted, so sum(spans) == TRANSITIONS
+    # still holds: a block refused for its total would never reach the identity at all.
+    skew = list(SPANS_V2_1D)
+    skew[14] -= 50000
+    skew[0] += 50000
+    write(d, "capture-v21dskew.txt",
+          boot_v2() + probe_cal()
+          + stats_dump_v2(cnts=cnt1d, appended=full, spans=skew, rung1d=True))
+
+    # The firmware's own `l` rollup disagreeing with the four bucket rows it is computed
+    # from.  Same impossibility as the `t` line's, one bucket over.
+    write(d, "capture-v21dloopmismatch.txt",
+          boot_v2() + probe_cal()
+          + stats_dump_v2(cnts=cnt1d, appended=full, spans=SPANS_V2_1D, rung1d=True,
+                          loop_cyc=799000000))
+
+    # A rung-1d dump whose `s` block lost the DOPCFIND row in transit.  The block is refused
+    # (its rows no longer sum to its own stated total), and the identities are stated over
+    # SPANS -- so they become UNAVAILABLE rather than being computed from whatever else is to
+    # hand.  The rollup and the guard survive, because they come off the `b` rows.
+    write(d, "capture-v21dspanslost.txt",
+          boot_v2() + probe_cal()
+          + stats_dump_v2(cnts=cnt1d, appended=full, spans=SPANS_V2_1D, rung1d=True,
+                          drop_span_rows=(14,)))
+
+    # A dump that answers the shape question twice and disagrees: `LOOP` at id 0 -- the name
+    # that says there is no split -- while carrying DOPCFIND at id 14, which only exists
+    # where there is.  No firmware writes this; a hand-edit or a mixed paste does.  The id-0
+    # name stands, ids 14..16 stay uninterpreted, and neither answer is silently preferred.
+    write(d, "capture-v21dnameclash.txt",
+          boot_v2() + probe_cal()
+          + stats_dump_v2(cnts=cnt1d, appended=full, spans=SPANS_V2_1D, rung1d=True,
+                          bnames=["LOOP"] + BUCKET_NAMES_V2_1D[1:]))
+
     # The stats dump whose "=== stage attribution ===" banner was eaten by the console
     # collision -- the SAME shared-UART defect the `ring hdr` repair exists for, arriving on
     # a different line.  Five of the 2026-08-22/23 metal captures were refused for this while
@@ -950,6 +1158,18 @@ def main():
     del noident[banner_i + 1]
     noident[banner_i] = "PROF DUMP requested (stage buckets + count[PeROrF]s =)== s"
     write(d, "capture-v2bannerident.txt", noident)
+
+    # The same collision over a RUNG-1D dump's bytes.  The repair keys on `[PROF] ver=` and
+    # never on the banner, so it cannot care which shape follows it -- and this fixture is
+    # what says so rather than what assumes it.  The assertion is again the IDENTITY of the
+    # two reports: the capture session that needs the loop split is the next one, and it will
+    # be taken over the same shared UART that ate five of the last one's banners.
+    b1d = lines_1d.index("[PROF] === stage attribution ===")
+    write(d, "capture-v21dbanner.txt",
+          lines_1d[:b1d]
+          + ["PROF DUMP requested (stage buckets + count[PeROrF]s =)== s",
+             "tage attribution ==="]
+          + lines_1d[b1d + 1:])
 
     # ------------------------------------------------- captures that disagree with themselves
     #

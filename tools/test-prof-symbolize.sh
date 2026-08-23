@@ -78,7 +78,32 @@
 # command that requested the dump.  Five metal captures were refused for it with every byte
 # of their payload present.  The banner carries nothing and the `[PROF] ver=` line beneath it
 # carries everything, so the repair is to open the dump from that line -- and losing THAT
-# line is still a refusal, which is what capture-v2bannerident pins.
+# line is still a refusal, which is what capture-v2bannerident pins.  The rung-1d fixture has
+# the same damage applied to its own bytes, because the repair must not care which shape
+# follows the banner and the capture session that needs the split is the next one.
+#
+# THEN A MEANING MOVED WITHOUT THE VERSION MOVING, which is the newest family and the one
+# with the largest wrong answer in it.  Rung 1d brackets the decoded-op lookup, the
+# decoded-op fill and the block-idiom recognizer out of the dispatch loop into ids 14..16, so
+# id 0 becomes the RESIDUE -- and the firmware moves the printed name (`LOOP` -> `LOOPRES`)
+# instead of bumping, exactly as v1's `TAIL` became v2's `TAILADV`.  The magic, the version
+# field, the header and the sample record are all unchanged, so:
+#
+#   * THE NAME IS THE ONLY SIGNAL, and the fixtures are built to punish a tool that keys on
+#     anything else.  capture-v21d's rollup is 26.53 % -- inside the 26.38-26.54 % the C2
+#     attack map quotes LOOP at -- while its id 0 alone is 15.92 %.  A tool that reports id 0
+#     against the map's figure produces a clean ten-point saving that no code change made,
+#     and no arithmetic anywhere in its report objects to it.
+#   * THE IDENTITIES ARE OVER SPANS, NOT COUNTERS, and capture-v21dspanslost pins that a
+#     refused `s` block makes them UNAVAILABLE rather than something to derive from a
+#     correlate -- which is the method the spans retired, by 1.97x.
+#   * A CACHE-OFF ARM IS NOT A DEFECT.  With the cache off two of the four identities
+#     legitimately diverge, the firmware says so on a `note:` line rather than a WARNING, and
+#     capture-v21doff asserts that this tool warns about NOTHING there.  Warning would send a
+#     reader to fix a switch setting they chose on purpose.
+#   * capture-v21dnameclash answers the shape question twice (`LOOP` at id 0, `DOPCFIND` at
+#     id 14).  No firmware writes it; a hand-edit or a mixed paste does, and neither answer
+#     may win silently.
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 TOOL="$HERE/tools/prof-symbolize.py"
@@ -464,6 +489,133 @@ run capture-v2ivshort.txt
 check "sum(IV) below DOPC_INVAL still reports"  "0" "$st"
 has   "  ...as impossible rather than merely odd" "1" "IMPOSSIBLE: every invalidation performed was requested"
 has   "  ...and it reaches the warnings"        "1" "is LESS than DOPC_INVAL"
+
+echo
+echo "-- rung 1d: the LOOP split, and the ten points it puts within reach --------------"
+# The version does NOT move for this, deliberately -- the magic is Z3P2, the ver= line says
+# 2, and the only thing that says id 0 stopped meaning the dispatch loop is that it is now
+# printed LOOPRES.  So every assertion below is one a tool keying on the version number gets
+# WRONG while producing a full, well-formatted report, and the first one is the ten-point
+# one: capture-v21d's rollup is 26.53 %, inside the 26.38-26.54 % the C2 map quotes LOOP at,
+# while id 0 alone is 15.92 %.
+
+run capture-v21d.txt
+check "a rung-1d capture parses"                "0" "$st"
+has   "  ...at the SAME wire version"           "1" "wire version    2  (17 buckets, 39 counters defined; this dump carries 39)"
+has   "  ...saying which shape of it"           "1" "the rung 1d bucket set: id 0 prints as LOOPRES"
+has   "  ...and that the name is what moved"    "1" "the NAME is what moved"
+has   "id 0 is renamed, not repurposed silently" "3" "  0  LOOPRES "
+has   "  ...with the three new ids beside it"   "3" " 14  DOPCFIND "
+has   "  ...and no name-drift warning for either" "0" "is named .LOOPRES. here but"
+has   "  ...nor an uninterpreted-id one"        "0" "beyond the 17 version 2 defines"
+
+# THE ROLLUP IS THE COMPARABLE QUANTITY.  Reporting id 0 against the map's figure is a
+# 10.61-point saving that no code change produced, and nothing else in the report objects.
+has   "the loop rolls up from four ids"         "1" "      LOOP                  800000000     26.53%    100.00%"
+has   "  ...and id 0 alone is only the residue" "1" "   0  LOOPRES               480000000     15.92%     60.00%"
+has   "  ...with DOPCFIND broken out"           "1" "  14  DOPCFIND              210000000      6.96%     26.25%"
+has   "  ...and the fill broken out"            "1" "  15  DOPCFILL               50000000      1.66%      6.25%"
+has   "  ...and the recognizer too"             "1" "  16  BLKREC                 60000000      1.99%      7.50%"
+has   "the guard against scoring id 0 is printed" "1" "DO NOT SCORE ID 0 ALONE AGAINST A QUOTED .LOOP. FIGURE"
+has   "  ...naming the map's own figure"        "1" "quotes LOOP at 26.38-26.54 % of the interpreter"
+has   "  ...and sizing the mistake"             "1" "would claim a 10.61-point fall that no code change produced"
+has   "the firmware's own l line cross-checks"  "1" "the firmware's own '\[PROF\] l' line agrees -- 800000000 == 800000000"
+
+# THE SPLIT'S OWN COST, so a share here and a share from an older capture can be compared.
+# 4000054 = 2 x (1000025 + 100002 + 900000), and 17354104 - 4000054 = 13354050 -- which is
+# capture-v2spans's TRANSITIONS exactly, i.e. the count this run WOULD have had before the
+# split.  That identity across two fixtures is the assertion.
+has   "the split prices itself from its own spans" "1" "added transitions                         4000054   23.05% of all transitions"
+has   "  ...showing which spans"                "1" "two per span of DOPCFIND (1000025), DOPCFILL (100002) and BLKREC (900000)"
+has   "  ...and re-pricing the capture without it" "1" "re-priced without the split              13354050"
+has   "  ...as a probe figure that can be compared" "1" "probe re-priced               614286300 cyc   (13354050 x 46 cyc/transition)"
+has   "  ...but never re-pricing the buckets"   "1" "The BUCKETS are not re-priced here and must not be"
+
+# The four identities.  The first two are EXACT -- neither bracket touches guest memory, so
+# neither span can be abandoned by an unwind -- which is why the firmware warns rather than
+# notes when they fail.
+has   "the lookup identity is asserted"         "1" "tcnt\[DOPCFIND\] == DOPC_HIT + DOPC_MISS            ok        1000025 == 900023 + 100002"
+has   "  ...and against the dispatch count too" "1" "tcnt\[DOPCFIND\] == INSNS + FAULTS                  ok        1000025 == 1000000 + 25"
+has   "the fill identity is asserted"           "1" "tcnt\[DOPCFILL\] == DOPC_MISS                       ok        100002 == 100002"
+has   "the recognizer inequality is asserted"   "1" "tcnt\[BLKREC\]   <= tcnt\[DOPCFIND\]                  ok        900000 <= 1000025"
+has   "  ...with the fire case scoping it"      "1" "on a FIRE this bucket holds the whole serviced chunk"
+has   "the modelling gap is named where the residual is" "1" "A KNOWN PART OF THAT RESIDUAL IS BLKREC"
+has   "  ...and sized from the spans"           "1" "BLKREC spans 900000, i.e. 1800000 of the 17354104 transitions above"
+check "a clean rung-1d capture warns about nothing" "0" \
+      "$(sed -n '/^warnings$/,$p' "$TMP/o" | grep -c '^  \*')"
+
+# THE CACHE-OFF ARM.  Two identities legitimately diverge there and the firmware says so on
+# a `note:` line rather than a WARNING.  A tool that warns is sending the reader to fix a
+# switch setting they chose on purpose.
+run capture-v21doff.txt
+check "a cache-off rung-1d capture parses"      "0" "$st"
+has   "  ...with the lookup identity n/a"       "1" "tcnt\[DOPCFIND\] == DOPC_HIT + DOPC_MISS            n/a       cache OFF: 1000025 spans vs 0"
+has   "  ...and the fill identity n/a"          "1" "tcnt\[DOPCFILL\] == DOPC_MISS                       n/a       cache OFF: 1000025 spans vs 0"
+has   "  ...but the dispatch identity still held" "1" "tcnt\[DOPCFIND\] == INSNS + FAULTS                  ok        1000025 == 1000000 + 25"
+has   "  ...explained as the switch, not a defect" "1" "THE CACHE WAS OFF FOR THIS WINDOW"
+has   "  ...and said to be a note, not a warning" "1" "it is a NOTE, not a warning, and nothing here needs fixing"
+has   "the firmware's own note is surfaced"     "1" "note:    capture line 27: DOPCFIND spans=1000025 with DOPC_HIT+DOPC_MISS=0"
+check "and a cache-off arm warns about nothing" "0" \
+      "$(sed -n '/^warnings$/,$p' "$TMP/o" | grep -c '^  \*')"
+
+# A lookup bracket that disagrees with the dispatch counters, cache ON.  Both the tool's own
+# identity and the BOARD's warning have to appear: the board saw the state, this tool did not.
+run capture-v21dskew.txt
+check "a skewed lookup bracket still reports"   "0" "$st"
+has   "  ...as a MISMATCH"                      "1" "tcnt\[DOPCFIND\] == DOPC_HIT + DOPC_MISS            MISMATCH  950025 vs 900023 + 100002"
+has   "  ...naming it as exact rather than approximate" "1" "this count is EXACT"
+has   "the firmware's own WARNING is surfaced"  "1" "WARNING: capture line 27: DOPCFIND spans=950025 but DOPC_HIT+DOPC_MISS=1000025"
+has   "  ...and repeated into the warnings"     "1" "the firmware's own '\[PROF\] l WARNING' at capture line 27"
+has   "  ...as the BOARD's verdict, not this tool's" "1" "the BOARD's verdict on the state it measured"
+
+# The `l` rollup against the four rows it is computed from: the tail cross-check, one bucket
+# over, and impossible for the same reason.
+run capture-v21dloopmismatch.txt
+check "a disagreeing l line still reports"      "0" "$st"
+has   "  ...as a failed cross-check"            "1" "CROSS-CHECK FAILED: the firmware's '\[PROF\] l' line says 799000000"
+has   "  ...and it reaches the warnings"        "1" "bucket rows and its loop line did not come off the same state"
+
+# The identities are stated over SPANS, so a refused `s` block makes them UNAVAILABLE rather
+# than something to be computed from whatever else is to hand.  The rollup and the guard come
+# off the `b` rows and survive.
+run capture-v21dspanslost.txt
+check "a rung-1d dump with s rows lost reports" "0" "$st"
+has   "  ...with the identities unavailable"    "1" "UNAVAILABLE: they are stated over each bucket's own SPAN count"
+has   "  ...refusing to substitute a correlate" "1" "the method the spans retired, by 1.97x"
+has   "  ...while the rollup still stands"      "1" "      LOOP                  800000000     26.53%    100.00%"
+
+# A capture that answers the shape question twice: `LOOP` at id 0 and DOPCFIND at id 14.  No
+# firmware writes that; a hand-edit or a mixed paste does.  Neither answer wins silently.
+run capture-v21dnameclash.txt
+check "a self-contradicting shape still reports" "0" "$st"
+has   "  ...naming the contradiction"           "1" "and then carries 'DOPCFIND' at id 14, which only exists where it is"
+has   "  ...leaving the split ids uninterpreted" "2" "bucket id 14 is beyond the 14 version 2 defines"
+has   "  ...and catching it on the l line too"  "1" "rolls up 'LOOPRES+DOPCFIND+DOPCFILL+BLKREC' while this dump's bucket rows name 'LOOP'"
+has   "  ...without inventing a rollup"         "0" "DO NOT SCORE ID 0 ALONE"
+
+# A pre-rung-1d capture must still report correctly, and must say WHY it is comparable.
+run capture-v2spans.txt
+check "a pre-split capture still reports"       "0" "$st"
+has   "  ...saying it has no split"             "1" "this dump has NO loop split: it names id 0 'LOOP'"
+has   "  ...so its id 0 IS comparable to the map" "1" "so this row can be laid beside those figures directly"
+has   "  ...and naming what a rung-1d one looks like" "1" "A rung-1d capture names id 0 LOOPRES and carries DOPCFIND/DOPCFILL/BLKREC"
+has   "  ...with no split cost claimed"         "0" "WHAT THE SPLIT ITSELF COST"
+has   "  ...and no LOOPRES bucket row"          "0" "^   0  LOOPRES"
+
+# And version 1, where id 0 is the whole loop AND the sampler hook -- so it is not the map's
+# quantity either, for a different reason.
+run capture-valid.txt
+has   "a v1 LOOP is not the map's quantity either" "1" "this bucket also holds TAILSAMP"
+
+# The banner repair keys on `\[PROF\] ver=` and never on the banner, so it cannot care which
+# shape follows it.  Same assertion as the pre-split one: the reports are IDENTICAL.
+run capture-v21dbanner.txt
+check "a rung-1d dump with its banner eaten parses" "0" "$st"
+sed -n '/^build           0x04/,/^warnings$/p' "$TMP/o" > "$TMP/b1d-body"
+run capture-v21d.txt
+sed -n '/^build           0x04/,/^warnings$/p' "$TMP/o" > "$TMP/c1d-body"
+check "the repaired rung-1d dump is the clean one" "same" \
+      "$(cmp -s "$TMP/b1d-body" "$TMP/c1d-body" && echo same || echo DIFFERENT)"
 
 echo
 echo "-- truncation: a lost serial line must never become a shorter profile ------------"
