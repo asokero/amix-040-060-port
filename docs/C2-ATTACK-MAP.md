@@ -2,7 +2,8 @@
 
 **How to read this file.** It has three parts, newest first.
 
-* **Part I — v3.3 (§§35–40), v3.2 (§§27–34), v3.1 (§§20–26) and v3 (§§13–19)**, below, is the
+* **Part I — v3.4 (§§41–47), v3.3 (§§35–40), v3.2 (§§27–34), v3.1 (§§20–26) and v3 (§§13–19)**,
+  below, is the
   current map, newest first inside the part. v1 and v2 ranked a machine nobody had changed yet.
   **v3 is the first version written after the top of the ladder was actually built**, and it is a
   different kind of document for that reason: four of its numbers are outcomes rather than
@@ -14,8 +15,12 @@
   nothing, and the mechanism that separates them (§30) re-prices every remaining row.
   **v3.3 is v3.2's ladder #1, sent to metal and taken off the board** — struck as a rung by a
   static count without the bucket ever being classified (§36) — **and v3.2's own stale input,
-  re-measured and re-scored** (§38). Every ranked number in Part I is measured on the
-  2026-08-22/23 metal sessions.
+  re-measured and re-scored** (§38). **v3.4 is v3.3's own recommendation, taken — and it struck
+  the rung it was written to promote**: the physical-index study's one unmeasured input was
+  measured on metal at `f` = 0.0787 against a gate of 0.35 (§42), which closes the fetch side of
+  the machine entirely, and the last well-conditioned row left on the ladder is priced in full and
+  found to sit inside the rig's own noise floor (§45). Every ranked number in Part I is measured on
+  the 2026-08-22/23 metal sessions.
 * **Part II — v2 (§§6–12)** is the map the campaign was dispatched from. It is
   **superseded in part**: its ordering held, its rung 1 estimate was vindicated, and one of
   its conclusions — "`LOOP` is empty" — is **refuted by measurement** (§15). Kept whole.
@@ -30,16 +35,791 @@ included.
 
 ---
 
-# PART I — v3.3 (§§35–40), v3.2 (§§27–34), v3.1 (§§20–26) and v3 (§§13–19), 2026-08-23
+# PART I — v3.4 (§§41–47), v3.3 (§§35–40), v3.2 (§§27–34), v3.1 (§§20–26) and v3 (§§13–19), 2026-08-23
 
-**v3.3 first, then the v3.2 it amends, then the v3.1 that v3.2 amends, then v3.** §§13–14 — the
+**v3.4 first, then the v3.3 it amends, then the v3.2 that v3.3 amends, then v3.1, then v3.**
+§§13–14 — the
 four rungs as built — are unedited and still current, and so is everything each version
 *measured*. What v3.2 touched is what v3.1 *projected*: the ladder (§24.2), its reclaim
 rationales (§24.3), the bar (§24.4) and the recommendation (§25). **What v3.3 touches is what
 v3.2 projected**: ladder row #1 (§33.3), the `HANDLER` row of the pricing-law pass (§33.2), the
-recommendation (§33.4) and the input it flagged as stale (§22.3). Each amended section carries a
+recommendation (§33.4) and the input it flagged as stale (§22.3). **What v3.4 touches is what v3.3
+projected**: the funding recommendation (§38.6) and the removal fraction under it (§38.4), the
+ladder (§39.2), the F6 point (§39.3), the strategic picture (§39.4), the fetch arithmetic (§37.1),
+the ATC row's reading (§37.2) and the confound §40.2 could not name. Each amended section carries a
 banner and stays otherwise unedited.
 
+---
+
+## 41. What v3.4 is
+
+**v3.3's own recommendation, taken — and it struck the rung it was written to promote.** §38.6
+refused to fund the physical-index design round and funded instead the one-switch measurement of
+the removal fraction `f`, on the argument that *the entire remaining risk is concentrated in one
+unmeasured number*. That switch was built (`IVSUP`), armed on metal, and read in two independent
+instruments in one session. **`f` = 0.0787 against a pre-registered gate of 0.35**, and the wall
+clock moved **+0.00 %** against a gate of +1.5 %. Both clauses fail, they fail in agreement, and
+the doc's own reading rule for that cell is *strike the study from the ladder and do not
+re-measure at another band* (§42).
+
+**That leaves the fetch side of this machine closed.** Its served path was measured
+latency-hidden and reverted (rung 3, §29); its miss path was the last live prize on it and has
+just been priced at an order of magnitude below its own break-even bar. **Row H has no live rung
+in either of its halves**, and it is the largest thing on the ladder that is now finished rather
+than unexplored.
+
+**So v3.4's forward-looking work is the rung underneath it**, and it is the last row whose
+classification was bought rather than assumed: the ATC fast path. §45 applies §30.3 to it in
+full — a named latency per cost site, a measured price per event, a count-derived added-work band
+deflated by rung 3's own measured factor, and an explicit answer to *what would a discriminator
+even look like here*. The answer is unusual and it is the section's main result.
+
+**And the session paid two small debts in passing**: §37.1's fetch arithmetic gains two measured
+corrections (§43), and F6 gets the clean fourth point §39.3 said was owed — which does not close
+F6, for a reason that is now the series' own defect rather than this capture's (§44).
+
+### 41.1 Provenance
+
+| | |
+|---|---|
+| session | 2026-08-23, 17:27 → 18:37 EEST, A4000 + Z3660 metal — four boots, three flashes, zero anomalies |
+| evidence | `2026-08-23-ivsup-verdict/` — `MATRIX.md` (scorecard), `NOTES.txt` (F1–F9), `expectations.md` (the gate and the direction table, written before power-on and unedited) |
+| rig | preset 7 (`amix_ram 128`, `service_cadence 4`, `arm_frequency 1100`), AMIX on piscsi card 1, **all armed boots on a work copy of the installed root** |
+| design doc | `Z3660/docs/f-measurement.md` — pre-registration `a3af6b1`, committed **before** the code `58d9acb` |
+| console switch | `IVSUP` (unset = OFF; the arm is deliberately unsound and must never ship) |
+| firmware | IVSUP prof `2530C3F4`, IVSUP lean `E663B44A`; reference and close-out lean `DEC21748`; `FAILSAFE.bin 7E03DA03` never written |
+| **verdict** | **`f` = 0.0787 — NOT FUNDED. The physical-index decoded-op cache study is STRUCK.** |
+
+Continuity: the serial log opened at **exactly** the spec-verdict close-out offset (137 674 040)
+and closed at 137 964 119 — span 290 079 B, captured 290 079 B, **zero drops**. The as-found row
+on the installed root reads median **8163**, −0.27 % against the previous session's five runs of
+the same image, inside the rig's own 0.15–0.68 % spread.
+
+### 41.2 The standing posture — 8185, and this session re-took it on the reference image
+
+| row | dhry c4, lean, `service_cadence 4`, `amix_ram 128` | n |
+|---|---|---|
+| **R0** — `DEC21748`, installed root, as found | 8163 (mean 8164.8, spread 0.28 %) | 5 |
+| **R** — `DEC21748`, **work copy**: the reference | **8185** (mean 8178.4, spread 0.56 %) | 5 |
+| **A** — IVSUP lean `E663B44A`, disarmed | 8173 (mean 8157.8, spread 0.70 %) | 5 |
+| **B** — IVSUP lean `E663B44A`, **ARMED** | **8173** (mean 8169.6, spread 0.13 %) | 5 |
+| **A′** — return leg, disarmed | 8174 (mean 8174.3, spread 0.04 %) | 3 |
+
+**The reference row lands on 8185 exactly**, so this session's live gate edge and the
+pre-registered one coincide and every share and projection below reads against **8185**, as v3.2
+and v3.3 did. **Read the spread column too** — it is 0.04–0.70 % across five arms, and §45.5
+turns that number into a constraint on what this rig can still decide.
+
+### 41.3 Protocol — three things this session proved rather than asserted
+
+Recorded because each was a standing risk this campaign had been carrying on trust.
+
+* **The work-copy discipline is proved by CRC, not by intent.** The installed root and its
+  on-device copy both read `30FE1733` at 17:45. Every boot from 17:46 — **including both armed
+  windows of a deliberately unsound build** — ran on the copy. At close-out the installed root
+  still reads `30FE1733`; the copy reads `C52AD557`. The pair *is* the proof. The reroot added a
+  new config slot rather than editing the installed system's own declaration, and both config
+  files restored byte-identical. **No verification boot was taken after the restore, deliberately**
+  — booting to "check" would write `mnttab`/`wtmp` and destroy exactly the evidence that proves
+  the armed work never touched it.
+* **The as-found card CRC gap is closed.** The previous session's own finding F9 records that it
+  never CRC'd the card at a menu before flashing, so its as-found identification was *functional*
+  rather than cryptographic. This session took that capture first: `0:/Z3660.bin` = `DEC21748` at
+  17:32:49, `FAILSAFE.bin` = `7E03DA03` at 17:32:56, before anything was uploaded. The CRC chain
+  across the two sessions is now unbroken at both ends.
+* **A scorer that is tuned after the fact is an artefact.** The direction table's row D5 was first
+  scored **MISS** by a bare *>2 %* rule, and the only counter that tripped it was `IV_DMA` **6 → 4**
+  — two events on a base of six, a count at which *"unchanged"* is not a measurable claim.
+  Rescored on a rule **stated rather than tuned** (|Δ| ≤ 1 % **or** |Δ| ≤ 5 counts), all nine
+  causes are unchanged and the row passes. **The rule has to be written down with the direction it
+  scores**, or the first surprising row rewrites it.
+
+> **And one console lesson that generalises past this lane.** The arm detector waited for the
+> literal string `[IVSUP] ***** MEASUREMENT MODE`, and reported *"core1 never confirmed ARM"* after
+> three presses — while the switch had in fact armed, disarmed and armed again, perfectly, all
+> three times. On an arm, **core0 and core1 print at the same time through one UART with no lock**,
+> and the banner arrives spliced: `*IVUP]* **** MEAENREMENT MOQU --EDOPC INVALINATIODASUPPRESSERE`.
+> On a disarm the collision is far smaller and core1's confession arrives intact every time.
+> **On a two-core one-UART box a banner's TEXT is not a reliable echo; a COUNTER is.** The real
+> gate was moved off the live stream and onto the capture — the profiler banner fires on
+> `armed || IV_SUPPRESSED != 0`, and `IV_SUPPRESSED` is compiled into **every** variant including
+> the lean one that has no profiler at all. That decision is the only reason arm B was attestable.
+
+---
+
+## 42. THE STRIKE — `f` = 0.0787, and the physical-index study comes off the ladder
+
+### 42.1 Both clauses of the gate fail, and they fail in agreement
+
+Arms **C1** (prof, `IVSUP` OFF) and **D1** (prof, `IVSUP` ARMED), **same boot**, each `PROFZ`-fenced
+around one dhrystone run at a **pinned 100 000 count**:
+
+```
+   C1 disarmed   DOPC_HIT 61996672   DOPC_MISS 2341153   miss rate 0.03638844
+   D1 ARMED      DOPC_HIT 62174023   DOPC_MISS 2156677   miss rate 0.03352485
+
+   f = (0.03638844 - 0.03352485) / 0.03638844  =  0.0787      gate: f >= 0.35
+```
+
+| clause | required | measured | verdict |
+|---|---|---|---|
+| `f` ≥ 0.35 | 0.35 | **0.0787** | **MISS by 4.4×** |
+| wall clock ≥ ~1.5 % → dhry ≥ 8308 | 8308 | **8173** | **MISS** — the gate needed **+135** dhrystones; it moved **+0** |
+| armed row lands 8353–8450 (at the calibrated `f` = 0.357) | — | 8173 | **MISS**, low |
+| …or 8425–8563 (at §24.4's naive `f` = 0.5096) | — | 8173 | **MISS**, low |
+| a reading far **above** 8563 is as suspicious as one below | — | 8173 | **did not fire** |
+| correctness gate: printed values correct in every armed run | — | **20 checked, 0 wrong, in all 7 captures**, every block byte-identical to the `DEC21748` reference | **PASS, not degraded** |
+| arm A within ±0.5 % of arm R (so B/A is usable directly) | ±0.5 % | −0.147 % | **PASS** |
+
+**Which reading rule fires, and which do not.** §38.6 pre-registered four cells. Only *"`f` < 0.35
+→ **NULL, and it is a STRIKE-shaped null**; do not fund, record `f`, strike the study from the
+ladder, and **do not re-measure at a different band** — `f` is a ratio of two hit rates in one boot
+and carries no band"* applies. The `INVALID` cell (*wall clock moves but `f` does not*) **did not
+fire**: the wall clock also missed. **Two independent instruments, on different images in
+different boots, agree on both the sign and the size of the null. There is nothing to retake.**
+
+### 42.2 `T*` re-derived at the measured `f` — and it is an upper bound
+
+§38.3 requires the break-even budget to be re-derived at the measured `f`, never quoted from its
+table:
+
+```
+   T* = f/(1-f) x S = 0.0854 x S
+
+   S = 166.6 .. 178.7 cyc  (the spec session's band [54, 60])   ->  T* = 14.2 .. 15.3 cyc
+   S = 189.4 .. 209.5 cyc  (THIS capture's own band [40, 50])   ->  T* = 16.2 .. 17.9 cyc
+
+   the bar the design had to clear, at the calibrated f = 0.357 :  93 .. 99 cyc
+```
+
+Both forms are given because the first mixes this session's `f` with the previous session's `S`,
+and the second does not — §31.2's discipline applied to the study's own headline number. **They
+agree: the budget is an order of magnitude below the bar**, and a design that prepends a
+translation to a fill starts above a budget of 14–18 cycles before it has done anything.
+
+**And this is a strict upper bound.** A no-op invalidates a **superset** of what a physical index
+would; the matching set is a subset. So a real physical index achieves `f′ ≤ 0.0787` and therefore
+`T*′ ≤ 17.9 cyc`. **The measurement cannot flatter the design and it did not.**
+
+### 42.3 The error chain, recorded because it is the finding
+
+```
+   SS24.4 carried it at         f = 0.5096    (IV_FLUSH's share of invalidation traffic:
+                                               an ASSUMED response slope of 1.0)
+   its own calibration implied  f = 0.357     (SS38.4: rung 1c's measured 0.70 slope)
+   METAL SAYS                   f = 0.0787    (response slope 0.154)
+```
+
+**Each correction shrank it, and each was cheaper than the one before.** §38.4 recovered a factor
+of 1.4 by reading §24.4's own evidence properly — for the price of an afternoon's arithmetic.
+§38.6 recovered the remaining factor of 4.5 for the price of **one console switch**, against a
+design round that would have cost what the `HANDLER` round cost (§36) and returned an
+implementation instead of an answer.
+
+> **This is §30.3's rule generalised, and it has now paid twice: buy the prize's SIZE before
+> funding the design, the same way you buy the classification before funding the rung.** §38.6
+> named the shape of the error while it was still in the future — *"that is the same shape of
+> error the `HANDLER` round just paid a full metal session for"* — and was, if anything,
+> understated. All three of §38.4's named reasons the 0.70 slope might still be generous bit in
+> the same direction, exactly as the doc pre-registered they would if the row came in low.
+
+### 42.4 What the direction table bought: this is a null with a *working* instrument
+
+**Score: 15 PASS, 2 NOTE (both explicitly not gates), 0 MISS.** Every gated row of a direction
+table written months before the code moved the way it was written to move. The identity rows are
+the striking ones because they are exact rather than approximate:
+
+```
+   sum(IV_*) - IV_SUPPRESSED == DOPC_INVAL
+       disarmed  5741 - 0    = 5741  ==  5741      the standing identity's special case
+       ARMED     5738 - 2676 = 3062  ==  3062      the standing identity BROKEN BY DESIGN
+
+   IV_SUPPRESSED == IV_FLUSH        2676 == 2676   exact -- the window was armed throughout
+   DOPC_HIT + DOPC_MISS == INSNS + FAULTS          exact, BOTH arms
+   DOPCFIND spans == DOPC_HIT + DOPC_MISS          exact, BOTH arms
+   DOPCFILL spans -6.55 %  vs  DOPC_MISS -6.55 %   independent cross-check, two decimals
+```
+
+**The firmware did what the switch specified. The prize is simply not there.** That distinction is
+the whole value of writing the direction table down in advance: *a null with a broken instrument*
+and *a null with a working one* are different findings, and this one is provably the second.
+
+§37.1's refuting form worked again, deliberately: `IV_FLUSH` is counted **above** the suppression
+test so the guest's own flush rate stays measurable in both arms. It moved **+0.04 %**. A counter
+above the skipped branch cannot move, and did not.
+
+### 42.5 What the strike does **not** license
+
+* **The mode behaved perfectly and that licenses nothing.** ~136 000 suppressed invalidations
+  across two armed windows, every printed value correct, no wild branch, no wild write, no
+  filesystem error, no panic, no bus error, and the return leg reproduced the disarmed arm to
+  **+0.012 %**. §38.6 pre-empted the wrong conclusion: dhrystone is small and resident and is *"the
+  workload least likely to trip it — which is a reason to trust a clean dhrystone row, and NOT a
+  reason to extrapolate the mode's safety to anything else."* The highest-risk guest path is demand
+  paging and **nothing paging-heavy was run armed, deliberately.** The build must never ship and is
+  off the card.
+* **Nothing was learned about how much of `IV_FLUSH` is load-bearing.** §38.6 offered that as the
+  consolation reading *if the guest misbehaved*. It did not misbehave, so that bound was not
+  bought, and nothing should be inferred about it.
+* **The cost site was never tested.** `T` was charged at **zero by construction** here. That
+  question is moot for this study, but §38.6 item 2's discipline — *the cost site must pay only on
+  a miss that was going to walk anyway, **shown in the disassembly*** — is inherited by any
+  successor design.
+* **The strike is of the study, not of the bucket.** `DOPCFILL` and the miss path still cost what
+  they cost. What has been retired is the claim that **narrowing invalidation by physical address**
+  recovers a usable share of them on this workload.
+
+---
+
+## 43. §37.1 amended — two measured corrections to the fetch/miss arithmetic
+
+§37.1 built its reconciliation on two pieces of unmeasured arithmetic, and the direction table put
+a number on both. Neither changes a verdict; both change the next pre-registration.
+
+### 43.1 D9 — a decoded-op miss costs **2.43** instruction fetches, not 2.00
+
+```
+   d(FETCH/INSN) = -0.006950      FETCH/INSN 0.214535 -> 0.207585  (-3.24 %)
+   d(miss/INSN)  = -0.002864
+   ratio         =  2.43          against SS37.1's arithmetic of exactly 2.00
+```
+
+§37.1 prices a miss at two real fetches a hit does not pay — the loop's own `x_prefetch(0)` and
+the extension lookahead. **Metal says two-and-a-half.** The row was scored PASS because the doc
+pre-registered a direction with an approximate size and the direction is right; the **21 %
+overshoot is recorded rather than rounded away.**
+
+**And it closes §37.1's own residual.** That section predicted `+0.00476 × 2 = +0.0095` extra
+fetches per guest instruction against a measured **+0.0124** — right size, right sign, 23 % short.
+At 2.43 the prediction is **+0.01157**, which is **6.7 %** short. **A correction derived in this
+session tightens the previous session's unexplained gap without being fitted to it**, which is the
+only kind of cross-session agreement worth having.
+
+Direction of the effect on the struck study: each removed miss is worth a little **more** than
+assumed, so the correction makes the `f` null **worse** for the design, not better.
+
+### 43.2 D11 — the ipage cache is consulted once per **two** fetches, not once per fetch
+
+```
+   FETCH       13802600 -> 13353960    -3.250 %
+   IPAGE_HIT    6701390 ->  6702141    +0.011 %
+   IPAGE_MISS    274554 ->   274591    +0.013 %
+```
+
+The pre-registration reasoned that both `IPAGE` counters sit **below** a real fetch, so removing
+fetches removes lookups. **Fetches fell 3.25 % and the absolute `IPAGE` counts did not move at
+all.** The mechanism is visible in the ratio of the two counters: `IPAGE_HIT + IPAGE_MISS` is
+**6.98 M against 13.80 M fetches — almost exactly one lookup per two fetches** — so the ipage cache
+is not consulted per fetch on this path, and the fetches the suppression removed were the
+second-of-a-pair that reuse an already-resolved page rather than re-consulting it.
+
+**Scored exactly as the doc scores it.** The pre-registration put a ±0.2 pp band on the **ratio**
+and said in advance that *"an `IPAGE` row outside that band is a note, not a failure"*. The ratio
+moved **−0.0001 pp** and is inside the band. **The absolute half is refuted and recorded as a
+note**, and it retires §37.1's *"it carries `IPAGE` with it for the same reason"* clause — which
+was true of the ratio and is not true of the counts.
+
+### 43.3 The rule this leaves for the next pre-registration
+
+> **§37.1 said: trace where a counter sits in the call topology before declaring which way it will
+> move. §43 adds: state the counter's CADENCE relative to the event, not just its position — and
+> put the band on the quantity you are willing to be judged on.** A counter reached once per two
+> events cannot track a per-event count; a counter reached above a skipped branch cannot move at
+> all. Both of this session's two NOTEs are cadence findings, and in both the *banded* half passed
+> while the *unbanded* half was refuted. **That is the pre-registration doing its job**: the
+> quantity the doc committed to is the quantity that survived.
+
+---
+
+## 44. F6's fourth point — taken in-band, and the series is still the defect
+
+§39.3 said the reverted tree's prof image would be the first clean build since s19 and that *"the
+next prof capture on it takes the honest fourth point"*. This is that capture. The `HANDLER`
+discriminator was reverted in `363a508` before the image was built, so there is no `SPEC`
+machinery, no third verdict table and **no −1.07 % disarm cost to separate out**.
+
+```
+   this build's own probe calibration : 40 cyc/transition marginal, 50 in-bucket
+   this capture's own printed ceiling : 58 cyc/span, bound by TAILADV
+   -> the boot line's in-bucket end (50) is BELOW the ceiling, so the FULL bracket is
+      arithmetically usable and no ceiling warning fired.       BAND = [40, 50]
+
+   DOPCFIND = 85.12 .. 75.12 cyc/dispatch   at band [40, 50]    (unarmed, arm C2)
+              85.24 .. 75.24 cyc/dispatch   at band [40, 50]    (armed,   arm D2 -- D13 says
+                                                                 the switch does not move it,
+                                                                 and it does not)
+```
+
+**This is the first capture in the whole series whose full bracket is usable** — §31.3's ceiling
+line working in the arm §31.3 predicted it could work in.
+
+**It still does not close F6, and the reason is now the series and not the capture.** The
+historical column is quoted at a **pinned 57 cyc/transition**, while the *marginal* probe price
+each capture actually measured has been **57, 54, 39 and now 40 across four sessions — a 46 %
+spread** — and `cyc/dispatch` carries that price as a **first-order term**. `profiler.md` bias
+note 2c is explicit: never pin a price a capture did not measure. **So the @57 column is a
+cross-session artefact rather than a measurement series, and this session refuses to add a fifth
+entry to it.**
+
+> For the reader who wants the like-for-like arithmetic anyway, the same acc/spans evaluated at 57
+> gives **68.12 cyc/dispatch** — printed **with** its caveat beside it rather than instead of it,
+> and it is not this row's number.
+
+**F6 stays OPEN.** Candidate (b) — D-cache pressure from the verdict tables — was already demoted
+by rung 3, and this build **removes the `SPEC` machinery entirely while the bucket still costs what
+it costs**, which weakens it further without confirming candidate (a). What would settle it is a
+**same-boot pair at one capture's own measured price**, which is a different experiment from this
+one and is not on the ladder.
+
+---
+
+## 45. THE ATC RUNG, PRICED — §30.3 applied in full to the last well-conditioned row
+
+§39.2 note 1 called the ATC fast path *"the better-conditioned bet"* and *"the **only** row whose
+classification is already bought *and* whose share is nearly probe-free"*. With ladder #1 struck it
+is the leading classified row, so v3.4 owes it the full §30.3 pass rather than a carried estimate.
+
+**The pass changes the answer.** Everything §37.2 said about this bucket's *instrument* conditioning
+is confirmed and reproduces; what emerges is that the bucket's **share is the least reproducible
+quantity on the page**, for reasons that have nothing to do with the probe.
+
+### 45.1 The two cost sites, and the latency each one sits in front of — §30.3 steps 1 and 2
+
+**This bucket is two rungs' worth of different work sharing a table row**, and the map has been
+pricing it as one. Named separately, with the latency each sits in front of:
+
+| site | what it is | the latency it sits in front of | what hides it |
+|---|---|---|---|
+| **`XLATE`** — the ATC lookup | 85.3 % of translates are answered from the ATC without a walk | **dependent loads out of a host-side table**, then a tag compare and a permission check, feeding an address the accessor cannot start without | **nothing.** This is the *same shape* as the page-cache lookup rung 2 removed and won +25.17 % on |
+| **`WALK`** — the table walk | the 14.7 % that miss the ATC | **a chain of dependent GUEST-memory loads** — root table → pointer table → page table, each one itself a host access through the emulator's own accessors | **nothing.** §30.3 step 2 names this case verbatim: *"nothing hides a table walk's chain of dependent guest-memory loads"* |
+
+**Both sites are dependency-chained by construction, and the classification is therefore bought
+without an experiment** — this is the one row on the ladder for which that is true, and §33.2 has
+said so since v3.2. **The two sites are not attackable by the same technique**, which is the part
+the single table row has been hiding.
+
+### 45.2 The prices are the most reproducible on the page; the SHARE is the least
+
+**Per-event prices, measured on two sessions, two builds, two bands, two very different workload
+mixes:**
+
+| quantity | this session (C2, `[40, 50]`) | spec session (B2, `[54, 60]`) | agreement |
+|---|---|---|---|
+| corrected cyc **per translate** (`XLATE`) | **199.4 – 188.0** | **197.8 – 190.3** | **the ranges overlap** |
+| corrected cyc **per walk** (`WALK`) | **2619 – 2609** | **2739 – 2733** | **4.6 %** |
+| `tcnt[WALK]` spans == `ATC_MISS` | 50 867 == 50 867 | 248 021 == 248 021 | **exact, both** |
+
+**That is the tightest cross-session reproduction on this page** — against `DOPCFIND`'s 46 % price
+spread (§44) and the fill path's 19–32 % refutation (§38.1). It is also broadly consistent with
+v2's older 2202 cyc/walk (§9.6), measured on a different instrument generation.
+
+**And now the share, which is the number the ladder actually uses:**
+
+| | this session (C2, `[40, 50]`) | spec session (B2, `[54, 60]`) |
+|---|---|---|
+| `XLATE` | **0.198 – 0.236 %** | 0.595 – 0.683 % |
+| `WALK` | **0.383 – 0.482 %** | 1.989 – 2.366 % |
+| **`XLATE` + `WALK`** | **0.581 – 0.718 %** | **2.584 – 3.049 %** ← §39.1's row, reproduced exactly |
+
+**§31.2 forbids differencing two bands, so the case does not rest on those columns.** It rests on
+the **band-free** rates, which carry no price at all:
+
+| per guest instruction | this session (C2) | spec session (B2) | ratio |
+|---|---|---|---|
+| `XLATE` + `WALK` **spans / INSN** | **0.006794** | **0.021233** | **3.13×** |
+| `XLATE` / INSN | 0.00526 | 0.01436 | 2.73× |
+| `ATC_MISS` / INSN | 0.000773 | 0.003464 | **4.48×** |
+| walk rate (`ATC_MISS`/`XLATE`) | **14.70 %** | **24.13 %** | 1.64× |
+| — | | | |
+| `DOPCFIND` spans / INSN | 1.00001 | 1.00005 | **1.00×** |
+| `HANDLER` spans / INSN | 1.8313 | 1.9012 | 1.04× |
+| `READ` / INSN | 0.4195 | 0.4473 | 1.07× |
+| `WRITE` / INSN | 0.2883 | 0.3185 | 1.10× |
+
+> **The per-dispatch quantities are stable to ≤ 10 %. Every translation-side quantity moves 2.7 –
+> 4.5×. Both windows are dhrystone windows on the same rig five hours apart.**
+
+**The correlate is measured, not inferred.** The two windows differ in one large, directly counted
+way: **supervisor share of guest instructions is 17.98 % here against 48.77 % there — 2.71×**,
+against the translate rate's 2.73×. Across all four windows this session and the last one produced,
+the walk rate and the miss rate are **monotone in supervisor share** (16.11 % → 17.98 % → 35.16 % →
+48.77 % gives `ATC_MISS`/INSN 0.00064 → 0.00077 → 0.00236 → 0.00346), and the dopc hit rate falls
+with it (96.36 % → 95.74 % → 85.03 % → 78.21 %). **Two points do not establish a law and four do
+not either** — the translate rate is not monotone inside the high cluster — but the windows split
+cleanly into two clusters and the split has a name.
+
+> **This also names the confound §40.2 could only describe.** §38.5's two miss-rate bases, 46 %
+> apart, were explained by *"time-driven invalidation sources holding steady while the probed guest
+> runs slower"* and §40.2 recorded that explanation as **mechanism-shaped and unmeasured**. It now
+> has a measured correlate — `INSNS_SUPER` — and it is a property of what is in the window, not of
+> the instrument. **Every miss-driven bucket in this file inherits that**: row H reads 16.27–18.36 %
+> in the kernel-heavy window and **7.23–8.60 %** in the pinned dhrystone window, and `DOPCFILL`
+> reads 3.74–4.13 % against **0.69–0.77 %**.
+
+**Which window should the ladder use?** The ladder's Amdahl denominator is **8185 — a lean
+dhrystone number**. This session's window was `PROFZ`-fenced around **one `./dhry` run at a pinned
+100 000 count**; the previous session's was a ~12 s window carrying nearly half supervisor time.
+**The fenced window is the one denominated like the number the ladder converts into.** That is the
+basis §45.7 recommends on, and both are shown throughout so the reader can take the other one.
+
+### 45.3 What a fast path actually removes — and it is not the walks — §30.3 step 3, prize half
+
+**The rung as it has always been described is an *ATC fast path*: inline the common ATC hit so a
+translate that hits does not pay the out-of-line call chain.** That is rung 2's technique applied
+one layer down — the ATC lookup is what a `dpage`-cache miss falls through to, so it sits directly
+beneath the bucket rung 2 already won on. **It attacks `XLATE`. It does not remove a single walk.**
+
+A walk is removed only by a *larger or differently structured ATC*, which is a different design with
+a different cost site and no measured classification. **So the 60 % reclaim this map has carried
+since v2 has been applied to a bucket that is 66–78 % walks:**
+
+| | this session's window | spec session's window |
+|---|---|---|
+| `WALK` share of the `XLATE`+`WALK` bucket | **65.9 – 67.1 %** | **77.0 – 77.6 %** |
+| the fast path's actual target (`XLATE` only) | **0.198 – 0.236 %** of profile | 0.595 – 0.683 % |
+| prize at the carried 60 % reclaim | **0.119 – 0.142 %** | 0.357 – 0.410 % |
+
+**That is the single largest correction in this section, and it is arithmetic, not measurement.**
+§39.2's row #2 — 60 % of 2.58–3.05 % = 1.55–1.83 % — credits the rung with removing table walks the
+technique does not touch, on a window that is half kernel. **Both halves of that row are now
+withdrawn.**
+
+**One honest note in the other direction.** Rung 2 beat its own count model 1.7× because removing a
+dependency chain also removed stalls the count never saw, and the ATC probe's dependent loads are
+**the same shape**. So the 60 % applied to `XLATE` may be conservative. It is not raised here,
+because raising it would be exactly the move §34.2 forbids: reasoning a classification's *size*
+from the shape of the code instead of buying it.
+
+### 45.4 The added-work side, count-derived and deflated — §30.3 step 3, cost half
+
+An inlined ATC probe adds, on the arm that falls through to the existing path: a tag load, a
+compare, a branch, and the address reconstruction — **4–8 ARM instructions**, the same shape and
+size as rung 3's +19 (which was a wider table). **The population it lands on is the decisive
+quantity, and it is measured:**
+
+```
+   added work           4 .. 8 ARM instructions, on the TRANSLATE population only
+   population           XLATE/INSN = 0.00526  (this window)   .. 0.01436  (kernel-heavy)
+   count-derived cost   4..8 cyc x 0.00526 = 0.021 .. 0.042 cyc per guest instruction
+   as a share           0.03 .. 0.06 %  of runtime (against a LEAN 71.8 cyc/INSN, SS36.1),
+                                        raw count model, nothing deflated yet
+   x rung 3's MEASURED deflator (-3.2..-3.5 % predicted, -1.58 % measured  ->  ~0.5x)
+   ------------------------------------------------------------------------------------
+   expected added cost  0.015 .. 0.03 %   -- inside the rig's own rounding
+```
+
+**The cost side is negligible, and that is itself the finding.** This rung cannot lose the way rung
+3 lost, because its added work is confined to a population that is **0.5 – 1.4 % of guest
+instructions**. **It also cannot win**, for exactly the same reason: prize and cost live in the same
+tiny population, and the prize scales with the population, not with the technique.
+
+> **Rung 2 and this rung are the same technique with the same classification on populations two
+> orders of magnitude apart: 99.10 % of accesses against 0.53 %. Rung 2 returned +25.17 %.**
+
+### 45.5 A §30.3 discriminator here: unnecessary, and unbuildable
+
+The brief §30.3 lays down is *buy the classification before funding the rung*. **For this row the
+classification was bought by construction** (§45.1, §33.2) — a table walk's dependent guest-memory
+loads are §30.3 step 2's own worked example. So a discriminator here would not be buying a
+classification at all; it would be buying the **size**, which is what §38.6's switch bought for the
+physical index.
+
+**What it would look like, concretely.** A console switch that short-circuits the ATC probe —
+returning a precomputed answer without probing — is the `IVSUP` pattern exactly: deliberately
+unsound, measurement-only, correctness-gated, cost charged at zero by construction, giving a strict
+**upper bound** on the whole `XLATE` half in one lean A/B.
+
+**Why it cannot be built usefully on this rig:**
+
+```
+   the signal such a switch would produce  :  0.20 .. 0.68 %  (the whole XLATE half, free)
+   this session's within-arm spreads       :  0.04 / 0.13 / 0.28 / 0.56 / 0.70 %  (five arms)
+   the +/-0.5 % band the disarm control used, and passed inside
+   SS38.6's own wall-clock gate            :  1.5 %  -- set there for precisely this reason
+```
+
+> **The upper bound this experiment would return is at or below the rig's own repeatability.** The
+> `f` measurement was fundable because its *predicted* signal was 1.5 % and its instrument was a
+> hit-rate ratio immune to wall-clock noise. **This rung has no counter-side analogue** — `XLATE`
+> and `ATC_HIT` already count the population exactly, so the only unmeasured quantity is the
+> reclaim, and the reclaim is a wall-clock question. **The discriminator step is therefore not
+> merely unnecessary; the measurement that would decide it does not exist at this rig's
+> resolution.** A rung whose entire ceiling fits inside the noise floor cannot be settled by a lean
+> A/B, and no amount of repetition changes which side of the floor it is on.
+
+### 45.6 What the design must pre-register instead — rung 2's pattern, one layer down
+
+If the rung is funded anyway (it is a decision, not a measurement — §45.7 recommends against), then
+because the discriminator is unavailable **the design carries the whole burden**, and it inherits
+rung 2's pre-registration rather than §30.3's:
+
+1. **The population, measured on the window the ladder is denominated in, before anything is
+   built.** Rung 2 engaged **99.10 %** of accesses and said so in advance. This rung's population
+   is `XLATE`/INSN = **0.53 %** on the pinned dhrystone window and **1.44 %** on a kernel-heavy one.
+   **Pre-register which window the verdict will be read on**, and take the reference row on the
+   fenced, pinned run.
+2. **The added work must be confined to the translate population, and this must be shown in the
+   disassembly.** If the probe lands on the `dpage`-cache hit path it pays on **99.8 %** of accesses
+   to save on 0.5 % — that is rung 3's failure mode with the arithmetic inverted, and it is the one
+   way this rung can go **negative**. §29.5's asymmetry is the precedent: *the instructions a rung
+   adds arrive; the ones it removes need not.*
+3. **The prize deflated on the cost side and NOT inflated on the prize side.** Rung 3's added leg
+   measured **~0.5×** its count-derived prediction; apply that to the cost. Rung 2's removed leg
+   measured **1.7×** its count model; **do not** apply that to the prize — it is the same shape of
+   chain, which is a reason to hope and not a reason to project (§34.2).
+4. **A lean A/B plus a cross-build reference row, outgoing lean image archived first** — and,
+   uniquely for this rung, **a statement written in advance of how the verdict will be read when
+   the expected signal is below the within-arm spread.** The honest answer is that it cannot be,
+   which is §45.5, which is why this is the fourth item and not the first.
+5. **`XLATE` and `WALK` must be scored separately.** They are two cost sites needing two different
+   techniques, and the walk half outweighs the lookup half by **2 : 1** on this window and **3 : 1**
+   on the kernel-heavy one. A verdict on the pair is not a verdict on either.
+
+### 45.7 THE FUNDING RECOMMENDATION
+
+> ## **DO NOT FUND for throughput.** The ATC rung is the best-classified and worst-sized row on the ladder. Its realistic prize is **+0.09 % to +0.40 % — dhry 8192 – 8218 against the standing 8185** — which is **inside this rig's own within-arm spread**, and the experiment that would tighten it is below the same floor. §9.6's original verdict was right and is restored: **attack the ATC for boot latency or for correctness, never for throughput.**
+
+**The band, with every step shown:**
+
+| | this session's window (pinned dhry — **the recommended basis**) | spec session's window (kernel-heavy) |
+|---|---|---|
+| `XLATE` share — the fast path's actual target | 0.198 – 0.236 % | 0.595 – 0.683 % |
+| × 60 % reclaim (carried, unmeasured) | 0.119 – 0.142 % | 0.357 – 0.410 % |
+| − added work (count-derived, ×0.5 deflator) | 0.015 – 0.03 % | 0.015 – 0.03 % |
+| **net** | **≈ 0.09 – 0.13 %** | ≈ 0.33 – 0.40 % |
+| **dhry @8185** | **8192 – 8196** | 8212 – 8218 |
+| *the widest defensible reading across both windows* | **+0.09 – 0.40 % → dhry 8192 – 8218** | |
+| *§39.2's withdrawn row, for comparison* | *1.55 – 1.83 % → 8314 – 8338* | *credits removing walks the technique does not remove, on a half-kernel window* |
+
+**Why not STRIKE.** Nothing about it is refuted. The classification stands and is the only one on
+the page bought by construction; the per-event prices are the most reproducible measurements in
+this file; the cost side is confined and cheap; and §9.6's other two uses — **boot latency**
+(BOOT's walk rate is 29.53 % against DHRY's 12.74 %, so translation matters more than twice as
+much during bring-up) and **correctness** — are untouched by this pricing and are where the
+`WALK` half's 2600-cycle events actually live. **The rung is real; it is simply not a throughput
+rung, and the map has been ranking it as one since v2.**
+
+**Why not FUND.** Because funding it means funding a design round with no discriminator available
+(§45.5), against a prize that this rig cannot distinguish from zero (§45.7 band), on a bucket whose
+share moves 3× with the workload mix (§45.2). **Every one of those three is a reason the campaign
+has already learned to respect the hard way.**
+
+---
+
+## 46. THE MAP v3.4 — the ladder after the strike
+
+### 46.1 The shares, on this session's own window and band
+
+Arm **C2** — the `IVSUP` prof build **disarmed**, which is the reverted-tree posture plus one
+not-taken branch. Cadence 4, this capture's own band **`[40, 50]`**, ceiling **58 bound by
+`TAILADV`**, `TAILSAMP` excluded from the denominator (corrected total 34 797 M @40 / 27 526 M @50).
+
+**§31.2 forbids comparing these against §39.1's `[54, 60]` columns without saying so — and §45.2
+says the band is now the *smaller* of the two reasons a row here differs.** The right-hand column
+names which.
+
+| bucket / group | **corrected share (c4, `[40, 50]`)** | §39.1 at `[54, 60]` | why it differs |
+|---|---|---|---|
+| **`LOOP` whole** | **36.46 – 35.89 %** | 32.89 – 31.09 % | band |
+| ‑ **`DOPCFIND`** | **16.10 – 17.96 %** | 16.09 – 17.68 % | **neither — it is stable** |
+| ‑ `LOOPRES` — the true residue | **19.35 – 16.89 %** | 11.92 – 8.40 % | band (87 % bracket cost, §37.2) |
+| ‑ `DOPCFILL` | **0.69 – 0.77 %** | 3.74 – 4.13 % | **window — 5× (§45.2)** |
+| ‑ `BLKREC` | 0.32 – 0.27 % | 1.14 – 0.87 % | window + band |
+| **`HANDLER`** | **20.87 – 22.01 %** | 19.28 – 20.13 % | mostly band; spans/INSN differ 4 % |
+| **`FETCHOP` + `FETCHEX`** (row H) | **7.23 – 8.60 %** | 16.27 – 18.36 % | **window — 2.2× (§45.2)** |
+| **`READ` + `WRITE`** | **14.62 – 16.78 %** | 16.24 – 18.20 % | band; rates differ ≤ 10 % |
+| **`TAILPOLL`** | 9.30 – 9.37 % | 8.16 – 8.23 % | band |
+| **`TAILADV`** | *10.57 – 6.17 % — price artefact, §31.3* | *4.00 – 0.26 %* | band, by construction |
+| **`XLATE` + `WALK`** | **0.58 – 0.72 %** | 2.58 – 3.05 % | **window — 3.1× band-free (§45.2)** |
+| `TAILSPEC` | 0.35 – 0.43 % | 0.40 – 0.46 % | — |
+| `FAULT` (uncorrected) | 0.03 % | 0.17 – 0.21 % | window (592 faults vs 3630) |
+| *`TAILSAMP` (instrument, excluded)* | *7.94 – 7.65 %* | *4.69 – 4.09 %* | band |
+
+§10.1 applies unchanged: shares of the **distorted** machine. §37.2's bracket-cost column is not
+repeated — it is a property of the correction, not of the window, and is unchanged.
+
+### 46.2 The ladder
+
+Amdahl against the standing **8185**, at `1/(1−t)`. Shares are C2's at `[40, 50]`; **the reclaim
+column is still not measured** and §10.6 governs it exactly as before.
+
+| # | rung | buckets | **share (c4, `[40, 50]`)** | pricing law | reclaim (**est.**) | time won | **dhry @8185** |
+|---|---|---|---|---|---|---|---|
+| **1** | `DOPCFIND` — the hit-path walk | `DOPCFIND` | **16.10 – 17.96 %** | chained, but nearly empty | 5 – 15 % | **0.81 – 2.69 %** | **8252 – 8411** |
+| **1b** | *`DOPCFIND` — the unexplained ≈ 9 cyc/dispatch* | `DOPCFIND` | — | **unknown — an investigation, not a rung** | — | — | *F6 OPEN, §44* |
+| **2** | **ATC fast path — `XLATE` half only** | `XLATE` | **0.198 – 0.236 %** | **chained by construction — the only row bought without an experiment** | 60 % | **0.09 – 0.40 %** | **8192 – 8218** — *and see §45.7: this is inside the rig's spread* |
+| — | *ATC — the `WALK` half* | *`WALK`, 0.38 – 0.48 %* | — | chained | — | — | ***not attacked by a fast path** — a different design; boot-latency/correctness value stands (§9.6)* |
+| **3** | `LOOPRES` — the true dispatch residue | `LOOPRES` | **19.35 – 16.89 %** | **unclassifiable** | **withheld — two reasons** | — | — |
+| — | *physical-index dopc* | *miss path of `DOPCFILL` + `FETCHOP`* | — | prize classified; **prize absent** | — | — | ***STRUCK — §42, `f` = 0.0787 vs a 0.35 gate; `T*` 14–18 cyc vs a 93–99 bar*** |
+| — | *handler specialisation* | *`HANDLER`, 20.87 – 22.01 %* | — | ***bucket UNCLASSIFIED*** | — | — | ***RUNG STRUCK — §36.3*** |
+| — | *accessor fast path* | *`READ` + `WRITE`* | — | chained | — | — | ***BUILT — rung 2, +25.17 %*** |
+| — | *instruction-fetch fast path (served)* | *row H* | — | **hidden** | — | — | ***BUILT AND REVERTED — rung 3, −0.05 %*** |
+| — | *interrupt-poll cadence* | *`TAILPOLL`* | — | — | — | — | ***banked*** |
+| — | *tail residue* | *`TAILADV`* | *price artefact, 99 % bracket* | — | — | — | ***RETIRED*** |
+| **J** | the residual only a JIT reaches | `LOOP` + `FETCH*` + `TAILADV` + `TAILPOLL` + `TAILSPEC` | **63.90 – 60.45 %** | **partly hidden** | 90 % coverage | — | *≈ **2.19 – 2.35×** at this band — an upper bound; §33.3's instruction not to quote a dhrystone figure for it stands* |
+
+**Four notes the table cannot carry.**
+
+* **The ladder's #1 is now a rung this file has called "nearly empty" since v3.1.** `DOPCFIND` leads
+  by elimination, not by evidence — 50–57 counted ARM instructions running at IPC ≈ 1, with the
+  named candidates worth 1–4 instructions each. **Its 0.81 – 2.69 % is an estimate on an
+  unmeasured reclaim**, and 90 % of §46.3's remainder band is that one estimate.
+* **Row H has no live rung in either half, and that is new.** The served path is struck as
+  latency-hidden (rung 3); the miss path is struck for having no prize (§42). **The fetch side of
+  this machine is finished**, and it is 7.23 – 8.60 % of this window's corrected profile.
+* **#2's row is honest about being under the floor.** It is kept on the ladder because its
+  classification is the best on the page and its non-throughput value is real, not because its
+  dhrystone band is fundable. §45.7 is the row's actual content.
+* **Row J rose against §39.2 and nothing about it changed.** 2.19 – 2.35× here against 2.11 – 2.25×
+  — same machine, different band, and `TAILADV` inside it moves 10.57 % → 6.17 % across this
+  capture's own two prices. Read it as §33.3 says to read it.
+
+### 46.3 The re-compounded remainder, and the strategic picture
+
+**§39.4 compounded three rows to +4.2 – 7.6 %. Two of the three have since been struck or
+re-priced, and the remainder is what is left.**
+
+```
+   physical-index dopc    STRUCK                     (SS42 -- f = 0.0787, an upper bound)
+   ATC fast path          0.09 .. 0.40 %             (SS45 -- XLATE half, inside the rig's spread)
+   DOPCFIND way walk      0.81 .. 2.69 %             (est. reclaim, unmeasured; the bucket is real)
+   -----------------------------------------------------------------------------------------
+   compounded             +0.9 % .. +3.2 %    ->     dhry 8259 .. 8445
+
+   granting SS39.2's withdrawn ATC row in full, as the most generous reading available:
+                          +4.7 %              ->     dhry 8568
+```
+
+Plus F6's unquantified ≈ 9 cyc/dispatch, which remains the softest number on the page.
+
+> ### **THE HONEST END STATE: the interpreter lane's remaining classified, attackable headroom is +1 % to +3 %, and roughly 90 % of that band is one unmeasured reclaim estimate on a bucket whose only measured anomaly is unexplained.**
+
+**There is no hidden row, and this is the version that can say so without hedging.** v3.1 opened
+the loop; v3.2 built the two rungs that emptied the accessor and fetch sides and derived the law
+that separates them; v3.3 took the last unclassified large bucket off the board as a *rung*; v3.4
+struck the last fetch-side prize by measuring it, and re-priced the last well-conditioned row down
+into the noise. **`LOOPRES` is withheld** (unenumerated, and 87 % bracket cost), **`HANDLER`'s rung
+is struck**, **`TAILADV` is retired**, **`TAILPOLL` is banked**, **both fast-path rungs are
+resolved**, and **`DOPCFIND` is nearly empty by its own measurement.**
+
+**Row J is the only remaining step change, and the gap has widened by an order of magnitude.**
+
+```
+   everything else on the interpreter ladder, compounded :  +0.9 % ..  +3.2 %
+   row J, an upper bound at this capture's band          : +119 % .. +135 %
+```
+
+Against v3.3's +4.2 – 7.6 % that ratio ran between **15 : 1** and **30 : 1**; it now runs between
+**37 : 1** and **150 : 1**. The change is not that row J grew — it is that everything beside it was
+measured. Row J
+remains soft in two named directions (§33.3: `TAILADV`'s price band inflates it, and the fetch pair
+inside it is measured partly latency-hidden), and §31.1 says the profile is least fair to exactly
+that pair. **It is not a better rung; it is a different machine.**
+
+> **The map's recommendation stops here, and this time it stops with nothing queued behind it.**
+> §38.6 could still name one cheap switch that would decide the leading rung. **There is no such
+> switch left**: the physical-index question has been answered, the `HANDLER` question needs a
+> design round to ask, the `LOOPRES` question needs an enumeration nobody has, and the ATC question
+> is below the rig's resolution. **What the ladder has left is one soft estimate worth ≤ 2.65 % and
+> a JIT.** Whether to fund a JIT is a decision about how much engineering this lane is worth, not a
+> decision the measurements can make — and the campaign's whole lesson (§30, §34.2, §36, §42) is
+> that a design's sign cannot be read off a bucket's size. **v3.4 records row J as the remaining
+> step change, prices it as an upper bound, and leaves the funding call to the reader.**
+
+---
+
+## 47. What v3.4 does **not** establish
+
+§10, §18, §26, §34 and §40 apply unchanged and are not repeated. Six things are new, and §47.6
+appends the ledger.
+
+### 47.1 The strike bounds the study, not the cost site or the bucket
+
+`T` was charged at **zero by construction**, so nothing here measures whether a translation can be
+threaded out of the fetch that already happened (§38.3's observation). That question is moot for
+this study and **live for any successor design**, which inherits §38.6 item 2 verbatim. Likewise
+`DOPCFILL` and the miss path still cost what §38.1 and this session's 85.6 – 75.6 cyc/miss say
+they cost; what is struck is *narrowing invalidation by physical address* as a way to recover them.
+
+### 47.2 `f` is an upper bound on **this workload**, and the workload is now known to matter
+
+§45.2 shows the dopc hit rate moving 78.21 % → 96.36 % between windows of the same benchmark. `f`
+was measured on the pinned dhrystone window at a 95.74 % hit rate. **It is a ratio of two hit rates
+taken the same way in one boot, so it is immune to the band and to the instrument** — but it is
+not thereby immune to the mix. A workload whose invalidation traffic is dominated by `IV_FLUSH`
+rather than `IV_PFLUSHA` could read higher. **Nothing here bounds `f` on any other workload**, and
+§38.6's own rule — do not re-measure at another band — is about the band, not about the workload.
+
+### 47.3 The ATC re-price rests on two windows, and the reclaim is still an estimate
+
+The 3.13× band-free share swing is measured and is not an artefact. **The 60 % reclaim is not
+measured and never has been** — it is v2's carried figure, now applied to a smaller and correctly
+identified target. §45.4's added-work band is a **count model** with rung 3's deflator applied,
+which is exactly the conversion §30 exists to warn about; it is used here only to show the cost is
+small relative to a prize that is itself small.
+
+### 47.4 The supervisor-share correlate is a cluster, not a law
+
+Four windows, two clusters. The walk rate and miss rate are monotone across all four; **the
+translate rate is not monotone inside the high cluster.** No mechanism has been traced from
+`INSNS_SUPER` to `ATC_MISS` — the plausible one (kernel address space, different mappings, lower
+page-cache locality) is **named and unmeasured**, and belongs in a pre-registration rather than in
+a share table. **What is established is that the two windows differ by a counted quantity**, not
+that supervisor share predicts translation rate.
+
+### 47.5 What is owed to the Z3660 lane
+
+Of §40.5's list, **one is discharged and one recurs in a new form**:
+
+* **`docs/f-measurement.md`** carries its own metal verdict — the scored gate, the direction table,
+  the `T*` re-derivation and the STRUCK conclusion — the correction pass rung 2's, rung 3's and the
+  discriminator's docs each got.
+* **The `SPEC_HIT` id-46 non-action recorded in §40.5 recurs, and its rule decides this case too.**
+  The `IVSUP` experiment put `IV_SUPPRESSED` at counter id **46** — the id `SPEC_HIT` briefly held
+  and gave back — and unlike `SPEC_HIT` it **did** reach captures. **Whether it should ever be named
+  in `COUNTER_NAMES_V2` depends entirely on whether the `IVSUP` switch is reverted from the
+  firmware tree**, which is a Z3660-lane decision this document does not make and this session did
+  not record. §40.5's rule applies unchanged and both ways: **name a counter if and only if
+  shipping firmware emits it** — a name for an id no shipping build emits puts a row in the table
+  that can only ever report `absent`. **This is a gate on the revert, not an action.**
+
+**Still standing, unchanged, and none of them done:**
+
+* **`docs/ifetch-fastpath.md` should be marked MISSED** with §29.5's mechanism beside it.
+* **`docs/profiler.md` should carry §31.2, §31.3 and §37.2**, and now also **§43.3** — a
+  pre-registration must state a counter's cadence relative to the event, not only its position in
+  the call topology. §43.2 is the worked example and it cost two NOTEs to learn.
+* **NEW: `docs/profiler.md` should carry §45.2's window caveat beside the share tables** — that
+  miss-driven buckets (row H, `DOPCFILL`, `XLATE`, `WALK`) move 2–5× with the window's supervisor
+  share while per-dispatch buckets do not, and that a capture's `INSNS_SUPER` is the cheapest
+  available discriminator between two windows. This is a bigger comparability hazard than the
+  price band and there is currently no warning for it.
+* **NEW: the `COUNTER_NAMES_V2` gap recorded in §40.5 is unchanged** — the table names 39 counters
+  against the 46 the reverted-`SPEC` firmware defines (47 in the `IVSUP` builds this session
+  measured, which are off the card). The append seam still handles ids past
+  39 correctly; the counter *table* still does not print them. Out of scope here, as before.
+
+### 47.6 The ledger of refuted claims — v3.4's additions
+
+Per `docs/METHOD.md`, appended to §18.4, §26.5, §34.6 and §40.6. Nothing is deleted.
+
+| claim | where | status |
+|---|---|---|
+| **the physical-index decoded-op cache is the ladder's leading rung, worth 1.74 – 2.71 %** | §38.5, §38.6, §39.2 row 1 | **STRUCK BY MEASUREMENT.** `f` = **0.0787** against a pre-registered gate of 0.35 — a miss by 4.4× — with the wall clock at **+0.00 %** against a +1.5 % gate. `T*` re-derives to **14.2 – 17.9 cyc** against a 93 – 99 cyc bar, and it is a strict **upper** bound. §42 |
+| **`f` = 0.5096** (misses removed ∝ invalidations removed, slope 1.0) | §24.4's headline row | **REFUTED TWICE OVER.** §38.4 cut it to 0.357 from §24.4's own calibration point; metal says **0.0787**, i.e. a response slope of **0.154**. Each correction shrank it, and the last one cost one console switch. §42.3 |
+| **`f` = 0.357, the calibrated figure** | §38.4, §38.5, §38.6's gate | **REFUTED — by 4.5×.** All three of §38.4's named reasons the 0.70 slope might still be generous bit in the same direction, exactly as pre-registered. §42.3 |
+| **a decoded-op miss costs 2 real instruction fetches** | §37.1's reconciliation arithmetic | **CORRECTED to 2.43** (+21 %). It also closes §37.1's own residual: the +0.0124 measured against +0.0095 predicted becomes +0.01157 predicted, 6.7 % short instead of 23 %. §43.1 |
+| **the absolute `IPAGE` counts fall when fetches fall** ("both sit below a real fetch") | `f-measurement.md` D11; §37.1's check-4d clause | **REFUTED.** `FETCH` fell 3.25 % and `IPAGE_HIT`+`MISS` moved +0.011 %. The ipage cache is consulted **once per two fetches** (6.98 M lookups against 13.80 M fetches). The **banded** half — the ratio — moved −0.0001 pp against ±0.2 pp and passed. §43.2 |
+| **`XLATE` + `WALK` is 2.58 – 3.05 % of the corrected profile** | §37.2, §39.1, §39.2 row 2 | **WINDOW-DEPENDENT, 3.13× BAND-FREE.** The pinned-dhrystone window reads **0.58 – 0.72 %**; spans/INSN are 0.006794 against 0.021233. The 10 % bracket-cost finding is confirmed and is not the issue — the share is a *rate*, and the rate is a property of the workload mix. §45.2 |
+| **the ATC rung is worth 1.55 – 1.83 % (dhry 8314 – 8338) at a 60 % reclaim** | §39.2 row 2, §39.4 | **WITHDRAWN ON BOTH HALVES.** The bucket is **66 – 78 % table walks**, which a fast path does not remove; and the 2.58 – 3.05 % share it was applied to is the kernel-heavy window's. Re-priced at **+0.09 – 0.40 %, dhry 8192 – 8218** — inside the rig's own within-arm spread. §45.3, §45.7 |
+| **the ATC rung "needs no measurement before it can be designed"** | §39.2 note 1 | **RESTATED, AND SHARPENED INTO ITS OPPOSITE.** True — its classification is bought by construction — but the reason no discriminator is needed is also the reason none is *available*: the only unmeasured quantity is the reclaim, and its whole range sits below the rig's repeatability. §45.5 |
+| **the interpreter ladder's classified remainder compounds to +4.2 – 7.6 % (dhry 8530 – 8805)** | §39.4 | **RE-COMPOUNDED to +0.9 – 3.2 % (dhry 8259 – 8445)** after the strike and the ATC re-price. ~90 % of the remaining band is `DOPCFIND`'s unmeasured 5 – 15 % reclaim. §46.3 |
+| **§38.5's miss-rate confound is "mechanism-shaped and unmeasured"** | §40.2 | **NAMED.** The two bases differ with the window's **supervisor share** — 48.77 % against 17.98 %, against a 2.73× translate-rate ratio — and every miss-driven bucket in the file inherits it. Four windows, two clusters, monotone in the walk and miss rates. Still not a law (§47.4). §45.2 |
+| **`DOPCFIND` cyc/dispatch as a four-point series** | §39.3, §32.2 | **THE SERIES IS THE DEFECT, NOT THE POINT.** A clean in-band fourth point was taken — **85.12 – 75.12 cyc/dispatch at `[40, 50]`**, the first capture in the series whose full bracket is usable — but the historical column is pinned at 57 while the measured marginal price has been 57/54/39/40, a **46 % spread on a first-order term**. F6 stays OPEN. §44 |
+| a banner's text is a reliable console echo of a mode change | this campaign's arm/disarm detectors | **REFUTED on a two-core box.** Two cores share one unlocked UART; an arm banner arrives spliced and unmatchable. **A counter is the echo, not a string** — which is why `IV_SUPPRESSED` is compiled into every variant including the lean one. §41.3 |
+| a bare *>2 %* "unchanged" rule is a scorer | this session's own first pass at D5 | **THE SCORER WAS THE ARTEFACT.** It flagged `IV_DMA` 6 → 4. Rescored on a rule stated rather than tuned (≤1 % **or** ≤5 counts), all nine causes are unchanged. **State the rule with the direction it scores.** §41.3 |
+
+---
 ---
 
 ## 35. What v3.3 is
@@ -274,6 +1054,14 @@ by eye.
 
 ### 37.1 A pre-registered counter direction must be checked against the counter's position in the call topology
 
+> **⚠ AMENDED by §43 — two of the numbers below are now measured.** A decoded-op miss costs
+> **2.43** instruction fetches, not the 2.00 assumed here (§43.1) — which also closes this
+> section's own residual, from 23 % short to 6.7 % short. And the clause *"it carries `IPAGE`
+> with it for the same reason"* is **refuted in its absolute form**: the ipage cache is consulted
+> **once per two fetches**, so `FETCH` fell 3.25 % while the absolute `IPAGE` counts did not move
+> at all (§43.2). The caveat this section states is unchanged and §43.3 extends it. **Kept
+> unedited.**
+
 The discriminator declared, twice and emphatically, that `FETCH` / `IFETCH_CALLS` **would fall**
 by the number of served `d16(An)` instructions — listed as *declared* behaviour, "the one place
 this rung is deliberately not like-for-like". It was scored a **MISS**: `FETCH` per guest
@@ -313,6 +1101,14 @@ size, right sign — and it carries `IPAGE` (check 4d, 88.51 % vs 88.66 %, −0.
 > not doing this check.
 
 ### 37.2 Which shares are real and which are price artefacts — the probe-density test
+
+> **⚠ THE TEST STANDS; ONE OF ITS CONCLUSIONS DOES NOT.** The method, the four validations and
+> every bracket-cost figure below reproduce. But the conclusion drawn from the `XLATE` + `WALK`
+> row — *"the ATC rung is the best-conditioned row on the ladder"* — conflated **probe
+> conditioning** with **conditioning**. That bucket is indeed only 10 % bracket cost, and its
+> share is the **least reproducible on the page**: 3.13× band-free between two dhrystone windows
+> five hours apart (§45.2). This test separates a bucket from its own probe; it says nothing about
+> whether the bucket's *rate* is a property of the machine or of the window. **Kept unedited.**
 
 §31.3 retired *"the in-bucket end is always impossible"* and showed `TAILADV`'s share to be a
 price artefact, but it could only demonstrate that by watching one bucket collapse between two
@@ -370,6 +1166,14 @@ Arm B2 (`SPEC` OFF, the reference posture), band `[54, 60]`, ceiling **60 bound 
 ---
 
 ## 38. THE PHYSICAL-INDEX RE-SCORE — §22.3's input was refuted, and §24.4 is re-run against the measurement
+
+> **⚠ THE STUDY THIS SECTION RE-SCORES IS STRUCK — §42.** Its one unmeasured input was measured on
+> metal 2026-08-23 evening: **`f` = 0.0787** against the 0.35 gate §38.6 set, with the wall clock
+> at **+0.00 %** against a +1.5 % gate. `T*` re-derives to **14.2 – 17.9 cyc** against this
+> section's own 93 – 99 cyc bar, and it is a strict **upper** bound. **Everything §38 *measured*
+> stands** — the fill path really is 19–32 % dearer (§38.1, reproduced on a cleaner build at
+> 85.6 – 75.6 cyc/miss at `[40, 50]`), `S` really is richer (§38.2), and the cost site really does
+> have headroom (§38.3). **The prize is what is absent.** **Kept unedited.**
 
 §33.4 closed by saying one input the design needs is stale and must be **re-measured at one
 band before scoring a design against it**. It was, while the rig was up. This section is the
@@ -488,6 +1292,12 @@ a measurement, and §33.4's pre-registration item 2 still binds.*
 
 ### 38.4 The removal fraction — §24.4's own calibration point says 0.70, not 1.0
 
+> **⚠ SUPERSEDED BY MEASUREMENT — §42.** The slope is not 1.0 and it is not 0.70: it is **0.154**,
+> giving `f` = **0.0787**. This section's reading of §24.4's evidence was right in direction and
+> short by 4.5×, and all three of its named reasons the 0.70 might still be generous bit in the
+> same direction — exactly as it pre-registered they would. It is the interpolation the
+> measurement was funded to replace. **Kept unedited.**
+
 **This is the correction that moves the answer, and it comes from §24.4's own evidence.** §24.4
 assumed that removing `IV_FLUSH`-driven invalidations removes the same **fraction of misses**:
 50.96 % of invalidation traffic ⇒ 50.96 % of misses. It justified the proportionality by pointing
@@ -560,6 +1370,16 @@ figure here is a share of the **distorted** machine (§10.1) whose corrected pro
 400–477 cyc/INSN against a lean 71.8.
 
 ### 38.6 THE FUNDING RECOMMENDATION
+
+> **⚠ TAKEN, IN FULL, AND IT STRUCK THE STUDY — §42.** The switch described below was built as
+> `IVSUP` (`Z3660 58d9acb`, pre-registration `a3af6b1` committed first), armed on metal
+> 2026-08-23 evening, and read on both of the instruments this section specifies. **`f` = 0.0787**
+> against the 0.35 gate; wall clock **+0.00 %** against +1.5 %; correctness gate **passed
+> undegraded**; the pre-registered direction table scored **15 PASS / 2 NOTE / 0 MISS**. The
+> reading rule this section wrote for that cell — *strike the study from the ladder, and do not
+> re-measure at a different band* — is the one that fires. **This recommendation is the campaign's
+> cheapest result: a factor of 4.5 recovered for the price of one console switch, against a design
+> round it prevented.** **Kept unedited.**
 
 > ## **ADJUST.** The study stays live and is now the leading classified rung on the ladder. **Do not fund the design round yet.** Fund the one-switch measurement of `f` first — it is cheaper than the round just spent, it has no implementation in it to confound the reading, and it is the only input that decides the study.
 
@@ -658,6 +1478,13 @@ much of each bucket is the profiler's own bracket pair — **not** how much is i
 
 ### 39.2 The ladder
 
+> **⚠ SUPERSEDED by §46.2.** Row **#1** (physical-index dopc) is **STRUCK** — §42, `f` = 0.0787.
+> Row **#2** (ATC fast path) is **re-priced and both halves of its row withdrawn**: the bucket is
+> 66–78 % table walks a fast path does not remove, and the 2.58–3.05 % share it was applied to is a
+> kernel-heavy window's — §45. Rows #3 and #4 keep their rank and are re-read on this session's own
+> window and band. Row J rises to 2.19 – 2.35× on a different band, meaning nothing (§31.2).
+> **Kept unedited.**
+
 Amdahl against the standing **8185**. Shares are B2's at `[54, 60]`; **the reclaim column is
 still not measured** and §10.6 governs it exactly as before. §33.2's pricing-law column is
 carried in one word, with the two rows that changed marked.
@@ -695,6 +1522,14 @@ carried in one word, with the two rows that changed marked.
 
 ### 39.3 `DOPCFIND`'s ≈ 9 cyc/dispatch — a fourth point, and it is the first one that is in-band
 
+> **⚠ THE OWED POINT WAS TAKEN — §44.** The reverted tree's prof image gave **85.12 – 75.12
+> cyc/dispatch at band `[40, 50]`**, with no `SPEC` machinery and no −1.07 % disarm cost to
+> separate out, and it is the first capture in the series whose **full** bracket is arithmetically
+> usable. **It still does not close F6**, and the reason has moved from this capture to the series:
+> the historical column is pinned at 57 while the measured marginal price has been 57/54/39/40
+> across four sessions — a 46 % spread on a first-order term. §44 refuses to add a fifth entry to
+> that column. **Kept unedited.**
+
 §32.2 left F6 OPEN with both candidates weakened. This session adds a point, and unlike r3's it
 is taken at a price **inside its own capture's usable band** — 57 lies within `[54, 60]`, whereas
 r3's `[39, 50]` did not contain it, which is what §32.2's asterisk was about:
@@ -717,6 +1552,13 @@ nobody has asked. The +4.6 % over r3 is therefore **plausibly the disarm cost it
 > cyc/dispatch is a reason to investigate and **must not be quoted as a projected gain.**
 
 ### 39.4 The strategic picture, stated plainly
+
+> **⚠ SUPERSEDED by §46.3.** Two of the three compounded rows have since been struck or re-priced:
+> the physical index is **struck** (§42) and the ATC row is **withdrawn and re-priced** (§45). The
+> remainder re-compounds from **+4.2 – 7.6 %** to **+0.9 – 3.2 %**, dhry **8259 – 8445**, of which
+> ~90 % is `DOPCFIND`'s single unmeasured reclaim estimate. The section's *conclusion* — that row J
+> is the only remaining step change and its funding is not a call the measurements can make — is
+> **unchanged and stronger**: the gap widened from 15–30 : 1 to 37–150 : 1. **Kept unedited.**
 
 This is the section the campaign has been earning the right to write since v3, and v3.3 is the
 first version that can write it without an unclassified bucket at the top of the ladder pretending
@@ -770,6 +1612,14 @@ so is a static count, not a measurement of the bucket's recoverable content.
 
 ### 40.2 The re-score's largest lever is a confound, not a measurement error
 
+> **⚠ THE CONFOUND NOW HAS A MEASURED CORRELATE — §45.2.** The explanation offered below was
+> flagged here as *mechanism-shaped and unmeasured*. The two windows differ by a **counted**
+> quantity: **supervisor share of guest instructions, 48.77 % against 17.98 %**, against a 2.73×
+> translate-rate ratio and a 5.12× miss-rate ratio. Four windows across two sessions split into two
+> clusters, monotone in the walk and miss rates. **Every miss-driven bucket in this file inherits
+> it** — row H moves 2.2× and `XLATE`+`WALK` 3.1× band-free between windows of the same benchmark.
+> It is still a correlate and not a law (§47.4). **Kept unedited.**
+
 §38.5's two bases differ by 46 % in miss rate and the prize is proportional to it. The explanation
 offered — time-driven invalidation sources holding steady while the probed guest runs slower — is
 **mechanism-shaped and unmeasured**. The honest statement is that the ceiling is 1.7 – 2.7 % and
@@ -777,6 +1627,12 @@ that the width of that range is dominated by which of one boot's two windows is 
 the price band.
 
 ### 40.3 `f` is still an interpolation, and the correction to it is one calibration point
+
+> **⚠ DISCHARGED — §42.** `f` is no longer an interpolation. It was measured directly, in one boot,
+> as a ratio of two hit rates: **0.0787**, a strict upper bound, against the 0.357 this section
+> could only interpolate. The interpolation was short by 4.5×. **What replaces this caveat is
+> §47.2**: `f` is now measured, and it is measured *on one workload* — which §45.2 has just shown
+> is not a free variable. **Kept unedited.**
 
 §38.4's 0.70 slope is derived from **rung 1c and nothing else**, and applied to a different
 invalidation cause by a different mechanism (narrowing, not removal). It is a better reading of
