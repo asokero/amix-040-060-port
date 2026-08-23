@@ -144,17 +144,28 @@ COUNTER_NAMES_V2 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "DPAGE_WHIT", "DPAGE_WMISS", "XLATE", "XLATE_OK", "ATC_MISS",
                     "MISALIGN_R", "MISALIGN_W", "FAULTS", "TRANSITIONS", "STACK_OVF",
                     "ATC_HIT"]
-# Ids 20..38, appended to version 2 WITHOUT a version bump.  They are a separate list here
+# Ids 20..45, appended to version 2 WITHOUT a version bump.  They are a separate list here
 # for the same reason the two version tables are separate lists: a firmware that predates
-# them emits 20 counter rows and one that has them emits 39, and both are legal v2 dumps.
-# A generator that could only produce the longer one could not build the fixture that proves
-# a tool tells "this firmware never had it" apart from "this counter measured zero".
+# them emits 20 counter rows and one that has them all emits 46, and every length in between
+# is a legal v2 dump too.  A generator that could only produce the longest one could not
+# build the fixture that proves a tool tells "this firmware never had it" apart from "this
+# counter measured zero" -- so the generator carries the whole list and the CALLER says how
+# far down it a given firmware got.
 COUNTER_NAMES_APPENDED = ["IFETCH_CALLS",
                           "BLK_HIT", "BLK_INSNS", "BLK_BYTES",
                           "DOPC_HIT", "DOPC_MISS", "DOPC_EXT", "DOPC_INVAL",
                           "IV_FLUSH", "IV_ROOT", "IV_DMA", "IV_TABLE", "IV_KNOB",
                           "IV_WRAP", "IV_MAP", "IV_PFLUSH", "IV_PFLUSHA", "IV_CACR",
-                          "IV_CACR_SKIP"]
+                          "IV_CACR_SKIP",
+                          "DOPC_WAY0", "DOPC_WAY1", "DOPC_WAY2", "DOPC_WAY3",
+                          "MISALIGN_I", "DFAST_HIT", "DFAST_XPAR"]
+# ONE ID PAST THE FIRMWARE'S LIST, and deliberately not a name any firmware has ever emitted.
+# The append seam's whole promise is that a counter this tool has never heard of is reported
+# uninterpreted rather than mislabelled, and that promise is about the NEXT append -- so the
+# fixture that tests it must not borrow a real name.  A real one would either be a name the
+# table already has (testing nothing) or a claim that some firmware shipped it (which would
+# be false, and is exactly the row the table refuses to carry).
+COUNTER_NAME_BEYOND = "NEXT_APPEND"
 MAGICS = {1: "Z3P1", 2: "Z3P2"}
 
 # Flag bases.  SUPER|MMU|AMIX|CPU040 is an AMIX kernel sample on the 68040 run loop.
@@ -255,12 +266,28 @@ def counters_v2(insns=1000000, fetch=1600000, read=700000, write=300000,
             transitions, stack_ovf, atc_hit]
 
 
+# Ids 39..45, the way histogram and rung 2, as one block.  Sized against the SAME defaults
+# the rest of this generator uses, because the firmware states identities over them:
+#
+#   WAY0+WAY1+WAY2+WAY3 == DOPC_HIT           900023, the four ways of one hit count
+#   MISALIGN_I <= MISALIGN_R                  1100 of counters_v2's 1200; the firmware
+#                                             predicts the instruction-stream half dominates,
+#                                             leaving 100 genuine misaligned DATA reads
+#   DFAST_XPAR <= DFAST_HIT <= READ + WRITE   120000 <= 850000 <= 1000000
+#
+# The way split is 70.0 / 20.0 / 6.7 / 3.3, which lands in the "in between" band of the
+# firmware's own pre-registered decision rule ON PURPOSE.  A fixture at either end would read
+# as an answer to a question no capture has been taken for yet, and these rows are a naming
+# test, not a verdict.
+RUNG2 = (630000, 180000, 60000, 30023, 1100, 850000, 120000)
+
+
 def counters_appended(fetch=1600000, insns=1000000, faults=25,
                       blk=(2000, 600000, 1800000),
                       dopc=(900023, 100002, 400000, 2000),
                       iv=(1200, 100, 20, 0, 0, 0, 0, 180, 480, 20),
-                      cacr_skip=2000, ifetch=None, with_skip=True):
-    """Counter ids 20..38, wired so that every identity a symbolizer should check HOLDS.
+                      cacr_skip=2000, ifetch=None, with_skip=True, rung2=None):
+    """Counter ids 20..45, wired so that every identity a symbolizer should check HOLDS.
 
     A fixture whose identities do not hold cannot tell a tool that checks them from one that
     does not, so the defaults here are chosen against the arithmetic rather than for round
@@ -276,13 +303,23 @@ def counters_appended(fetch=1600000, insns=1000000, faults=25,
                                                 the recognizer test is paid per iteration
 
     `with_skip=False` builds the 38-counter firmware -- the one whose narrowing lives at a
-    call site it cannot see, which is the shape that made a real verdict unscoreable."""
+    call site it cannot see, which is the shape that made a real verdict unscoreable.
+
+    `rung2` appends ids 39..45; pass RUNG2 for the full 46-counter firmware.  It is refused
+    without id 38, because these ids are POSITIONAL: a dump carrying 39..45 over a missing 38
+    would not be a shorter firmware, it would be every row from 38 on relabelled -- which is
+    the one thing the append seam cannot detect and therefore the one thing this generator
+    must not be able to emit by accident."""
     if ifetch is None:
         ifetch = fetch
+    if rung2 is not None and not with_skip:
+        raise ValueError("rung2 without id 38 would shift every id past it")
     out = [ifetch, blk[0], blk[1], blk[2],
            dopc[0], dopc[1], dopc[2], dopc[3]] + list(iv)
     if with_skip:
         out.append(cacr_skip)
+    if rung2 is not None:
+        out += list(rung2)
     return out
 
 
@@ -489,7 +526,7 @@ def stats_dump_v2(buckets=None, cnts=None, build=0x04, probe_cyc=PROBE_CYC_V2, h
                   clk="cfg", version=2, tail_cyc=None, grammar=2,
                   appended=None, spans=None, drop_span_rows=(), span_sum=None,
                   span_trans=None, rung1d=False, loop_cyc=None, wall_ticks=None,
-                  bnames=None):
+                  bnames=None, beyond=None):
     """The version-2 PROFD block, emitted exactly as the firmware writes it.
 
     `grammar` exists to build the one capture that must be REFUSED without being corrupt:
@@ -503,7 +540,12 @@ def stats_dump_v2(buckets=None, cnts=None, build=0x04, probe_cyc=PROBE_CYC_V2, h
     dispatch loop decomposed, which is carried by the bucket NAMES and by nothing else.
     `bnames` overrides that table outright, and exists for one fixture -- the dump that
     answers the shape question twice by naming id 0 `LOOP` while carrying `DOPCFIND` at
-    id 14.  No firmware writes that, which is exactly why a generator has to be able to."""
+    id 14.  No firmware writes that, which is exactly why a generator has to be able to.
+
+    `beyond` adds ONE counter past the end of this generator's own name list, under the name
+    no table anywhere carries.  It builds the capture from a firmware newer than the tool
+    reading it, which is not a hypothetical shape but the normal one: every counter in
+    COUNTER_NAMES_APPENDED arrived that way, and the next one will too."""
     if bnames is None:
         bnames = BUCKET_NAMES_V2_1D if rung1d else BUCKET_NAMES_V2
     if buckets is None:
@@ -561,6 +603,13 @@ def stats_dump_v2(buckets=None, cnts=None, build=0x04, probe_cyc=PROBE_CYC_V2, h
     if appended is not None:
         names += COUNTER_NAMES_APPENDED[:len(appended)]
         vals += list(appended)
+    # A dump from a firmware NEWER than this generator's own list: one more counter, carrying
+    # its own name, at the id after the last one anybody has transcribed.  The rows above are
+    # unaffected -- that is the whole point of an append -- so the fixture is built by adding
+    # to a complete dump rather than by making a different one.
+    if beyond is not None:
+        names.append(COUNTER_NAME_BEYOND)
+        vals.append(beyond)
     for i, name in enumerate(names):
         out.append("[PROF] c %-2d %-12s %d" % (i, name, vals[i]))
     ih, im = cnts[5], cnts[6]
@@ -1039,6 +1088,35 @@ def main():
     write(d, "capture-v2noskip.txt",
           boot_v2() + probe_cal()
           + stats_dump_v2(appended=counters_appended(with_skip=False)))
+
+    # THE 46-COUNTER FIRMWARE: every id the firmware defines, and every row therefore named.
+    # This is the shape every capture taken since rung 1d has actually had, read for a long
+    # time by a tool whose table stopped at 38 -- so the seven rows below arrived, were
+    # reported as ids beyond the table, and never appeared in the counter table at all.
+    # Nothing was mislabelled and no id moved: the seam did what it is for.  The fixture is
+    # what stops the table from silently falling behind the firmware again, because a tool
+    # that had not been synced would leave seven rows out of a report that looks complete.
+    rung2_head = ["Z3660 firmware boot"] + boot_v2() + probe_cal() + [ARMED]
+    write(d, "capture-v2rung2.txt",
+          rung2_head
+          + stats_dump_v2(appended=counters_appended(rung2=RUNG2), spans=SPANS_V2))
+
+    # ONE COUNTER PAST THE TABLE, which is the seam itself under test rather than its
+    # consequences.  A capture from a firmware NEWER than the reader is the normal case and
+    # not an error case -- it is how all twenty-six appended ids arrived -- so the row must be
+    # reported under the name the DUMP carries, marked uninterpreted, with every row above it
+    # read exactly as it would have been had the row not been there at all.  The alternatives
+    # are both silent: refusing the capture loses a measurement nobody can re-take, and
+    # folding the row into the table under a guessed name puts a number in it that means
+    # something else.
+    #
+    # It is capture-v2rung2's own bytes plus one line, so the assertion can be the IDENTITY of
+    # the two report bodies rather than a spot check: an id the reader has never heard of must
+    # cost the rest of the report NOTHING.
+    write(d, "capture-v2beyond.txt",
+          rung2_head
+          + stats_dump_v2(appended=counters_appended(rung2=RUNG2), spans=SPANS_V2,
+                          beyond=4242))
 
     # DOPC_HIT + DOPC_MISS against INSNS + FAULTS, broken.  Every dispatch consults the cache
     # exactly once and every dispatch either retires or throws, so this holds exactly on a

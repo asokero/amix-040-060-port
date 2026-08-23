@@ -177,8 +177,14 @@ COUNTER_NAMES_V1 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "IPAGE_HIT", "IPAGE_MISS", "DPAGE_RHIT", "DPAGE_RMISS",
                     "DPAGE_WHIT", "DPAGE_WMISS", "XLATE", "ATC_HIT", "ATC_MISS",
                     "MISALIGN_R", "MISALIGN_W", "FAULTS", "TRANSITIONS", "STACK_OVF"]
-# Ids 0..19 are the version-2 bump.  Ids 20..38 were APPENDED to the same version -- see
+# Ids 0..19 are the version-2 bump.  Ids 20..45 were APPENDED to the same version -- see
 # COUNTER_APPEND_BASE below for why that is safe and what it costs a reader.
+#
+# THIS TABLE IS TRANSCRIBED FROM THE FIRMWARE'S OWN `z3660_prof_counter_names[]`, never from
+# a capture.  A name read off a dump would be a name this tool then checked the dump against,
+# which tests nothing; the firmware's list is the only independent source, and it is guarded
+# there by a compile-time tripwire against Z3660_PROF_C_COUNT.  Ids 39..45 below are
+# transcribed from Z3660 6afc8f9, where C_COUNT is 46.
 COUNTER_NAMES_V2 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "IPAGE_HIT", "IPAGE_MISS", "DPAGE_RHIT", "DPAGE_RMISS",
                     "DPAGE_WHIT", "DPAGE_WMISS", "XLATE", "XLATE_OK", "ATC_MISS",
@@ -191,7 +197,11 @@ COUNTER_NAMES_V2 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "IV_FLUSH", "IV_ROOT", "IV_DMA", "IV_TABLE", "IV_KNOB",
                     "IV_WRAP", "IV_MAP", "IV_PFLUSH", "IV_PFLUSHA",
                     "IV_CACR",                                        # 28..37  rung 1b
-                    "IV_CACR_SKIP"]                                   # 38      rung 1c
+                    "IV_CACR_SKIP",                                   # 38      rung 1c
+                    "DOPC_WAY0", "DOPC_WAY1", "DOPC_WAY2",
+                    "DOPC_WAY3",                                      # 39..42  way histogram
+                    "MISALIGN_I",                                     # 43      rung 2
+                    "DFAST_HIT", "DFAST_XPAR"]                        # 44..45  rung 2
 C_INSNS, C_INSNS_SUPER, C_FETCH, C_READ, C_WRITE, \
     C_IPAGE_HIT, C_IPAGE_MISS, C_DPAGE_RHIT, C_DPAGE_RMISS, \
     C_DPAGE_WHIT, C_DPAGE_WMISS, C_XLATE, C_XLATE_OK, C_ATC_MISS, \
@@ -201,11 +211,19 @@ C_INSNS, C_INSNS_SUPER, C_FETCH, C_READ, C_WRITE, \
     C_DOPC_HIT, C_DOPC_MISS, C_DOPC_EXT, C_DOPC_INVAL, \
     C_IV_FLUSH, C_IV_ROOT, C_IV_DMA, C_IV_TABLE, C_IV_KNOB, \
     C_IV_WRAP, C_IV_MAP, C_IV_PFLUSH, C_IV_PFLUSHA, C_IV_CACR, \
-    C_IV_CACR_SKIP = range(39)
+    C_IV_CACR_SKIP, \
+    C_DOPC_WAY0, C_DOPC_WAY1, C_DOPC_WAY2, C_DOPC_WAY3, \
+    C_MISALIGN_I, C_DFAST_HIT, C_DFAST_XPAR = range(46)
+
+# AND IT STOPS AT 45 ON PURPOSE.  An experiment held a `SPEC_HIT` at id 46 and its revert
+# took the id with it, so no shipping firmware has ever emitted the row.  Naming it here
+# would put an id in the table that can only ever print `absent` -- a non-measurement in a
+# column of measurements, which is the ATC_HIT defect the append seam exists to prevent.  The
+# table grows when the firmware's list does, and by transcription from it.
 
 # THE APPEND SEAM, and why absent is not zero.
 #
-# Ids 0..19 are what version 2 bumped for.  Ids 20..38 arrived later, into the SAME version,
+# Ids 0..19 are what version 2 bumped for.  Ids 20..45 arrived later, into the SAME version,
 # because a pure append moves no existing id's meaning and the firmware's rule is to bump
 # only when a meaning moves -- bumping would make every v2 tool refuse a capture it can read
 # correctly.  The cost of that choice lands here: two v2 captures can legitimately carry
@@ -309,7 +327,7 @@ TWO32 = 1 << 32
 #   `clk` is parsed and surfaced wherever it appears, and `clk=bsp` is warned about hard --
 #   see _clk_note(), which also states why the wrap cross-check cannot stand in for it.
 #
-#   AND VERSION 2 GREW AFTER IT SHIPPED, WITHOUT MOVING.  Counter ids 20..38 and the
+#   AND VERSION 2 GREW AFTER IT SHIPPED, WITHOUT MOVING.  Counter ids 20..45 and the
 #   per-bucket `[PROF] s` span block were appended to version 2 rather than bumped into a
 #   version 3, and that is the right call under the firmware's own rule: a bump is for a
 #   MEANING that moves under a reader's feet, and an append moves nothing.  So this table

@@ -521,6 +521,18 @@ can span a reflash.
 | 24–27 | `DOPC_*` — the decoded-op cache | `DOPC_HIT + DOPC_MISS == INSNS + FAULTS` |
 | 28–37 | `IV_*` — invalidation cause | `sum(IV_*) == DOPC_INVAL` with the cache on; `< ` is impossible |
 | 38 | `IV_CACR_SKIP` | **not** a cause; the guest's true request rate is `sum(IV_*) + IV_CACR_SKIP` |
+| 39–42 | `DOPC_WAY0`–`3` — the decoded-op way histogram | named only |
+| 43 | `MISALIGN_I` — the instruction-stream half of `MISALIGN_R` | named only |
+| 44–45 | `DFAST_HIT`, `DFAST_XPAR` — the accessor fast path's coverage | named only |
+
+**"Named only" means the row is in the table and nothing above it reads it.** Ids 39–45
+arrived after the tool's counter list was last synced, so until now they took the append
+seam's designed path — reported in a *"beyond the … version 2 defines"* warning and absent
+from the counter table itself. They are now named from the firmware's own
+`z3660_prof_counter_names[]`, which is the only source a name may come from: a name inferred
+from a capture is a name the tool would then check that capture against. The firmware states
+`WAY0+WAY1+WAY2+WAY3 == DOPC_HIT` and `MISALIGN_R − MISALIGN_I` as the genuine misaligned
+*data* reads; this tool asserts neither, and a derived row for either is a separate change.
 
 **`BLK_INSNS` is not a subset of `INSNS`.** `INSNS` counts instructions retired through the
 run-loop *tail*, and the fast path retires a whole chunk per pass of that loop — so a chunk
@@ -818,14 +830,20 @@ field, and the suite asserts that each names what contradicts what.
 **The post-append fixtures are a third kind again**, because the thing being tested is that
 two *legal version-2 captures* carrying different numbers of rows are read differently:
 
-* `capture-v2spans` carries all 39 counters and the `s` block; `capture-v2valid` carries 20
-  and no block. The suite pins `LOOP`'s probe at the **measured** `5043850 × 46 =
+* `capture-v2spans` carries 39 of the 46 counters and the `s` block; `capture-v2valid`
+  carries 20 and no block. The suite pins `LOOP`'s probe at the **measured** `5043850 × 46 =
   232017100`, and asserts that the modelled figure for the same bucket in the same buckets
   (`211601150`) appears **nowhere** — the model was never wrong about the *total*, only about
   the shape, so a tool still using it produces a full and different table rather than an error.
 * `capture-v2noskip` is the 38-counter firmware: id 38 must read `absent`, be named as an
   *append* rather than a loss, and the report must refuse to score a call-site narrowing from
   rows that structurally cannot see one.
+* `capture-v2rung2` is the full **46**-counter firmware — every id named, nothing absent and
+  nothing uninterpreted. `capture-v2beyond` is its own bytes plus **one counter past the
+  table**, which is what a capture from a firmware newer than its reader looks like: the row
+  is reported under the name the *dump* carries, marked uninterpreted, no table row is
+  invented for it, and the assertion is that the rest of the report is **byte-identical** to
+  `capture-v2rung2`'s. An id the tool has never heard of must cost the reader nothing.
 * three ways an `s` block can be present and unusable — spans that miss `TRANSITIONS`, a
   block with rows lost, and a per-pair version — each must fall back to the model and say so.
 * `capture-v2cal2` is the two-pass calibration: one price, no bracket, and the suite asserts
