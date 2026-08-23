@@ -135,6 +135,17 @@ COUNTER_NAMES_V2 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "DPAGE_WHIT", "DPAGE_WMISS", "XLATE", "XLATE_OK", "ATC_MISS",
                     "MISALIGN_R", "MISALIGN_W", "FAULTS", "TRANSITIONS", "STACK_OVF",
                     "ATC_HIT"]
+# Ids 20..38, appended to version 2 WITHOUT a version bump.  They are a separate list here
+# for the same reason the two version tables are separate lists: a firmware that predates
+# them emits 20 counter rows and one that has them emits 39, and both are legal v2 dumps.
+# A generator that could only produce the longer one could not build the fixture that proves
+# a tool tells "this firmware never had it" apart from "this counter measured zero".
+COUNTER_NAMES_APPENDED = ["IFETCH_CALLS",
+                          "BLK_HIT", "BLK_INSNS", "BLK_BYTES",
+                          "DOPC_HIT", "DOPC_MISS", "DOPC_EXT", "DOPC_INVAL",
+                          "IV_FLUSH", "IV_ROOT", "IV_DMA", "IV_TABLE", "IV_KNOB",
+                          "IV_WRAP", "IV_MAP", "IV_PFLUSH", "IV_PFLUSHA", "IV_CACR",
+                          "IV_CACR_SKIP"]
 MAGICS = {1: "Z3P1", 2: "Z3P2"}
 
 # Flag bases.  SUPER|MMU|AMIX|CPU040 is an AMIX kernel sample on the 68040 run loop.
@@ -226,6 +237,51 @@ def counters_v2(insns=1000000, fetch=1600000, read=700000, write=300000,
             transitions, stack_ovf, atc_hit]
 
 
+def counters_appended(fetch=1600000, insns=1000000, faults=25,
+                      blk=(2000, 600000, 1800000),
+                      dopc=(900023, 100002, 400000, 2000),
+                      iv=(1200, 100, 20, 0, 0, 0, 0, 180, 480, 20),
+                      cacr_skip=2000, ifetch=None, with_skip=True):
+    """Counter ids 20..38, wired so that every identity a symbolizer should check HOLDS.
+
+    A fixture whose identities do not hold cannot tell a tool that checks them from one that
+    does not, so the defaults here are chosen against the arithmetic rather than for round
+    numbers:
+
+      IFETCH_CALLS == FETCH                     identically -- every ENTER_IFETCH site
+                                                increments FETCH exactly once
+      DOPC_HIT + DOPC_MISS == INSNS + FAULTS    a dispatch either retires (INSNS) or throws
+                                                (FAULTS), and consults the cache exactly once
+      sum(IV_*) == DOPC_INVAL                   with the cache on, every request that
+                                                reaches the invalidator performs one
+      BLK_INSNS / BLK_HIT                       300, well clear of the ~8 floor below which
+                                                the recognizer test is paid per iteration
+
+    `with_skip=False` builds the 38-counter firmware -- the one whose narrowing lives at a
+    call site it cannot see, which is the shape that made a real verdict unscoreable."""
+    if ifetch is None:
+        ifetch = fetch
+    out = [ifetch, blk[0], blk[1], blk[2],
+           dopc[0], dopc[1], dopc[2], dopc[3]] + list(iv)
+    if with_skip:
+        out.append(cacr_skip)
+    return out
+
+
+# Per-bucket transition spans, in bucket-id order, for the `[PROF] s` block.
+#
+# Two constraints, and they are what make this list what it is rather than round numbers.
+# It must sum to exactly the fixture's TRANSITIONS (13354050), because `sum(spans) ==
+# TRANSITIONS` holds by construction on any intact dump and a symbolizer must refuse a block
+# where it does not.  And every bucket must stay POSITIVE at the TOP of the price bracket
+# (57 cyc/span), because the clean case has to be clean before a clamped one means anything
+# -- LOOP and TAILADV are the two that clamp first on metal, so both are given room.
+#
+# FAULT and PROF get zero spans, which is not an omission: an unwind charges FAULT cycles
+# and counts no span, and PROF is only entered by a dump.
+SPANS_V2 = [5043850, 260000, 600000, 570000, 410000, 22000, 4200,
+            2430000, 2000000, 0, 0, 1000000, 1000000, 14000]
+
 BUCKETS = [60000000, 120000000, 70000000, 150000000, 70000000,
            90000000, 40000000, 220000000, 68000000, 2000000, 10000000]
 
@@ -287,8 +343,37 @@ def stats_dump(buckets=None, cnts=None, build=0x04, probe_cyc=11, hz=HZ, version
     return out
 
 
+def _span_block(buckets, spans, price, trans, drop_rows=(), stated_sum=None):
+    """The `[PROF] s` block exactly as the firmware writes it.
+
+    The firmware prices these rows at the SAME probe_cyc its aggregate line uses, so the two
+    agree by construction and `sum(corrected) == corrected total`.  Reproducing that here
+    rather than inventing a second price is the point: the fixture has to be a dump, and a
+    dump whose two corrections disagree is a firmware bug, not a test case.
+
+    `drop_rows` builds the capture that lost `s` lines in transit.  Its stated total stays
+    the TRUE one, which is what makes the loss detectable: the rows that arrived no longer
+    sum to it.  A tool that used such a block would credit the missing buckets with zero
+    probe cost, i.e. would INFLATE exactly the ones whose evidence is gone."""
+    out = ["[PROF] === per-bucket spans and the corrected shares (price %d cyc/span; sweep "
+           "to the boot line's in-bucket figure) ===" % price]
+    corr = [max(buckets[i] - spans[i] * price, 0) for i in range(len(buckets))]
+    ctotal = sum(corr)
+    for i, name in enumerate(BUCKET_NAMES_V2):
+        if i in drop_rows:
+            continue
+        out.append("[PROF] s %-2d %-8s spans=%-14s corrected_cyc=%-16s %s%%"
+                   % (i, name, spans[i], corr[i], fw_pct(corr[i], ctotal)))
+    out.append("[PROF] s -- corrected_total=%d  spans=%d  (must equal TRANSITIONS %d -- an "
+               "unwind charges FAULT cycles and no span, so FAULT reads uncorrected)"
+               % (ctotal, sum(spans) if stated_sum is None else stated_sum, trans))
+    return out
+
+
 def stats_dump_v2(buckets=None, cnts=None, build=0x04, probe_cyc=PROBE_CYC_V2, hz=HZ,
-                  clk="cfg", version=2, tail_cyc=None, grammar=2):
+                  clk="cfg", version=2, tail_cyc=None, grammar=2,
+                  appended=None, spans=None, drop_span_rows=(), span_sum=None,
+                  span_trans=None):
     """The version-2 PROFD block, emitted exactly as the firmware writes it.
 
     `grammar` exists to build the one capture that must be REFUSED without being corrupt:
@@ -334,9 +419,18 @@ def stats_dump_v2(buckets=None, cnts=None, build=0x04, probe_cyc=PROBE_CYC_V2, h
         if probe > total:
             out.append("[PROF] WARNING: the modelled probe cost EXCEEDS the measured total. "
                        "The calibration or the transition count is wrong; do not subtract.")
+    if spans is not None:
+        out.extend(_span_block(buckets, spans, probe_cyc,
+                               cnts[17] if span_trans is None else span_trans,
+                               drop_span_rows, span_sum))
     out.append("[PROF] === counters ===")
-    for i, name in enumerate(COUNTER_NAMES_V2):
-        out.append("[PROF] c %-2d %-12s %d" % (i, name, cnts[i]))
+    names = list(COUNTER_NAMES_V2)
+    vals = list(cnts)
+    if appended is not None:
+        names += COUNTER_NAMES_APPENDED[:len(appended)]
+        vals += list(appended)
+    for i, name in enumerate(names):
+        out.append("[PROF] c %-2d %-12s %d" % (i, name, vals[i]))
     ih, im = cnts[5], cnts[6]
     out.append("[PROF] r ipagecache hit %s%%" % fw_pct(ih, ih + im).strip())
     out.append("[PROF] r dpagecache read hit %s%%" % fw_pct(cnts[7], cnts[7] + cnts[8]).strip())
@@ -356,6 +450,26 @@ def stats_dump_v2(buckets=None, cnts=None, build=0x04, probe_cyc=PROBE_CYC_V2, h
                    "translates that faulted before the walk decision" % (ah + am, xl))
     out.append("[PROF] r supervisor instructions %s%% of %d"
                % (fw_pct(cnts[1], cnts[0]).strip(), cnts[0]))
+    # The decoded-op cache's own derived rows.  The tool does not parse them -- it computes
+    # its own -- but the fixture has to be a DUMP, and a dump that omits lines the firmware
+    # writes is not one.  They are also the rows a reader compares the tool's against.
+    if appended is not None and len(appended) >= 8:
+        hi, mi, iv = appended[4], appended[5], appended[7]
+        req = sum(appended[8:18])
+        sk = appended[18] if len(appended) > 18 else None
+        if hi + mi:
+            out.append("[PROF] r dopc %s%% of %d dispatches"
+                       % (fw_pct(hi, hi + mi).strip(), hi + mi))
+        if iv:
+            out.append("[PROF] r dopc %d.%02u misses and %d.%02u dispatches per "
+                       "invalidation -- a figure that does NOT track the workload's code "
+                       "footprint is re-warm, not capacity"
+                       % (mi // iv, (mi * 100 // iv) % 100,
+                          (hi + mi) // iv, ((hi + mi) * 100 // iv) % 100))
+        if sk is not None and req + sk:
+            out.append("[PROF] r dopc %d invalidation requests, %d performed, %d narrowed "
+                       "at the call site (%s%%)"
+                       % (req + sk, iv, sk, fw_pct(sk, req + sk).strip()))
     out.append("[PROF] === end ===")
     return out
 
@@ -404,6 +518,41 @@ def ring_dump(samples, rec_count=None, promised=None, magic=None, version=1,
 BOOT = ("[PROF] profiling build: ARM clock %d Hz (measured), enter/exit pair 11 cyc, "
         "ring %d x 8 B" % (CPU_HZ, RING_ENTRIES))
 ARMED = "[PROF] armed: %d Hz (%d cyc/tick), buckets ON" % (HZ, PERIOD)
+
+
+CAL_PAIRS = 1024
+# The three calibration spans, chosen so the firmware's own arithmetic comes out at exactly
+# the bracket [46, 57]:  (armed - unarmed) / 2048 == 46  and  (armed - empty) / 2048 == 57.
+# The scaffolding term is then 11, and 46 + 11 == 57 -- which is the relation a reader is
+# meant to be able to check on the line, so the fixture has to satisfy it.
+CAL_EMPTY = 2048
+CAL_ARMED = CAL_EMPTY + 57 * 2 * CAL_PAIRS          # 118784
+CAL_UNARMED = CAL_ARMED - PROBE_CYC_V2 * 2 * CAL_PAIRS   # 24576
+PROBE_IN_BUCKET = 57
+
+
+def probe_cal(passes=3, marginal=PROBE_CYC_V2, in_bucket=PROBE_IN_BUCKET,
+              armed=CAL_ARMED, unarmed=CAL_UNARMED, empty=CAL_EMPTY, bracket=True,
+              bracket_lo=None, bracket_hi=None):
+    """The calibration and price-bracket lines, in both the shapes metal has produced.
+
+    `passes=2` is the older firmware: no `empty` pass, so no in-bucket figure and no bracket
+    line at all.  It is not a degenerate case of the three-pass line -- it is a capture that
+    supports ONE price, and a tool that reported its bracket as a range of width zero would
+    be claiming the instrument had answered a question it was never asked."""
+    if passes == 2:
+        return ["[PROF] probe calibration: armed %d cyc, unarmed %d cyc, %d pairs -> %d "
+                "cyc/transition marginal" % (armed, unarmed, CAL_PAIRS, marginal)]
+    lines = ["[PROF] probe calibration: armed %d cyc, unarmed %d cyc, empty %d cyc, %d "
+             "pairs -> %d cyc/transition marginal, %d in-bucket"
+             % (armed, unarmed, empty, CAL_PAIRS, marginal, in_bucket)]
+    if bracket:
+        lines.append("[PROF] price bracket: %d (bodies only, what PROFB gates) .. %d (bodies "
+                     "+ the call scaffolding, which is inside the buckets too) "
+                     "cyc/transition -- sweep it, do not pick"
+                     % (marginal if bracket_lo is None else bracket_lo,
+                        in_bucket if bracket_hi is None else bracket_hi))
+    return lines
 
 
 def boot_v2(clk="cfg", probe_cyc=PROBE_CYC_V2):
@@ -674,6 +823,133 @@ def main():
           boot_v2() + stats_dump_v2(cnts=counters_v2(ipage=(0, 0), dpr=(0, 0), dpw=(0, 0),
                                                      xlate=2600000, walks=40000,
                                                      xlate_ok=0)))
+
+    # -------------------------------------------- the post-v2 append: spans and rungs 0/1/1b/1c
+    #
+    # Counter ids 20..38 and the `[PROF] s` block were appended to wire version 2 WITHOUT a
+    # bump, so these captures are the same version as capture-v2valid and carry nineteen
+    # more counters and a whole extra block.  They are separate fixtures rather than an
+    # upgrade of capture-v2valid precisely BECAUSE both are legal v2: a tool has to read the
+    # short one without inventing zeros and the long one without ignoring the block, and one
+    # fixture cannot test both.
+    #
+    # The `s` block is what turns a corrected share from an upper bound into a number, and
+    # the whole reason it exists is that the estimate it replaces -- `2 x IFETCH_CALLS` for
+    # the fetch buckets' transitions -- is REFUTED, not merely bettered: with a decoded-op
+    # cache upstream a hit never enters FETCHOP at all, so the bucket is entered once per
+    # MISS and not once per fetch.  The fixture encodes that (FETCHOP spans 260000 against
+    # DOPC_MISS 100002 -- no relation to IFETCH_CALLS 1600000), because a fixture where the
+    # two happened to agree could not tell a tool using the right one from a tool using the
+    # wrong one.
+    full = counters_appended()
+    write(d, "capture-v2spans.txt",
+          ["Z3660 firmware boot"] + boot_v2() + probe_cal() + [ARMED]
+          + stats_dump_v2(appended=full, spans=SPANS_V2))
+
+    # sum(spans) != TRANSITIONS.  Every transition charges exactly one span and an unwind
+    # charges neither, so on an intact dump these are equal BY CONSTRUCTION -- a mismatch
+    # means the `s` lines and the `c` lines did not come off one state, and a corrected
+    # column built from them would balance while being wrong.  The spans must be refused and
+    # the modelled landing must take over, not silently.
+    bad_spans = list(SPANS_V2)
+    bad_spans[0] -= 50000
+    write(d, "capture-v2spansbad.txt",
+          boot_v2() + probe_cal() + stats_dump_v2(appended=full, spans=bad_spans))
+
+    # The same block with ROWS LOST in the capture.  Its own stated total is still the true
+    # one, which is what makes the loss detectable at all.  This is not the conservative
+    # failure it looks like: a missing row reads as a bucket that pays no probe, so it
+    # INFLATES exactly the buckets whose evidence is gone.
+    write(d, "capture-v2spanslost.txt",
+          boot_v2() + probe_cal()
+          + stats_dump_v2(appended=full, spans=SPANS_V2, drop_span_rows=(0, 7)))
+
+    # The two-pass calibration: no `empty` span, so no in-bucket figure and no bracket line.
+    # One price, and the report must say that rather than present a zero-width range.
+    write(d, "capture-v2cal2.txt",
+          boot_v2() + probe_cal(passes=2) + stats_dump_v2(appended=full, spans=SPANS_V2))
+
+    # A calibration line whose stated marginal figure is not what its own three spans give.
+    # Both are printed from the same measurement in the same boot, so they cannot disagree;
+    # the tool checks the arithmetic rather than repeating the quotient on faith.
+    write(d, "capture-v2calbad.txt",
+          boot_v2() + probe_cal(marginal=44) + stats_dump_v2(appended=full))
+
+    # IFETCH_CALLS != FETCH.  These are identically equal in any firmware that has both --
+    # each of the five ENTER_IFETCH sites is followed immediately by one FETCH increment --
+    # so a divergence means a fetch site was added to one path and not the other.  That is
+    # the drift no reviewer catches and no arithmetic check objects to.
+    write(d, "capture-v2ifetchdrift.txt",
+          boot_v2() + probe_cal()
+          + stats_dump_v2(appended=counters_appended(ifetch=1600400)))
+
+    # A recognizer that fires and does not pay: mean chunk length 2.  The fast path pays its
+    # test ONCE PER CHUNK, so a mean of 2 means it is being paid per iteration and the whole
+    # saving is gone -- the pre-registered failure mode, and the thing to check is the
+    # TRIGGER rather than the host operation.
+    write(d, "capture-v2blkstall.txt",
+          boot_v2() + probe_cal()
+          + stats_dump_v2(appended=counters_appended(blk=(300000, 600000, 1800000))))
+
+    # The decoded-op cache switched OFF for the whole window.  The four DOPC_ counters read
+    # exactly zero -- the lookup returns before it can count -- and that is a MEASUREMENT,
+    # not an absence.  The IV_* counters still move, because they count what the GUEST asked
+    # for and the guest issues CPUSHL and PFLUSH whatever the switch says, which is what
+    # makes a cache-off arm a free measurement of the guest's own invalidation rate.
+    write(d, "capture-v2dopcoff.txt",
+          boot_v2() + probe_cal()
+          + stats_dump_v2(appended=counters_appended(dopc=(0, 0, 0, 0))))
+
+    # The 38-counter firmware: a narrowing that decides at its CALL SITE, and no counter that
+    # can see it.  `sum(IV_*) - DOPC_INVAL` does NOT recover it -- a request refused before
+    # the invalidator increments nothing at all -- so the report must refuse to score a
+    # narrowing from these rows rather than quietly under-report one.
+    write(d, "capture-v2noskip.txt",
+          boot_v2() + probe_cal()
+          + stats_dump_v2(appended=counters_appended(with_skip=False)))
+
+    # DOPC_HIT + DOPC_MISS against INSNS + FAULTS, broken.  Every dispatch consults the cache
+    # exactly once and every dispatch either retires or throws, so this holds exactly on a
+    # window taken entirely with the cache on; if it does not, the hit rate above it is a
+    # rate of something else.
+    write(d, "capture-v2dopcskew.txt",
+          boot_v2() + probe_cal()
+          + stats_dump_v2(appended=counters_appended(dopc=(900023, 90002, 400000, 2000))))
+
+    # sum(IV_*) LESS than DOPC_INVAL, which is impossible: every invalidation performed was
+    # requested and attributed to a cause.  Either a cause id is out of range or a call site
+    # reaches the invalidator without going through the attribution.
+    write(d, "capture-v2ivshort.txt",
+          boot_v2() + probe_cal()
+          + stats_dump_v2(appended=counters_appended(
+              iv=(700, 100, 20, 0, 0, 0, 0, 180, 480, 20))))
+
+    # The stats dump whose "=== stage attribution ===" banner was eaten by the console
+    # collision -- the SAME shared-UART defect the `ring hdr` repair exists for, arriving on
+    # a different line.  Five of the 2026-08-22/23 metal captures were refused for this while
+    # every byte of their payload was present, so the damage is reproduced here verbatim in
+    # shape: the echo of the request and the firmware's first line interleaved, then the
+    # remainder of the banner on its own line.
+    #
+    # The payload after it is capture-v2spans's own bytes, so the assertion is the IDENTITY
+    # of the two reports and not a spot check.
+    spans_lines = (["Z3660 firmware boot"] + boot_v2() + probe_cal() + [ARMED]
+                   + stats_dump_v2(appended=full, spans=SPANS_V2))
+    banner_i = spans_lines.index("[PROF] === stage attribution ===")
+    write(d, "capture-v2bannergone.txt",
+          spans_lines[:banner_i]
+          + ["PROF DUMP requested (stage buckets + count[PeROrF]s =)== s",
+             "tage attribution ==="]
+          + spans_lines[banner_i + 1:])
+
+    # The same damage with the `ver=` line gone TOO.  That line is what carries the dump's
+    # identity -- version, build flags, clock, clock source, probe price -- so this one must
+    # still be refused: the banner carries nothing, and repairing its absence is cheap
+    # precisely because the line beneath it is checked.  Losing both leaves nothing to check.
+    noident = list(spans_lines)
+    del noident[banner_i + 1]
+    noident[banner_i] = "PROF DUMP requested (stage buckets + count[PeROrF]s =)== s"
+    write(d, "capture-v2bannerident.txt", noident)
 
     # ------------------------------------------------- captures that disagree with themselves
     #

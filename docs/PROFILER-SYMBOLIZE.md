@@ -39,6 +39,13 @@ version it is:
 The **sample record and every flag bit are byte-for-byte identical** in the two versions, so
 the `S`-line decoding did not change at all. Only the header and the `PROFD` block moved.
 
+**Version 2 then grew twice more without moving**, and the tool reads all three firmwares
+under the one version entry: counter ids **20–38** and the per-bucket **`[PROF] s` span
+block** were *appended* rather than bumped. See
+[What version 2 grew after it shipped](#what-version-2-grew-after-it-shipped) — the spans in
+particular turn a corrected bucket share from an upper bound into a number, and retire the
+`2 × IFETCH_CALLS` estimate that preceded them.
+
 ```
 python3 tools/prof-symbolize.py CAPTURE [--kernel build/unix-040] [--load-base 0x08000000]
                                         [--user BIN] [--probe-cost N] [--top N]
@@ -102,11 +109,20 @@ pass afterwards:
   payload is complete** — the recovered `key=value` set has to be exactly one of the two
   header lines the format defines. A payload that is *missing a field* is not repaired; it
   is refused, naming what is gone.
+* **A stats dump whose `=== stage attribution ===` banner was eaten.** The same collision on
+  a different line, arriving as
+  `PROF DUMP requested (stage buckets + count[PeROrF]s =)== s` / `tage attribution ===`.
+  **Five of the 2026-08-22/23 captures were refused for this with every byte of their payload
+  present** — the rung 0, rung 1 and rung 1b boot and workload `PROFD`s among them. The
+  banner carries nothing; the `[PROF] ver=` line beneath it carries the version, build flags,
+  clock, clock source, sampler rate and probe price, in a fixed-width grammar that is
+  version-checked. So the dump is opened from *that* line, and a capture that lost the `ver=`
+  line as well is **still refused** — that is the line whose absence actually costs something.
 
-These two together are why the tool refused all seven captures of the first metal profiling
-session while every one of them was provably intact. Nothing about the repair weakens the
-truncation checks: a repair that could absorb a real loss would be worse than a refusal,
-because it turns a hard error into a plausible profile.
+These three together are why the tool refused all seven captures of the first metal profiling
+session, and five of the campaign's, while every one of them was provably intact. Nothing
+about the repair weakens the truncation checks: a repair that could absorb a real loss would
+be worse than a refusal, because it turns a hard error into a plausible profile.
 
 ---
 
@@ -164,7 +180,13 @@ The buckets also charge the probe's own cost to the buckets. The firmware measur
 enter/exit pair at arm time and reports it as `probe_cyc` alongside an exact `TRANSITIONS`
 count, so the inflation is computable — but it reports **one global** transition count, so a
 *per-bucket* subtraction has to be modelled. This tool models it from the mechanism rather
-than by apportionment:
+than by apportionment.
+
+*(A firmware that emits the `[PROF] s` span block reports the per-bucket counts directly, and
+then the model is not used at all — see
+[the per-bucket spans](#the-per-bucket-spans-a-corrected-share-stops-being-an-upper-bound).
+Everything in this section is what happens when it does not, which is every version-1 capture
+and every version-2 capture taken before the append.)*
 
 #### Version 1's unit: `probe_cyc` prices a *pair*, `TRANSITIONS` counts *each half*
 
@@ -354,6 +376,169 @@ assumption, and **the assumption is announced** in both the report and the warni
 
 ---
 
+## What version 2 grew after it shipped
+
+Counter ids **20–38** and the per-bucket **`[PROF] s` span block** were appended to wire
+version 2 rather than bumped into a version 3. That is the right call under the firmware's
+own rule — a bump is for a *meaning* that moves under a reader's feet, and a pure append
+moves nothing — and it means the tool reads both firmwares under one version entry.
+
+The cost of that choice lands in one place, and it is worth stating before anything else.
+
+### Absent is not zero, and which of the two it is depends on the id
+
+| a missing counter row | means |
+|---|---|
+| id **< 20** | the capture **lost a line**. Every version-2 firmware emits these. |
+| id **≥ 20** | the **firmware predates** that counter. Nothing was lost. |
+
+The report prints `absent` rather than `0` for a row that did not arrive, names which of the
+two cases it is, and **warns** only for the first. Every derived row is gated on the counters
+it needs being *present* rather than being non-zero.
+
+This is load-bearing rather than pedantic, because of the `DOPC_` block: those four counters
+read **exactly zero when the decoded-op cache is switched off** — the lookup returns before
+it can count — and that is a measurement. Printing `0` for a firmware that never had them
+would put a non-measurement in a column of measurements, which is the `ATC_HIT` defect
+wearing a different name. The `IV_*` counters beside them still move with the cache off, by
+design: they count what the *guest* asked for, and the guest issues `CPUSHL` and `PFLUSH`
+whatever the switch says.
+
+### The per-bucket spans: a corrected share stops being an upper bound
+
+Before the `s` block there was no per-bucket transition count at all, so the "subtract per
+bucket by its share of transitions" instruction the dump has always printed could only be
+followed by *modelling* the shares. `LOOP` — the bucket the entire probe-pricing argument
+turns on — could therefore only be reported as *at most* X, and the two ends of the price
+bracket gave two different at-mosts 5.8 points apart.
+
+A **span** is a cycle-span *charged to* a bucket, counted at exactly the two sites that
+charge it. It is **not** "calls into the bucket": entering a nested stage closes a span just
+as exiting does, so a `FETCHOP` with a translate inside it is charged twice. Two identities
+follow and both are checked:
+
+```
+sum(spans)              ==  TRANSITIONS
+corrected cyc for b     ==  acc[b] − spans[b] × probe_cyc
+```
+
+The second is the point — it makes the global correction decompose *exactly*, so no bucket's
+corrected share can disagree with the total's. Where the block is present and passes its
+gates, the report's probe column is headed `probe(spans)` and the **landing model is demoted
+to a cross-check**; its residual becomes a remark about the model rather than a gate on the
+report. Three gates, each a way the block could be present and wrong:
+
+* **the version gate** — spans count transitions, so a dump whose semantics price a *pair*
+  would be over-charged 2×, the exact defect v2 exists to fix;
+* **the identity gate** — `sum(spans) == TRANSITIONS` holds by construction, so a mismatch
+  means the `s` lines and the `c` lines did not come off one state;
+* **the completeness gate** — a block with rows missing is not a conservative error. The
+  missing rows read as buckets that pay *no* probe, which **inflates** exactly the buckets
+  whose evidence is gone.
+
+`FAULT` is reported **uncorrected**, deliberately: an unwind charges it cycles and counts no
+span (it is not a probe transition and has never been in `TRANSITIONS`), so it is
+over-reported rather than under-reported — the safe direction, at the ~0.06 % it measures.
+
+#### The `2 × IFETCH_CALLS` method is retired here, and it was refuted rather than bettered
+
+Before the spans, the fetch buckets' transition count was estimated as two per
+`IFETCH_CALLS`. Metal 2026-08-23 measured both quantities on one capture:
+
+| | transitions charged to the ifetch buckets | of all transitions |
+|---|---|---|
+| assumed, `2 × IFETCH_CALLS` | 99 049 270 | 12.37 % |
+| **measured spans** | **50 194 621** | **6.27 %** |
+
+**The assumption over-charges by 1.97×**, so every corrected share derived from it was biased
+**low**. The mechanism is the decoded-op cache itself: with the cache on, **a hit never
+enters `FETCHOP` at all** — the bucket is entered once per *miss*, not once per fetch
+(`FETCHOP` spans 15 547 429 against `DOPC_MISS` 15 436 987, 0.72 % apart). `IFETCH_CALLS ==
+FETCH` is still exactly true; what is false is that `FETCH` predicts bucket *entries* once
+something upstream answers fetches without entering the bucket. The report states both, and
+says which one may be used for what.
+
+### The price is a range, and the report sweeps it
+
+The boot line's three-pass calibration brackets the probe price, and the tool now parses it:
+
+```
+[PROF] probe calibration: armed N cyc, unarmed N cyc, empty N cyc, 1024 pairs -> M cyc/transition marginal, K in-bucket
+[PROF] price bracket: M (bodies only, what PROFB gates) .. K (bodies + the call scaffolding …) -- sweep it, do not pick
+```
+
+| quantity | arithmetic | what it names |
+|---|---|---|
+| **marginal** | `(armed − unarmed) / 2N` | the probe **bodies** — what `PROFB` gates off. What the firmware subtracts. |
+| call scaffolding | `(unarmed − empty) / 2N` | the `bl`, prologue, predicate, epilogue and `bx lr` — inside the buckets, and still there when the bodies are gone |
+| **in-bucket** | `(armed − empty) / 2N` | bodies **plus** scaffolding: the price if the instrumentation calls go away entirely |
+
+The report **checks the firmware's arithmetic** against the three spans rather than repeating
+its quotients, and carries **both ends into the span table** as two corrected columns.
+Neither end is a correction of the other — the marginal figure is right for "the prof build
+with the bodies gated off", the in-bucket figure for "the prof build without the
+instrumentation calls", and a map's readers usually want the second while the firmware
+subtracts the first. A capture priced at one and read as though it were the other is how a
+"floor" gets invented. **Do not compare either against 45.5**: that is v1's 91 cyc/pair
+halved, measured with the probes *inlined* over the whole loop — a whole-cost inlined
+quantity neither of these is a bound on.
+
+The **two-pass** calibration is the older firmware: no `empty` span, so no in-bucket figure
+and no bracket line. That capture supports **one price**, and the report says so rather than
+presenting a range of width zero as a range. The bracket is version-guarded exactly as the
+boot-line probe fallback is: it is measured by one boot in one version's unit, and a capture
+can span a reflash.
+
+### The rung counters, and the identities that scope them
+
+| ids | what | the identity the report asserts |
+|---|---|---|
+| 20 | `IFETCH_CALLS` | `IFETCH_CALLS == FETCH`, identically — all five `ENTER_IFETCH` sites increment `FETCH` exactly once |
+| 21–23 | `BLK_*` — the block-idiom fast path | the guest stream is `(INSNS − BLK_HIT) + BLK_INSNS` |
+| 24–27 | `DOPC_*` — the decoded-op cache | `DOPC_HIT + DOPC_MISS == INSNS + FAULTS` |
+| 28–37 | `IV_*` — invalidation cause | `sum(IV_*) == DOPC_INVAL` with the cache on; `< ` is impossible |
+| 38 | `IV_CACR_SKIP` | **not** a cause; the guest's true request rate is `sum(IV_*) + IV_CACR_SKIP` |
+
+**`BLK_INSNS` is not a subset of `INSNS`.** `INSNS` counts instructions retired through the
+run-loop *tail*, and the fast path retires a whole chunk per pass of that loop — so a chunk
+contributes 1 to `INSNS` and 2 × chunk to `BLK_INSNS`. The literal ratio is a share of
+nothing, and it does not merely inflate: on the 2026-08-22 metal boot it reads 59.28 %
+against a true 37.25 %, which is *outside* the range in which the map's 31.80 % prediction
+could be judged at all. The report prints both, calls only the reconstruction the share, and
+shows the literal one so it is not reached for by accident. It also reports the **mean chunk
+length** and warns below ~8: the recognizer test is paid once per chunk, so a mean near 2
+means it is paid per iteration and the whole saving is gone — and the thing to check then is
+the *trigger*, not the host operation.
+
+**A dispatch is not a guest instruction.** `DOPC_HIT + DOPC_MISS` counts run-loop passes, so
+where the fast path is live the hit rate is per pass and anything per-instruction must divide
+by the reconstructed stream. The identity itself is worth a note: the firmware's
+`docs/profiler.md` states it as `== INSNS`, and **twelve metal captures across three sessions
+and three firmware builds put the sum above `INSNS` by exactly `FAULTS`, every time, to the
+unit**. The mechanism is plain once stated — a faulting instruction consults the cache (so it
+is a dispatch) and then throws before retiring through the tail (so `INSNS` never counts it).
+A difference that reproduces another counter in the same dump exactly, twelve times, is a
+mechanism and not the dump skew it was first read as. The tool asserts the `+ FAULTS` form.
+
+**`DOPC_INVAL / DOPC_MISS` is not a ratio worth forming** and the report refuses to print
+one: a single whole-cache invalidation can cost a full cache of refills, so the two are not
+commensurable. The figure that means something is *misses per invalidation*, read against the
+workload's code footprint — one that does not track the footprint is re-warm, not capacity,
+and the fix for re-warm is a narrower invalidation rather than a bigger cache.
+
+**`IV_CACR_SKIP` is outside the cause block, and the report is emphatic about why.** Every
+entry in the block means "this request reached the invalidator". A narrowing implemented at
+its *call site* decides before that and increments nothing at all — it is not a skipped
+request, it is an uncounted one — so defining a narrowing's yield as `sum(IV_*) − DOPC_INVAL`
+is **false for exactly the class of narrowing most worth doing**. On a firmware that has no
+such counter the report says the narrowing is *invisible here* and refuses to score one from
+those rows. A gap of `sum(IV_*) > DOPC_INVAL` is legal and has **two causes these rows cannot
+tell apart** — the cache off for part of the window, or a narrowing *inside* the invalidator
+refusing a request whose cause was already counted — so the report names both and points at
+the switch log.
+
+---
+
 ### Counters and rates
 
 The counters are exact regardless of what the timing instruments are doing — they are not
@@ -431,7 +616,7 @@ instrument would make the ranking look like a measurement.
 sh tools/test-prof-symbolize.sh          # exit 0
 ```
 
-190 checks. No board, no kernel image and no cross toolchain required.
+276 checks. No board, no kernel image and no cross toolchain required.
 `tools/prof-fixtures.py` builds the synthetic captures into a temporary directory — valid,
 truncated, wrapped, weighted, and one per refusal — together with a small hand-assembled
 m68k ELF and the equivalent `nm` dump, so **both** symbol paths are executed and asserted to
@@ -471,6 +656,30 @@ Three further v2 fixtures are captures that are **not corrupt** but disagree wit
 about their version — a v1 magic under `version=2`, and a `ver=` line in each version's
 grammar declaring the other. All three must be refused rather than resolved in favour of one
 field, and the suite asserts that each names what contradicts what.
+
+**The post-append fixtures are a third kind again**, because the thing being tested is that
+two *legal version-2 captures* carrying different numbers of rows are read differently:
+
+* `capture-v2spans` carries all 39 counters and the `s` block; `capture-v2valid` carries 20
+  and no block. The suite pins `LOOP`'s probe at the **measured** `5043850 × 46 =
+  232017100`, and asserts that the modelled figure for the same bucket in the same buckets
+  (`211601150`) appears **nowhere** — the model was never wrong about the *total*, only about
+  the shape, so a tool still using it produces a full and different table rather than an error.
+* `capture-v2noskip` is the 38-counter firmware: id 38 must read `absent`, be named as an
+  *append* rather than a loss, and the report must refuse to score a call-site narrowing from
+  rows that structurally cannot see one.
+* three ways an `s` block can be present and unusable — spans that miss `TRANSITIONS`, a
+  block with rows lost, and a per-pair version — each must fall back to the model and say so.
+* `capture-v2cal2` is the two-pass calibration: one price, no bracket, and the suite asserts
+  the swept column appears nowhere. `capture-v2calbad` states a marginal figure its own three
+  spans do not give.
+* `capture-v2blkstall` is the fast path's pre-registered failure mode arriving — it fires,
+  with a mean chunk length of 2. `capture-v2dopcoff` is the cache switched off, where the four
+  `DOPC_` counters read exactly zero and the `IV_*` counters do not.
+* `capture-v2bannergone` is `capture-v2spans`'s own bytes with the `=== stage attribution ===`
+  banner eaten by the console echo, and the assertion is again an **identity**: the repaired
+  report body must equal the clean one. `capture-v2bannerident` loses the `ver=` line too and
+  must still be refused.
 
 If `build/unix-040` happens to be present the test additionally runs the ELF parser against
 the real artifact. That case reports **SKIP**, not a pass, when the image is absent: it is

@@ -50,6 +50,35 @@
 # corrupt.  Every field is present and well formed, and each simply answers the version
 # question twice.  They are here because that is what a hand-edited capture, a mixed-firmware
 # paste, or a generator that bumped a number without bumping a format actually looks like.
+#
+# WIRE VERSION 2 THEN GREW WITHOUT MOVING, and that is the shape of the newest cases.
+# Counter ids 20..38 and the per-bucket `[PROF] s` span block were APPENDED to version 2
+# rather than bumped into a version 3 -- correctly, because a bump would make every existing
+# v2 tool refuse a capture it can read correctly.  The cost is that two legal v2 captures can
+# carry different numbers of rows, so there are fixtures for both and the assertions are
+# about telling them apart:
+#
+#   * ABSENT IS NOT ZERO, and which of the two it is depends on the id.  Below 20 a missing
+#     row is a lost line; at or above it, a firmware that predates the counter.  The
+#     `DOPC_` block makes this load-bearing rather than pedantic: those counters read exactly
+#     zero when the decoded-op cache is switched OFF, which is a measurement.
+#   * THE SPANS BEAT THE MODEL.  A corrected bucket share used to be an upper bound because
+#     nothing counted per-bucket transitions; the `s` block counts them.  The estimate it
+#     replaces -- `2 x IFETCH_CALLS` for the fetch buckets -- is REFUTED and not merely
+#     bettered, by 1.97x on metal, and the mechanism is the decoded-op cache itself: with the
+#     cache on, a hit never enters FETCHOP at all.  The fixture is built so a tool using the
+#     old estimate gets a visibly different number rather than an error.
+#   * THE PRICE IS A RANGE.  The boot's three-pass calibration brackets it, and a capture
+#     priced at one end and read as though it were the other is how a "floor" gets invented.
+#     The two-pass fixture is the older firmware, which supports one price and must say so
+#     rather than present a zero-width range as a range.
+#
+# And one more capture-path repair, from the same shared UART as the `ring hdr` one: the
+# stats dump's own "=== stage attribution ===" banner, eaten by the console echo of the
+# command that requested the dump.  Five metal captures were refused for it with every byte
+# of their payload present.  The banner carries nothing and the `[PROF] ver=` line beneath it
+# carries everything, so the repair is to open the dump from that line -- and losing THAT
+# line is still a refusal, which is what capture-v2bannerident pins.
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 TOOL="$HERE/tools/prof-symbolize.py"
@@ -142,7 +171,7 @@ echo "-- wire version 2: it parses, and the three v1 defects are gone ----------
 
 run capture-v2valid.txt $K
 check "a v2 capture parses"                     "0" "$st"
-has   "  ...and says which version it read"     "1" "wire version    2  (14 buckets, 20 counters)"
+has   "  ...and says which version it read"     "1" "wire version    2  (14 buckets, 39 counters defined; this dump carries 20)"
 has   "  ...and reads the v2 boot line"         "1" "v2, ARM clock 666666666 Hz (clk=cfg), probe 46 cyc/transition"
 has   "  ...with the v2 magic on the ring"      "1" "magic Z3P2  version 2"
 has   "the renamed bucket 8 is TAILADV"         "2" "  8  TAILADV "
@@ -283,6 +312,160 @@ has   "  ...and still treated as the unsafe case" "1" "NOT KNOWN TO BE THE RUNNI
 present "  ...with the drift in the warnings"   "is neither"
 
 echo
+echo "-- v2's post-ship append: nineteen counters and a whole extra block --------------"
+# Ids 20..38 and the `[PROF] s` block went into version 2 WITHOUT a bump, which is the right
+# call -- a bump would make every v2 tool refuse a capture it can read -- but it means two
+# legal v2 captures can carry different numbers of rows.  So the pre-append firmware must be
+# read without inventing zeros, and the post-append one without ignoring the block.
+
+run capture-v2spans.txt
+check "the appended-counter capture parses"     "0" "$st"
+has   "  ...distinguishing defined from carried" "1" "39 counters defined; this dump carries 39"
+has   "  ...and reading the new ids"            "1" " 20  IFETCH_CALLS"
+has   "  ...through the last of them"           "1" " 38  IV_CACR_SKIP"
+
+# ABSENT IS NOT ZERO, and which of the two depends on the id.  Below 20 a missing row is a
+# lost line; at or above it, a firmware that predates the counter.  Printing 0 for the
+# second would put a non-measurement in a column of measurements.
+run capture-v2noskip.txt
+check "the 38-counter firmware parses"          "0" "$st"
+has   "  ...and id 38 reads absent, not zero"   "1" " 38  IV_CACR_SKIP                 absent"
+has   "  ...named as an append, not a loss"     "1" "ids 38..38 did not arrive"
+has   "  ...and said to predate them"           "1" "firmware that PREDATES them"
+# The whole point of that distinction: a narrowing that decides at its call site increments
+# NOTHING, so `sum(IV_*) - DOPC_INVAL` does not recover it.  A real verdict was scored that
+# way and accounted for 7.3% of a 54.8% effect.
+has   "  ...so a call-site narrowing is invisible" "1" "is INVISIBLE here"
+has   "  ...and must not be scored from these rows" "1" "Do not score a narrowing from these rows"
+
+echo
+echo "-- the per-bucket spans: a corrected share stops being an upper bound ------------"
+# 5043850 LOOP spans x 46 = 232017100, against the MODEL's 211601150 for the same bucket in
+# capture-v2valid.  Those are different numbers from the same buckets and the same
+# TRANSITIONS: the model was never wrong about the total, only about the shape.
+
+run capture-v2spans.txt
+has   "the probe column is measured, not modelled" "1" "probe(spans)"
+has   "  ...LOOP's probe is spans x price"      "1" "   0  LOOP                  420000000   21.00%        232017100"
+has   "  ...where the model gave a different figure" "0" "211601150"
+has   "  ...and the model is demoted to a cross-check" "1" "NOT USED -- the .s. block measured what this model estimates"
+has   "sum(spans) == TRANSITIONS is asserted"    "1" "sum(spans) == TRANSITIONS                         ok        13354050 == 13354050"
+has   "  ...and the firmware's own column reproduced" "1" "firmware's own corrected_total @46                ok        1385713700 == 1385713700"
+has   "  ...with FAULT left uncorrected"        "1" "   9  FAULT                   8000000               0          8000000"
+
+# The bracket is a RANGE and the report must sweep it.  Picking an end is what the
+# firmware's own line means by "sweep it, do not pick".
+has   "the price bracket is read off the boot"  "1" "PRICE BRACKET   \[46, 57\] cyc/transition -- SWEEP IT, DO NOT PICK"
+has   "  ...with its arithmetic checked"        "1" "marginal      46 cyc/transition   = (armed - unarmed) / 2048   ok"
+has   "  ...and the scaffolding term named"     "1" "scaffolding   11 cyc/transition"
+has   "  ...and both ends carried into the table" "1" "corrected @46    share  |  corrected @57    share"
+has   "  ...LOOP swept across the bracket"      "1" "   0  LOOP                  420000000         5043850        187982900   13.57%        132500550   10.70%"
+has   "  ...and 45.5 named as not a bound"      "1" "do not compare either against 45.5"
+
+# THE RETIREMENT.  This is why the block exists: the estimate it replaces is refuted, not
+# merely bettered, and the mechanism is the decoded-op cache itself.
+has   "the 2 x IFETCH_CALLS method is retired"  "1" "RETIRED HERE: the .2 x IFETCH_CALLS. estimate"
+has   "  ...with both quantities shown"         "1" "assumed  2 x IFETCH_CALLS = 3200000"
+has   "  ...against the measured spans"         "1" "measured FETCHOP+FETCHEX spans = 860000"
+has   "  ...naming the over-charge"             "1" "over-charges the fetch buckets by 3.72x"
+has   "  ...and biased LOW, not high"           "1" "was biased LOW"
+has   "  ...and the mechanism, not just the size" "1" "a HIT NEVER ENTERS"
+
+# Three ways an `s` block can be present and unusable.  Each must fall back to the model
+# rather than produce a corrected column from a block that cannot be right.
+run capture-v2spansbad.txt
+check "spans that miss TRANSITIONS still report" "0" "$st"
+present "  ...naming the difference"              "sum(spans)=13304050 against TRANSITIONS=13354050"
+present "  ...as equal by construction"           "equal by construction"
+has   "  ...and the spans are not used"         "1" "The .s. lines and the counter lines did not come off the same state"
+has   "  ...so the modelled column is back"     "1" "probe cyc"
+
+run capture-v2spanslost.txt
+check "an s block with rows lost still reports" "0" "$st"
+has   "  ...naming its own stated total"        "1" "says sum(spans)=13354050 but its 12 per-bucket rows sum to 5880200"
+has   "  ...and why the loss is not conservative" "1" "which inflates them"
+
+run capture-v2cal2.txt
+check "the two-pass calibration still reports"  "0" "$st"
+has   "  ...saying only two passes ran"         "1" "ran only TWO calibration passes"
+has   "  ...so there is no bracket to sweep"    "1" "PRICE BRACKET   not available from this capture: one price only"
+has   "  ...and no swept column appears"        "0" "corrected @46    share  |"
+
+run capture-v2calbad.txt
+check "a calibration that fails its own sum reports" "0" "$st"
+has   "  ...checking the arithmetic on the line" "1" "but (armed - unarmed) / 2048 = 46"
+has   "  ...and it reaches the warnings"        "1" "The line's number and the line's arithmetic disagree"
+
+echo
+echo "-- the counters the rungs added, and the identities that scope them --------------"
+
+run capture-v2spans.txt
+has   "IFETCH_CALLS == FETCH is asserted"       "1" "IFETCH_CALLS == FETCH                             ok        1600000 == 1600000"
+has   "  ...and its scope stated with it"       "1" "WHAT THIS DOES NOT LICENSE: an ifetch BUCKET entry count"
+
+# BLK_INSNS is NOT a subset of INSNS: a chunk is one retirement and many guest instructions,
+# so the literal ratio is a share of nothing.  Both are printed, and only one is called the
+# share -- the other is shown so it is not reached for by accident.
+has   "the guest stream is reconstructed"       "1" "(1000000 - 2000) + 600000 = 1598000"
+has   "  ...and that is THE share"              "1" "fast-path share of the stream         37.55%"
+has   "  ...with the literal ratio marked as not one" "1" "literal BLK_INSNS / INSNS             60.00%   <- NOT a share of anything"
+has   "  ...and the mean chunk length reported" "1" "mean chunk length                                  300.0"
+
+# The pre-registered failure mode for the fast path, arriving: it fires, and the recognizer
+# test is paid per iteration.
+run capture-v2blkstall.txt
+check "a fast path that fires uselessly reports" "0" "$st"
+has   "  ...naming the floor it is below"       "1" "BELOW 8"
+has   "  ...and where to look"                  "1" "the failure mode is the trigger, not the"
+has   "  ...and it reaches the warnings"        "1" "mean chunk length is 2.0"
+
+run capture-v2spans.txt
+has   "the dopc hit rate is per DISPATCH"       "1" "hit rate                              90.00%   900023 hit / 100002 miss of 1000025 dispatches"
+# docs/profiler.md states this identity as `== INSNS`.  Twelve metal captures across three
+# sessions say the sum exceeds INSNS by EXACTLY FAULTS, every time: a faulting instruction
+# consults the cache and then throws before retiring through the tail.
+has   "  ...and reconciled against INSNS + FAULTS" "1" "DOPC_HIT + DOPC_MISS == INSNS + FAULTS            ok        1000025 == 1000000 + 25"
+has   "  ...with the +FAULTS term explained"    "1" "threw before retiring through the tail"
+has   "  ...and a dispatch distinguished from an instruction" "1" "A DISPATCH IS NOT A GUEST INSTRUCTION here"
+has   "DOPC_INVAL/DOPC_MISS is refused as a ratio" "1" "IS NOT A RATIO WORTH FORMING"
+has   "  ...in favour of misses per invalidation" "1" "misses / invalidation"
+
+run capture-v2dopcskew.txt
+check "a broken dispatch identity still reports" "0" "$st"
+has   "  ...as a MISMATCH"                      "1" "DOPC_HIT + DOPC_MISS == INSNS + FAULTS            MISMATCH"
+has   "  ...pointing at the window, not the counter" "1" "check the switch log before the counter"
+
+run capture-v2ifetchdrift.txt
+check "a drifted IFETCH_CALLS still reports"    "0" "$st"
+has   "  ...as a MISMATCH naming the gap"       "1" "IFETCH_CALLS == FETCH                             MISMATCH  1600400 vs 1600000, +400"
+has   "  ...and why nothing else would catch it" "1" "the drift no"
+
+echo
+echo "-- invalidation attribution, and the request the cause block cannot see ----------"
+
+run capture-v2spans.txt
+has   "the causes are broken out"               "1" "IV_FLUSH                   1200    60.00%"
+has   "sum(IV_\*) == DOPC_INVAL holds"           "1" "sum(IV_\*) == DOPC_INVAL                           ok        2000 == 2000"
+# The guest's true request rate is sum + skip, and the narrowed share is out of THAT.
+has   "the true request rate includes the skip" "1" "requested by the guest                     4000"
+has   "  ...and the narrowing is scored from it" "1" "proved inert before the call               2000   50.00%   <- narrowed at the CALL SITE"
+has   "  ...with IV_CACR_SKIP kept out of the block" "1" "deliberately NOT a member of the cause block"
+
+# Cache OFF: the four DOPC_ counters read exactly zero and that is a MEASUREMENT.  The IV_*
+# counters still move, because they count what the guest asked for.
+run capture-v2dopcoff.txt
+check "a cache-off window still reports"        "0" "$st"
+has   "  ...as a measurement, not an absence"   "1" "this is a measurement and not an absence"
+has   "  ...with the guest's own rate still visible" "1" "the guest issues CPUSHL and PFLUSH whatever the switch says"
+has   "  ...and no hit rate invented from zeros" "0" "hit rate                               0.00%"
+has   "  ...the request gap named as two-caused" "1" "IT HAS TWO CAUSES THESE ROWS CANNOT TELL APART"
+
+run capture-v2ivshort.txt
+check "sum(IV) below DOPC_INVAL still reports"  "0" "$st"
+has   "  ...as impossible rather than merely odd" "1" "IMPOSSIBLE: every invalidation performed was requested"
+has   "  ...and it reaches the warnings"        "1" "is LESS than DOPC_INVAL"
+
+echo
 echo "-- truncation: a lost serial line must never become a shorter profile ------------"
 
 run capture-truncated.txt
@@ -327,6 +510,30 @@ check "  ...and so are its buckets and coverage" "same" \
 run capture-hdrgone.txt $K
 check "the same damage with a field LOST is refused" "1" "$st"
 has   "  ...and says the payload is what is gone" "1" "one lost payload, which nothing in the"
+
+# The SAME shared-UART collision on a different line: the stats dump's own
+# "=== stage attribution ===" banner.  Five of the 2026-08-22/23 metal captures were refused
+# for this while every byte of their payload was present -- the whole rung 0/1/1b campaign's
+# boot and workload PROFDs among them.  The banner carries nothing; the `[PROF] ver=` line
+# beneath it carries the version, build flags, clock, clock source and probe price, in a
+# fixed-width grammar that is version-checked.  So the payload is repairable and the
+# assertion is that the report is the SAME report.
+run capture-v2bannergone.txt
+check "a stats dump with its banner eaten parses" "0" "$st"
+has   "  ...announcing the repair"              "1" "opener did not arrive"
+has   "  ...and where the identity came from instead" "1" "opened from its '\[PROF\] ver=' line instead"
+has   "  ...naming it as the shared-UART defect" "1" "the same defect the 'ring hdr' repair"
+sed -n '/^build           0x04/,/^warnings$/p' "$TMP/o" > "$TMP/banner-body"
+run capture-v2spans.txt
+sed -n '/^build           0x04/,/^warnings$/p' "$TMP/o" > "$TMP/spans-body"
+check "the repaired stats dump is the clean one" "same" \
+      "$(cmp -s "$TMP/banner-body" "$TMP/spans-body" && echo same || echo DIFFERENT)"
+
+# And the same damage with the `ver=` line lost too.  That is the line the repair rests on --
+# it is what makes the banner disposable -- so losing both must still be a refusal.
+run capture-v2bannerident.txt
+check "banner AND ver= gone is still refused"   "1" "$st"
+has   "  ...as a capture with no dump in it"    "1" "no '\[PROF\]' dump found"
 
 echo
 echo "-- WEIGHT: the failure that produces a confident wrong answer -------------------"

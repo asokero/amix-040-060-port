@@ -134,16 +134,61 @@ COUNTER_NAMES_V1 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "IPAGE_HIT", "IPAGE_MISS", "DPAGE_RHIT", "DPAGE_RMISS",
                     "DPAGE_WHIT", "DPAGE_WMISS", "XLATE", "ATC_HIT", "ATC_MISS",
                     "MISALIGN_R", "MISALIGN_W", "FAULTS", "TRANSITIONS", "STACK_OVF"]
+# Ids 0..19 are the version-2 bump.  Ids 20..38 were APPENDED to the same version -- see
+# COUNTER_APPEND_BASE below for why that is safe and what it costs a reader.
 COUNTER_NAMES_V2 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "IPAGE_HIT", "IPAGE_MISS", "DPAGE_RHIT", "DPAGE_RMISS",
                     "DPAGE_WHIT", "DPAGE_WMISS", "XLATE", "XLATE_OK", "ATC_MISS",
                     "MISALIGN_R", "MISALIGN_W", "FAULTS", "TRANSITIONS", "STACK_OVF",
-                    "ATC_HIT"]
+                    "ATC_HIT",
+                    # --- appended, no version bump ---------------------------------------
+                    "IFETCH_CALLS",                                   # 20
+                    "BLK_HIT", "BLK_INSNS", "BLK_BYTES",              # 21..23  rung 0
+                    "DOPC_HIT", "DOPC_MISS", "DOPC_EXT", "DOPC_INVAL",  # 24..27 rung 1
+                    "IV_FLUSH", "IV_ROOT", "IV_DMA", "IV_TABLE", "IV_KNOB",
+                    "IV_WRAP", "IV_MAP", "IV_PFLUSH", "IV_PFLUSHA",
+                    "IV_CACR",                                        # 28..37  rung 1b
+                    "IV_CACR_SKIP"]                                   # 38      rung 1c
 C_INSNS, C_INSNS_SUPER, C_FETCH, C_READ, C_WRITE, \
     C_IPAGE_HIT, C_IPAGE_MISS, C_DPAGE_RHIT, C_DPAGE_RMISS, \
     C_DPAGE_WHIT, C_DPAGE_WMISS, C_XLATE, C_XLATE_OK, C_ATC_MISS, \
     C_MISALIGN_R, C_MISALIGN_W, C_FAULTS, C_TRANSITIONS, C_STACK_OVF, \
-    C_ATC_HIT = range(20)
+    C_ATC_HIT, C_IFETCH_CALLS, \
+    C_BLK_HIT, C_BLK_INSNS, C_BLK_BYTES, \
+    C_DOPC_HIT, C_DOPC_MISS, C_DOPC_EXT, C_DOPC_INVAL, \
+    C_IV_FLUSH, C_IV_ROOT, C_IV_DMA, C_IV_TABLE, C_IV_KNOB, \
+    C_IV_WRAP, C_IV_MAP, C_IV_PFLUSH, C_IV_PFLUSHA, C_IV_CACR, \
+    C_IV_CACR_SKIP = range(39)
+
+# THE APPEND SEAM, and why absent is not zero.
+#
+# Ids 0..19 are what version 2 bumped for.  Ids 20..38 arrived later, into the SAME version,
+# because a pure append moves no existing id's meaning and the firmware's rule is to bump
+# only when a meaning moves -- bumping would make every v2 tool refuse a capture it can read
+# correctly.  The cost of that choice lands here: two v2 captures can legitimately carry
+# different numbers of counter rows, and a row that did not arrive means one of two entirely
+# different things.
+#
+#   id <  20 missing   the capture lost a line.  Every v2 firmware emits these.
+#   id >= 20 missing   the FIRMWARE predates that counter.  Nothing was lost.
+#
+# Printing 0 for the second case would be the ATC_HIT defect in a new place: a number that
+# is not a measurement, sitting in a column of measurements.  So the counter table reports
+# absent rows as absent, and every derived row below is gated on the counters it needs being
+# PRESENT rather than on their being non-zero.  The distinction is load-bearing for the
+# `DOPC_` block in particular: those counters read exactly zero when the decoded-op cache is
+# switched OFF, which is a measurement and must not be confused with the firmware not having
+# them.
+COUNTER_APPEND_BASE = 20
+
+# The invalidation-cause block, ids 28..37, in Z3660_DOPC_INV_* order.
+#
+# IV_CACR_SKIP (38) IS DELIBERATELY NOT IN IT.  The block is indexed arithmetically by cause
+# and every entry means "this request reached z3660_dopc_invalidate()".  A CACR write that
+# the call site proved inert never gets there: it is not a skipped request, it is an
+# uncounted one, and the sum identity below would be wrong if it were folded in.
+C_IV_FIRST, C_IV_LAST = C_IV_FLUSH, C_IV_CACR
+IV_CAUSE_IDS = tuple(range(C_IV_FIRST, C_IV_LAST + 1))
 
 BUILD_PROBES, BUILD_PERF, BUILD_PROF = 0x01, 0x02, 0x04
 
@@ -221,11 +266,28 @@ TWO32 = 1 << 32
 #   `clk` is parsed and surfaced wherever it appears, and `clk=bsp` is warned about hard --
 #   see _clk_note(), which also states why the wrap cross-check cannot stand in for it.
 #
+#   AND VERSION 2 GREW AFTER IT SHIPPED, WITHOUT MOVING.  Counter ids 20..38 and the
+#   per-bucket `[PROF] s` span block were appended to version 2 rather than bumped into a
+#   version 3, and that is the right call under the firmware's own rule: a bump is for a
+#   MEANING that moves under a reader's feet, and an append moves nothing.  So this table
+#   describes both the pre-append and the post-append firmware, and the difference between
+#   them is read out of what a capture CONTAINS rather than out of what it declares.  See
+#   COUNTER_APPEND_BASE for the one thing that costs: a missing row means "lost" below id 20
+#   and "the firmware predates it" at or above.
+#
 # WHAT A NEW ENTRY HERE DOES NOT COVER, and what has to be re-read from the firmware
 # alongside it: BUCKET_PARENT and bucket_entries().  Those are the interpreter's nesting
 # shape and its entry counts rather than wire facts, and a version that adds or re-parents
 # a stage changes both -- v2 added three children of B_TAIL and two counters' worth of
 # entries, and neither could have been derived from this table.
+#
+# AND THE MODEL IN bucket_entries() IS NOW KNOWN TO BE WRONG WHERE THE `s` BLOCK EXISTS.
+# It derives FETCHOP's entry count from INSNS and FETCHEX's from FETCH, which was right for
+# a run loop that fetches every opcode.  With the decoded-op cache on, a HIT never enters
+# FETCHOP at all -- metal 2026-08-23 measured FETCHOP spans 15 547 429 against DOPC_MISS
+# 15 436 987 -- so the model over-charges the fetch buckets by ~1.97x.  Where a dump carries
+# `[PROF] s` lines the spans are used and the model is demoted to a cross-check; where it
+# does not, the model is all there is and the report says so.
 # --------------------------------------------------------------------------------------
 
 WIRE_VERSIONS = {
@@ -246,6 +308,7 @@ WIRE_VERSIONS = {
         "atc_hit_identity": "ATC_HIT + FAULTS == XLATE",
         "tier0_identity": "IPAGE_MISS + DPAGE_RMISS + DPAGE_WMISS == XLATE",
         "atc_sum_identity": None,
+        "counter_append_base": None,    # v1 is frozen; nothing was ever appended to it
     },
     2: {
         "probe_unit": "phase transition",
@@ -264,6 +327,7 @@ WIRE_VERSIONS = {
         "atc_hit_identity": "XLATE_OK + FAULTS == XLATE",
         "tier0_identity": "IPAGE_MISS + DPAGE_RMISS + DPAGE_WMISS == XLATE",
         "atc_sum_identity": "ATC_HIT + ATC_MISS == XLATE (when no translate faulted)",
+        "counter_append_base": COUNTER_APPEND_BASE,
     },
 }
 
@@ -700,6 +764,26 @@ RE_BOOT_V1 = re.compile(r"^\[PROF\] profiling build: ARM clock (\d+) Hz \(measur
 RE_BOOT_V2 = re.compile(r"^\[PROF\] profiling build v(\d+): ARM clock (\d+) Hz "
                         r"\(clk=(\w+), PMU:wall \d+\.\d+\), probe (-?\d+) cyc/transition "
                         r"\(-?\d+ cyc/pair\), ring (\d+) x (\d+) B\s*$")
+# The probe calibration and the price bracket, both printed at boot right under the boot
+# line.  They are parsed for one reason above all others: the boot line reports a SINGLE
+# probe figure and the bracket line reports the TWO ends of a range, and a capture priced at
+# one end and read as though it were the other is exactly the confusion the C2 map's
+# "45.5 floor" came out of.  A tool that reads only the boot line cannot sweep.
+#
+# TWO SHAPES, and the older one is not a subset of the newer.  The 2026-08-22 firmware
+# printed `armed/unarmed/pairs -> N cyc/transition marginal` and no bracket line at all,
+# because the third (`empty`) calibration pass did not exist yet.  The 2026-08-23 firmware
+# adds `empty` and the in-bucket figure.  Matching them with one loose pattern would let a
+# capture that carries only the marginal price be reported as though its bracket had
+# collapsed to a point -- which is a claim about the instrument, not an absence of one.
+RE_PROBE_CAL_3 = re.compile(r"^\[PROF\] probe calibration: armed (\d+) cyc, unarmed (\d+) "
+                            r"cyc, empty (\d+) cyc, (\d+) pairs -> (-?\d+) cyc/transition "
+                            r"marginal, (-?\d+) in-bucket\s*$")
+RE_PROBE_CAL_2 = re.compile(r"^\[PROF\] probe calibration: armed (\d+) cyc, unarmed (\d+) "
+                            r"cyc, (\d+) pairs -> (-?\d+) cyc/transition marginal\s*$")
+RE_PRICE_BRACKET = re.compile(r"^\[PROF\] price bracket: (-?\d+) \(bodies only, what PROFB "
+                              r"gates\) \.\. (-?\d+) \(bodies \+ the call scaffolding[^)]*\) "
+                              r"cyc/transition -- sweep it, do not pick\s*$")
 RE_HDR = re.compile(r"^\[PROF\] ring hdr (.*)$")
 RE_BEGIN = re.compile(r"^\[PROF\] ring begin\s*$")
 RE_END = re.compile(r"^\[PROF\] ring end n=(\d+)\s*$")
@@ -723,6 +807,16 @@ RE_COUNTER = re.compile(r"^\[PROF\] c (\d+)\s+(\S+)\s+(\d+)\s*$")
 # four numbers -- but to be CROSS-CHECKED against the four bucket rows, which is a free
 # check that the dump's `b` lines and its `t` line came off the same span.
 RE_TAIL = re.compile(r"^\[PROF\] t whole tail \(([A-Z+]+)\) cyc=(\d+)\s+(\d+\.\d+)%")
+# The per-bucket transition spans -- the `s` block.  This is the number the dump has always
+# told the reader to subtract by and never supplied: a bucket's OWN span count, incremented
+# at exactly the two sites that charge cycles to it.  With it, a corrected share is a number
+# instead of an upper bound.
+RE_SPAN = re.compile(r"^\[PROF\] s (\d+)\s+(\S+)\s+spans=(\d+)\s+corrected_cyc=(\d+)\s+"
+                     r"(\d+\.\d+)%\s*$")
+RE_SPAN_TOTAL = re.compile(r"^\[PROF\] s -- corrected_total=(\d+)\s+spans=(\d+)\s+"
+                           r"\(must equal TRANSITIONS (\d+)")
+RE_SPAN_HDR = re.compile(r"^\[PROF\] === per-bucket spans and the corrected shares "
+                         r"\(price (-?\d+) cyc/span")
 RE_KV = re.compile(r"([A-Za-z_]+)=(\S+)")
 
 # --------------------------------------------------------------------------------------
@@ -828,6 +922,16 @@ class Stats(object):
         self.counters = {}         # id -> value
         self.tail_cyc = None       # v2: the firmware's own whole-tail sum, for cross-check
         self.tail_line = 0
+        # The `[PROF] s` block (appended to v2).  `spans` is the measurement; the other
+        # three are the firmware's own arithmetic over it, kept so this tool can check it
+        # rather than reproduce it and hope.
+        self.spans = {}            # bucket id -> spans charged to it
+        self.span_corrected = {}   # bucket id -> the firmware's own corrected cycles
+        self.span_price = None     # the price the firmware's `s` block was computed at
+        self.span_total = None     # its corrected_total
+        self.span_sum = None       # its sum(spans)
+        self.span_trans = None     # the TRANSITIONS it says that sum must equal
+        self.span_line = 0
 
 
 def parse_capture(path):
@@ -837,6 +941,7 @@ def parse_capture(path):
     profile, quietly -- is the failure mode a fixed-width grammar exists to prevent."""
     warnings = []
     boot = None
+    cal = {}                       # the probe calibration / price-bracket lines, if present
     rings, stats = [], []
     ring = None
     st = None
@@ -904,6 +1009,31 @@ def parse_capture(path):
                         rec_size=int(m.group(4)), line=no)
             continue
 
+        # The calibration and the bracket.  Kept in their own dict and attached to `boot`
+        # afterwards, because a capture can carry them with the boot line itself lost to the
+        # console collision -- and a price bracket without a boot line is still a price
+        # bracket.  The three-pass form is tried first: the two-pass line is a PREFIX of it
+        # up to `pairs`, so matching in the other order would read a three-pass line as a
+        # two-pass one and silently drop the in-bucket end of the range.
+        m = RE_PROBE_CAL_3.match(line)
+        if m:
+            cal.update(armed=int(m.group(1)), unarmed=int(m.group(2)),
+                       empty=int(m.group(3)), pairs=int(m.group(4)),
+                       marginal=int(m.group(5)), in_bucket=int(m.group(6)),
+                       passes=3, cal_line=no)
+            continue
+        m = RE_PROBE_CAL_2.match(line)
+        if m:
+            cal.update(armed=int(m.group(1)), unarmed=int(m.group(2)), empty=None,
+                       pairs=int(m.group(3)), marginal=int(m.group(4)), in_bucket=None,
+                       passes=2, cal_line=no)
+            continue
+        m = RE_PRICE_BRACKET.match(line)
+        if m:
+            cal.update(bracket_lo=int(m.group(1)), bracket_hi=int(m.group(2)),
+                       bracket_line=no)
+            continue
+
         m = RE_HDR.match(line)
         payload = m.group(1) if m else None
         if payload is None:
@@ -940,6 +1070,33 @@ def parse_capture(path):
             st.first_line = no
             continue
 
+        # THE THIRD REPAIR: a stats dump whose "=== stage attribution ===" opener did not
+        # survive the console collision.  It is the same shared-UART defect the `ring hdr`
+        # repair exists for -- the echo of the command that requested the dump and the
+        # firmware's first line collide in the one UART -- and it arrives looking like
+        # "PROF DUMP requested (stage buckets + count[PeROrF]s =)== / tage attribution ===".
+        # Five of the 2026-08-22/23 metal captures were refused for exactly this while every
+        # byte of their payload was present.
+        #
+        # The repair is narrow, and it is narrow in the right place: the opener is a BANNER
+        # and carries nothing, while the `[PROF] ver=` line beneath it carries the dump's
+        # entire identity -- version, build flags, clock, clock source, sampler rate, probe
+        # price -- in a fixed-width grammar that is version-checked two lines later.  So the
+        # `ver=` line opens the block when the banner is gone, and a capture that lost the
+        # `ver=` line itself is still refused, because that is the line whose absence
+        # actually costs something.
+        if st is None and (RE_VER_V2.match(line) or RE_VER_V1.match(line)):
+            st = Stats()
+            st.first_line = no
+            warnings.append(
+                "capture line %d: a stats dump's '[PROF] === stage attribution ===' opener "
+                "did not arrive; the dump is opened from its '[PROF] ver=' line instead. "
+                "That line carries the version, build flags, clock and probe price, and its "
+                "grammar is version-checked, so nothing is guessed -- the banner carries "
+                "nothing the dump needs. This is the console echo colliding with the "
+                "firmware's output in the shared UART, the same defect the 'ring hdr' repair "
+                "exists for." % no)
+
         if st is not None:
             m = RE_VER_V2.match(line)
             if m:
@@ -967,6 +1124,17 @@ def parse_capture(path):
             if m:
                 st.tail_cyc, st.tail_line = int(m.group(2)), no
                 continue
+            m = RE_SPAN_HDR.match(line)
+            if m:
+                st.span_price = int(m.group(1))
+                st.span_line = no
+                continue
+            m = RE_SPAN_TOTAL.match(line)
+            if m:
+                st.span_total = int(m.group(1))
+                st.span_sum = int(m.group(2))
+                st.span_trans = int(m.group(3))
+                continue
             m = RE_TOTAL.match(line)
             if m:
                 st.total_cyc, st.wall_ticks, st.wall_hz = (int(m.group(1)), int(m.group(2)),
@@ -982,6 +1150,13 @@ def parse_capture(path):
                 bid, name, cyc = int(m.group(1)), m.group(2), int(m.group(3))
                 _check_name(bid, name, sem["bucket_names"], "bucket", no, sver, warnings)
                 st.buckets[bid] = cyc
+                continue
+            m = RE_SPAN.match(line)
+            if m:
+                bid, name = int(m.group(1)), m.group(2)
+                _check_name(bid, name, sem["bucket_names"], "bucket", no, sver, warnings)
+                st.spans[bid] = int(m.group(3))
+                st.span_corrected[bid] = int(m.group(4))
                 continue
             m = RE_COUNTER.match(line)
             if m:
@@ -1019,6 +1194,22 @@ def parse_capture(path):
             "it is used. Only a timestamp-shaped prefix on a line that is firmware output "
             "without it is tolerated, so this does not weaken the truncation checks."
             % (prefixed, first_prefix_line, first_prefix))
+    if cal:
+        if boot is None:
+            # A calibration with no boot line above it.  Kept rather than dropped: it is
+            # still a real measurement of this boot's probe, and it is exactly the case the
+            # console collision produces.  Everything the boot line would have supplied
+            # (the clock, its source, the ring geometry) is absent and stays absent.
+            boot = dict(version=2, cpu_hz=0, clk=None, probe_cyc=cal["marginal"],
+                        ring_entries=0, rec_size=0, line=cal["cal_line"],
+                        from_calibration_only=True)
+            warnings.append(
+                "capture line %d: a probe calibration line arrived with no '[PROF] "
+                "profiling build' boot line above it. The calibration is used -- it is a "
+                "real measurement of this boot's probe -- but the clock, its source "
+                "(clk=cfg/bsp) and the ring geometry the boot line carries are absent from "
+                "this capture." % cal["cal_line"])
+        boot["cal"] = cal
     return rings, stats, boot, len(lines), warnings
 
 
@@ -1255,6 +1446,162 @@ def probe_landing(entries):
     return land
 
 
+def span_probe(st, price):
+    """Per-bucket probe cycles from the MEASURED spans, at a given price.
+
+    This is the whole of the rung-1b improvement in one line: `acc[b] - spans[b] x price`.
+    No model, no apportionment, no residual -- the firmware counted the spans charged to
+    each bucket at the two sites that charge them, so the global correction
+    (`total - TRANSITIONS x price`) decomposes exactly and a bucket's corrected share stops
+    being an interval.
+
+    FAULT gets zero here and that is deliberate rather than an omission: an unwind charges
+    FAULT cycles and counts no span, because an unwind is not a probe transition and has
+    never been in TRANSITIONS.  Counting it would make the per-bucket correction disagree
+    with the global one.  FAULT is therefore reported UNCORRECTED, which over-reports it --
+    the safe direction, at the 0.06 % it measures."""
+    return dict((b, st.spans.get(b, 0) * price) for b in range(N_BUCKETS))
+
+
+def probe_bracket(st, boot, probe_cyc, probe_src, sver):
+    """The [marginal, in-bucket] price range to sweep, and where it came from.
+
+    Returns (lo, hi, source-text).  `lo == hi` means there is no bracket to sweep and the
+    single price is all the capture supports -- which is a fact about the capture, and is
+    said rather than papered over with a range of width zero presented as a range.
+
+    THE BRACKET IS VERSION-GUARDED for the same reason the boot-line probe fallback is: it
+    is measured by ONE boot, in ONE version's unit, and a capture can span a reflash.  A
+    price bracket carried across a version boundary is the error v2 exists to fix, wearing
+    a different hat."""
+    if probe_src == "--probe-cost":
+        return probe_cyc, probe_cyc, ("--probe-cost: one price, given explicitly, so there "
+                                      "is nothing to sweep")
+    cal = (boot or {}).get("cal")
+    if not cal or (boot.get("version") != sver):
+        return probe_cyc, probe_cyc, None
+    lo = cal.get("bracket_lo", cal.get("marginal"))
+    hi = cal.get("bracket_hi", cal.get("in_bucket"))
+    if lo is None or hi is None or hi <= lo:
+        return probe_cyc, probe_cyc, None
+    return lo, hi, ("this boot's own calibration (capture line %d)"
+                    % cal.get("bracket_line", cal.get("cal_line", 0)))
+
+
+def report_calibration(cal, out, warn):
+    """The boot's probe calibration and its price bracket, with the firmware's arithmetic
+    checked rather than repeated.
+
+    Two things are worth doing here and nothing else is.  First, CHECK: the marginal figure
+    is `(armed - unarmed) / 2N` and the in-bucket figure is `(armed - empty) / 2N`, and both
+    are printed beside the three spans they come from precisely so a reader can check them
+    -- so this tool checks them, because a reader who has been handed a checked number
+    checks it once and a reader who has been handed an unchecked one checks it never.
+    Second, SAY THE BRACKET IS A RANGE: the firmware's own line ends "sweep it, do not
+    pick", and the failure it is guarding against -- a capture priced at one end and read as
+    though it were the other -- is what produced the C2 map's "45.5 floor"."""
+    out.append(sec("probe calibration (capture line %d) -- the price, and why it is a range"
+                   % cal.get("cal_line", 0)))
+    if cal.get("passes") == 3:
+        out.append("  armed %d cyc / unarmed %d cyc / empty %d cyc over %d pairs"
+                   % (cal["armed"], cal["unarmed"], cal["empty"], cal["pairs"]))
+    else:
+        out.append("  armed %d cyc / unarmed %d cyc over %d pairs"
+                   % (cal["armed"], cal["unarmed"], cal["pairs"]))
+        out.append("  this firmware ran only TWO calibration passes: there is no `empty` "
+                   "span, so the")
+        out.append("  in-bucket end of the bracket was not measured and this capture "
+                   "supports one price,")
+        out.append("  not a range.  That is a property of the firmware that took it, not of "
+                   "the workload.")
+    n2 = 2 * cal["pairs"] if cal.get("pairs") else 0
+
+    def _check(label, want, armed_minus, note):
+        got = (armed_minus // n2) if n2 else None
+        if got is None or want is None:
+            return
+        if got == want:
+            out.append("  %-12s %3d cyc/transition   = (%s) / %d   %s"
+                       % (label, want, note, n2, "ok"))
+        else:
+            out.append("  %-12s %3d cyc/transition   *** but (%s) / %d = %d"
+                       % (label, want, note, n2, got))
+            warn.append("probe calibration at capture line %d: the firmware reports %s = %d "
+                        "cyc/transition, but its own three spans give %d. The line's number "
+                        "and the line's arithmetic disagree, so one of the two was not "
+                        "printed from the state the other was."
+                        % (cal.get("cal_line", 0), label.strip(), want, got))
+
+    _check("marginal", cal.get("marginal"), cal["armed"] - cal["unarmed"],
+           "armed - unarmed")
+    if cal.get("empty") is not None:
+        # The firmware clamps the in-bucket figure at the marginal one -- on a coarse clock
+        # the empty span can measure larger than it is, and a price below the marginal one
+        # would be arithmetic nonsense.  So a MATCH is expected and a mismatch is only
+        # interesting when it is not that clamp.
+        raw = (cal["armed"] - cal["empty"]) // n2 if n2 else None
+        want = cal.get("in_bucket")
+        if raw is not None and want is not None and raw < cal.get("marginal", 0) \
+                and want == cal.get("marginal"):
+            out.append("  in-bucket    %3d cyc/transition   = clamped up to the marginal "
+                       "figure ((armed - empty) / %d = %d)" % (want, n2, raw))
+        else:
+            _check("in-bucket", want, cal["armed"] - cal["empty"], "armed - empty")
+        out.append("  scaffolding  %3d cyc/transition   = (unarmed - empty) / %d -- the "
+                   "`bl`, prologue," % ((cal["unarmed"] - cal["empty"]) // n2 if n2 else 0,
+                                        n2))
+        out.append("               predicate, epilogue and `bx lr`.  Inside the buckets, "
+                   "and still there when")
+        out.append("               the bodies are gated off, which is why it is the "
+                   "difference between the two ends.")
+    lo = cal.get("bracket_lo", cal.get("marginal"))
+    hi = cal.get("bracket_hi", cal.get("in_bucket"))
+    out.append("")
+    if lo is not None and hi is not None and hi > lo:
+        out.append("  PRICE BRACKET   [%d, %d] cyc/transition -- SWEEP IT, DO NOT PICK."
+                   % (lo, hi))
+        out.append("    marginal (%d) is the probe BODIES: what PROFB gates off.  It is what "
+                   "the firmware" % lo)
+        out.append("    subtracts, and it is correct for what it names -- 'the prof build "
+                   "with the bodies off'.")
+        out.append("    in-bucket (%d) adds the call scaffolding, which sits INSIDE the "
+                   "buckets too and is" % hi)
+        out.append("    absent from the marginal difference because it is identical in the "
+                   "armed and unarmed")
+        out.append("    passes.  It is the price if the instrumentation calls go away "
+                   "entirely, which is what")
+        out.append("    a reader who wants the LEAN interpreter's shares is asking for.")
+        out.append("    NEITHER IS A CORRECTION OF THE OTHER.  They answer different "
+                   "questions, and a capture")
+        out.append("    priced at one and read as though it were the other is how a "
+                   "'floor' gets invented.")
+        # The one comparison a reader will reach for, and the one that is wrong.
+        out.append("    And do not compare either against 45.5: that is v1's 91 cyc/PAIR "
+                   "halved, measured")
+        out.append("    with the probes INLINED over the whole loop -- a whole-cost inlined "
+                   "quantity that")
+        out.append("    neither of these is a bound on.")
+    else:
+        out.append("  PRICE BRACKET   not available from this capture: one price only (%s)."
+                   % (("%d cyc/transition" % lo) if lo is not None else "unmeasured"))
+    if cal.get("bracket_lo") is not None and cal.get("marginal") is not None:
+        if cal["bracket_lo"] != cal["marginal"] or (
+                cal.get("bracket_hi") is not None and cal.get("in_bucket") is not None
+                and cal["bracket_hi"] != cal["in_bucket"]):
+            out.append("  *** the 'price bracket' line and the 'probe calibration' line "
+                       "disagree: [%d, %s] vs" % (cal["bracket_lo"], cal.get("bracket_hi")))
+            out.append("  *** [%s, %s].  Both are printed from the same three spans in the "
+                       "same boot."
+                       % (cal.get("marginal"), cal.get("in_bucket")))
+            warn.append("probe calibration at capture line %d: the 'price bracket' line "
+                        "gives [%s, %s] while the 'probe calibration' line gives [%s, %s]. "
+                        "Both are printed from the same three calibration spans in the same "
+                        "boot and cannot disagree."
+                        % (cal.get("cal_line", 0), cal.get("bracket_lo"),
+                           cal.get("bracket_hi"), cal.get("marginal"),
+                           cal.get("in_bucket")))
+
+
 def _clk_note(clk, what, idx, out, warn):
     """Surface `clk=`, and warn hard when it is `bsp`.
 
@@ -1314,7 +1661,211 @@ def _clk_note(clk, what, idx, out, warn):
                 % (what, idx, clk))
 
 
-def _report_tail(st, idx, sem, ver, total, probe_total, usable, land, modelled, out, warn):
+def _spans_usable(st, trans, per_unit, idx, out, warn):
+    """May this dump's `[PROF] s` block be used as the per-bucket probe count?
+
+    Three gates, and each of them is a way the block could be present and wrong.
+
+    THE VERSION GATE.  The `s` block is an APPEND to wire version 2, and version 2 is the
+    only version whose `probe_cyc` prices one transition.  A span count multiplied by a
+    per-PAIR price would be wrong by 2x -- the exact defect v2 exists to fix -- so a dump
+    whose semantics say `pair` does not get here at all.
+
+    THE IDENTITY GATE.  `sum(spans) == TRANSITIONS` holds EXACTLY on an intact block, by
+    construction: every transition charges exactly one span, and an unwind (which charges
+    FAULT cycles) is deliberately in neither.  A mismatch means the `s` lines and the `c`
+    lines did not come off the same state, and a corrected column built from them would
+    balance while being wrong -- which is the failure this whole tool is shaped around.
+
+    THE COMPLETENESS GATE.  A block missing rows is a capture that lost lines, and the
+    missing rows read as zero spans, i.e. as buckets that pay no probe at all.  That is not
+    a conservative error: it INFLATES exactly the buckets whose lines were lost."""
+    if not st.spans:
+        return False
+    if per_unit != 1:
+        warn.append("stats dump #%d: it carries `[PROF] s` per-bucket span lines but its "
+                    "wire semantics price the probe per enter/exit PAIR. Spans count "
+                    "transitions, so multiplying them by a per-pair price would over-charge "
+                    "every bucket by 2x -- the defect version 2 exists to fix. The spans are "
+                    "NOT used and the modelled landing stands." % idx)
+        out.append("  *** this dump carries per-bucket span lines under per-PAIR probe "
+                   "semantics.  Spans")
+        out.append("  *** count TRANSITIONS, so they are NOT used here; the modelled landing "
+                   "stands.")
+        return False
+    got = sum(st.spans.values())
+    if st.span_sum is not None and st.span_sum != got:
+        warn.append("stats dump #%d: the `s` block's own total says sum(spans)=%d but its %d "
+                    "per-bucket rows sum to %d. The block lost lines in the capture; using "
+                    "it would silently credit the missing buckets with zero probe cost, "
+                    "which inflates them. The spans are NOT used."
+                    % (idx, st.span_sum, len(st.spans), got))
+        out.append("  *** the `s` block's rows do not sum to its own stated total (%d vs "
+                   "%d): lines were" % (got, st.span_sum))
+        out.append("  *** lost.  The spans are NOT used -- a missing row reads as a bucket "
+                   "that pays no probe.")
+        return False
+    if trans and got != trans:
+        warn.append("stats dump #%d: sum(spans)=%d against TRANSITIONS=%d, a difference of "
+                    "%+d. Every transition charges exactly one span and an unwind charges "
+                    "neither, so on an intact dump these are equal by construction. The `s` "
+                    "lines and the counter lines did not come off the same state; the spans "
+                    "are NOT used." % (idx, got, trans, got - trans))
+        out.append("  *** sum(spans)=%d against TRANSITIONS=%d.  These are equal by "
+                   "construction on an" % (got, trans))
+        out.append("  *** intact dump, so the `s` lines and the `c` lines came off different "
+                   "states.  The spans")
+        out.append("  *** are NOT used; the modelled landing stands.")
+        return False
+    return True
+
+
+def _report_spans(st, idx, sem, total, probe_cyc, lo, hi, bracket_src, out, warn):
+    """The `s` block: what it measured, what it refutes, and the swept bracket.
+
+    THIS SECTION EXISTS BECAUSE A CORRECTED SHARE USED TO BE AN UPPER BOUND.  Before the
+    spans there was no per-bucket transition count at all except for the ifetch bracket, so
+    `LOOP` -- the bucket the entire probe-pricing argument turns on -- could only be reported
+    as "at most X", and the two ends of the price bracket gave two different at-mosts 5.8
+    points apart.  With the spans it is a number, and the bracket collapses to the width the
+    PRICE alone accounts for."""
+    names = sem["bucket_names"]
+    c = st.counters
+    out.append(sec("per-bucket transition spans -- the corrected shares, measured"))
+    out.append("  A SPAN IS NOT A CALL INTO THE BUCKET.  Every transition ends one span and "
+               "begins the")
+    out.append("  next; the span that ends is charged to whatever bucket is current, and so "
+               "is one probe's")
+    out.append("  worth of probe machinery.  Entering a NESTED stage closes a span exactly "
+               "as exiting does,")
+    out.append("  so a FETCHOP with a translate inside it is charged twice.  That is the "
+               "quantity the")
+    out.append("  subtraction needs, and it is what these rows count.")
+    out.append("")
+    swept = hi > lo
+    if swept:
+        out.append("  id  name       raw cycles             spans            corrected @%-3d"
+                   "   share  |  corrected @%-3d   share" % (lo, hi))
+        out.append("  --  --------  ---------------------  --------------  ---------------  "
+                   "-------  ---------------  -------")
+    else:
+        out.append("  id  name       raw cycles             spans            corrected @%-3d"
+                   "   share" % lo)
+        out.append("  --  --------  ---------------------  --------------  ---------------  "
+                   "-------")
+
+    def corrected(price):
+        d = {}
+        for b in range(len(names)):
+            d[b] = max(st.buckets.get(b, 0) - st.spans.get(b, 0) * price, 0)
+        return d, sum(d.values())
+
+    clo, tlo = corrected(lo)
+    chi, thi = corrected(hi)
+    for b in range(len(names)):
+        if swept:
+            out.append("  %2d  %-8s  %21d  %14d  %15d  %7s  %15d  %7s"
+                       % (b, names[b], st.buckets.get(b, 0), st.spans.get(b, 0),
+                          clo[b], fpct(clo[b], tlo), chi[b], fpct(chi[b], thi)))
+        else:
+            out.append("  %2d  %-8s  %21d  %14d  %15d  %7s"
+                       % (b, names[b], st.buckets.get(b, 0), st.spans.get(b, 0),
+                          clo[b], fpct(clo[b], tlo)))
+    if swept:
+        out.append("      %-8s  %21d  %14d  %15d  %7s  %15d  %7s"
+                   % ("TOTAL", total, sum(st.spans.values()), tlo, "100.00%", thi,
+                      "100.00%"))
+    else:
+        out.append("      %-8s  %21d  %14d  %15d  %7s"
+                   % ("TOTAL", total, sum(st.spans.values()), tlo, "100.00%"))
+    out.append("")
+    if swept:
+        out.append("  PRICE SWEPT ACROSS [%d, %d] cyc/span -- %s." % (lo, hi, bracket_src))
+        out.append("  A bucket's corrected share is now a BRACKET whose width is the price "
+                   "question and")
+        out.append("  nothing else.  Report the range; picking an end is what the firmware's "
+                   "own line means")
+        out.append("  by 'sweep it, do not pick'.")
+    elif bracket_src:
+        out.append("  ONE PRICE ONLY (%d cyc/span) -- %s." % (lo, bracket_src))
+    else:
+        out.append("  ONE PRICE ONLY (%d cyc/span): this capture carries no price bracket, "
+                   "so there is" % lo)
+        out.append("  nothing to sweep.  The corrected column is exact at THIS price and "
+                   "says nothing about")
+        out.append("  the range of prices the instrument actually supports.")
+
+    # The two identities, checked rather than asserted.
+    got = sum(st.spans.values())
+    trans = c.get(C_TRANSITIONS, 0)
+    out.append("")
+    out.append("  cross-checks")
+    out.append("    %-49s %-9s %s" % ("sum(spans) == TRANSITIONS", "ok",
+                                      "%d == %d" % (got, trans)))
+    if st.span_total is not None:
+        # The firmware computes this column too, at its own probe_cyc.  Reproducing it
+        # exactly is the proof that this tool's arithmetic and the board's are the same
+        # arithmetic -- which is worth more than either number alone.
+        mine, mytot = corrected(probe_cyc)
+        if mytot == st.span_total:
+            out.append("    %-49s %-9s %d == %d"
+                       % ("firmware's own corrected_total @%d" % probe_cyc, "ok",
+                          mytot, st.span_total))
+        else:
+            out.append("    %-49s %-9s %d vs %d"
+                       % ("firmware's own corrected_total @%d" % probe_cyc, "MISMATCH",
+                          mytot, st.span_total))
+            warn.append("stats dump #%d: recomputing the firmware's own corrected_total at "
+                        "its own price (%d cyc/span) gives %d, but the dump says %d. The "
+                        "board and this tool are not doing the same arithmetic over the same "
+                        "rows." % (idx, probe_cyc, mytot, st.span_total))
+    out.append("    FAULT is reported UNCORRECTED above and here: an unwind charges it "
+               "cycles and counts")
+    out.append("    no span (it is not a probe transition and is not in TRANSITIONS "
+               "either), so it is")
+    out.append("    over-reported rather than under-reported -- the safe direction.")
+
+    # THE RETIREMENT.  This is the whole reason the block was added, and it belongs in the
+    # report rather than only in a doc, because the method it retires produces a number that
+    # looks exactly like the right one.
+    ifc = c.get(C_IFETCH_CALLS)
+    if ifc:
+        assumed = 2 * ifc
+        meas = st.spans.get(B_FETCHOP, 0) + st.spans.get(B_FETCHEX, 0)
+        out.append("")
+        out.append("  RETIRED HERE: the `2 x IFETCH_CALLS` estimate of the fetch buckets' "
+                   "transitions.")
+        out.append("    assumed  2 x IFETCH_CALLS = %-14d  %s of all transitions"
+                   % (assumed, fpct(assumed, trans).strip()))
+        out.append("    measured FETCHOP+FETCHEX spans = %-14d  %s of all transitions"
+                   % (meas, fpct(meas, trans).strip()))
+        if meas:
+            out.append("    the assumption over-charges the fetch buckets by %.2fx, so every "
+                       "corrected share" % (float(assumed) / meas))
+            out.append("    derived from it was biased LOW.")
+        out.append("    THE MECHANISM IS THE DECODED-OP CACHE ITSELF: with the cache on, a "
+                   "HIT NEVER ENTERS")
+        out.append("    FETCHOP AT ALL.  The bucket is entered once per MISS, not once per "
+                   "fetch.")
+        dm = c.get(C_DOPC_MISS)
+        if dm is not None:
+            out.append("      FETCHOP spans %d against DOPC_MISS %d.  On a window taken "
+                       "entirely with the" % (st.spans.get(B_FETCHOP, 0), dm))
+            out.append("      cache on these track each other closely: metal 2026-08-23 "
+                       "read 15547429 against")
+            out.append("      15436987, 0.72 %% apart.  (A reference, not a check -- a "
+                       "window that spans the")
+            out.append("      switch moving is not expected to satisfy it.)")
+        out.append("    `IFETCH_CALLS == FETCH` is still exactly true; what is false is that "
+                   "FETCH predicts")
+        out.append("    bucket ENTRIES once something upstream answers fetches without "
+                   "entering the bucket.")
+        out.append("    Take per-bucket transition counts from this block, never from a "
+                   "counter that merely")
+        out.append("    correlates with them.")
+
+
+def _report_tail(st, idx, sem, ver, total, usable, probe_of, out, warn):
     """The run-loop tail: one number in v1, four in v2, and the same quantity in both.
 
     Reported as its own section because the tail is the largest single share the C2 map
@@ -1361,13 +1912,13 @@ def _report_tail(st, idx, sem, ver, total, probe_total, usable, land, modelled, 
                    "interpretation, and it")
         out.append("    is here at all only because this build is the one being measured "
                    "with.")
-        if usable and modelled:
-            p = sum(probe_total * land[b] // modelled for b in ids)
+        if usable:
+            p = sum(probe_of(b) for b in ids)
             out.append("  the tail with neither the instrument nor the probe: %d cyc = %s"
                        % (max(tail - inst - p, 0),
                           fpct(max(tail - inst - p, 0), total)))
-            out.append("    (the four tail buckets carry %d cyc of modelled probe cost "
-                       "between them)" % p)
+            out.append("    (the four tail buckets carry %d cyc of probe cost between them)"
+                       % p)
 
     # The firmware's own rollup, if this version prints one.  A free consistency check.
     if st.tail_cyc is not None:
@@ -1396,7 +1947,338 @@ def _report_tail(st, idx, sem, ver, total, probe_total, usable, land, modelled, 
                    "tool's own sum)")
 
 
-def report_stats(st, idx, probe_cyc, probe_src, out, warn):
+IDROW = "    %-49s %-9s %s"
+
+
+def _report_ifetch(st, idx, out, warn):
+    """`IFETCH_CALLS == FETCH`, and the inference it does NOT license.
+
+    The counter exists because a model needed the ifetch bracket's entry count and had only
+    `FETCH`, which counts words -- or so the model assumed.  The firmware source settles it:
+    all five ENTER_IFETCH sites increment `FETCH` exactly once, so `FETCH` has never counted
+    words and the two are identically equal.  That is worth ASSERTING rather than reading,
+    because on the day they diverge a fetch site was added to one path and not the other,
+    which is precisely the drift no reviewer catches.
+
+    And the identity's SCOPE has to be stated with it.  `IFETCH_CALLS == FETCH` says nothing
+    about how often the ifetch BUCKETS are entered: with a decoded-op cache upstream, a hit
+    answers a fetch without entering the bucket at all.  Reading a bucket entry count out of
+    this identity is the refuted method, and the refutation is 1.97x."""
+    c = st.counters
+    if C_IFETCH_CALLS not in c:
+        return
+    ifc, f = c[C_IFETCH_CALLS], c.get(C_FETCH, 0)
+    out.append(sec("instruction-fetch calls (counter id %d)" % C_IFETCH_CALLS))
+    if ifc == f:
+        out.append(IDROW % ("IFETCH_CALLS == FETCH", "ok", "%d == %d" % (ifc, f)))
+        out.append("    Identically equal by construction: all five ENTER_IFETCH sites "
+                   "increment FETCH exactly")
+        out.append("    once, so FETCH counts accessor CALLS and never counted words.  A "
+                   "longword instruction")
+        out.append("    fetch is one call and one increment.")
+    else:
+        out.append(IDROW % ("IFETCH_CALLS == FETCH", "MISMATCH",
+                            "%d vs %d, %+d" % (ifc, f, ifc - f)))
+        out.append("  *** These are identically equal in every firmware that has both: each "
+                   "of the five")
+        out.append("  *** ENTER_IFETCH sites is followed immediately by one FETCH increment. "
+                   " A divergence")
+        out.append("  *** means a fetch site was added to one path and not the other, which "
+                   "is the drift no")
+        out.append("  *** reviewer catches and no arithmetic check objects to.")
+        warn.append("stats dump #%d: IFETCH_CALLS=%d against FETCH=%d, %+d apart. Every "
+                    "ENTER_IFETCH site increments FETCH exactly once, so these are "
+                    "identically equal in any firmware that has both; a divergence means a "
+                    "fetch site exists on one path and not the other."
+                    % (idx, ifc, f, ifc - f))
+    out.append("    WHAT THIS DOES NOT LICENSE: an ifetch BUCKET entry count.  With a "
+               "decoded-op cache")
+    out.append("    upstream, a hit answers the fetch without entering FETCHOP at all, so "
+               "FETCH does not")
+    out.append("    predict entries.  Take those from the `[PROF] s` spans; `2 x "
+               "IFETCH_CALLS` is refuted.")
+
+
+def _report_blk(st, idx, out, warn):
+    """The block-idiom fast path, and the one correction the obvious arithmetic gets wrong.
+
+    `BLK_INSNS` is NOT a subset of `INSNS`.  `INSNS` counts instructions retired through the
+    run-loop TAIL and the fast path retires a whole CHUNK per pass of that loop, so a chunk
+    contributes 1 to `INSNS` and 2 x chunk (3 x for the third stage) to `BLK_INSNS`.  The
+    literal ratio is therefore a share of nothing, and it does not merely inflate the answer
+    -- on the 2026-08-22 metal boot it read 59.28 % against a true 37.25 %, which is outside
+    the range in which the map's 31.80 % prediction could be judged at all.
+
+    The guest stream is `(INSNS - BLK_HIT) + BLK_INSNS` and the share is over THAT."""
+    c = st.counters
+    if C_BLK_HIT not in c:
+        return
+    hit, bi, by = c[C_BLK_HIT], c.get(C_BLK_INSNS, 0), c.get(C_BLK_BYTES, 0)
+    insns = c.get(C_INSNS, 0)
+    out.append(sec("block-idiom fast path (counters %d..%d)" % (C_BLK_HIT, C_BLK_BYTES)))
+    if hit == 0:
+        out.append("  BLK_HIT is 0: the recognizer did not fire in this window.  With "
+                   "BLK_INSNS %d and" % bi)
+        out.append("  BLK_BYTES %d, that is a true pass-through -- the fast path is present "
+                   "and switched off," % by)
+        out.append("  or present and never triggered.  The two are not distinguishable from "
+                   "counters alone.")
+        return
+    stream = (insns - hit) + bi
+    out.append("  chunks serviced (BLK_HIT)          %21d" % hit)
+    out.append("  guest instructions they retired    %21d" % bi)
+    out.append("  bytes zeroed / copied / flushed    %21d   (%.2f MiB)"
+               % (by, by / (1024.0 * 1024.0)))
+    out.append("")
+    out.append("  RECONSTRUCTED GUEST STREAM  (INSNS - BLK_HIT) + BLK_INSNS")
+    out.append("    (%d - %d) + %d = %d" % (insns, hit, bi, stream))
+    out.append("  %-34s %8.2f%%   <- THE SHARE.  BLK_INSNS / the stream above"
+               % ("fast-path share of the stream", pct(bi, stream)))
+    out.append("  %-34s %8.2f%%   <- NOT a share of anything: INSNS counts a whole chunk"
+               % ("literal BLK_INSNS / INSNS", pct(bi, insns)))
+    out.append("                                                 as ONE retirement, so the "
+               "denominator")
+    out.append("                                                 is missing the very "
+               "instructions in")
+    out.append("                                                 the numerator.  Shown so "
+               "it is not")
+    out.append("                                                 reached for by accident.")
+    mean = float(bi) / hit
+    out.append("")
+    out.append("  mean chunk length                  %21.1f   BLK_INSNS / BLK_HIT" % mean)
+    if mean < 8.0:
+        out.append("  *** BELOW 8.  The fast path pays its recognizer test ONCE PER CHUNK, "
+                   "so a mean this")
+        out.append("  *** low means the test is being paid per iteration and the saving is "
+                   "gone.  This is")
+        out.append("  *** 'firing but not firing usefully' -- the failure mode is the "
+                   "trigger, not the")
+        out.append("  *** host operation.")
+        warn.append("stats dump #%d: the block fast path's mean chunk length is %.1f, below "
+                    "the ~8 floor. The recognizer test is paid once per chunk, so at this "
+                    "mean it is being paid per iteration and the saving is gone. Check the "
+                    "TRIGGER rather than the host operation." % (idx, mean))
+    else:
+        out.append("  (healthy is the high hundreds once the ramp-in is amortised against a "
+                   "256-chunk cap")
+        out.append("   and 1024-longword page fills, and never below ~8: the recognizer test "
+                   "is paid once")
+        out.append("   per chunk, so a mean near 2 means it is paid per iteration and the "
+                   "saving is gone.)")
+    if hit:
+        out.append("  mean bytes per chunk               %21.1f" % (float(by) / hit))
+
+
+def _report_dopc(st, idx, out, warn):
+    """The decoded-op cache: the hit rate, the identity that scopes it, and the invalidation
+    attribution.
+
+    THE PRE-REGISTERED FAILURE MODE IS A HIGH HIT RATE WITH A LOW SPEEDUP, so the hit rate
+    is reported next to what it is a rate OF rather than on its own.  Two things scope it:
+
+      * a DISPATCH is not a guest instruction.  The block fast path retires a whole chunk
+        per dispatch, so `DOPC_HIT + DOPC_MISS` counts run-loop passes and the guest stream
+        is the reconstruction in _report_blk().  A hit rate read as a per-guest-instruction
+        rate is wrong by whatever the fast path is worth.
+      * `DOPC_INVAL` and `DOPC_MISS` are NOT commensurable.  One whole-cache invalidation
+        can cost up to a full cache of refills, so their ratio means nothing.  The figure
+        that means something is misses PER invalidation, against the workload's code
+        footprint: one that does not track the footprint is re-warm, not capacity."""
+    c = st.counters
+    if C_DOPC_HIT not in c:
+        return
+    hi, mi = c[C_DOPC_HIT], c.get(C_DOPC_MISS, 0)
+    ex, iv = c.get(C_DOPC_EXT, 0), c.get(C_DOPC_INVAL, 0)
+    insns, fa = c.get(C_INSNS, 0), c.get(C_FAULTS, 0)
+    disp = hi + mi
+    out.append(sec("decoded-op cache (counters %d..%d)" % (C_DOPC_HIT, C_DOPC_INVAL)))
+    if disp == 0:
+        out.append("  DOPC_HIT and DOPC_MISS are both zero: the cache was OFF for this whole "
+                   "window.  The")
+        out.append("  lookup returns before it can count, so this is a measurement and not "
+                   "an absence.")
+        out.append("  The IV_* counters below, if present, still moved -- they count what "
+                   "the GUEST asked")
+        out.append("  for, and the guest issues CPUSHL and PFLUSH whatever the switch says.")
+    else:
+        out.append("  %-34s %8.2f%%   %d hit / %d miss of %d dispatches"
+                   % ("hit rate", pct(hi, disp), hi, mi, disp))
+        out.append("  %-34s %21d   served from the entry's single slot"
+                   % ("extension words (DOPC_EXT)", ex))
+        f = c.get(C_FETCH, 0)
+        if f:
+            out.append("  %-34s %8.2f%%   DOPC_EXT / FETCH -- how much of the SECOND half"
+                       % ("  ... as a share of fetch calls", pct(ex, f)))
+            out.append("                                                 of the rung "
+                       "(FETCHEX) was reached")
+        # THE IDENTITY, and the correction the firmware's own doc does not carry.
+        #
+        # docs/profiler.md states `DOPC_HIT + DOPC_MISS == INSNS` with the cache on.  Twelve
+        # metal captures across three sessions and three firmware builds say the sum exceeds
+        # INSNS by EXACTLY FAULTS, every time, to the unit.  The mechanism is plain once
+        # stated: a faulting instruction consults the cache (so it is a dispatch) and then
+        # throws before retiring through the run-loop tail (so INSNS never counts it).  A
+        # difference that reproduces another counter in the same dump exactly, twelve times,
+        # is a mechanism and not the dump skew it was first taken for.
+        out.append("")
+        out.append("  cross-checks")
+        if disp == insns + fa:
+            out.append(IDROW % ("DOPC_HIT + DOPC_MISS == INSNS + FAULTS", "ok",
+                                "%d == %d + %d" % (disp, insns, fa)))
+            out.append("    Every dispatch consults the cache exactly once, which is what "
+                       "makes the rate above")
+            out.append("    a hit RATE.  The +FAULTS term is the instructions that were "
+                       "dispatched and then")
+            out.append("    threw before retiring through the tail, so INSNS never counted "
+                       "them.")
+        elif disp == insns:
+            out.append(IDROW % ("DOPC_HIT + DOPC_MISS == INSNS", "ok",
+                                "%d == %d" % (disp, insns)))
+            out.append("    (and FAULTS is %d, so the +FAULTS form is indistinguishable "
+                       "here.)" % fa)
+        else:
+            out.append(IDROW % ("DOPC_HIT + DOPC_MISS == INSNS + FAULTS", "MISMATCH",
+                                "%d vs %d + %d = %d" % (disp, insns, fa, insns + fa)))
+            out.append("  *** Every dispatch consults the cache once and every dispatch "
+                       "either retires (INSNS)")
+            out.append("  *** or throws (FAULTS), so an intact dump taken entirely with the "
+                       "cache ON satisfies")
+            out.append("  *** this exactly.  A window that spans the switch moving will not, "
+                       "and that is a fact")
+            out.append("  *** about the window rather than a defect -- check the switch log "
+                       "before the counter.")
+            warn.append("stats dump #%d: DOPC_HIT + DOPC_MISS = %d against INSNS + FAULTS = "
+                        "%d, %+d apart. Every dispatch consults the cache exactly once and "
+                        "either retires or throws, so this holds exactly on a window taken "
+                        "entirely with the cache on. Either the window spans the switch "
+                        "moving, or the hit rate above is a rate of something else."
+                        % (idx, disp, insns + fa, disp - (insns + fa)))
+        if C_BLK_HIT in c and c[C_BLK_HIT]:
+            out.append("    A DISPATCH IS NOT A GUEST INSTRUCTION here: the block fast path "
+                       "retired %d guest" % c.get(C_BLK_INSNS, 0))
+            out.append("    instructions in %d of those dispatches, so the hit rate above is "
+                       "per run-loop pass." % c[C_BLK_HIT])
+            out.append("    Divide by the reconstructed stream, not by dispatches, for "
+                       "anything per-instruction.")
+    if iv:
+        out.append("")
+        out.append("  %-34s %21d   whole-cache invalidations PERFORMED"
+                   % ("DOPC_INVAL", iv))
+        out.append("  %-34s %21.2f   misses per invalidation" % ("  misses / invalidation",
+                                                                 float(mi) / iv))
+        out.append("  %-34s %21.2f   dispatches per invalidation"
+                   % ("  dispatches / invalidation", float(hi + mi) / iv))
+        out.append("    DOPC_INVAL / DOPC_MISS IS NOT A RATIO WORTH FORMING: one whole-cache "
+                   "invalidation")
+        out.append("    can cost a full cache of refills, so the two are not commensurable.  "
+                   "The figure that")
+        out.append("    means something is the one above, read against the workload's CODE "
+                   "FOOTPRINT: a")
+        out.append("    misses-per-invalidation that does NOT track the footprint is re-warm, "
+                   "not capacity --")
+        out.append("    and the fix for re-warm is a narrower invalidation, not a bigger "
+                   "cache.")
+    _report_iv(st, idx, out, warn)
+
+
+def _report_iv(st, idx, out, warn):
+    """Invalidation attribution: the ten causes, the sum identity, and the request the sum
+    cannot see.
+
+    THE GUEST'S TRUE REQUEST RATE IS `sum(IV_*) + IV_CACR_SKIP`.  The `IV_*` block counts
+    requests that REACH the invalidator; a narrowing implemented at its CALL SITE decides
+    before that and increments nothing at all, so it is not a skipped request but an
+    uncounted one.  Defining a narrowing's yield as `sum(IV_*) - DOPC_INVAL` is therefore
+    false for exactly the class of narrowing most worth doing, and the miss is not small:
+    the 2026-08-23 session measured a 54.8 % fall in invalidations that the row could
+    account for only 7.3 % of.
+
+    A narrowing that decides before the invalidator must bring its own counter, or it is
+    invisible to its own verdict."""
+    c = st.counters
+    present = [i for i in IV_CAUSE_IDS if i in c]
+    if not present:
+        return
+    names = COUNTER_NAMES_V2
+    req = sum(c.get(i, 0) for i in IV_CAUSE_IDS)
+    iv = c.get(C_DOPC_INVAL, 0)
+    skip = c.get(C_IV_CACR_SKIP)
+    out.append("")
+    out.append("  invalidation attribution (counters %d..%d, one per cause)"
+               % (C_IV_FIRST, C_IV_LAST))
+    if not req:
+        out.append("    every cause counter is zero: no invalidation was requested in this "
+                   "window.")
+        return
+    for i in IV_CAUSE_IDS:
+        v = c.get(i, 0)
+        if not v:
+            continue
+        out.append("    %-14s %16d   %7s of requests that reached the invalidator"
+                   % (names[i], v, fpct(v, req).strip()))
+    out.append("    %-14s %16d   100.00%%" % ("sum(IV_*)", req))
+    out.append("")
+    out.append("  cross-checks")
+    if req == iv:
+        out.append(IDROW % ("sum(IV_*) == DOPC_INVAL", "ok", "%d == %d" % (req, iv)))
+        out.append("    Holds exactly on a window taken entirely with the cache ON: every "
+                   "request that")
+        out.append("    reaches z3660_dopc_invalidate() performs one.")
+    elif req > iv:
+        out.append(IDROW % ("sum(IV_*) >= DOPC_INVAL", "ok",
+                            "%d vs %d, %d requested but not performed" % (req, iv, req - iv)))
+        out.append("    A GAP THIS WAY IS LEGAL, AND IT HAS TWO CAUSES THESE ROWS CANNOT "
+                   "TELL APART.  Either")
+        out.append("    the cache was OFF for part of the window (the invalidator consults "
+                   "the switch, the")
+        out.append("    causes do not -- which is what makes a cache-off arm a free "
+                   "measurement of the")
+        out.append("    guest's own rate), or a narrowing INSIDE the invalidator refused "
+                   "the request after")
+        out.append("    its cause had already been counted.  The switch log decides which; "
+                   "the counters")
+        out.append("    cannot, and reading the gap as a narrowing's yield without it is "
+                   "how a yield gets")
+        out.append("    credited to the wrong change.")
+    else:
+        out.append(IDROW % ("sum(IV_*) >= DOPC_INVAL", "MISMATCH",
+                            "%d < %d" % (req, iv)))
+        out.append("  *** IMPOSSIBLE: every invalidation performed was requested and "
+                   "counted by one of the")
+        out.append("  *** causes.  A cause id is out of range, or a call site reaches the "
+                   "invalidator without")
+        out.append("  *** going through the attribution.")
+        warn.append("stats dump #%d: sum(IV_*)=%d is LESS than DOPC_INVAL=%d. Every "
+                    "invalidation performed was requested and attributed to a cause, so this "
+                    "is impossible: either a cause id is out of range or a call site "
+                    "bypasses the attribution." % (idx, req, iv))
+    if skip is None:
+        out.append("    IV_CACR_SKIP (id %d) is absent from this dump, so a call-site "
+                   "narrowing -- if this" % C_IV_CACR_SKIP)
+        out.append("    firmware has one -- is INVISIBLE here.  The block above counts "
+                   "requests that reached")
+        out.append("    the invalidator; one refused at its call site increments nothing at "
+                   "all, and cannot")
+        out.append("    be recovered as sum(IV_*) - DOPC_INVAL.  Do not score a narrowing "
+                   "from these rows.")
+        return
+    out.append("")
+    out.append("  THE GUEST'S TRUE REQUEST RATE  sum(IV_*) + IV_CACR_SKIP")
+    out.append("    %-30s %16d" % ("requested by the guest", req + skip))
+    out.append("    %-30s %16d   %s" % ("performed", iv, fpct(iv, req + skip).strip()))
+    out.append("    %-30s %16d   %s   <- narrowed at the CALL SITE"
+               % ("proved inert before the call", skip, fpct(skip, req + skip).strip()))
+    out.append("    IV_CACR_SKIP is deliberately NOT a member of the cause block: every "
+               "entry there means")
+    out.append("    'reached the invalidator', which this one does not.  A second call-site "
+               "narrowing gets")
+    out.append("    a second counter for the same reason -- one shared 'skipped' counter "
+               "could attribute")
+    out.append("    neither.")
+
+
+def report_stats(st, idx, probe_cyc, probe_src, bracket, out, warn):
+    br_lo, br_hi, br_src = bracket
     out.append(head("stage attribution / counters -- dump #%d  (capture lines %d..%d)"
                     % (idx, st.first_line, st.last_line or st.first_line)))
 
@@ -1447,8 +2329,12 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
     unit = sem["probe_unit_short"]
     per_unit = sem["transitions_per_probe_unit"]
 
-    out.append("wire version    %d  (%d buckets, %d counters)"
-               % (ver, len(bucket_names), len(counter_names)))
+    # Two numbers, not one, and the second is the interesting one.  Version 2 grew counter
+    # ids 20..38 without a version bump, so "how many counters does version 2 have" and "how
+    # many did THIS firmware emit" are different questions with different answers, and a
+    # single figure would answer whichever one the reader assumed it meant.
+    out.append("wire version    %d  (%d buckets, %d counters defined; this dump carries %d)"
+               % (ver, len(bucket_names), len(counter_names), len(st.counters)))
     if sem["has_clk"]:
         out.append("cpu_hz          %d Hz (the RUNTIME clock -- see clock source below)"
                    % st.cpu_hz)
@@ -1482,6 +2368,12 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
         entries = bucket_entries(c, sem)
         land = probe_landing(entries)
         modelled = sum(land.values())
+        # MEASURED SPANS BEAT THE MODEL, and this is where that is decided.  The model
+        # derives each bucket's transition count from the counters; the `s` block COUNTS it.
+        # Where the block is present and self-consistent the model is demoted to a
+        # cross-check, and the subtraction stops depending on an assumption that the
+        # decoded-op cache is now known to break (see THE VERSION SEAM).
+        spans_ok = _spans_usable(st, trans, per_unit, idx, out, warn)
         # THE UNIT.  `probe_cyc` prices one probe_unit -- an enter/exit PAIR in version 1,
         # ONE TRANSITION in version 2 -- while TRANSITIONS counts each enter and each exit
         # in both.  The priced quantity is therefore trans / per_unit, which is trans / 2
@@ -1499,22 +2391,32 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
         # now prints a warning of its own at the same threshold.
         probe_over = probe_cyc > 0 and total > 0 and probe_total > total
         fatal_over = probe_over and sem["probe_exceeds_total_is_fatal"]
-        usable = (trans > 0 and probe_cyc > 0 and modelled > 0 and resid_pct <= 25.0
-                  and not fatal_over)
+        model_usable = (trans > 0 and probe_cyc > 0 and modelled > 0 and resid_pct <= 25.0
+                        and not fatal_over)
+        usable = (spans_ok and probe_cyc > 0 and not fatal_over) or model_usable
+
+        # One accessor, two provenances, so nothing below has to ask again which it got.
+        measured = span_probe(st, probe_cyc) if spans_ok else None
+
+        def probe_of(b):
+            if measured is not None:
+                return measured.get(b, 0)
+            if not model_usable:
+                return 0
+            return probe_total * land[b] // modelled
 
         adj = {}
         clamped, clamped_cyc = 0, 0
         if usable:
-            # Distribute the firmware's EXACT probe total by the modelled landing shape, so
-            # the parts sum to the measured whole even where the model is imperfect.
-            #
-            # A bucket whose modelled probe cost EXCEEDS its measured cycles is clamped at
-            # zero, and that is counted rather than swallowed: it is arithmetically
-            # impossible and therefore evidence that the probe price is too high, which is
-            # exactly how the firmware's 2x over-pricing announced itself -- LOOP was asked
-            # for half again as many cycles as it contained.
+            # A bucket whose probe cost EXCEEDS its measured cycles is clamped at zero, and
+            # that is counted rather than swallowed: it is arithmetically impossible and
+            # therefore evidence that the probe PRICE is too high, which is exactly how the
+            # firmware's 2x over-pricing announced itself -- LOOP was asked for half again
+            # as many cycles as it contained.  It means the same thing under either
+            # provenance, and it means MORE under the measured one: with the spans there is
+            # no modelling error left to blame it on.
             for b in range(len(bucket_names)):
-                p = probe_total * land[b] // modelled
+                p = probe_of(b)
                 raw = st.buckets.get(b, 0)
                 if p > raw:
                     clamped += 1
@@ -1522,25 +2424,39 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
                 adj[b] = max(raw - p, 0)
             adj_total = sum(adj.values())
 
-        out.append("  id  name       cycles                 share   probe cyc          "
-                   "adjusted     adj share")
+        col = "probe cyc" if measured is None else "probe(spans)"
+        out.append("  id  name       cycles                 share   %-15s    adjusted     "
+                   "adj share" % col)
         out.append("  --  --------  ---------------------  -------  ---------------  "
                    "---------------  -------")
         for b in range(len(bucket_names)):
             cyc = st.buckets.get(b, 0)
             if usable:
-                p = probe_total * land[b] // modelled
                 out.append("  %2d  %-8s  %21d  %7s  %15d  %15d  %7s"
-                           % (b, bucket_names[b], cyc, fpct(cyc, total), p, adj[b],
+                           % (b, bucket_names[b], cyc, fpct(cyc, total), probe_of(b), adj[b],
                               fpct(adj[b], adj_total)))
             else:
                 out.append("  %2d  %-8s  %21d  %7s  %15s  %15s  %7s"
                            % (b, bucket_names[b], cyc, fpct(cyc, total), "-", "-", "-"))
         if usable:
+            # The TOTAL row carries `probe_total` -- the firmware's own exact figure -- and
+            # not the sum of the rows above it, which is short by a few cycles of per-bucket
+            # integer truncation.  Under the MEASURED provenance the two are equal anyway
+            # (sum(spans) == TRANSITIONS, so sum(spans x price) == TRANSITIONS x price); it
+            # is only the modelled apportionment that truncates.
             out.append("      %-8s  %21d  %7s  %15d  %15d  %7s"
                        % ("TOTAL", total, "100.00%", probe_total, adj_total, "100.00%"))
         else:
             out.append("      %-8s  %21d  %7s" % ("TOTAL", total, "100.00%"))
+        if measured is not None:
+            out.append("  the probe column is MEASURED: bucket b's own span count x %d "
+                       "cyc/span.  No model," % probe_cyc)
+            out.append("  no apportionment, no residual -- the global correction decomposes "
+                       "exactly.  FAULT is")
+            out.append("  the one exception and reads UNCORRECTED: an unwind charges it "
+                       "cycles and counts no")
+            out.append("  span, so it is over-reported, at the %s it measures."
+                       % fpct(st.buckets.get(B_FAULT, 0), total).strip())
 
         out.append("")
         if probe_cyc <= 0:
@@ -1622,19 +2538,25 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
                            " The subtraction is WITHHELD rather than clamped; raw cycles and "
                            "shares are unaffected." if fatal_over else ""))
         if usable and clamped:
-            out.append("  *** %d bucket(s) were CLAMPED at zero: the modelled probe cost "
-                       "exceeded the cycles" % clamped)
+            which = "measured (span x price)" if measured is not None else "modelled"
+            out.append("  *** %d bucket(s) were CLAMPED at zero: the %s probe cost "
+                       "exceeded the cycles" % (clamped, which))
             out.append("  *** actually measured in them, by %d in total.  That is "
                        "arithmetically impossible," % clamped_cyc)
             out.append("  *** so it is evidence the probe PRICE is too high -- not that "
                        "those stages are empty.")
+            if measured is not None:
+                out.append("  *** And with the spans MEASURED there is no modelling error "
+                           "left to blame: the")
+                out.append("  *** count is the firmware's own, so the price is the only "
+                           "input that can be wrong.")
             out.append("  *** The 'adjusted' column absorbs the excess and no longer sums "
                        "to total - probe.")
-            warn.append("stats dump #%d: %d bucket(s) clamped at zero -- the modelled probe "
+            warn.append("stats dump #%d: %d bucket(s) clamped at zero -- the %s probe "
                         "cost exceeded their measured cycles by %d in total. The "
                         "subtraction is arithmetically impossible at this probe price; the "
                         "adjusted column absorbs the excess and the shares derived from it "
-                        "are not trustworthy." % (idx, clamped, clamped_cyc))
+                        "are not trustworthy." % (idx, clamped, which, clamped_cyc))
         # The landing model and the probe price are two independent ways for the
         # subtraction to fail, and they must not be reported as each other: a withheld
         # subtraction whose model is fine is a PRICE problem, and blaming the model would
@@ -1645,7 +2567,13 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
         # Three different reasons to withhold, named apart.  A reader who is told the model
         # is out of tolerance will go and re-derive the model; if the real cause was an
         # absent price or an impossible one, that is an afternoon spent on the wrong thing.
-        if usable:
+        # And a FOURTH state, which is not a failure at all: the spans measured what the
+        # model estimates, so the model is no longer load-bearing and its residual is a
+        # remark about the model rather than a gate on the report.
+        if measured is not None:
+            why = ("NOT USED -- the `s` block measured what this model estimates; kept as a "
+                   "cross-check")
+        elif usable:
             why = "within tolerance, subtraction applied"
         elif not model_ok:
             why = "OUT OF TOLERANCE"
@@ -1656,6 +2584,15 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
             why = ("within tolerance; the model is fine -- the subtraction is withheld "
                    "because the probe exceeds the total")
         out.append("    residual %+d (%.4f%% of measured) -- %s" % (resid, resid_pct, why))
+        if measured is None and st.spans:
+            out.append("    (this dump carries `[PROF] s` lines but they could not be used "
+                       "-- see above.)")
+        if measured is not None and not model_ok:
+            out.append("    the model's residual is large, and that is now a finding about "
+                       "the MODEL rather")
+            out.append("    than about the dump: nothing below depends on it.  The known "
+                       "cause is the fetch")
+            out.append("    buckets -- see the ifetch row in the identities section.")
         if not usable and not model_ok:
             warn.append("stats dump #%d: the probe-cost subtraction is WITHHELD -- the "
                         "probe-landing model predicts %d transitions but the firmware "
@@ -1672,18 +2609,50 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
                    "below the lean")
         out.append("  build's and the two are not comparable.  See docs/PROFILER-SYMBOLIZE.md.")
 
-        _report_tail(st, idx, sem, ver, total, probe_total if usable else 0, usable,
-                     land, modelled, out, warn)
+        _report_tail(st, idx, sem, ver, total, usable, probe_of, out, warn)
+
+        if measured is not None:
+            _report_spans(st, idx, sem, total, probe_cyc, br_lo, br_hi, br_src, out, warn)
 
     # ---- counters ---------------------------------------------------------------------
     insns = c.get(C_INSNS, 0)
     out.append(sec("counters (exact -- not switchable, and unaffected by bucket distortion)"))
     out.append("  id  name             value                per insn")
     out.append("  --  ------------  ---------------------  ----------")
+    append_base = sem.get("counter_append_base")
+    absent_appended, absent_core = [], []
     for i in range(len(counter_names)):
-        v = c.get(i, 0)
+        if i not in c:
+            # ABSENT IS NOT ZERO, and which of the two it is depends on the id -- see
+            # COUNTER_APPEND_BASE.  Printing 0 for a counter the firmware never had would
+            # put a non-measurement in a column of measurements, which is the ATC_HIT defect
+            # wearing a different name.
+            (absent_appended if append_base is not None and i >= append_base
+             else absent_core).append(i)
+            out.append("  %2d  %-12s  %21s  %10s" % (i, counter_names[i], "absent", "-"))
+            continue
+        v = c[i]
         per = ("%10.4f" % (float(v) / insns)) if insns else "         -"
         out.append("  %2d  %-12s  %21d  %s" % (i, counter_names[i], v, per))
+    if absent_appended:
+        out.append("")
+        out.append("  ids %d..%d did not arrive.  They were APPENDED to wire version %d "
+                   "after it shipped,"
+                   % (absent_appended[0], absent_appended[-1], ver))
+        out.append("  so this is a firmware that PREDATES them -- not a capture that lost "
+                   "lines, and not a")
+        out.append("  measurement of zero.  Every row below that needs one of them is "
+                   "reported as absent.")
+    if absent_core:
+        out.append("")
+        out.append("  *** ids %s are missing and are NOT part of the append: every wire "
+                   "version-%d firmware"
+                   % (", ".join(str(i) for i in absent_core), ver))
+        out.append("  *** emits them, so this capture LOST those lines.")
+        warn.append("stats dump #%d: counter id(s) %s did not arrive. They are not part of "
+                    "the post-v2 append -- every version-%d firmware emits them -- so this "
+                    "capture lost lines rather than predating the counters."
+                    % (idx, ", ".join(str(i) for i in absent_core), ver))
     if c.get(C_STACK_OVF, 0):
         out.append("")
         out.append("*** STACK_OVF is %d and must be 0.  The phase stack overflowed, "
@@ -1885,6 +2854,10 @@ def report_stats(st, idx, probe_cyc, probe_src, out, warn):
         out.append("     inside a stage.  This is a shape check, not a wrap check -- the wrap "
                    "check is on the")
         out.append("     ring header, whose cycle span comes from the sampler.)")
+
+    _report_ifetch(st, idx, out, warn)
+    _report_blk(st, idx, out, warn)
+    _report_dopc(st, idx, out, warn)
 
 
 # --------------------------------------------------------------------------------------
@@ -2362,7 +3335,12 @@ def main(argv=None):
     out.append("capture lines            %d" % nlines)
     out.append("ring dumps found         %d" % len(rings))
     out.append("stats dumps found        %d" % len(stats))
-    if boot and boot["version"] > 1:
+    if boot and boot.get("from_calibration_only"):
+        out.append("boot line                ABSENT -- but a probe calibration line survived "
+                   "at line %d," % boot["line"])
+        out.append("                         so the probe price is known and the clock is "
+                   "not.")
+    elif boot and boot["version"] > 1:
         out.append("boot line (line %d)      v%d, ARM clock %d Hz (clk=%s), probe %d "
                    "cyc/transition, ring %d x %d B"
                    % (boot["line"], boot["version"], boot["cpu_hz"], boot["clk"],
@@ -2396,6 +3374,9 @@ def main(argv=None):
             out.append("                         %d assembler-local label(s) filtered out"
                        % usyms.filtered)
 
+    if boot and boot.get("cal"):
+        report_calibration(boot["cal"], out, warn)
+
     # Where the probe cost comes from, in decreasing order of authority: an explicit
     # override, this dump's own measurement, then the boot line's.  The source is printed
     # because the whole probe subtraction rests on it.
@@ -2425,7 +3406,7 @@ def main(argv=None):
                         % (i, boot["line"], boot["version"], sver, sver))
         else:
             pc_, src = 0, "unavailable"
-        report_stats(st, i, pc_, src, out, warn)
+        report_stats(st, i, pc_, src, probe_bracket(st, boot, pc_, src, sver), out, warn)
 
     for i, r in enumerate(rings, 1):
         if args.dump is not None and i != args.dump:
