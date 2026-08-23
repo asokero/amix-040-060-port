@@ -2,15 +2,17 @@
 
 **How to read this file.** It has three parts, newest first.
 
-* **Part I — v3.1 (§§20–26) and v3 (§§13–19)**, below, is the current map, newest first
-  inside the part. v1 and v2 ranked a machine nobody had changed yet. **v3 is the first
-  version written after the top of the ladder was actually built**, and it is a different
+* **Part I — v3.2 (§§27–34), v3.1 (§§20–26) and v3 (§§13–19)**, below, is the current map,
+  newest first inside the part. v1 and v2 ranked a machine nobody had changed yet. **v3 is the
+  first version written after the top of the ladder was actually built**, and it is a different
   kind of document for that reason: four of its numbers are outcomes rather than
   predictions, one rung was built and taken back, and the instrument that produced the
   earlier rankings was itself corrected mid-campaign. **v3.1 is v3's own §19 list, taken.**
   It does not replace v3 — §§13–14 stand unedited — it *opens* v3's largest bucket, prices
-  v3's own bar, and re-ranks the ladder around what was inside. Every ranked number in
-  Part I is measured on the 2026-08-22/23 metal sessions.
+  v3's own bar, and re-ranks the ladder around what was inside. **v3.2 is v3.1's own
+  recommendation, taken twice with opposite outcomes**: rung 2 paid +25.17 %, rung 3 paid
+  nothing, and the mechanism that separates them (§30) re-prices every remaining row. Every
+  ranked number in Part I is measured on the 2026-08-22/23 metal sessions.
 * **Part II — v2 (§§6–12)** is the map the campaign was dispatched from. It is
   **superseded in part**: its ordering held, its rung 1 estimate was vindicated, and one of
   its conclusions — "`LOOP` is empty" — is **refuted by measurement** (§15). Kept whole.
@@ -25,13 +27,713 @@ included.
 
 ---
 
-# PART I — v3.1 (§§20–26) and v3 (§§13–19), 2026-08-23
+# PART I — v3.2 (§§27–34), v3.1 (§§20–26) and v3 (§§13–19), 2026-08-23
 
-**v3.1 first, then the v3 it amends.** §§13–14 — the four rungs as built — are unedited and
-still current. Everything v3.1 touches is downstream of them: the share table (§17.1), the
-ladder (§17.2), the bar (§17.3), and the seven-item list (§19) that v3 wrote for exactly
-this session to take.
+**v3.2 first, then the v3.1 it amends, then the v3 that v3.1 amends.** §§13–14 — the four rungs
+as built — are unedited and still current, and so is everything v3.1 *measured*. What v3.2
+touches is what v3.1 *projected*: the ladder (§24.2), its reclaim rationales (§24.3), the bar
+(§24.4) and the recommendation (§25), all of which were written before the two rungs below were
+built.
 
+---
+
+## 27. What v3.2 is
+
+**v3.1's recommendation, taken twice in one day, with opposite outcomes — and the pair is worth
+more than either result on its own.** §25.1 said *build the accessor fast path*. It was built,
+and it returned **+25.17 %** — the largest single rung of the campaign. The same technique was
+then pointed at the bucket the accessor rung left as the largest attackable group, the
+instruction fetch. That rung engaged on **91.10 %** of instruction fetches, made the fetch
+bucket **23–25 % cheaper per guest instruction**, and returned **−0.05 % across the build.**
+
+**Two rungs, one technique, one week, opposite signs.** §30 is the mechanism that separates
+them, and it is a *pricing law*: it says which removed instructions turn into wall clock and
+which do not, and the profile cannot see the difference. Every remaining row on the ladder is
+re-annotated against it in §33.2 — because bucket size has now been measured, twice and in both
+directions, **not** to be a predictor of attackability.
+
+Nothing in this version comes from a new instrument. The shares are read with the same reader,
+the same brackets and the same conventions as v3.1; §31 is what changed about how they may be
+*compared*.
+
+> **A naming collision, resolved once.** "Rung 2" in §13.2 and §22.5 means **v2's ladder row —
+> the interrupt-poll cadence**, which is banked by running `service_cadence 4`. From here on
+> **"rung 2" and "rung 3" mean the second and third firmware builds of the C2 series**
+> (rung 0, 1, 1b, 1c, 2, 3): the *accessor* fast path and the *instruction-fetch* fast path.
+
+### 27.1 Provenance
+
+| | **rung 2 — the accessor fast path** | **rung 3 — the instruction-fetch fast path** |
+|---|---|---|
+| session | 2026-08-23, 09:55 → 10:46 EEST | 2026-08-23, 11:49 → 12:46 EEST |
+| evidence | `2026-08-23-r2-verdict/` | `2026-08-23-r3-verdict/` |
+| firmware | HEAD `d5c3d6a`; lean `DEC21748`, prof `15DC7660` | HEAD `9c11ee0`; lean `86C0BC18`, prof `E3E9DB90` |
+| design doc | `Z3660/docs/accessor-fastpath.md` | `Z3660/docs/ifetch-fastpath.md` |
+| pre-registration | `EXPECTATIONS.txt`, before power-on, unedited | `expectations.md`, before power-on, unedited |
+| console switch | `DFAST` (unset = ON) | `IFAST` (unset = ON) |
+| **verdict** | **KEPT** | **REVERT** |
+
+Rig unchanged across both sessions and across v3.1: preset 7 (`amix_ram 128`,
+`service_cadence 4`, `arm_frequency 1100`), AMIX on piscsi `ced0s1`, the preset *file* never
+written. Each session opened its serial capture at the previous session's close-out offset, so no
+session's evidence overlaps another's, and rung 3's capture is byte-exact end-to-end (254 226 B
+requested, 254 226 B received, zero drops).
+
+### 27.2 The standing posture — read every number below against this
+
+| row | dhry c4, lean, `service_cadence 4`, `amix_ram 128` |
+|---|---|
+| pre-rung-2 reference (v3.1's baseline) | **6539.0** — and reproduced as **cell A of rung 3's 2×2** (both switches disarmed): 6539 / 6566 / 6566 |
+| **rung 2, shipping** | **8185** (8185 / 8184 / 8185, within-arm spread 0.01 %) — **+25.17 %** |
+| rung-2 build, re-measured one session later | 8197 / 8197 / 8185, **mean 8193.0**, median 8197 |
+| **rung 3** (*the row*) | 8184 / 8163 / 8219, **mean 8188.7**, median 8184 — **−0.05 %** |
+| rung 3, return leg (both switches cycled and restored) | 8153 / 8196, mean 8174.5 |
+
+**The standing posture is 8185-class**, and the two builds are the same machine to within the
+rig's own spread. Cell A landing on **6539** — v3.1's banked pre-rung-2 reference, to the digit,
+two builds and three flashes later — is the strongest rig-stability evidence this lane has ever
+had, and it is what lets the −0.05 % be read as a null rather than as drift.
+
+**Card state and repo state differ, and the difference is recorded rather than tidied.** The card
+holds `86C0BC18` — the rung-3 lean image — because the rung-3 rebuild overwrote `BOOT-lean.BIN`
+in place and **no copy of the rung-2 lean image `DEC21748` exists** on host or card
+(`50-REVERT-IMAGE-UNAVAILABLE.txt` lists every image checked, with CRCs). Behaviourally that
+image *is* the rung-2 posture: −0.05 %, inside the rig's spread, both switches reversible and
+echo-confirmed in both directions. **The substantive revert is a firmware-repo action — revert
+`3087af9`, rebuild `make lean`, one flash — and it is not done at the time of writing.**
+
+> **Process finding, worth more than the incident.** The build writes every variant to a *fixed*
+> filename, so flashing a new build destroys the only copy of the reference arm it is about to be
+> judged against. **A verdict session must archive the outgoing image before its first rebuild**,
+> or the build must stamp the CRC into the filename.
+
+---
+
+## 28. Rung 2 — the accessor fast path: KEPT, and the number is **+25.17 %**
+
+§25.1's brief, built as written: the `dpagecache` hit path resolved inline, behind a `DFAST`
+console switch, with a host state-equivalence corpus as the guard. It cleared its pre-registered
+bar (`dhry c4 ≥ 6900`) by 18.6 %.
+
+### 28.1 The row, and why there are two honest numbers
+
+```
+cross-build   lean c4   8184.7  vs the pre-rung-2 build's 6539.0   = +25.17 %   <- SHIPPING
+same-boot     lean c4   8184.7  vs DFAST OFF's         6294.5      = +30.03 %
+cross-build   lean c1                                              = +19.43 %
+same-boot     prof c1                                              = +15.77 %
+```
+
+**The disarmed arm is not the pre-rung-2 machine.** With every verdict `SLOW` an access still
+loads the table, compares, and only then runs the unmodified accessor — a **−3.74 %** disarm
+penalty, measured across two flashes. The design doc's claim that disarming *"costs nothing on
+the hot path"* is true of the **armed** table and false of the disarmed one, and the arithmetic
+closes exactly:
+
+```
+1.2517 (shipping)  x  1.0388 (disarm penalty)  =  1.3003  =  the same-boot ratio, to four digits
+```
+
+**Quote +25.17 %.** The same-boot switch overstates the shipping gain by ~4.9 pp. §30.2 shows
+this is not a quirk of one rung: the switch overstates *by construction*, and rung 3 measured the
+same identity again.
+
+### 28.2 The profile moved where the wall clock did
+
+Cadence 4, swept `[54, 59]` (that session's own band, ceiling printed by the firmware):
+
+| group | before (v3.1, c4) | after rung 2 |
+|---|---|---|
+| **`READ` + `WRITE`** | 23.12 – 24.13 % | **14.58 – 15.87 %** |
+| `FETCHOP` + `FETCHEX` | 16.41 – 17.06 % | **18.06 – 19.98 %** ← now the largest attackable group |
+| `DOPCFIND` | 13.32 – 13.65 % | 15.06 – 16.15 % |
+| `HANDLER` | 19.41 – 19.68 % | 19.19 – 19.80 % |
+
+**Three independent signals moved together** — wall clock +25 %, `READ` + `WRITE` down 8.4 pp,
+fast-path coverage **99.11 % (c1) / 99.14 % (c4)** — so the pre-registered failure mode ("the
+accessors get faster and dhrystone does not move") did not occur *and could not have hidden*.
+The `dpagecache` hit rates are unmoved to **≤ 0.04 pp** (read 99.19 %, write 99.33 / 99.34 %),
+which is what makes the comparison like-for-like.
+
+### 28.3 What the rung's own doc had to correct — and what the map corrects with it
+
+Four of the design doc's statements did not survive its metal, and all four are corrections the
+map inherits:
+
+1. **The disarm is not free** (−3.74 %); the shipping number is the cross-build one. §28.1.
+2. **The `XPAR` / `PAGE` weighting is not a constant.** Pre-registered at 30–33 % from the s19
+   capture, measured at **22.63 % (c1) / 24.07 % (c4)** in rung 2's own — and at **19.88 %** one
+   session later. It is a property of the window's supervisor/user mix, and `DFAST_XPAR` now
+   makes reading it per capture free. **Do not re-pin it**, in either doc or map.
+   The counter validated on its own data: the doc's original *inference* method, re-run on the
+   same capture, agrees with the direct measurement **to 0.6 pp**.
+3. **The disk row moves, +5.03 % (same-boot lean c4) / +7.79 % (cross-build) / +7.69 %
+   (same-boot prof c1)** — pre-registered as "no, or barely". Both premises behind that
+   prediction were true and the conclusion still did not follow: on this rig "device-heavy work"
+   means the AMIX kernel **copying bytes in interpreted 68k code** (`uiomove`/`copyout`), and
+   every one of those bytes is a guest data access through the accessors. The rung helps I/O
+   throughput, which was never claimed for it.
+4. **§25.1's misalignment asymmetry — CLOSED, and it was a denominator defect.** The map asked
+   why one guest read in five is misaligned against one write in 800. `MISALIGN_R` counts the
+   *instruction-stream* fetch site too; `MISALIGN_W` has no instruction-stream analogue.
+   Subtract the instruction half (`MISALIGN_I`, 98.5 % of it) and the genuine misaligned **data**
+   reads are **0.1886 % (c1) / 0.1828 % (c4)** of `READ` against a `MISALIGN_W`/`WRITE` control of
+   **0.1317 / 0.1275 %** — an asymmetry of **1.43×**, not 106×. Reproduced at 0.1850 % / 1.46×
+   in rung 3's session. **There is no misaligned-read sub-path to attack; there was a counter
+   with two call sites.**
+
+### 28.4 The 2×2 confirms rung 2 from the other side
+
+Rung 3's `DFAST` × `IFAST` matrix (§29.4) measures the accessor rung again, one boot, both
+`IFAST` arms, every arm echo-confirmed:
+
+```
+DFAST gain   +22.98 %  (IFAST off)      +23.07 %  (IFAST on)
+```
+
+Against the same-boot switch's own +30.03 % in rung 2's session — a *different* boot, a
+*different* build and a workload one rung faster — that is the same measurement recovered
+independently, and the residual gap is the disarm penalty carried by a different image. **The
+accessor rung is the best-defended number on this page.**
+
+---
+
+## 29. Rung 3 — the instruction-fetch fast path: **REVERT**
+
+The same technique on the instruction side: `mmu_get_iword()`'s out-of-line TTR call resolved
+inline through a 256-entry verdict table, behind an `IFAST` console switch, with the same host
+corpus shape as rung 2. ITT0 covers 0–1 GB at both privilege levels, so ~87 % of instruction
+fetches were expected to be TTR-matched and to pay that call.
+
+### 29.1 The verdict rule, and both of its clauses
+
+> Pre-registered: **KEEP** if the new-lean cross-build dhry c4 exceeds **8185** *and*
+> `IFAST_HIT / FETCH` coverage lands in **80–90 %**. Otherwise **REVERT**.
+
+| | pre-registered | measured | |
+|---|---|---|---|
+| cross-build lean c4 | **+7.8 .. +8.7 %** → 8824–8898 | **−0.05 %** (mean 8193.0 → 8188.7); median **8184**; all five new-build runs → −0.12 % | **MISS — hard** |
+| *named possibility*, not the prediction: rung 2's stall recovery repeating | +13.1 .. +14.6 % | −0.05 % | **MISS** |
+| `IFAST_HIT / FETCH` coverage | 80 – 90 % | **91.10 %** (44 345 843 / 48 679 431); 91.14 % on the DFAST-off arm | **MISS — over-delivered** |
+| `IFAST_XPAR / IFAST_HIT` | 85 – 90 % | **89.23 %** | **HIT** |
+| `IPAGE` rates must not move | ± 0.1 pp | **91.63 % → 91.62 %** across the switch, same boot: **0.01 pp** | **HIT** |
+| the same-boot switch reads high vs cross-build | 3.2 – 3.5 pp | **1.60 pp** (switch +1.55 %, cross-build −0.05 %) | **MISS** — right sign, right shape, half the size |
+| `cross-build × disarm-penalty == same-boot switch` | must close | 0.99947 × 1.01604 = **1.01550**; measured switch ratio **1.01550** | **HIT — exact** |
+
+**REVERT fires on both clauses.** The rung works; it does not pay.
+
+### 29.2 Every premise came in at or better than assumed
+
+This is what makes the null a finding about the *model* and not about the build:
+
+| premise | the design doc assumed | measured |
+|---|---|---|
+| `FETCHOP` + `FETCHEX` share of c4 (both swept `[54, 59]`) | 18.06 – 19.98 % | **17.82 – 19.78 %** |
+| fast-pathable shape (words + aligned longwords) | 86.6 % | **92.20 %** |
+| longword fetches routed to the splitter | 26.9 % | **15.59 %** |
+| `IFAST_HIT / FETCH` coverage | 80 – 90 % (pre-reg) | **91.10 %** |
+| `IFAST_XPAR / IFAST_HIT` (the ITT0 premise, measured directly) | 85 – 90 % | **89.23 %** |
+| the fetch bucket's own cut | −40.1 % | **−23.0 % per guest instruction** |
+
+**Priced identically, the target was exactly the size the projection assumed.** The one premise
+that under-delivered is the only one the doc could not measure in advance — and even it is a
+23 % cut of the bucket the whole rung was aimed at.
+
+### 29.3 The bucket really did shrink, and the machine did not notice
+
+Same boot, prof image, cadence 4, corrected cycles **per guest instruction** (the two ~12 s
+windows are not the same length, so nothing raw is compared):
+
+| bucket | `IFAST` on | `IFAST` off | delta |
+|---|---|---|---|
+| `FETCHOP` | 18.33 | 26.30 | **−30.3 %** |
+| `FETCHEX` | 54.19 | 67.87 | **−20.2 %** |
+| **fetch pair** | **72.51** | **94.17** | **−23.0 %** (−25.0 % at price 50) |
+| `HANDLER` | 118.82 | 119.41 | −0.5 % |
+| `DOPCFIND` | 88.54 | 88.83 | −0.3 % |
+| `READ` | 47.94 | 48.14 | −0.4 % |
+| `WRITE` | 36.09 | 34.83 | +3.6 % |
+| **corrected TOTAL** | **685.31** | **706.77** | **−3.04 %** |
+
+**The saving is not reabsorbed elsewhere**: the fetch pair gives up 21.66 cyc/INSN and the whole
+corrected profile gives up 21.46 — about 1 % of the saving lands in other buckets. The cycles
+left the profile. They did not arrive at the wall clock.
+
+### 29.4 The `DFAST` × `IFAST` 2×2 — one boot, every arm echo-confirmed
+
+Means of three dhry c4 runs each, lean image `86C0BC18`:
+
+| | **`IFAST` off** | **`IFAST` on** | `IFAST` gain |
+|---|---|---|---|
+| **`DFAST` off** | **A 6557.0** <br><sub>6539 / 6566 / 6566</sub> | **B 6653.7** <br><sub>6629 / 6684 / 6648</sub> | **+1.47 %** |
+| **`DFAST` on** | **C 8063.7** <br><sub>8075 / 8063 / 8053</sub> | **D 8188.7** <br><sub>8184 / 8163 / 8219</sub> | **+1.55 %** |
+| **`DFAST` gain** | **+22.98 %** | **+23.07 %** | |
+
+```
+multiplicative model  (B/A) x (C/A) = 1.24791
+measured                      D/A   = 1.24884
+INTERACTION  D*A/(B*C) = 1.00075  ->  +0.07 %      (pre-registered |x| < 1.5 %)
+```
+
+**The two rungs compose multiplicatively: there is no interaction to find.** Engagement is pinned
+in both directions — `IFAST_HIT = 0` with `IFAST` off, `DFAST_HIT = 0` with `DFAST` off, and
+`DFAST` coverage reads 99.10 % with `IFAST` on *and* off — so the two fast paths are genuinely
+independent knobs on metal, as the host corpus asserts.
+
+### 29.5 The null, accounted for exactly — this is the whole result
+
+The design doc counts the `iword` `XPAR` arm — the 87 % arm — three ways, from the disassembly:
+
+```
+pre-rung-3 build        79 instructions
+rung 3, IFAST armed     37          (-42)
+rung 3, IFAST disarmed  98          (+19)
+```
+
+If wall clock tracked instruction count, the two measured legs would stand in the ratio 42 : 19.
+Measured, same rig, same session, same posture, lean images:
+
+```
+pre-rung-3 (rung-2 build)   8193.0
+rung 3, IFAST OFF           8063.7    -1.58 %    (+19 instructions)
+rung 3, IFAST ON            8188.7    -0.05 %    (-42 instructions)
+```
+
+**The +19 leg delivered 1.60 % of runtime** (the same ratio the other way up: 8193.0 / 8063.7 =
+1.0160). **Scaled by 42/19, the armed leg should have returned +3.54 % — i.e. 8483. It returned
+zero.** The shortfall is 294 dhrystones, 3.6 % of the machine.
+
+> **The instructions this rung ADDS arrive, and cost in proportion to their count. The
+> instructions it REMOVES return nothing.** One build, one boot, one workload, one
+> disassembly — which is why this asymmetry, and not the cross-build row, is the cleanest
+> evidence on the page.
+
+**One honesty note about the added leg**, because it is the calibration the ratio argument
+rests on: −1.58 % is itself a **MISS** of its own pre-registration, which priced the disarmed
+table from the disassembly at **−3.2 .. −3.5 %** — right sign, right shape, about **half** the
+predicted size. So the added side's *magnitude* needs measuring too. What distinguishes it from
+the removed side is not accuracy; it is that it **arrived at all**.
+
+---
+
+## 30. THE PRICING LAW — what decides a rung, and it is not the bucket's size
+
+### 30.1 The law
+
+> **A removed instruction pays only if it sat in a dependency chain in front of its consumer.
+> Work removed from *beside* a latency that something else is already hiding returns nothing.
+> Work *added* in front of the path arrives — nothing overlaps a dependency you put in front —
+> which is how the two sides of one change can price at completely different rates.**
+
+The mechanism, in rung 3's own terms: the **42 removed instructions are a call chain *around*
+the fetch** — an out-of-line `mmu_match_ttr_ins`, an indirect call through `x_phys_get_iword`, an
+out-of-line `memory_get_word`. Their latency overlaps the fetch's own guest-DRAM access — and
+that access is precisely the thing **the decoded-op cache exists to hide**, so it is the access
+this machine already has the most slack behind. The **19 added instructions are a serial
+dependency prepended to the original path**: load `z3660_ifv[top byte]`, compare, branch, and
+only then start the accessor that was going to run anyway.
+
+**Its inverse is why rung 2 paid.** The data side's call chain sat in front of a *page-cache
+lookup* — two dependent loads out of a 256 KB table, an indirect call, a chain that fences the
+ARM's own speculation — with nothing hiding it. Rung 2 therefore beat even its own
+instruction-count model (~+15 % projected at constant IPC, **+25.17 %** measured): removing the
+chain also removed stalls the count never saw, and the *surviving* code got faster too.
+
+**The lesson is not "instruction counts are optimistic".** It is that **the same instruction
+count means different things in front of different latencies**, and the ladder has now measured
+both signs of that within one week:
+
+| | removed work sat… | count model | measured |
+|---|---|---|---|
+| **rung 2** (data side) | in front of a page-cache lookup — **dependency-chained** | ~+15 % | **+25.17 %** |
+| **rung 3** (fetch side) | beside a guest-DRAM fetch the dopc already hides — **latency-hidden** | +7.8 .. +8.7 % | **−0.05 %** |
+
+### 30.2 The corollary the switches proved twice: a same-boot switch always overstates
+
+A console switch's OFF arm is not the pre-rung machine — it still loads the table, compares, and
+falls through. So the switch A/B always reads high, by exactly the disarm penalty, and both
+rungs closed the identity to the digit:
+
+| | shipping (cross-build) | disarm penalty | same-boot switch | identity |
+|---|---|---|---|---|
+| rung 2 | +25.17 % | −3.74 % | +30.03 % | 1.2517 × 1.0388 = **1.3003** ✔ |
+| rung 3 | −0.05 % | −1.58 % | +1.55 % | 0.99947 × 1.01604 = **1.01550** ✔ |
+
+**Rung 3's switch alone would have reported +1.55 % and looked like a small win.** The verdict
+turns on the cross-build row, which is why a verdict session must take one — and why it must not
+destroy the reference image before it does (§27.2).
+
+### 30.3 How to price a rung before funding it
+
+Four steps, all cheap, all now mandatory for anything on §33.3's ladder:
+
+1. **Name the latency the removed work sits next to.** Not the bucket — the *latency*.
+2. **Ask what is already hiding it.** The decoded-op cache hides the instruction stream's DRAM
+   access; nothing hides a page-cache lookup's dependent loads, and nothing hides a table walk's
+   chain of dependent guest-memory loads.
+3. **Count the added work separately and charge it — it is the side that reliably has a sign.**
+   Rung 3's +19 instructions were priced from the disassembly *in advance* at −3.2 .. −3.5 % and
+   measured **−1.58 %**: about half, but it arrived, and it was the only leg of that rung that
+   moved the wall clock at all.
+4. **Buy the answer with one lean A/B *plus* a cross-build reference row.** One session, one
+   console switch, both arms in one boot, and the previous lean image archived. That is the whole
+   discriminator, and it is what settled this rung.
+
+**Consequence for the ladder: ranking by bucket size is not ranking by attackability.** The fetch
+pair was the largest attackable group on the map, it was attacked with the technique that paid
+25 % on the data side, with *better* coverage than projected, and it paid nothing.
+
+---
+
+## 31. What the instrument can and cannot price
+
+Three caveats, all new, all of which change how the shares in this file may be *compared*. None
+of them changes a measured number.
+
+### 31.1 Row H is inflated by the profiler's own per-fetch calls — by about 3×
+
+In the profiling build **every instruction fetch pays `Z3660_PROF_ENTER_IFETCH` +
+`Z3660_PROF_CNT` + `Z3660_PROF_RET` — three out-of-line calls — and all three land INSIDE
+`FETCHOP`/`FETCHEX`.** The probe correction subtracts the bracket pair; it does not subtract the
+counter call that lives between them. So the bucket a fetch-side rung is sized against is the
+bucket the instrument inflates most.
+
+Measured, same-boot `IFAST` switch, corrected shares at `[54, 59]`:
+
+```
+the switch removes 3.97 .. 4.52 pp of the corrected profile
+  -> at constant IPC that is  +4.1 .. +4.7 %  of wall clock
+the LEAN image measured                        +1.55 %          -> a ~3x over-statement
+```
+
+Order-of-magnitude check on the mechanism (arithmetic sketch, **not** a measurement — no counter
+separates the instrument from the bucket): 48.6 M fetches over 71.5 M guest instructions is 0.68
+fetches per instruction, against an OFF-arm fetch pair of 94.17 cyc/INSN. Three calls at 30–40
+cycles together is 20–27 cyc/INSN, i.e. **21–29 % of the bucket, present in both arms and absent
+from lean entirely.**
+
+> **Print this caveat beside row H wherever row H is quoted, and beside any row whose bucket
+> contains profiler self-cost.** Shares read off a `PROFB` capture are a fair ranking of buckets
+> *against each other*; they are **not a wall-clock forecast**, and they are least fair to the
+> fetch pair. **The honest sizing tool for a fetch-side rung is a lean A/B**, which is what
+> settled rung 3.
+
+### 31.2 The probe price recalibrates between boots — a pinned price is not like-for-like
+
+The firmware's own boot-time measurement of what a probe pair costs, same rig, same guest, three
+sessions of one morning:
+
+| session | bracket |
+|---|---|
+| v3.1 (s19) 07:3x | **[57, 68]** |
+| rung 2, 10:0x | **[54, 66]** |
+| rung 3, 12:24 | **[39, 50]** |
+
+**A 32 % move in the marginal price in five hours**, and it moved *down*. v3.1 §16.2 documents a
+~20 % drift and rung 2's findings repeated it; this is larger than either.
+
+**Two consequences, and both retire a comparison this file has been making.**
+
+* **`cyc/dispatch` at a pinned price is confounded.** `DOPCFIND` cyc/dispatch is
+  `(acc − spans × price) / spans`, so the price is a first-order term. Comparing rung 2's 70.26
+  against v3.1's 60.83 by pinning both at 57 charges the two captures different amounts of
+  instrument — 57 was v3.1's own marginal price and only 54 was rung 2's. **The within-session
+  comparison is the sound one** (§32.2 is one, and its spread is 0.63 %).
+* **A share swept at one band cannot be compared with a share swept at another.** The fetch pair
+  on rung 3's IFAST-off arm reads **14.21 – 16.59 %** at this boot's own `[39, 50]` and
+  **17.82 – 19.78 %** at the doc's `[54, 59]` — the same cycles, two bands, and only the second
+  is comparable with rung 2's table. Every cross-session share comparison in this file must name
+  the band on both sides.
+
+### 31.3 The ceiling line decides per capture — the "always impossible" folklore is retired
+
+Rung 2 predicted and got the **WARNING** form of the firmware's price-ceiling line (*"the boot
+line's in-bucket end 66 is ABOVE this capture's ceiling 59 and is arithmetically impossible"*),
+as had every capture this lane had ever taken. Rung 3 printed the **other** form, in all three
+captures:
+
+```
+[PROF] s ceiling: min_b(acc/spans) = 59 cyc/span, bound by TAILADV
+[PROF] s usable sweep: [39, 50] -- the boot line's in-bucket end fits under the ceiling
+```
+
+**The streak broke because the bracket fell, not because the ceiling rose** — the ceiling is 59
+in both sessions. So the line works in both of its arms, and *"the in-bucket end is always
+impossible"* was a fact about the bracket's historical range, **not a law**. Keep sweeping
+`[bracket_lo, min(bracket_hi, ceiling)]` and let the line decide per capture.
+
+**A worked example of why this matters, from this file's own ladder**: `TAILADV` was RETIRED in
+§22.5 at 1.28 – 0.00 %, because it *binds* the ceiling and vanishes there. On rung 3's band it
+reads **9.16 – 5.29 %** — the same bucket, the same firmware, a lower price. The retirement
+stands (a bucket that is all probe cost at its own ceiling is not a target), but the number is a
+price artefact in either direction, and v3's rung 5 was funded off exactly that artefact.
+
+---
+
+## 32. The dispatch loop — `DOPCFIND` stays at #5, and the 15 % it gained is still unexplained
+
+### 32.1 The way histogram: instrument fixed, verdict unchanged
+
+Rung 2 found the histogram line printing `DOPC_HIT` in place of way 0 — five `z3660_prof_u64()`
+calls into a four-slot rotating buffer inside one `printf`, so the line invited *"way0 = 100 %"*,
+crossed the **≥ 85 % strike threshold**, and would have **struck a live rung** against the verdict
+the firmware itself computed correctly two lines later. The fix landed before rung 3's capture,
+and the line now prints the number it computes:
+
+```
+[PROF] r dopc ways: 35543411 / 12880698 / 4941876 / 2697555 (way0 63.39% of 56063540 hits)
+[PROF] r dopc way VERDICT: way0 between 60% and 85% -- the rung STAYS at ladder #5
+```
+
+**way0 = 63.39 %** on the shipping arm (64.08 % `IFAST` off, 64.23 % `DFAST` off), and the
+identity `sum(ways) == DOPC_HIT` is **exact in all three captures** with the pre-written warning
+silent. All three sit inside 60–85 %: **the strike threshold is not crossed and `DOPCFIND` stays
+at ladder #5.** Consistent with rung 2's own *integer* computation (62.50 % c1 / 63.25 % c4) —
+the value never moved, only its printing was broken.
+
+### 32.2 The +15.5 %: both candidates weakened, and the finding stays OPEN
+
+Rung 2 measured `DOPCFIND` rising **60.83 → 70.26 cyc/dispatch (+15.5 %)** and named two
+candidates: **(a) workload mix**, **(b) D-cache pressure from the new always-hot verdict tables**.
+Rung 3 was the cheap test. Same boot, three arms:
+
+| arm (prof image, cadence 4) | @39 | @50 | @57\* | dopc hit |
+|---|---|---|---|---|
+| `DFAST` on, `IFAST` on (shipping) | 88.53 | 77.53 | 70.53 | 78.34 % |
+| `DFAST` on, `IFAST` off | 88.83 | 77.83 | 70.83 | 78.25 % |
+| `DFAST` off, `IFAST` on | 88.98 | 77.98 | 70.98 | 78.08 % |
+
+**Spread across all three arms: 0.63 %. Neither console switch moves it** — which was the
+*predicted* result and carries no weight either way, because `expectations.md` §6 said in advance
+that a disarmed table is still loaded and still compared: the switch varies whether the table is
+**believed**, not whether it is **touched**.
+
+**What does discriminate is the build comparison rung 3 made possible.** Rung 3 adds a *third*
+always-hot verdict table (+1 KB `.bss`, +944 B `.text`) to the same L1D a 64 KB decoded-op cache
+is competing for. Candidate (b) predicts a further rise:
+
+```
+s19 (pre-rung-2, no tables)   60.83
+r2  (rung 2,     2 KB)        70.26      <- the +15.5 %
+r3  (rung 2+3,   3 KB)        70.53      <- +0.39 % against r2
+```
+
+**A mechanism that charged 15.5 % for the first 2 KB charged 0.39 % for the third. Candidate (b)
+is DEMOTED.** (\*The 57 is pinned only to line up with the earlier numbers, and §31.2 says that
+pin is itself confounded — so this is evidence, not proof.)
+
+**Candidate (a) is not confirmed either.** Rung 2 read its own opposite-signed hit-rate moves
+(82.91 → 79.05 % at cadence 1 but 78.17 → 79.88 % at cadence 4) as the signature of a mix change.
+Rung 3 adds a third point, and it does not fit: the dopc hit rate is **78.34 %** here against
+**79.87 %** in rung 2 and **78.17 %** in s19 — this session sits *below* rung 2 and level with
+s19 — while `DOPCFIND` sits **level with rung 2 and 16 % above s19**. Supervisor share: 48.74 %
+here, 53.24 % rung 2, 49.28 % s19 — same story. **The cost tracks neither quantity**, so if mix
+is the mechanism it is not through the hit rate or the privilege split, and no other form of it
+has been named.
+
+> **F6 stays OPEN with both candidates weakened.** The honest residue: something between the s19
+> and rung-2 builds changed `DOPCFIND`'s cost by ~15 %, and it is neither of the two console
+> switches, nor the size of the verdict tables, nor any simple form of workload mix.
+>
+> **And it is the larger prize in this bucket.** +15.5 % of ~61 cyc/dispatch is **≈ 9 cycles paid
+> on every dispatch** — against a named way-walk rung whose entire ceiling is 1–4 instructions of
+> a ~50-instruction path (§25.2). *If* the 9 cycles are real and recoverable, they are worth more
+> than the rung the map has ranked at #5 for two versions. **They are also the softest number
+> here**: cross-session, at a pinned price §31.2 says is not like-for-like. **Investigation
+> first, rung second** — and the investigation is a build bisection with one price band, not
+> another switch.
+
+---
+
+## 33. THE MAP v3.2 — the ladder, re-annotated and re-ranked
+
+### 33.1 The shares
+
+Rung 3's **`IFAST`-off arm** — the closest thing this session took to a rung-2-only profile, and
+therefore the shape the machine is in once the rung-3 revert lands. **Close, not identical**: the
+arm still carries rung 3's disarmed table, i.e. §29.5's +19 instructions per served fetch, which
+inflates row H by that much. Cadence 4, swept this boot's
+own `[39, 50]`, `TAILSAMP` excluded from the denominator. **The band is this boot's; §31.2
+forbids comparing these against the `[54, 59]` columns in §28.2 without saying so.**
+
+| bucket / group | corrected share (c4, `[39, 50]`) | at the doc band `[54, 59]` |
+|---|---|---|
+| **`LOOP` whole** | **36.33 – 34.73 %** | — |
+| ‑ `LOOPRES` — the true residue | **18.52 – 15.37 %** | — |
+| ‑ **`DOPCFIND`** | **13.41 – 14.92 %** | — |
+| ‑ `DOPCFILL` | 2.77 – 3.06 % | — |
+| ‑ `BLKREC` | 1.63 – 1.39 % | — |
+| **`HANDLER`** | **18.02 – 18.87 %** | — |
+| **`FETCHOP` + `FETCHEX`** (row H) | **14.21 – 16.59 %** | **17.82 – 19.78 %** |
+| **`READ` + `WRITE`** | **12.52 – 14.28 %** | 14.58 – 15.87 % (rung 2's session) |
+| **`TAILPOLL`** | 7.45 – 7.35 % | — |
+| **`TAILADV`** | *9.16 – 5.29 % — price artefact, §31.3* | *≈ 0 at the ceiling* |
+| **`XLATE` + `WALK`** | 1.81 – 2.25 % | — |
+| `TAILSPEC` | 0.38 – 0.47 % | — |
+| `FAULT` (uncorrected) | 0.13 – 0.16 % | — |
+| *`TAILSAMP` (instrument, excluded)* | *6.66 – 6.35 %* | — |
+
+§10.1 applies unchanged: these are shares of the **distorted** machine, and §31.1 now names the
+distortion's largest single site — row H's own three per-fetch profiler calls.
+
+### 33.2 The pricing-law annotation pass
+
+**Every remaining candidate, annotated before it is ranked.** This is the column §30 adds to the
+map, and no rung may be funded from an instruction count until its row here says
+*dependency-chained*.
+
+| row | what a rung would remove | in front of a latency, or beside one? | status |
+|---|---|---|---|
+| **`HANDLER`** | interpreted work that computes guest state | **UNCLASSIFIED — and this is now the prerequisite.** The work feeds the guest register file, so it *looks* dependency-chained by construction; the fetch side looked chained too until it was measured. Independent datum: `HANDLER` did not move across rung 3's switch (−0.5 %), so it did not absorb the fetch saving either | **must buy its classification** with one switch + lean A/B before it is funded |
+| **`FETCHOP` + `FETCHEX`** — the *served* path | the call chain around a fetch the dopc is already hiding | **LATENCY-HIDDEN — MEASURED.** This is rung 3 | **STRUCK as an inlining target.** Do not re-fund an ifetch-side rung from these counts |
+| **`FETCHOP` + `FETCHEX`** — the *miss* path (the physical-index study) | whole misses, not scaffolding: a miss's fetch is the one fetch the decoded-op cache is **not** hiding | **NOT hidden** — but its own added cost (a translation on the fill path) is a **dependency prepended to the fill**, so it is charged at full price | **live, and the only fetch-side prize left**; §33.4 |
+| **`DOPCFIND`** — the way walk | 1–4 instructions of a ~50-instruction path measured at **IPC ≈ 1** | **dependency-chained** — the dispatch cannot start until the lookup resolves, so removals pay at count rate | **stays #5**; there is simply little to remove |
+| **`DOPCFIND`** — the unexplained +15.5 % | ≈ 9 cyc/dispatch of unknown origin | **unknown — the mechanism is unidentified**, which is exactly why it is an investigation | **OPEN**, §32.2 |
+| **`LOOPRES`** | unenumerated | **UNCLASSIFIABLE** — a bucket whose contents are unknown cannot be classified, which is a second, independent reason to withhold | **reclaim withheld**, as in v3 and v3.1 |
+| **`READ` + `WRITE`** | what is left after 99.10 % coverage: the decline population and the inlined path itself | dependency-chained (rung 2 proved it) — but the chain has already been removed | **taken**; no named second-pass mechanism |
+| **`XLATE` + `WALK`** | a table walk = a chain of **dependent guest-memory loads** | **dependency-chained by construction** — the cleanest case on the page | **prices at full value, and the bucket is ~2 %** |
+| **`TAILPOLL`** | — | — | **banked** (cadence 4) |
+| **`TAILADV`** | — | — | **retired** (price artefact, §31.3) |
+| **row J (a JIT)** | the whole interpretive structure | **partly hidden, by measurement**: row J counts the fetch pair *in full*, and the fetch pair is now measured to be substantially latency-hidden; a JIT still pays the guest's own memory latency | **upper bound, now with a named mechanism for why** |
+
+### 33.3 The ladder
+
+Amdahl against the standing **8185** (§27.2). Shares are measured on rung 3's `IFAST`-off arm at
+`[39, 50]`; **the reclaim column is not measured** and §10.6 governs it exactly as before. Rows
+are ranked by expected value, and the annotation column is §33.2's verdict in one word.
+
+| # | rung | buckets | **share (c4)** | pricing law | reclaim (**est.**) | time won | **dhry @8185** |
+|---|---|---|---|---|---|---|---|
+| **1** | **handler specialisation** | HANDLER | **18.02 – 18.87 %** | **unclassified** | 25 % | 4.51 – 4.72 % | **8571 – 8590** |
+| **2** | physical-index dopc (miss-rate half of the fetch second pass) | FETCHOP + FETCHEX, *miss path* | 14.21 – 16.59 % of profile; the *prize* is ~2.2 – 2.5 % of runtime | not hidden; **its own cost is chained** | see §33.4 | **~2.2 %** realistic | *≈ 8370 — v3.1's §24.4 arithmetic, **not** re-derived on this build* |
+| **3** | `DOPCFIND` — the hit-path walk | DOPCFIND | **13.41 – 14.92 %** | chained, but nearly empty | 5 – 15 % | 0.67 – 2.24 % | **8240 – 8372** |
+| **4** | `LOOPRES` — the true dispatch residue | LOOPRES | **18.52 – 15.37 %** | **unclassifiable** | **withheld** | — | — |
+| **5** | ATC fast path | XLATE + WALK | 1.81 – 2.25 % | **chained** | 60 % | 1.09 – 1.35 % | **8275 – 8297** |
+| — | *accessor fast path* | *READ + WRITE* | *12.52 – 14.28 %* | — | — | — | ***BUILT — rung 2, +25.17 %*** |
+| — | *instruction-fetch fast path* | *FETCHOP + FETCHEX, served path* | — | **hidden** | — | — | ***BUILT AND REVERTED — rung 3, −0.05 %*** |
+| — | *interrupt-poll cadence* | *TAILPOLL* | *7.45 – 7.35 %* | — | — | — | ***banked*** |
+| — | *tail residue* | *TAILADV* | *price artefact* | — | — | — | ***RETIRED*** |
+| **J** | the residual only a JIT reaches | LOOP + FETCH\* + TAILADV + TAILPOLL + TAILSPEC | **64.4 – 67.5 %** | **partly hidden** | 90 % coverage | — | *≈ 2.4 – 2.55× — an upper bound soft on two named components* |
+
+**Three notes the table cannot carry.**
+
+* **#1 is a promotion by elimination, not by evidence.** `HANDLER` leads because the bucket above
+  it was measured hidden and the buckets below it are small or empty — **not** because anything
+  says its work is recoverable. The 25 % is v2's estimate, carried unchanged for three versions
+  now. **Its first move is not a design; it is the §30.3 discriminator on one handler family.**
+* **#3 keeps its rank, but the interesting number in its bucket is no longer the rung.** The way
+  walk stays worth 0.7–2.2 %; the unexplained ≈ 9 cyc/dispatch sitting beside it (§32.2) is worth
+  more, is not yet a rung, and is the softest figure on this page (§34.3).
+* **Row J's number rose and its meaning did not.** Both reasons are artefacts: `TAILADV`'s price
+  band inflates it (§31.3) and the fetch pair inside it is partly hidden (§30). Read it as it has
+  always been read — *a JIT is worth roughly twice the leading rung* — and stop quoting a
+  dhrystone figure for it.
+
+### 33.4 The recommendation
+
+> ### The next funded design is still the physical-index decoded-op cache. It is now the only fetch-side prize the pricing law does not strike — and the law applies to its own cost too.
+
+**The bar is unchanged and is already written** (§17.3, priced in §22.3): *a physical index costs
+a translation on the fill path*. §30 adds the second half of that sentence: **a translation
+prepended to the fill is a dependency in front of the fill, and dependencies in front arrive** —
+exactly like rung 3's +19 instructions, the only leg of that rung that moved the wall clock at
+all. **There is no stall-recovery discount to hope for on the cost side**, and its size still has
+to be measured rather than counted (rung 3's added leg came in at half its own count-derived
+prediction). The *prize* is different
+in kind from rung 3's: it removes whole misses rather than scaffolding around served fetches, and
+a miss's fetch is the one fetch the decoded-op cache is not hiding.
+
+**What the design must pre-register, in this order:**
+
+1. **Which of its removed costs are latency-hidden and which are dependency-chained** (§30.3),
+   named per cost site, before any count is converted to a wall-clock number.
+2. **Its cost site**, as §17.3 already requires — and it must be a site that pays *only* on a
+   miss that was going to walk anyway. A design that adds work to every fill starts below the bar.
+3. **A lean A/B plus a cross-build reference row**, with the outgoing lean image archived first.
+
+**And one input the design needs is stale.** §22.3 priced the fill path at **62–64 cyc/miss** at
+price 57. Re-derived on rung 3's `IFAST`-off arm at that boot's own band, `DOPCFILL` costs
+**73–84 corrected cycles per miss** — the same path, a different price band, and §31.2 says the
+two are **not** comparable. **Re-measure the fill-path price at one band before scoring a design
+against it**, and quote the band.
+
+**Do not re-fund an ifetch-side inlining rung from row H's counts.** That is the one thing §30
+strikes outright, and row H's share is also the one most inflated by the instrument (§31.1).
+
+---
+
+## 34. What v3.2 does **not** establish
+
+§10, §18 and §26 apply unchanged and are not repeated. Five things are new, and §34.6 appends
+the ledger.
+
+### 34.1 The revert is measured but not performed
+
+Rung 3's verdict is REVERT and the card holds the rung-3 image (§27.2). The behavioural claim —
+that `86C0BC18` *is* the rung-2 posture — rests on a −0.05 % cross-build null with a 0.15–0.68 %
+within-arm spread, i.e. on the two builds being indistinguishable, not on the rung being absent.
+**Until the firmware commit is reverted and a lean image rebuilt, "the standing build" and "the
+rung-2 build" are two different binaries that measure the same.**
+
+### 34.2 The pricing law is a law about two measurements
+
+Two rungs, opposite signs, one week, one rig. That is enough to refute *"instruction counts
+predict wall clock"* and enough to name the mechanism, and it is **not** enough to predict a third
+rung's sign from armchair reasoning. §30.3 exists because the law's own consequence is that the
+classification has to be **bought** per rung, cheaply, before the rung is funded — not asserted
+from the shape of the code.
+
+### 34.3 F6 is open, and its prize is the softest number on the page
+
+§32.2's ≈ 9 cyc/dispatch is a cross-session figure at a pinned price §31.2 says is not
+like-for-like. It could be substantially smaller. **It is quoted as a reason to investigate, and
+it must not be quoted as a projected gain.**
+
+### 34.4 Row H's caveat is an arithmetic sketch, not a measurement
+
+§31.1's 21–29 % instrument share of the fetch bucket comes from a plausible per-call cost band,
+not from a counter. **No counter separates the instrument from the bucket.** The *direction* is
+established (three profiler calls do land inside the bucket, and the lean A/B under-runs the
+profile's forecast by ~3×); the *size* is not.
+
+### 34.5 What is owed to the Z3660 lane
+
+Of §26.3's three items, **one is discharged**: the price bracket now carries a ceiling, and the
+line has been seen in **both** of its arms (§31.3). The two `docs/profiler.md` identity
+corrections — `tcnt[DOPCFILL] == DOPC_MISS` needing a fault term, and `tcnt[BLKREC] <=
+tcnt[DOPCFIND]` comparing spans about a property of calls — **still stand, unfixed**. Discharged
+separately: the way-histogram print defect rung 2 found (fixed in `47bd901`, confirmed on metal,
+§32.1). Three items are added:
+* **`docs/ifetch-fastpath.md` should be marked MISSED**, with §29.5's mechanism recorded beside
+  it, the way rung 2's doc was corrected against rung 2's metal. Its instruction-count table is
+  *not* wrong — the disarm leg confirms the counts — but its conversion of counts to wall clock
+  is, on this side of the machine.
+* **`docs/profiler.md` should say that cross-session `cyc/dispatch` comparisons must not pin a
+  price one of the captures never measured** (§31.2), and that the in-bucket end is *sometimes*
+  usable — the ceiling line decides per capture (§31.3).
+* **The footprint tables in both fast-path docs price no second-order cost at all.** F6 is exactly
+  such a cost and is still unattributed (§32.2).
+
+### 34.6 The ledger of refuted claims — v3.2's additions
+
+Per `docs/METHOD.md` §8, appended to §18.4 and §26.5. Nothing is deleted.
+
+| claim | where | status |
+|---|---|---|
+| **"the fetch pair is the largest attackable group and the obvious next rung"** | rung 2's own findings; §28.2 | **REFUTED BY BUILDING IT.** Attacked at 91.10 % coverage, bucket −23 %, wall clock −0.05 %. §29. |
+| **an instruction-count projection predicts a rung's wall clock** | rung 3 pre-registration (+7.8 – 8.7 %), and every reclaim estimate on this page | **REFUTED in both directions** — rung 2 over-delivered 1.7×, rung 3 delivered nothing. §30. |
+| "removing a call chain removes stalls an instruction count never sees" — as a *general* rule | rung 2's findings, carried forward to rung 3 | **SCOPED.** True where the chain is dependency-chained; false where it sits beside a latency already hidden. §30.1. |
+| a same-boot console switch reports the shipping gain | rung 2 and rung 3 framing | **REFUTED — twice, and quantified.** It overstates by exactly the disarm penalty: +4.9 pp and +1.60 pp. §30.2. |
+| row H's corrected share as a sizing tool for a fetch-side rung | this file, every version | **INFLATED ~3×** by the profiler's own three per-fetch calls. §31.1. |
+| `DOPCFIND` cyc/dispatch compared across sessions at a pinned price | rung 2's F6; §22.3's fill-path price | **CONFOUNDED.** The probe bracket moved 32 % in five hours. §31.2. |
+| "the boot line's in-bucket end is always arithmetically impossible" | §20.2, rung 2's findings | **REFUTED.** It fit in all three of rung 3's captures. The ceiling line decides per capture. §31.3. |
+| "way0 = 100 %, the `DOPCFIND` rung is struck" — the line as printed before `47bd901` | firmware instrument | **INSTRUMENT DEFECT, FIXED.** The real value is 63.39 – 64.23 %; the rung **stays** at #5. §32.1. |
+| D-cache pressure from the verdict tables as the cause of `DOPCFIND`'s +15.5 % | rung 2's F6 candidate (b) | **DEMOTED** — a third always-hot table moved it +0.39 %. Not closed; candidate (a) is not confirmed either. §32.2. |
+| `TAILADV`'s retirement as a *bucket-size* fact | §22.5 | **RESTATED.** Its share is a price artefact in both directions (9.16 % at `[39,50]`, ≈ 0 at the ceiling). The retirement stands on the mechanism, not on the number. §31.3. |
+| §25.1's misaligned-read sub-path ("one read in five, never explained") | v3.1 §25.1 | **CLOSED — a denominator defect.** Genuine misaligned data reads are 0.185 % of `READ`, a 1.43× asymmetry against writes. §28.3. |
+| §22.3's fill-path price of 62–64 cyc/miss as a bar to score against | §22.3, §24.4 | **NOT LIKE-FOR-LIKE** with anything measured since; re-derives to 73–84 cyc/miss at rung 3's band. Re-measure at one band. §33.4. |
+
+---
 ---
 
 ## 20. What v3.1 is
@@ -331,6 +1033,10 @@ rig-drift detector compared only against itself, and it has held for four sessio
 
 ### 23.3 Item 1 — row H's band and bar are WITHDRAWN, and row H is FLAT
 
+> **⚠ Read §31.1 beside every row-H share below.** The corrected fetch share is inflated by the
+> profiling build's own three per-fetch calls, and a fetch-side rung sized off it is sized off the
+> instrument — measured at ~3× when rung 3 finally took a lean A/B (§29, §31.1).
+
 §19 item 1 pre-registered `FETCHOP + FETCHEX` at **10–13 %, "must not exceed rung 1's
 12.64 %"**, and reasoned *"expect it low"* from the hit rate coming in above band.
 
@@ -372,6 +1078,13 @@ says 32.01 % of dispatches serve an extension word from the entry; the rest do n
 ---
 
 ## 24. THE MAP v3.1 — the ladder re-ranked
+
+> **⚠ SUPERSEDED BY §33.3.** This ladder was written before rungs 2 and 3 were built. Its row #1
+> (accessors) **was built and returned +25.17 %** (§28); its row #2 (the fetch second pass) **was
+> built on the served path and returned −0.05 %** (§29). The reclaim column here converts
+> instruction counts to wall clock without asking whether the removed cost is latency-hidden,
+> which §30 shows is the question that decides a rung. **Kept unedited** — the projections are
+> what the outcomes are scored against.
 
 ### 24.1 The shares, both cadences
 
@@ -493,6 +1206,12 @@ rate 82.92 %; `DOPCFILL` 61.8–63.9 cyc/miss; `FETCHOP` **93.0** corrected cyc/
 ---
 
 ## 25. THE RECOMMENDATION
+
+> **⚠ TAKEN, both halves.** §25.1 was built as rung 2 and **KEPT at +25.17 %** (§28) — including
+> its misaligned-read question, which closed as a denominator defect (§28.3). §25.2's counter
+> change landed, its print defect was found and fixed on metal, and its verdict is **way0
+> 63.39 %: the rung STAYS at #5** (§32.1). **Kept unedited**; the current recommendation is
+> §33.4.
 
 > ### Build the accessor fast path (rung #1). Take the `DOPCFIND` way-histogram as a counter change alongside it — not as a rung.
 
