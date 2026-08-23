@@ -1,19 +1,592 @@
 # C2 attack map — where the interpreter's time actually goes
 
-**How to read this file.** It has two parts, newest first.
+**How to read this file.** It has three parts, newest first.
 
-* **Part I — v2 (§§6–12)**, below, is the current map. It is derived from the *clean*
-  metal captures of 2026-08-22 evening (`C1v2`), through the v2-capable symbolizer.
-  Every ranked number in this document is a v2 number.
-* **Part II — v1 (§§0–5)**, further down, is the first map, written the same day from
-  the morning's captures. It is **superseded but kept**, per `docs/METHOD.md` §8: a
-  refuted conclusion is evidence about the instrument, and deleting it would delete the
-  reason the v2 numbers are believable. §6.2 lists what moved and why, item by item.
-  Where the two disagree, **v2 wins**, and §6.2 says which of v1's inputs was wrong.
+* **Part I — v3 (§§13–19)**, below, is the current map. v1 and v2 ranked a machine nobody
+  had changed yet. **v3 is the first version written after the top of the ladder was
+  actually built**, and it is a different kind of document for that reason: four of its
+  numbers are outcomes rather than predictions, one rung was built and taken back, and the
+  instrument that produced the earlier rankings was itself corrected mid-campaign. Every
+  ranked number in Part I is measured on the 2026-08-22/23 metal sessions.
+* **Part II — v2 (§§6–12)** is the map the campaign was dispatched from. It is
+  **superseded in part**: its ordering held, its rung 1 estimate was vindicated, and one of
+  its conclusions — "`LOOP` is empty" — is **refuted by measurement** (§15). Kept whole.
+* **Part III — v1 (§§0–5)** is the first map, written the same day as v2 from the morning's
+  captures. **Superseded but kept**, per `docs/METHOD.md` §8: a refuted conclusion is
+  evidence about the instrument, and deleting it would delete the reason the later numbers
+  are believable.
+
+Where they disagree, **the later part wins**, and each says which input moved. §18.4 is the
+running ledger of every claim in this file that measurement has since refuted, v3's own
+included.
 
 ---
 
-# PART I — v2, 2026-08-22 evening
+# PART I — v3, 2026-08-23: the rungs that were built
+
+## 13. What v3 is
+
+### 13.1 The arc, in one table
+
+Four changes were built against the v2 map between 2026-08-22 evening and 2026-08-23 morning.
+Three shipped and one was taken back and decomposed. **Every row here is metal.**
+
+| rung | what | verdict | the number that decided it |
+|---|---|---|---|
+| **0** | block-idiom fast path (`bzero`/`mcpy`/`CPUSHL` recognizer) | **KEPT** | boot's AMIX phase **110 s → 62 s, −43.6 %**, for a dhrystone tax of **−0.83 %** |
+| **1** | decoded-op cache, 4096 entries | **KEPT** | lean dhrystone **4405.3 → 5432.0, +23.3 %** ship-vs-ship |
+| **1b** | invalidation narrowing, three arms | **REVERT — pre-registered, and fired** | **5306.0** against a revert line of 5432; crossed by 2.32 % |
+| **1c** | 1b decomposed: two arms reverted, one kept | **KEPT** | **5584.0**, +2.80 % on rung 1 and +5.24 % on rung 1b |
+
+Cumulatively, at cadence 1: **4405.3 → 5584.0 dhry/s, +26.8 %.** In the standing posture
+(cadence 4): **5106 → 6516.5, +27.6 %.**
+
+### 13.2 Provenance
+
+| session | evidence directory | what it holds |
+|---|---|---|
+| rung 0 | `2026-08-22-c2-blk-verdict` | `MATRIX.md`, `NOTES.txt`, the boot windows, the four-arm A/B |
+| rung 1 | `2026-08-23-dopc-verdict` | the four-state sweep, the last `2 × IFETCH_CALLS` stage bracket |
+| rung 1b | `2026-08-23-r1b-verdict` | **the only span-measured stage profile**, and the `IV_*` cause block |
+| rung 1c | `2026-08-23-r1c-verdict` | the verdict row, `IV_CACR_SKIP`, and the standing-posture pair |
+
+Every number below cites the capture it comes from. `MANIFEST.txt` and `NOTES.txt` in each
+directory come first; the firmware side is `Z3660_emu/src/uae/z3660_prof.h` plus
+`docs/profiler.md`, `docs/decoded-op-cache.md` and `docs/block-idiom-fastpath.md` of the
+Z3660 tree at `a1a360a`.
+
+**Three things about the baseline, stated before any share.** The lean cadence-1 figure the
+ladder is now scored against is **5584.0 dhry/s** and the standing (cadence-4) figure is
+**6516.5**; v2 ranked against 4486. The 4486 → 4405.3 step between the v2 session and the
+rung-0 session is **cross-session drift, not a regression** — the rig reproduces to about
+±1–2 % across flashes, and rung 0's own OFF arm reproduced the pre-change boot baseline *to
+the second*. And **rung 2 of the v2 ladder is already banked**: the standing posture runs
+`service_cadence 4`, and 6516.5 against 5584.0 is **+16.70 %** measured on one session, one
+build, two runtime settings — against v2's predicted 1.109×.
+
+---
+
+## 14. The four rungs, as built
+
+### 14.1 Rung 0 — the block-idiom fast path: KEPT
+
+**Boot −43.6 %, dhrystone −0.83 %.** The AMIX phase of boot — MMU-enable to the first guest
+TCP accept — went **110 s → 62 s**, with the OFF arm reproducing the pre-change baseline
+exactly (`c2-blk-verdict/MATRIX.md`; boot windows `boot1-prof-bootwindow`,
+`boot2-BLKOFF-bootwindow`). Two other boot definitions from the same arms: ring span
+163.2 s → 132.6 s (−18.7 %), arm-to-first-TCP 154 s → 108 s (−29.9 %). The −43.6 % is the
+one that names a phase rather than an operator's stopwatch.
+
+The tax is small and was measured three ways: lean cadence-1 ×3 **4442.0 → 4405.3
+(−0.83 %)**, profiling interleaved 3152.5 → 3092.0 (−1.92 %), profiling with the sampler
+3120 → 3065 (−1.76 %). Dhrystone spends 56.7 % of its time in its own hot loop, where
+`bzero` is 0.52 %, `mcpy` 1.49 % and `lcolloop` 0.61 % — so the workload the tax is measured
+on is the workload the fast path cannot help.
+
+**Utilisation, with the correction the obvious arithmetic gets wrong.** `BLK_INSNS` is not a
+subset of `INSNS`: a chunk is one retirement through the run-loop tail and many guest
+instructions, so the guest stream is `(INSNS − BLK_HIT) + BLK_INSNS`.
+
+| capture | `BLK_HIT` | `BLK_INSNS` | `BLK_BYTES` | reconstructed stream | **share** | literal ratio | mean chunk |
+|---|---|---|---|---|---|---|---|
+| boot | 239 255 | 106 638 294 | 310 303 148 (295.9 MiB) | 286 274 221 | **37.25 %** | 59.28 % | **445.7** |
+| dhry | 42 263 | 12 714 482 | 39 360 484 | — | **10.42 %** | — | 300.8 |
+
+The map predicted **31.80 %** of a boot for stages A+B+C and **10.57 %** of the dhrystone
+window; measured 37.25 % and 10.42 %. The literal ratio would have read **59.28 %** — outside
+the range in which the prediction could be judged at all, which is why the reconstruction is
+not a refinement but the only arithmetic that answers the question. The reconstruction
+cross-checks against the pre-change session's directly measured 276.65 M guest instructions,
+3.5 % apart. The mean chunk length of 445.7 clears the ~8 floor by two orders of magnitude:
+the recognizer test is amortised, which is the difference between firing and firing usefully.
+
+The OFF arms are true pass-through (dhry `0 / 0 / 0`; boot `1 / 92 / 184`), so the switch is
+a real A/B and not a partial one.
+
+**What rung 0 did NOT clear, kept because a pre-registration is only worth what its misses
+are worth:**
+
+* the **dhrystone row MISSED**: the pre-registration asked +8.4 % and got −0.8 %;
+* the **disk row is unscoreable, not merely missed** — its baseline was taken on the
+  *profiling* build, so the pre-registration compared a prof baseline against a lean target.
+  Against this session's own lean OFF arm (1106.4 kB/s) the fast path scores **−0.38 %**;
+* the **`bzero` bench guard missed by 1.1 points** — 22.07 % → 4.08 % raw / 4.46 % busy, a
+  **79.8 % reclaim** against the map's own 80 % model, and a `< 3 %` threshold that the same
+  model makes unreachable (perfect success is 4.42 %). **The threshold was wrong, not the
+  change**;
+* `probe_cyc` came back at **32**, below the 45–51 band the pre-registration named.
+
+**Still unscored:** no MB/s figure was ever computed from `BLK_BYTES`, so the map's
+**5.17 MB/s** kernel zero-fill claim — the number this rung exists to move — has never been
+tested. `EXPECTATIONS.txt` declined to gate it, deliberately. It is one division away and it
+is on the next session's list (§19).
+
+### 14.2 Rung 1 — the decoded-op cache: KEPT, and the tax reversed
+
+**+23.31 %, ship against ship**: lean, cadence 1, cache and fast path both on, **5432.0**
+against rung 0's **4405.3** (`dopc-verdict/31-DELTAS.txt`). The same-boot switch delta is
++41.57 % and **overstates the rung**, because its own baseline already carries rung 1's
+always-paid overhead; the ship-vs-ship figure is the one that decides.
+
+**The tax reversed, and the mechanism is legible.** A four-state sweep separated the two
+changes:
+
+| | cache OFF | cache ON |
+|---|---|---|
+| fast path OFF | 2532.0 | 3396.5 |
+| fast path ON | 2477.0 (**−2.17 %**) | 3442.5 (**+1.35 %**) |
+
+Without the cache the recognizer costs −2.17 %, reproducing rung 0's own −1.9 % profiling-build
+tax. **With the cache on the same recognizer gains +1.35 %** — a hit that says "not an idiom"
+skips it in 2 ARM instructions instead of 14. **Rung 0 is now free on workloads that never
+collect from it.**
+
+**Both hit-rate bars were missed**, and that is the row that mattered:
+
+| workload | hit rate | pre-registered | |
+|---|---|---|---|
+| boot | 69.76 % | (model said 92.40 %) | |
+| dhrystone | **77.48 %** | ≥ 88 % | **MISS** |
+| raw disk | **67.74 %** | ≥ 85 % | **MISS** |
+
+`DOPC_EXT` says the second half of the rung was reached: 41.5 % of fetch words on dhrystone,
+26.1 % on boot and disk. And the misses are **re-warm, not capacity** — 274–292 misses per
+invalidation across three unrelated workloads, against a 4096-entry cache. A figure that does
+not track the workload's code footprint is not a capacity miss, and the indicated fix is a
+narrower invalidation rather than a bigger cache. That reading is what dispatched rung 1b.
+
+**`FETCHOP + FETCHEX` cleared its gate at every price**: 28.65 % → **12.64 % raw, 11.27 % at
+32 cyc/transition, 10.48 % at 43**, against a pre-registered `< 18 %`. `FETCHOP` fell from
+17.34 % to 4.25 % by construction on every hit; `FETCHEX` from 11.31 % to 8.39 % through the
+entry's single extension slot.
+
+Two findings that were not about the rung:
+
+* **`DOPC_INVAL` moves with the cache OFF** (164 311 and 2 951 874 in the two off arms), which
+  the firmware's own doc said it did not. A documentation defect, fixed upstream since.
+* **The cache-off arm costs ~12.9 % on this build** (3837.0 against 4405.3). The switch is an
+  **A/B instrument, not a safe production fallback**, and it should not be described as one.
+
+### 14.3 Rung 1b — built, REVERT fired, decomposed
+
+Rung 1b narrowed the cache's invalidation, in **three arms**: an empty-cache short-circuit, a
+page-presence filter, and a `MOVEC`-to-CACR narrowing at the call site. The pre-registration
+named the losing branch in advance, in the doc's own words — *"a result below 5432 means the
+narrowing cost more than it saved and the filter should be reverted, not tuned"*:
+
+```
+>= 5550          HIT
+5432 .. 5550     MISS (below band, but the narrowing did not cost anything)
+<  5432          REVERT
+```
+
+**Measured 5306.0** (5309 / 5308 / 5301, spread 0.15 %). The revert line was **crossed by
+2.32 %**, and it was reported as REVERT rather than softened into "roughly flat". Decomposed:
+cache ON 5432.0 → 5306.0 (−2.32 %), cache OFF 3837.0 → 3776.0 (−1.59 %), leaving a
+**cache-specific residue of about −0.73 %**.
+
+And the hit rate went **up** while the speedup went down: dhrystone 77.48 % → 84.56 %, and the
+ON/OFF ratio fell from +41.57 % to +40.52 %. **+7.08 points of hit rate bought −1.05 points of
+speedup.**
+
+#### 14.3.1 The namespace lesson
+
+`IV_FLUSH` + `IV_PFLUSHA` is **91.0 % of boot, 87.5 % of dhrystone and 82.3 % of raw disk** of
+all invalidation requests — and **neither can be narrowed against a logical tag at all**.
+`CPUSHL`/`CINV` carry a physical address; `PFLUSHA` and a `TC` write carry nothing. The single
+cause the page-presence filter was built for, `IV_PFLUSH`, is **6–9 %**.
+
+> **A narrowing needs a namespace to narrow against, and 82–91 % of this traffic has none.**
+> The filter was built for the 6–9 %, and charged the other 91–94 % for the privilege.
+
+That is a design conclusion available *before* building, from one counter block, and it is
+the reason the `IV_*` block exists at all: the rung-1 verdict measured 274–292 misses per
+invalidation and could not say *which* invalidation, so a narrowing aimed at the wrong cause
+was a correctness risk taken for nothing.
+
+#### 14.3.2 The fill-path lesson
+
+The two arms that lost put their cost **on the fill path**: two filter marks and a flag store
+on every fill, plus 512 B of BSS. The arm that won put its cost at a **call site** — one
+compare, on neither the hit path nor the fill path.
+
+The controlled pair is what makes this a finding rather than an anecdote, and it needed rung
+1c to complete:
+
+| | hit rate vs rung 1 | speed vs rung 1 |
+|---|---|---|
+| rung 1b (fill-path cost) | **+7.08 pp** | **−2.32 %** |
+| rung 1c (call-site cost only) | **+7.84 pp** | **+2.80 %** |
+
+> **Hit rate is not what pays. The fill-path cost is.** Rung 1c is the control case: the same
+> high hit rate, the fill-path cost removed, and the speedup arrives.
+
+#### 14.3.3 And an instrument lesson, which produced a counter
+
+Rung 1b briefly defined the narrowing's yield as `sum(IV_*) − DOPC_INVAL`. **That is false for
+any narrowing implemented at a call site**: the CACR compare lives ahead of the invalidator,
+so an inert write increments *nothing at all* — it is not a skipped request, it is an
+uncounted one. The session measured a **54.8 % fall in invalidations that the row could
+account for only 7.3 % of** (3 252 counted against ~40 995 uncounted), and reconstructed the
+rest by hand across two sessions' captures.
+
+> **A narrowing that decides before the invalidator must bring its own request counter, or it
+> is invisible to its own verdict.**
+
+That is counter id 38, `IV_CACR_SKIP`, and it is deliberately *outside* the cause block — every
+entry there means "reached the invalidator", which this one does not.
+
+### 14.4 Rung 1c — the decomposition: KEPT
+
+Rung 1c reverted the two fill-path arms and kept the call-site one. **5584.0** (5581 / 5588 /
+5583, spread 0.125 %): **+2.80 % on rung 1**, **+5.24 % on rung 1b**, +26.76 % on rung 0.
+Six pre-registered rows hit, two missed *above* their bands, one not taken.
+
+**It is up at both cadences**, which is what separates a gain from a cadence artefact: rung 1b
+was down 2.32 % at cadence 1 but flat-to-up at cadence 4, so its regression was a cadence-1
+phenomenon; rung 1c is up at cadence 1 (+2.80 %) *and* at cadence 4 (6516.5, +1.23 % on rung
+1's 6437.5).
+
+**Both hit-rate bands were missed from above** — boot 72.83 % (band 70–74, HIT), dhrystone
+85.32 % (band 78–82), disk 75.53 % (band 69–73) — and the bands' *reasoning* is what the
+session refuted. All three rested on the expectation that reverting 1b's filters would give
+back 1b's hit-rate gain. **It did not come back.** Two of three workloads came in above rung
+1b. So **1b's hit-rate gain was the CACR arm's, all of it** — the page filter and the
+short-circuit contributed none of it, and cost 2.32 % for the privilege.
+
+**What one compare at a call site is worth**, from the counter that was added to see it:
+
+| workload | requests the guest made | performed | narrowed at the call site |
+|---|---|---|---|
+| boot | 189 018 | 116 140 | **72 878 (38.55 %)** |
+| dhrystone | 79 211 | 39 858 | **39 353 (49.68 %)** |
+| raw disk | 82 553 | 48 797 | **33 756 (40.89 %)** |
+
+Rung 1b removed 44 247 invalidations with three arms; **rung 1c removes 40 861 with one —
+92.3 % of 1b's win, for one compare.**
+
+---
+
+## 15. §8.3 CORRECTED: `LOOP` is not empty, and it is the largest bucket on the page
+
+**This supersedes §8.3 and §9.7's rung 7.** §8.3 concluded *"`LOOP` is empty… Two spans, two
+exhaustion points, one answer: it is zero."* That conclusion was reached the only way it could
+be at the time — by finding the price at which `LOOP`'s apparent share is *entirely* probe —
+and it is **refuted by direct measurement**.
+
+### 15.1 Why it could not be settled before
+
+The dump reported one **global** transition count, so a per-bucket subtraction had to be
+modelled, and `LOOP` is the bucket a model is worst at: it is the parent of eight nested
+stages and pays one `exit()` for every entry of all of them. Rung 1's stage bracket could
+therefore only report it as an **upper bound** — `≤ 33.90 %` at 32 cyc/transition and
+`≤ 39.71 %` at 43 (`dopc-verdict/20-STAGE-bracket.txt`) — with the session's own note
+recording that *"`LOOP`'s own probe load [is] not derivable"*.
+
+### 15.2 What closed it
+
+The firmware's rung-1b build added **per-bucket transition spans** (`[PROF] s`), which count
+the spans *charged to* each bucket at exactly the two sites that charge them. A corrected
+share stops being an interval:
+
+```
+corrected cyc for b  ==  acc[b] − spans[b] × probe_cyc          and     sum(spans) == TRANSITIONS
+```
+
+Measured on `r1b-verdict/19-STAGE-profd.txt` — dhrystone, buckets armed, cadence 1,
+`TRANSITIONS` 800 774 653, `sum(spans)` 800 774 653 exactly, `STACK_OVF` 0, price bracket
+**[39, 50]** from that boot's own three-pass calibration (`armed 105342, unarmed 23707, empty
+2090, 1024 pairs`):
+
+| | corrected `LOOP` share |
+|---|---|
+| rung 1 (`2 × IFETCH_CALLS` era) | 33.90 – 39.71 %, and those were **upper bounds** |
+| **metal 2026-08-23, measured spans** | **24.80 % @39 .. 25.11 % @50** |
+| *the same, ex-instrument* (the denominator §8.4 and §9 use) | **26.38 % .. 26.54 %** |
+
+**A 0.31-point bracket in place of a 5.8-point interval of upper bounds**, and the block
+self-checks. `LOOP` is not empty, it is not small, and **it is the largest single bucket in
+the interpreter.**
+
+`FAULT` is reported uncorrected and deliberately: an unwind charges it cycles and counts no
+span, so it is over-reported — the safe direction, at 0.11 %.
+
+### 15.3 Why the price question stopped deciding it
+
+§8.3 chose 50 cyc/transition and bracketed to 59, and the whole argument turned on where
+`LOOP` exhausts. It no longer turns on anything: across the *whole* measured bracket `LOOP`
+moves by **0.31 points**. The firmware's own documentation had already said the exhaustion
+argument was unsupported — even the top of the price bracket and the whole armed call sit
+*below* the 50.59 at which §8.3's span exhausts `LOOP` — and the spans then measured it.
+
+### 15.4 And a hypothesis about *why* it is large, which is testable and untested
+
+`LOOP` is "run-loop bookkeeping outside every named stage". Raw shares across the three
+sessions:
+
+| | v2 (pre-rung-0) | rung 1 | rung 1b |
+|---|---|---|---|
+| `LOOP` raw | 18.84 % | 23.78 % | 24.20 % |
+| `FETCHOP` raw | 11.95 % | 4.24 % | 3.25 % |
+
+`FETCHOP` lost 8.7 points of raw share and `LOOP` gained 5.4. **Some of rung 1's win is a
+genuine saving and some of it is a re-attribution**: with the cache on, a hit never enters
+`FETCHOP` at all, so the decoded-op cache's own hit path — which is in the run loop and is not
+bracketed — is charged to `LOOP`. If that is right, `LOOP` now *contains* the thing rung 1
+added, and attacking `LOOP` means attacking rung 1's hit path.
+
+**This is a hypothesis, not a finding.** Nothing in these captures distinguishes it from the
+alternatives, and the test is cheap: one more probe bracket around the lookup, or a `LOOP`
+breakdown, on the next prof-image boot. It is §19's item 4 for that reason, and it is the
+single largest open question on this page.
+
+---
+
+## 16. The instrument moved too, and one method is retired
+
+Three changes to how a share is computed, all landed in `tools/prof-symbolize.py` and
+documented in `docs/PROFILER-SYMBOLIZE.md`. Each of them changes a number in this file.
+
+### 16.1 The `2 × IFETCH_CALLS` bracket method is REFUTED, not merely bettered
+
+Rung 1's stage bracket assumed the two ifetch buckets carried two transitions per
+`IFETCH_CALLS` — one enter and one exit per call. Metal measured both quantities on the same
+capture:
+
+| | transitions charged to the ifetch buckets | of all transitions |
+|---|---|---|
+| assumed, `2 × IFETCH_CALLS` | 99 049 270 | 12.37 % |
+| **measured spans** | **50 194 621** | **6.27 %** |
+
+**The assumption over-charges by 1.97×**, so every corrected share derived from it was biased
+**low** — including rung 1's `FETCHOP + FETCHEX` of 11.27 % @32 and 10.48 % @43.
+
+**The mechanism is the decoded-op cache itself.** With the cache on a hit never enters
+`FETCHOP`, so the bucket is entered once per **miss**: `FETCHOP` spans 15 547 429 against
+`DOPC_MISS` 15 436 987, 0.72 % apart, against `IFETCH_CALLS` 49 524 635. `IFETCH_CALLS ==
+FETCH` remains exactly true — all five bracket sites increment `FETCH` once — but **`FETCH`
+stopped predicting bucket entries the moment something upstream began answering fetches
+without entering the bucket.** Rung 1's own instrument could not have seen this, which is
+precisely why the spans exist.
+
+**Every bracket-method figure in this document is superseded where a span-measured one
+exists**, and the symbolizer now prints the retirement in the report rather than leaving it in
+a doc.
+
+### 16.2 The probe price is a range, and it is swept rather than picked
+
+The boot's three-pass calibration brackets the price: `marginal = (armed − unarmed) / 2N` is
+the probe **bodies** (what `PROFB` gates), `in-bucket = (armed − empty) / 2N` adds the call
+scaffolding that sits inside the buckets too. Neither is a correction of the other. §8.3
+picked 50 and bracketed to 59; **that was a picked number, and 59 was above the price at which
+the subtraction is arithmetically possible.**
+
+The two sessions' brackets are **[39, 50]** (rung 1b) and **[40, 51]** (rung 1c) — against
+rung 1's **[32, 43]** on the same board, a ~20 % shift between captures. **A capture is priced
+from its own boot line, never from a table.** And nothing here should be compared against
+45.5: that figure is v1's 91 cyc/pair halved, measured with the probes *inlined*, and it is a
+whole-cost inlined quantity that neither end of this bracket bounds.
+
+### 16.3 A dispatch identity the firmware's own doc understates
+
+`docs/profiler.md` states `DOPC_HIT + DOPC_MISS == INSNS` with the cache on. **Twelve metal
+captures across three sessions and three firmware builds put the sum above `INSNS` by exactly
+`FAULTS`, every time, to the unit** — 7522, 3629, 3328, 7258, 3629, 7496, 3628, 3326, 3630,
+7556, 3630, 3328, each matching its own dump's `FAULTS` exactly. The rung-1 session read the
+gap as a live-print artefact of the dump loop; it is not.
+
+The mechanism is plain once stated: a faulting instruction **consults the cache** — so it is a
+dispatch — and then **throws before retiring through the run-loop tail** — so `INSNS` never
+counts it. A difference that reproduces another counter in the same dump exactly, twelve
+times, is a mechanism and not skew.
+
+```
+DOPC_HIT + DOPC_MISS  ==  INSNS + FAULTS
+```
+
+The symbolizer asserts this form. It is a doc fix owed to the firmware lane, not a firmware
+defect.
+
+---
+
+## 17. THE MAP v3 — the ladder re-ranked
+
+### 17.1 The shares
+
+Measured on `r1b-verdict/19-STAGE-profd.txt`, the **only span-measured stage profile that
+exists**, swept across that boot's own **[39, 50]** bracket. `TAILSAMP` is instrument cost and
+is excluded from the denominator, as in §8.4, because it does not exist in the lean build.
+
+| bucket / group | v2 (§8.4, modelled) | **v3 @39** | **v3 @50** | moved because |
+|---|---|---|---|---|
+| **`LOOP`** | 0.51 % ▼▼ | **26.38 %** | **26.54 %** | spans measured; §15 |
+| **`HANDLER`** | 26.37 % | **16.77 %** | **16.34 %** | rungs 0 and 1 removed handler work |
+| **`TAILPOLL`** | 19.61 % | **15.14 %** | **16.02 %** | cadence-1 profile; see the caveat |
+| **`READ` + `WRITE`** | 19.83 % | **17.01 %** | **18.62 %** | re-derived, not carried |
+| **`FETCHOP` + `FETCHEX`** | 28.65 % | **14.50 %** | **15.81 %** | rung 1 built; §14.2 |
+| **`TAILADV`** | 2.48 % | **8.06 %** | **4.21 %** | spans; the price question still moves this one |
+| **`XLATE` + `WALK`** | 1.87 % | **1.58 %** | **1.82 %** | unchanged in kind |
+| *`TAILSAMP` (instrument)* | *— excluded —* | *5.97 %* | *5.40 %* | |
+
+**Read the caveats on this table before ranking from it**, because two of them are large:
+
+* **The profile is of the rung-1b build, two of whose three arms were reverted by 1c.** Those
+  two arms charged the *fill* path, so `LOOP` and `HANDLER` carry a cost the shipped build
+  does not. The direction is known (both shares are over-stated for the shipped build); the
+  size is not.
+* **It is a cadence-1 profile and the standing posture is cadence 4.** `TAILPOLL`'s cycles
+  fall roughly fourfold at cadence 4 while its *spans* do not — the probe bracket wraps the
+  whole tail macro, gate included — so **`TAILPOLL`'s 15–16 % is a cadence-1 number and rung 2
+  is largely already banked** (§13.2: +16.70 % measured). Do not add it to the standing
+  baseline.
+* Everything §10.1 says still applies: these are shares of the *distorted* machine, and the
+  fetch and accessor buckets remain inflated relative to lean.
+
+### 17.2 The ladder
+
+Amdahl against the new baselines — **5584.0 dhry/s at cadence 1**, 6516.5 standing. The share
+column is measured; **the reclaim column is not**, and §10.6 governs it exactly as before.
+
+| # | rung | buckets | **measured share** | reclaim (**est.**) | time won | speedup | **dhry @5584** |
+|---|---|---|---|---|---|---|---|
+| **1** | **`LOOP` — the dispatch loop itself** | LOOP | **26.4 – 26.5 %** | **withheld — see below** | — | — | — |
+| **2** | accessor inlining (dcache) | READ + WRITE | **17.0 – 18.6 %** | 40 % | 6.80 – 7.45 % | 1.073 – 1.080× | **5992 – 6033** |
+| **3** | handler specialisation | HANDLER | **16.3 – 16.8 %** | 25 % | 4.08 – 4.19 % | 1.043 – 1.044× | **5822 – 5828** |
+| **4** | decoded-op cache, second pass | FETCHOP + FETCHEX | **14.5 – 15.8 %** | 40 % | 5.80 – 6.32 % | 1.062 – 1.068× | **5928 – 5961** |
+| **5** | tail residue | TAILADV | **4.2 – 8.1 %** | 50 % | 2.10 – 4.03 % | 1.022 – 1.042× | **5704 – 5818** |
+| **6** | ATC fast path | XLATE + WALK | **1.6 – 1.8 %** | 60 % | 0.95 – 1.09 % | 1.010 – 1.011× | **5637 – 5646** |
+| — | *interrupt-poll cadence* | *TAILPOLL* | *15.1 – 16.0 %* | — | — | — | ***already taken*** — cadence 4 is standing, +16.70 % measured |
+| **J** | the residual only a JIT reaches | LOOP+FETCH\*+TAILADV+TAILPOLL+TAILSPEC | **63.1 – 64.5 %** | 90 % coverage | 56.8 – 58.1 % | 2.31 – 2.38× | **12 920 – 13 317** |
+
+**`LOOP` is ranked first and given no dhry projection, and the asymmetry is deliberate.** Its
+*share* is the best-measured number on this page — a 0.31-point bracket, self-checked. Its
+*reclaim* is the worst-founded: v2 assigned 40 % when the bucket was believed to be 0.51 %, an
+estimate nobody had reason to scrutinise, and the bucket has since turned out to be fifty
+times larger and to contain (probably — §15.4) the hit path rung 1 just added. **A reclaim
+fraction for a 26 % bucket whose contents have never been enumerated would be a guess dressed
+as a number**, and this document's §10.6 exists to stop exactly that. The first move on rung 1
+is not to attack it; it is to find out what is in it.
+
+**The JIT row grew for the same reason and carries the same warning.** It went from 51.79 % to
+63–65 % almost entirely because `LOOP` went from 0.51 % to 26.5 %, so its size now turns on the
+same unenumerated bucket. Read it as *unchanged in kind*: a JIT is still worth roughly twice
+the ladder's leading rung, and the gap between them is now less well known than v2 thought it
+was, not better.
+
+### 17.3 The physical-index study, and the bar it has to clear
+
+The obvious next narrowing is a **physically-indexed decoded-op cache**, which would let
+`CPUSHL`/`CINV` invalidate by address instead of wholesale. The prize is measured and it is
+the largest single one available:
+
+| cause | boot | dhrystone | raw disk |
+|---|---|---|---|
+| **`IV_FLUSH`** (`CPUSHL`/`CINV`) | **63.89 %** | **51.21 %** | **46.70 %** |
+| `IV_PFLUSHA` | 26.92 % | 36.27 % | 35.60 % |
+| `IV_PFLUSH` | 6.20 % | 9.11 % | 6.82 % |
+| `IV_DMA` | 1.69 % | 0.16 % | 8.46 % |
+| `IV_ROOT` | 1.30 % | 3.25 % | 2.41 % |
+
+**`IV_FLUSH` is 47–64 % of every workload's invalidation traffic** and it is the one cause that
+carries a namespace a physical index could match against. `IV_PFLUSHA` — the other 27–36 % —
+carries nothing, and is not reachable by this or any tag-based narrowing.
+
+> **THE BAR, stated before anything is built: a physical index costs a TRANSLATION ON THE FILL
+> PATH.** That is the exact cost class that failed rung 1b, twice, and was recovered by
+> removal. §14.3.2 is the controlled evidence, and it is not a soft preference — 1b had the
+> higher hit rate and was slower. So this study **must pre-register its cost site and measure
+> the fill-path price**, not assume it. A design that moves the cost to a call site, or that
+> pays the translation only on a miss that was going to walk anyway, starts above the bar; one
+> that adds work to every fill starts below it and has to earn its way back.
+
+---
+
+## 18. What v3 does **not** establish
+
+§10 applies unchanged and is not repeated. Four things are new.
+
+### 18.1 There is no stage profile of the shipped build
+
+The only span-measured stage profile is of the **rung-1b** build, and rung 1c reverted two of
+its three arms. §17.1's shares therefore describe a binary that is not shipped — the same
+class of caveat §10.1 makes about the profiling build itself, one level in. The direction is
+known and the size is not. **Row H — `FETCHOP + FETCHEX` post-1c — is untaken**, and it is the
+cheapest thing on §19's list.
+
+### 18.2 Rung 1c's +2.80 % is not defended against drift by the method the file mandates
+
+**No same-boot ratio was taken in the 1c session**, for dhrystone or for disk. The rig's
+cross-session drift is proven at about 9 % on the disk row, and 2.80 % is well inside it. The
+lean boot window reproducing at 52 s exactly is good evidence and it is **one row**. Rung 1c's
+verdict rests on a pre-registered bar cleared by 2.80 % on a three-run arm with 0.125 %
+spread — which is a legitimate verdict — but **if the figure is going to be quoted in a
+decision, the same-boot pair has to be taken first.**
+
+### 18.3 The cache's worth on disk is unmeasured for 1c
+
+Rung 1 measured +2.74 % same-boot and rung 1b +5.40 %. For rung 1c there is no such arm; the
+cross-session −9.03 % is drift, refuted as a regression by rung 1's own same-boot pair, but
+that says nothing about 1c.
+
+### 18.4 The ledger of refuted claims — kept, and labelled
+
+Per `docs/METHOD.md` §8. Nothing below is deleted from this file; each is annotated where it
+stands.
+
+| claim | where | status |
+|---|---|---|
+| `ATC_HIT` (id 12) counts ATC hits | v1 §1 | **REFUTED** by v1 itself; it counts translate successes. Fixed in the wire format as `XLATE_OK`. |
+| `LOOP` ≤ 9.82 %, "somewhere between nothing and 9.8 %" | v1 §3.5 | **REFUTED.** §15: 24.80–25.11 %. |
+| **"`LOOP` is empty… it is zero"** | **v2 §8.3, §9.7 rung 7** | **REFUTED by direct measurement.** §15. The reasoning was sound and the instrument could not support it. |
+| `probe_cyc = 59` used as a bracket end | v2 §8.3, §8.5 | **SUPERSEDED.** The price is a measured range per boot; §16.2. |
+| the ifetch buckets carry `2 × IFETCH_CALLS` transitions | v2 §10.3, rung 1's stage bracket | **REFUTED**, by 1.97×; §16.1. |
+| recon-A (a cadence-gated tail child) | v2 §8.5, §10.3 | **REFUTED** by firmware source, in v2 itself. Retained there as the bracket's other extreme. |
+| recon-B (the shared ifetch bracket) as the model's shortfall | v2 §10.3 | **REFUTED** by the source: `IFETCH_CALLS == FETCH` identically. The model's shortfall is elsewhere and is now moot — the spans replace the model. |
+| `DOPC_HIT + DOPC_MISS == INSNS` | firmware `docs/profiler.md` | **UNDERSTATED.** The exact identity is `== INSNS + FAULTS`; §16.3. Doc fix owed upstream. |
+| rung 0's `< 3 %` `bzero` bench threshold | rung 0 pre-registration | **UNREACHABLE BY CONSTRUCTION** — the map's own 80 % reclaim model puts perfect success at 4.42 %. The threshold was wrong, not the change. |
+| the rung-0 disk row | rung 0 pre-registration | **UNSCOREABLE** — its baseline was taken on the profiling build. |
+| rung 1c's hit-rate bands | 1c pre-registration | **REFUTED.** They assumed 1b's hit-rate gain would be given back; it was the CACR arm's all along. §14.4. |
+| "with the cache off, none of the `DOPC_` counters move" | firmware `docs/decoded-op-cache.md` | **REFUTED** — `DOPC_INVAL` moved. Fixed upstream. |
+| the decoded-op-cache switch as a production fallback | rung 1 framing | **REFUTED** — it costs ~12.9 %. It is an A/B instrument. |
+
+---
+
+## 19. What the next capture session must take
+
+In order. The first three are the ones that defend numbers already quoted in this file.
+
+1. **Row H — `FETCHOP + FETCHEX` on the shipped 1c build.** Band 10–13 %, and it must not
+   exceed rung 1's 12.64 %. Given the hit rate came in *above* band, expect it low. It needs
+   `PROFB` plus a ring on one prof-image boot and is the cheapest item here. This is the row
+   §18.1 is about.
+2. **A fresh span-measured stage profile of the 1c build.** §17.1's entire share table is of
+   the reverted 1b build. Take it at **both cadences** if the session allows, because §17.1's
+   `TAILPOLL` figure is cadence-1 and the standing posture is cadence 4 — one profile cannot
+   serve both and the difference is 15 points of the largest tail bucket.
+3. **The five-minute same-boot A/B defending +2.80 %.** `DOPC` ON/OFF within one boot, dhry
+   and disk, at cadence 1. Rung 1c's absolute figures are not currently defended against a
+   drift band wider than the effect (§18.2). Same boot, same flash, `PROFZ` between arms.
+4. **A `LOOP` breakdown, or one bracket around the decoded-op lookup.** `LOOP` is now the
+   largest bucket in the interpreter and nobody has enumerated its contents; §15.4's
+   re-attribution hypothesis — that rung 1's hit path is charged there — is testable with one
+   probe bracket and would decide whether the top of the ladder is attackable at all. **This
+   is the highest-value instrument change available**, in the same sense the tail split was in
+   v1.
+5. **The boot-window A/B still owed from rung 1.** Lean cadence-4 boot reads 52 s against rung
+   0's 43 s, confounded with the rig's ~9 % cross-session drift. Same-boot or same-session, or
+   it stays unresolved.
+6. **Divide `BLK_BYTES` by a wall time.** The map's **5.17 MB/s** kernel zero-fill figure —
+   the number rung 0 exists to move — has never been scored. The counter has been captured
+   every session since; only the time base is missing.
+7. **A cache-off `PROFZ`-windowed arm for the guest's own invalidation rate.** With the cache
+   off the `IV_*` counters still move and the `DOPC_` ones do not, which makes a free,
+   uncontaminated measurement of what the guest actually asks for — the denominator §17.3's
+   study will be judged against.
+
+---
+---
+
+# PART II — v2, 2026-08-22 evening
 
 ## 6. What v2 is, and what moved
 
@@ -35,8 +608,8 @@ named defect in the last one:
 * **The clock is right and says so.** The boot line reads `ARM clock 1099989200 Hz
   (clk=cfg, PMU:wall 1.99), probe 59 cyc/transition`. `clk=cfg` means the figure is the
   rate core0 published after retuning the PLL, not the compile-time BSP constant. **No
-  ×1.65 correction applies to any number in Part I.** (§0.1 applied one to every rate and
-  duration in Part II; it never touched a share, because a wrong constant cancels out of a
+  ×1.65 correction applies to any number in this part.** (§0.1 applied one to every rate and
+  duration in the v1 part, Part III; it never touched a share, because a wrong constant cancels out of a
   ratio — that caveat held, and v2 confirms it.)
 * **Every ring contains its workload.** `drops=0` on all three, and `rec_count` ==
   `ring end n=` == S-records present on all three. v1 lost two of its three workload rings
@@ -58,7 +631,7 @@ two distorted points of the ladder are **3183** (prof image + sampler @250 Hz) a
 | 2 | **The tail** | one opaque 20.01 % bucket, "a 20 % bucket nobody can attack safely" | four ids, and **87 % of the tail is `check_uae_int_request()`** | v2 splits id 8 into `TAILADV`/`TAILSAMP`/`TAILPOLL`/`TAILSPEC`. v1's §3.2 asked for exactly this and called it "the single highest-value instrument improvement C2 could make". It was made, and it named the mechanism. |
 | 3 | **Instrument cost inside the tail** | invisible — charged to `LOOP` | `TAILSAMP`, **5.99 % raw**, broken out and subtracted | v1 could not see it in any capture. It is the sampler hook plus the `INSNS` counters: measurement, not interpretation. Every v2 share below is of a denominator with `TAILSAMP` removed. |
 | 4 | **Probe price** | 45.5 cyc/transition (v1 halved a firmware figure it proved was doubled) | **59 cyc/transition**, measured; **50** used here | The 2× over-pricing v1 diagnosed is fixed at the source. But at 59 the subtraction is *arithmetically impossible* — see §8.3. |
-| 5 | **Clock label** | ×1.65 correction applied to every rate and duration | none needed | `clk=cfg`. No share in Part II was ever affected. |
+| 5 | **Clock label** | ×1.65 correction applied to every rate and duration | none needed | `clk=cfg`. No share in the v1 part was ever affected. |
 | 6 | **Ring coverage** | BOOT lossless; **DHRY and IO were 86 % and 93 % overwritten** and measured the idle loop | all three lossless, `drops=0` | v1's §5.1 asked for this. The `swtch`+`idle` contamination that dominated v1's workload rings (62.5 % and 71.8 %) is **15.99 %** in v2's DHRY and **2.40 %** in v2's IO — and **0.04 %** in v2's BOOT, which is cleaner than v1's boot ring too (17.43 %). |
 | 7 | **PC concentration** (the decoded-op-cache input) | top 2000 PCs = 90.34 % of busy boot time | top 2048 PCs = **84.92 % (boot), 85.99 % (dhry), 79.55 % (IO)** | v1's curve came from a boot ring whose idle samples piled onto ~20 PCs and flattered the head of the distribution; and it had no workload curve at all. **This is the one place v2 is materially *less* optimistic than v1** — see §9.1. |
 | 8 | **Opcode specialisation reach** | top 20 opcode words = 58.94 % of busy time | **59.69 % (boot) but 42.04 % (dhry), 49.19 % (IO)** | v1's figure was boot-specific and read as general. The four-line-group figure *is* general (75.9 / 76.0 / 76.6 %). |
@@ -297,6 +870,14 @@ instruction because `service_cadence` is 1.
 
 ### 8.3 The probe price: the firmware says 59, and 59 does not fit
 
+> **⚠ SUPERSEDED — see §15. The conclusion this section reaches, "`LOOP` is empty", is
+> REFUTED by direct measurement: `LOOP` is 24.80 % @39 .. 25.11 % @50, the largest single
+> bucket in the interpreter.** The reasoning below is sound and the instrument could not
+> support it — the exhaustion argument needs a per-bucket transition count, which no v2
+> capture had. The firmware's rung-1b build added one (`[PROF] s`), and it settled the
+> question in the other direction. The price question, which this section spends itself on,
+> now moves `LOOP` by 0.31 points and decides nothing. **Kept, per `docs/METHOD.md` §8.**
+
 The firmware's own out-of-line calibration reports **59 cyc/transition** — and at 59 the
 subtraction is *arithmetically impossible*: the modelled probe cost exceeds the cycles
 actually measured in `LOOP` by 2 991 351 830 and in `TAILADV` by 1 225 742 547, **4.42 %
@@ -416,6 +997,13 @@ this map.**
 ---
 
 ## 9. THE MAP v2 — the rungs ranked by measured ceiling
+
+> **⚠ SUPERSEDED BY §17.** This ladder was the campaign's dispatch list and its **ordering
+> held**: rung 1 was built and returned +23.3 %, and rung 2 (`service_cadence`) is now the
+> standing posture at a measured +16.70 %. Two rows are wrong rather than merely stale —
+> **rung 7 (`LOOP`, 0.51 %) is refuted at §15**, and rung 1's 28.65 % was measured on an
+> instrument since shown to bias the fetch buckets low (§16.1). Read §17 for the re-ranking
+> against the new baseline; this table is kept for what it predicted and what it missed.
 
 Amdahl on the §8.4 shares, against the lean baseline of **4486 dhry/s** measured in this
 same session. Time won = share × reclaim; speedup = 1 / (1 − time won); dhry = 4486 ×
@@ -769,6 +1357,13 @@ retro-fitted to whatever the change turns out to deliver.
 
 ## 11. THE FIRST IMPLEMENTATION ORDER
 
+> **⚠ BOTH ITEMS WERE BUILT.** §11.1 became rung 0 and §11.2 became rung 1; see §14.1 and
+> §14.2 for what they measured against what is pre-registered here. **Kept unedited**,
+> because the value of a pre-registration is entirely in not being revised after the result:
+> §11.2's *"a high hit rate with a low speedup is the expected failure mode"* is the sentence
+> rung 1b then demonstrated, and §11.1's *"the first thing to check is the TRIGGER, not the
+> host operation"* is the check the mean-chunk-length row exists to make.
+
 Two items, in this order. Each is written to be dispatched as-is.
 
 ### 11.1 FIRST — the block-idiom fast path, starting with `bzero`
@@ -909,6 +1504,15 @@ since the IO workload is the one that stresses both at once.
 
 ## 12. What C2 should measure next
 
+> **⚠ SUPERSEDED BY §19**, and four of the six below are now struck. **1** (sweep
+> `service_cadence`) is banked: cadence 4 is the standing posture, measured at +16.70 %.
+> **2** (add `IFETCH_CALLS`) was done, and then *superseded by the per-bucket spans that
+> refuted the method it was added to serve* — §16.1. **3** (re-calibrate `probe_cyc = 59`)
+> was answered: the price is a measured per-boot range, and the "59 does not fit" problem was
+> a picked number rather than a measurement — §16.2. **5** (cost the tier-0 `ipagecache` hit
+> path) is subsumed by rung 1, which replaced that path on a hit. **4** (a pure-workload DHRY
+> ring) and **6** (a lean-build statistical PC profile) are still open and still worth doing.
+
 In priority order. **Items 1–5 of v1's §5 list were all done between the two sessions**
 (re-take the workload rings; split `TAIL`; recalibrate the probe out of line; fix the 2×
 over-pricing; fix `ATC_HIT` and the tool's cross-check) and are struck. Its item 6 — cost
@@ -937,7 +1541,7 @@ the `bzero` idiom fast path — is §11.1 above. What follows is new.
 ---
 ---
 
-# PART II — v1, 2026-08-22 morning (SUPERSEDED)
+# PART III — v1, 2026-08-22 morning (SUPERSEDED)
 
 **Kept, not deleted.** Everything below was written the same day from the first metal
 profiling session, before the clean re-take. §6.2 above lists what moved and why. Three of
