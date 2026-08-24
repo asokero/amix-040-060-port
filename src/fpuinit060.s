@@ -190,6 +190,25 @@ Lfi_trap:
 |
 | The 040 path is a plain tail jump, with no counter and no fpu_present involvement, so signal
 | delivery on a 68040 executes exactly the sequence it executes today.
+|
+| CORRECTION to the census table above (2026-08-24, after F1-M3 and F2-M0).  The four UNGATED
+| marks on savecontext and restorecontext are WRONG; the table stays as written with this beside
+| it.  Both bodies DO gate, through `jsr prhasfp` -- prhasfp is `movel fpu_present,%d0 / rts`,
+| one instruction, so the gate is a CALL and not a relocation, and the census predicate ("does
+| this body carry a relocation to fpu_present") could not see it.  restorecontext gates twice:
+| `uc_flags & UC_FPU` at 0x58e8c, then prhasfp at 0x58e96.  savecontext runs prhasfp at 0x58f78
+| and, on the no-FPU arm, CLEARS UC_FPU out of the caller's uc_flags at 0x58fdc.  Ten of the
+| eleven sites are gated in stock and sendsig is the one that is not -- which is precisely what
+| M68060-SUPPORT-LANDSCAPE.md:174-186 already said, with prhasfp named in its own column.  This
+| wrapper is therefore the WHOLE F1-M2 fix and not a token counter beside a wider hole; the body
+| gates in src/fpu060.s are defense in depth.  Full per-site evidence, read out of the booted
+| image: docs/060-F1-M2-GATE-CENSUS-260824.md.
+|
+| Reading the two counters together, since they look contradictory and are not: fpi_ss_skip_n
+| and fpc_setup_nofpu_n are in SERIES.  The refusal arm below ends in `rts` and never reaches
+| fpu_setup, so on an LC part the wrapper counter climbs (898 on the F2-M0 ladder) while the
+| body counter stays 0, by construction.  The FPU-rig mirror is fpi_ss_pass_n 879 / fpc_setup_n
+| 2449.
 | ============================================================================
 	.globl	fpu_setup_gated
 fpu_setup_gated:

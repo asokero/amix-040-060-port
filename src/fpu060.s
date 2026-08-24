@@ -78,6 +78,22 @@
 | wants a counter and not the absence of a crash).  The gate therefore belongs HERE, where every
 | caller must pass through it.  The new fpc_*_nofpu_n counters are appended at the END of the
 | block so that every address already published for it keeps its offset.
+|
+| CORRECTION to the paragraph above (2026-08-24, after F1-M3 and the F2-M0 trap census).  The
+| claim "four of the eleven call sites reach these bodies ungated" is WRONG and is left above
+| with this beside it.  Ten of the eleven are gated in stock; savecontext and restorecontext
+| reach fpu_present through `jsr prhasfp`, whose whole body is `movel fpu_present,%d0` -- a
+| CALL, not a relocation, which is exactly what a relocation-predicated census cannot see.
+| sendsig was the one genuinely ungated site, which is the one the landscape names.
+|
+| So these gates are DEFENSE IN DEPTH, not the first line, and on an LC part nothing reaches
+| them: fpc_save_nofpu_n / fpc_rest_nofpu_n / fpc_setup_nofpu_n all read 0 over kvp_n = 703492
+| with kvp_super_n = 0 -- and nullvect, which is what kvp counts, is where both FP call-out arms
+| land, so a supervisor FP trap would have shown.  They stay: a body gate cannot be bypassed by
+| a caller, and sendsig is the standing proof that stock has a caller that forgets.  But their
+| expected value is 0, and a NON-ZERO reading is a finding -- a caller outside the pinned eleven,
+| or fpu_present set on a part that has no FPU.
+| Per-site evidence: docs/060-F1-M2-GATE-CENSUS-260824.md.
 
 	.text
 

@@ -188,3 +188,33 @@ and the only movement is three hook displacements following their targets — wh
 appending an object to this link is supposed to do. The switch keeps its real job, the one the
 spec asks it for (`:460-462`): it makes a failure reducible, because it separates "the probe
 changed something" from "the gates changed something".
+
+## 7. Correction to §2 and §3 — the LC gate is upstream of the bodies (2026-08-24, after F1-M3 and F2-M0)
+
+Registered claims are not rewritten, so §2 and §3 stay as written and this says what is wrong
+with them. Full evidence, per call site: `docs/060-F1-M2-GATE-CENSUS-260824.md`.
+
+**§2 said "five ungated call sites reach these bodies".** Ten of the eleven pinned sites are
+gated in stock. `savecontext` and `restorecontext` reach `fpu_present` through `prhasfp()`,
+whose entire body is `movel fpu_present,%d0` — a call, not a relocation, which is why a census
+predicated on direct relocations reported them open. `sendsig` was the one genuinely ungated
+site, which is the one `M68060-SUPPORT-LANDSCAPE.md:183` already named, and the one F1-M2 fixed.
+
+**§3's Rig A lines `fpc_setup_n = 0` / `fpc_save_n = 0` / `fpc_rest_n = 0` scored HIT for a
+different reason than the one registered.** They read 0 not because the new body gates refused,
+but because stock's own gates declined first and the bodies were never entered. Measured across
+the F2-M0 ladder: `kvp_super_n = 0` over `kvp_n = 703492` — no supervisor-origin exception
+reached `nullvect`, which is the path both FP call-out arms take, so a supervisor FP trap would
+have been counted and none was.
+
+**A pair that looks like a contradiction and is not.** `fpi_ss_skip_n` climbs (898 on the LC
+ladder) while `fpc_setup_nofpu_n` stays 0. The two counters are in series:
+`fpu_setup_gated`'s refusal arm ends in `rts` and never reaches `fpu_setup`, so the wrapper
+counter fires and the body counter cannot. The mirror on the FPU rig is `fpi_ss_pass_n` 879 with
+`fpc_setup_n` 2449.
+
+**Consequence for the three refusal counters.** `fpc_save_nofpu_n` / `fpc_rest_nofpu_n` /
+`fpc_setup_nofpu_n` are defense in depth behind stock's gates, not the first line, and they are
+**unexercised on an LC part in normal operation**. Their correct prediction — here and on
+silicon — is **0**, and a non-zero reading is a finding (an unknown caller, or `fpu_present`
+set on a part with no FPU), not reassurance.
