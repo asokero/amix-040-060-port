@@ -26,6 +26,19 @@ cputype:
 |     bits 31-16  revision / ID  (0x0430xx on the 68060)
 |     bit 1       EDEBUG
 |     bit 0       ESS -- superscalar dispatch enable
+| CORRECTION (F1-M0, 2026-08-24): the "bit 1 EDEBUG" line above is WRONG.  It is kept rather
+| than edited away because the record should show what was believed while pcr_boot was being
+| read.  The MC68060 PCR is:
+|     bits 31-16  processor ID (0x0430 = full 68060)
+|     bits 15-8   mask revision number
+|     bit 6       EDEBUG -- internal state on the bus pins while the bus is idle
+|     bit 1       DFP -- DISABLE FLOATING-POINT UNIT.  Set => every FP instruction, FSAVE and
+|                 FRESTORE included, takes a line-F exception (vector 11).
+|     bit 0       ESS -- superscalar dispatch enable
+| EDEBUG is real; it is bit 6.  Evidence chain, incl. Motorola's own 060SP sample handler:
+| docs/060-PCR-BIT1-VERDICT-260824.md.  So the measured 0x04300601 below decodes completely:
+| ID 0x0430, revision 6, EDEBUG 0, DFP 0 (the FPU is on), ESS 1 -- and bit 1 is the bit that
+| separates the three FPU regimes fpuinit060.s probes for.
 | WHY THIS MATTERS: F0 measured Dhrystone at exactly 2.0x the 68040, i.e. precisely the clock
 | ratio (66/33).  With ESS=0 a superscalar 060 dispatches one instruction per clock and that
 | ratio is the whole expected result; with ESS=1 it is not, and something else is the limit.
