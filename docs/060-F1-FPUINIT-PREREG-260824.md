@@ -153,3 +153,38 @@ lean on.
   carried by the 040 control and the counters until real silicon runs again.
 * Nothing here says anything about *userland* floating point without an FPU. That is a separate
   front and it starts with a trap census, not with an engine.
+
+## 6. Correction to §3, Rig C — the control claim was too strong as written (2026-08-24, before any bench run)
+
+Registered claims are not rewritten here, so the wrong one stays above and this says what is
+wrong with it.
+
+§3 says `FPUINIT060=0` "reproduces that image byte for byte except the 16-byte build-id field".
+It does not, and it cannot: the switch gates the new object, its weaken, its link and the
+`sendsig` retarget, but two of F1's changes are edits to units that are linked either way —
+the `fpu_present` gates inside `src/fpu060.s`'s 060 arms, and the regime-3 arm in
+`src/fpsp060_glue.s`. Both sit behind `cputype == 60`, and neither is removed by the switch.
+
+What was measured instead, which is the stronger statement anyway (`build/REF-unix-040-f1-*`):
+
+```text
+stock-derived .text, 0xd71a8 bytes    baseline -> FPUINIT060=0   3 bytes differ
+                                      baseline -> FPUINIT060=1   6 bytes differ
+stock-derived .data, 0xfed4  bytes    both                       0 bytes differ
+```
+
+All six are halves of the same **three 32-bit PC-relative displacements**, each shifted by
+exactly the number of bytes the new objects add ahead of its target (`+0x30` for the control,
+`+0x174` with the probe linked):
+
+```text
+.text 0x00004a   bral ini_user_rte        the ISSUE-52 user-transition hook
+.text 0x05960e   bsrl bt_frame_ok         the ISSUE-50 backtrace frame test
+.text 0x0afb08   bsrl cb_pgfree_enter     the B2 page-release barrier
+```
+
+**No stock instruction changed.** Every byte the 68040 executes is the byte it executed before,
+and the only movement is three hook displacements following their targets — which is what
+appending an object to this link is supposed to do. The switch keeps its real job, the one the
+spec asks it for (`:460-462`): it makes a failure reducible, because it separates "the probe
+changed something" from "the gates changed something".
