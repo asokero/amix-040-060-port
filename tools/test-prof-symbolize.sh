@@ -196,7 +196,7 @@ echo "-- wire version 2: it parses, and the three v1 defects are gone ----------
 
 run capture-v2valid.txt $K
 check "a v2 capture parses"                     "0" "$st"
-has   "  ...and says which version it read"     "1" "wire version    2  (14 buckets, 46 counters defined; this dump carries 20)"
+has   "  ...and says which version it read"     "1" "wire version    2  (14 buckets, 61 counters defined; this dump carries 20)"
 has   "  ...and reads the v2 boot line"         "1" "v2, ARM clock 666666666 Hz (clk=cfg), probe 46 cyc/transition"
 has   "  ...with the v2 magic on the ring"      "1" "magic Z3P2  version 2"
 has   "the renamed bucket 8 is TAILADV"         "2" "  8  TAILADV "
@@ -345,7 +345,7 @@ echo "-- v2's post-ship append: twenty-six counters and a whole extra block ----
 
 run capture-v2spans.txt
 check "the appended-counter capture parses"     "0" "$st"
-has   "  ...distinguishing defined from carried" "1" "46 counters defined; this dump carries 39"
+has   "  ...distinguishing defined from carried" "1" "61 counters defined; this dump carries 39"
 has   "  ...and reading the new ids"            "1" " 20  IFETCH_CALLS"
 has   "  ...through the last it carries"        "1" " 38  IV_CACR_SKIP"
 
@@ -355,7 +355,7 @@ has   "  ...through the last it carries"        "1" " 38  IV_CACR_SKIP"
 run capture-v2noskip.txt
 check "the 38-counter firmware parses"          "0" "$st"
 has   "  ...and id 38 reads absent, not zero"   "1" " 38  IV_CACR_SKIP                 absent"
-has   "  ...named as an append, not a loss"     "1" "ids 38..45 did not arrive"
+has   "  ...named as an append, not a loss"     "1" "ids 38..60 did not arrive"
 has   "  ...and said to predate them"           "1" "firmware that PREDATES them"
 # The whole point of that distinction: a narrowing that decides at its call site increments
 # NOTHING, so `sum(IV_*) - DOPC_INVAL` does not recover it.  A real verdict was scored that
@@ -371,42 +371,81 @@ has   "  ...and must not be scored from these rows" "1" "Do not score a narrowin
 # reaching the reader only through a warning, in a report that otherwise looked complete.
 # These are the assertions that stop the table from falling behind again.
 run capture-v2spans.txt
-has   "the pre-rung-2 firmware names the gap"   "1" "ids 39..45 did not arrive"
+has   "the pre-rung-2 firmware names the gap"   "1" "ids 39..60 did not arrive"
 has   "  ...with the way histogram absent"      "1" " 39  DOPC_WAY0                    absent"
 has   "  ...and rung 2's own three"             "1" " 45  DFAST_XPAR                   absent"
 
+# capture-v2rung2 carries rung 2 (through id 45) but PREDATES the WARP append -- ids 46..60,
+# the retired placeholder and the WARP engine block, still take the append seam's "did not
+# arrive" path here.  It is a fixture in its own right and not a stale one: a tool synced to
+# WARP still has to read an un-WARPed capture without inventing a WARP block for it.
 run capture-v2rung2.txt
-check "the 46-counter firmware parses"          "0" "$st"
-has   "  ...carrying every id the firmware has" "1" "46 counters defined; this dump carries 46"
+check "the pre-WARP, 46-counter firmware parses" "0" "$st"
+has   "  ...carrying every id rung 2 has"       "1" "61 counters defined; this dump carries 46"
 has   "  ...with the way histogram named"       "1" " 39  DOPC_WAY0                    630000"
 has   "  ...through the last way"               "1" " 42  DOPC_WAY3                     30023"
 has   "  ...and the misalign denominator split" "1" " 43  MISALIGN_I                     1100"
 has   "  ...and the fast path's coverage"       "1" " 44  DFAST_HIT                    850000"
 has   "  ...and its transparent share"          "1" " 45  DFAST_XPAR                   120000"
-has   "  ...nothing reported uninterpreted"     "0" "beyond the 46 version 2 defines"
-has   "  ...and nothing reported absent"        "0" "did not arrive"
+has   "  ...but not the WARP block"             "1" "ids 46..60 did not arrive"
+has   "  ...and id 46 absent, not a live zero"  "1" " 46  (retired)                    absent"
+has   "  ...through the last WARP counter"      "1" " 60  WARP_EVICT                   absent"
 has   "  ...nor any name read as drift"         "0" "wire-format drift the"
 
+echo
+echo "-- the WARP append: id 46 retired, and fourteen more counters --------------------"
+# Id 46 (permanently retired) and 47..60 (the WARP engine block) are the next append past
+# rung 2 -- same seam, same "did not arrive" path capture-v2rung2 above exercises for a
+# firmware that predates them.  These are the assertions for the firmware that HAS them.
+
+run capture-v2warp.txt
+check "the 61-counter firmware parses"          "0" "$st"
+has   "  ...carrying every id the firmware has" "1" "61 counters defined; this dump carries 61"
+has   "  ...and the WARP block named"           "1" " 47  WARP_ENTER                    12000"
+has   "  ...through the round-2 eviction counter" "1" "60  WARP_EVICT                     8200"
+has   "  ...nothing reported uninterpreted"     "0" "beyond the 61 version 2 defines"
+has   "  ...and nothing reported absent"        "0" "did not arrive"
+has   "  ...nor any name read as drift"         "0" "wire-format drift the"
+# ID 46 IS NEVER A LIVE NUMBER.  A shipping firmware writes it 0, always -- and this fixture's
+# ordinary case prints `(retired)` for it and raises no warning, same as any other row that
+# happens to read absent-of-events.
+has   "  ...and id 46 reads retired, not zero"  "1" " 46  (retired)                 (retired)"
+has   "  ...never the raw counter value"        "0" " 46  (retired)                        0"
+check "a clean 61-counter capture warns about nothing" "0" \
+      "$(sed -n '/^warnings$/,$p' "$TMP/o" | grep -c '^  \*')"
+
+# ID 46 NON-ZERO is what the withdrawn IVSUP build's IV_SUPPRESSED looks like on the wire, and
+# the one value this row must never be printed as a plain measurement of.  The value column
+# still reads `(retired)` -- never the number -- and the warning is what carries the number
+# and says the capture is unsound.
+run capture-v2retired.txt
+check "a capture with id 46 non-zero parses"    "0" "$st"
+has   "  ...still rendering retired, not 777"   "1" " 46  (retired)                 (retired)"
+has   "  ...never printing the raw value"       "0" " 46  (retired)                      777"
+has   "  ...and it reaches the warnings"        "1" "counter id 46 ((retired)) is 777, not zero"
+has   "  ...naming it PERMANENTLY RETIRED"      "1" "PERMANENTLY RETIRED -- it held the withdrawn IVSUP build's IV_SUPPRESSED"
+has   "  ...and calling the capture unsound"    "1" "this capture came from a deliberately unsound machine"
+
 # AND THE SEAM ITSELF, one id PAST the table. A capture from a firmware newer than its reader
-# is the normal case, not an error case -- it is how all twenty-six appended ids arrived -- so
-# the row is reported under the name the DUMP carries and interpreted by nobody. The counter
+# is the normal case, not an error case -- it is how every appended id from 20 to 60 arrived --
+# so the row is reported under the name the DUMP carries and interpreted by nobody. The counter
 # table cannot grow a row for it, because the table is the tool's own list and that is the
 # whole point: a guessed name would put a number in it that means something else.
 run capture-v2beyond.txt
 check "a capture from a newer firmware parses"  "0" "$st"
-has   "  ...counting the row it cannot read"    "1" "46 counters defined; this dump carries 47"
-has   "  ...naming it from the dump, not a table" "1" "counter id 46 is beyond the 46 version 2 defines (NEXT_APPEND)"
+has   "  ...counting the row it cannot read"    "1" "61 counters defined; this dump carries 62"
+has   "  ...naming it from the dump, not a table" "1" "counter id 61 is beyond the 61 version 2 defines (NEXT_APPEND)"
 has   "  ...as reported but not interpreted"    "1" "reported but not interpreted"
 has   "  ...and never as a lost line"           "0" "did not arrive"
-has   "  ...with no table row invented for it"  "0" "  46  NEXT_APPEND"
+has   "  ...with no table row invented for it"  "0" "  61  NEXT_APPEND"
 # THE COST TO THE REST OF THE REPORT IS ZERO, and that is the assertion rather than a spot
 # check: same bytes in, one extra counter row, and every measurement and derived row below
 # the header identical to the capture that did not carry it.
 sed -n '/^cpu_hz  /,/^warnings$/p' "$TMP/o" > "$TMP/beyond-body"
-run capture-v2rung2.txt
-sed -n '/^cpu_hz  /,/^warnings$/p' "$TMP/o" > "$TMP/rung2-body"
+run capture-v2warp.txt
+sed -n '/^cpu_hz  /,/^warnings$/p' "$TMP/o" > "$TMP/warp-body"
 check "  ...and costs the rest of the report nothing" "same" \
-      "$(cmp -s "$TMP/beyond-body" "$TMP/rung2-body" && echo same || echo DIFFERENT)"
+      "$(cmp -s "$TMP/beyond-body" "$TMP/warp-body" && echo same || echo DIFFERENT)"
 
 echo
 echo "-- the per-bucket spans: a corrected share stops being an upper bound ------------"
@@ -546,7 +585,7 @@ echo "-- rung 1d: the LOOP split, and the ten points it puts within reach ------
 
 run capture-v21d.txt
 check "a rung-1d capture parses"                "0" "$st"
-has   "  ...at the SAME wire version"           "1" "wire version    2  (17 buckets, 46 counters defined; this dump carries 39)"
+has   "  ...at the SAME wire version"           "1" "wire version    2  (17 buckets, 61 counters defined; this dump carries 39)"
 has   "  ...saying which shape of it"           "1" "the rung 1d bucket set: id 0 prints as LOOPRES"
 has   "  ...and that the name is what moved"    "1" "the NAME is what moved"
 has   "id 0 is renamed, not repurposed silently" "3" "  0  LOOPRES "

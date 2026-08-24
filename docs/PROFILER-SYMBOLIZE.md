@@ -524,8 +524,10 @@ can span a reflash.
 | 39–42 | `DOPC_WAY0`–`3` — the decoded-op way histogram | named only |
 | 43 | `MISALIGN_I` — the instruction-stream half of `MISALIGN_R` | named only |
 | 44–45 | `DFAST_HIT`, `DFAST_XPAR` — the accessor fast path's coverage | named only |
+| 46 | permanently retired — see below | **never a live counter** |
+| 47–60 | `WARP_*` — the WARP engine block | named only |
 
-**"Named only" means the row is in the table and nothing above it reads it.** Ids 39–45
+**"Named only" means the row is in the table and nothing above it reads it.** Ids 39–60
 arrived after the tool's counter list was last synced, so until now they took the append
 seam's designed path — reported in a *"beyond the … version 2 defines"* warning and absent
 from the counter table itself. They are now named from the firmware's own
@@ -533,6 +535,19 @@ from the counter table itself. They are now named from the firmware's own
 from a capture is a name the tool would then check that capture against. The firmware states
 `WAY0+WAY1+WAY2+WAY3 == DOPC_HIT` and `MISALIGN_R − MISALIGN_I` as the genuine misaligned
 *data* reads; this tool asserts neither, and a derived row for either is a separate change.
+
+**Id 46 is permanently retired, and the report never prints a number for it.** It held
+`SPEC_HIT` in an experiment whose revert took the id with it — the reason 46 used to sit
+*outside* this table entirely — and then the withdrawn `f`-measurement build (`IVSUP`) reused
+it for `IV_SUPPRESSED`, whose non-zero value means "this capture is not a profile of a
+correct machine." The firmware retired the id for good rather than risk a third reuse:
+`z3660_prof_counter_names[46]` is the literal string `"(retired)"`, so a shipping firmware's
+own dump carries that name and a value of 0, always. The report renders the row as
+`(retired)` in the value column regardless of what arrives — present-and-zero, present-and-
+non-zero, or absent (a firmware that predates the WARP block, where it falls to the same
+*did not arrive* path as ids 47–60) — and only a non-zero reading gets a word beyond that: a
+warning naming the capture unsound, because a live number there would be the `ATC_HIT` defect
+under a new id.
 
 **`BLK_INSNS` is not a subset of `INSNS`.** `INSNS` counts instructions retired through the
 run-loop *tail*, and the fast path retires a whole chunk per pass of that loop — so a chunk
@@ -830,7 +845,7 @@ field, and the suite asserts that each names what contradicts what.
 **The post-append fixtures are a third kind again**, because the thing being tested is that
 two *legal version-2 captures* carrying different numbers of rows are read differently:
 
-* `capture-v2spans` carries 39 of the 46 counters and the `s` block; `capture-v2valid`
+* `capture-v2spans` carries 39 of the 61 counters and the `s` block; `capture-v2valid`
   carries 20 and no block. The suite pins `LOOP`'s probe at the **measured** `5043850 × 46 =
   232017100`, and asserts that the modelled figure for the same bucket in the same buckets
   (`211601150`) appears **nowhere** — the model was never wrong about the *total*, only about
@@ -838,12 +853,21 @@ two *legal version-2 captures* carrying different numbers of rows are read diffe
 * `capture-v2noskip` is the 38-counter firmware: id 38 must read `absent`, be named as an
   *append* rather than a loss, and the report must refuse to score a call-site narrowing from
   rows that structurally cannot see one.
-* `capture-v2rung2` is the full **46**-counter firmware — every id named, nothing absent and
-  nothing uninterpreted. `capture-v2beyond` is its own bytes plus **one counter past the
-  table**, which is what a capture from a firmware newer than its reader looks like: the row
-  is reported under the name the *dump* carries, marked uninterpreted, no table row is
-  invented for it, and the assertion is that the rest of the report is **byte-identical** to
-  `capture-v2rung2`'s. An id the tool has never heard of must cost the reader nothing.
+* `capture-v2rung2` is the 46-counter, **pre-WARP** firmware — every id rung 2 defines is
+  named, and ids 46–60 (the retired placeholder and the whole WARP block) must read `did not
+  arrive`, because that firmware predates them rather than having lost the lines. It is a
+  fixture in its own right, not a stepping stone: a tool synced to WARP still has to read an
+  un-WARPed capture correctly.
+* `capture-v2warp` is the full **61**-counter firmware — every id named, nothing absent and
+  nothing uninterpreted, including id 46 reading `(retired)` with no warning (its ordinary,
+  always-zero case). `capture-v2retired` is the same capture with id 46 forced non-zero: the
+  value column must still read `(retired)`, never the number, and a warning must name the
+  capture unsound. `capture-v2beyond` is `capture-v2warp`'s own bytes plus **one counter past
+  the table** — id 61 — which is what a capture from a firmware newer than its reader looks
+  like: the row is reported under the name the *dump* carries, marked uninterpreted, no table
+  row is invented for it, and the assertion is that the rest of the report is
+  **byte-identical** to `capture-v2warp`'s. An id the tool has never heard of must cost the
+  reader nothing.
 * three ways an `s` block can be present and unusable — spans that miss `TRANSITIONS`, a
   block with rows lost, and a per-pair version — each must fall back to the model and say so.
 * `capture-v2cal2` is the two-pass calibration: one price, no bracket, and the suite asserts

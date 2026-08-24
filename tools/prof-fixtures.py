@@ -144,9 +144,9 @@ COUNTER_NAMES_V2 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "DPAGE_WHIT", "DPAGE_WMISS", "XLATE", "XLATE_OK", "ATC_MISS",
                     "MISALIGN_R", "MISALIGN_W", "FAULTS", "TRANSITIONS", "STACK_OVF",
                     "ATC_HIT"]
-# Ids 20..45, appended to version 2 WITHOUT a version bump.  They are a separate list here
+# Ids 20..60, appended to version 2 WITHOUT a version bump.  They are a separate list here
 # for the same reason the two version tables are separate lists: a firmware that predates
-# them emits 20 counter rows and one that has them all emits 46, and every length in between
+# them emits 20 counter rows and one that has them all emits 61, and every length in between
 # is a legal v2 dump too.  A generator that could only produce the longest one could not
 # build the fixture that proves a tool tells "this firmware never had it" apart from "this
 # counter measured zero" -- so the generator carries the whole list and the CALLER says how
@@ -158,13 +158,25 @@ COUNTER_NAMES_APPENDED = ["IFETCH_CALLS",
                           "IV_WRAP", "IV_MAP", "IV_PFLUSH", "IV_PFLUSHA", "IV_CACR",
                           "IV_CACR_SKIP",
                           "DOPC_WAY0", "DOPC_WAY1", "DOPC_WAY2", "DOPC_WAY3",
-                          "MISALIGN_I", "DFAST_HIT", "DFAST_XPAR"]
+                          "MISALIGN_I", "DFAST_HIT", "DFAST_XPAR",
+                          # id 46: PERMANENTLY RETIRED -- the withdrawn IVSUP build's
+                          # IV_SUPPRESSED.  The firmware's own name-table entry is the
+                          # literal string "(retired)"; see RETIRED_46 below.
+                          "(retired)",
+                          # ids 47..60: the WARP engine block, in the order
+                          # docs/WARP-ENGINE.md pre-registered plus WARP_EVICT appended at
+                          # round 2.  See WARP below.
+                          "WARP_ENTER", "WARP_BLK", "WARP_INSNS", "WARP_BAIL",
+                          "WARP_BAIL_ST", "WARP_COMPILE", "WARP_CINSNS", "WARP_CBYTES",
+                          "WARP_CFETCH", "WARP_DISC", "WARP_DISC_ROOT", "WARP_FLUSH",
+                          "WARP_DECLINE", "WARP_EVICT"]
 # ONE ID PAST THE FIRMWARE'S LIST, and deliberately not a name any firmware has ever emitted.
 # The append seam's whole promise is that a counter this tool has never heard of is reported
 # uninterpreted rather than mislabelled, and that promise is about the NEXT append -- so the
 # fixture that tests it must not borrow a real name.  A real one would either be a name the
 # table already has (testing nothing) or a claim that some firmware shipped it (which would
-# be false, and is exactly the row the table refuses to carry).
+# be false, and is exactly the row the table refuses to carry).  It is used one past whatever
+# the CALLER's own appended list ends at -- id 61 once `warp` is included below.
 COUNTER_NAME_BEYOND = "NEXT_APPEND"
 MAGICS = {1: "Z3P1", 2: "Z3P2"}
 
@@ -281,13 +293,30 @@ def counters_v2(insns=1000000, fetch=1600000, read=700000, write=300000,
 # test, not a verdict.
 RUNG2 = (630000, 180000, 60000, 30023, 1100, 850000, 120000)
 
+# Id 46, permanently retired -- the withdrawn IVSUP build's IV_SUPPRESSED.  A shipping
+# firmware writes this as 0, always; the module-level default reflects that, and a fixture
+# that wants the one unsound-looking capture -- id 46 non-zero, the shape the report must
+# render as a warning rather than a number -- overrides it explicitly at the call site.
+RETIRED_46 = 0
+
+# Ids 47..60, the WARP engine block, as one tuple.  "Named only" like the way histogram and
+# rung 2 above -- nothing in the tool reads these yet (see COUNTER_NAMES_V2's own comment),
+# so the numbers are chosen to look like a plausible in-progress compile-cache session rather
+# than to encode an identity: WARP_COMPILE the largest, WARP_BLK bigger again (many block
+# executions per compile), WARP_INSNS bigger still (many guest instructions per block), and
+# WARP_ENTER/BAIL/DISC/DISC_ROOT/FLUSH/DECLINE/EVICT small counts of distinct events.
+WARP = (12000, 45000, 900000, 1800, 200,
+        3200, 640000, 2560000, 660000,
+        900, 40, 2, 1500, 8200)
+
 
 def counters_appended(fetch=1600000, insns=1000000, faults=25,
                       blk=(2000, 600000, 1800000),
                       dopc=(900023, 100002, 400000, 2000),
                       iv=(1200, 100, 20, 0, 0, 0, 0, 180, 480, 20),
-                      cacr_skip=2000, ifetch=None, with_skip=True, rung2=None):
-    """Counter ids 20..45, wired so that every identity a symbolizer should check HOLDS.
+                      cacr_skip=2000, ifetch=None, with_skip=True, rung2=None,
+                      warp=None, retired=RETIRED_46):
+    """Counter ids 20..60, wired so that every identity a symbolizer should check HOLDS.
 
     A fixture whose identities do not hold cannot tell a tool that checks them from one that
     does not, so the defaults here are chosen against the arithmetic rather than for round
@@ -305,21 +334,31 @@ def counters_appended(fetch=1600000, insns=1000000, faults=25,
     `with_skip=False` builds the 38-counter firmware -- the one whose narrowing lives at a
     call site it cannot see, which is the shape that made a real verdict unscoreable.
 
-    `rung2` appends ids 39..45; pass RUNG2 for the full 46-counter firmware.  It is refused
-    without id 38, because these ids are POSITIONAL: a dump carrying 39..45 over a missing 38
-    would not be a shorter firmware, it would be every row from 38 on relabelled -- which is
-    the one thing the append seam cannot detect and therefore the one thing this generator
-    must not be able to emit by accident."""
+    `rung2` appends ids 39..45; pass RUNG2 for the way histogram and rung 2's three.  It is
+    refused without id 38, because these ids are POSITIONAL: a dump carrying 39..45 over a
+    missing 38 would not be a shorter firmware, it would be every row from 38 on relabelled --
+    which is the one thing the append seam cannot detect and therefore the one thing this
+    generator must not be able to emit by accident.
+
+    `warp` appends id 46 (`retired`, default 0) and ids 47..60; pass WARP for the full
+    61-counter firmware.  It is refused without `rung2`, for the same positional reason --
+    id 46 sits immediately after rung 2's last id, and a dump carrying it over a missing
+    39..45 would relabel every row from there on rather than being a shorter firmware."""
     if ifetch is None:
         ifetch = fetch
     if rung2 is not None and not with_skip:
         raise ValueError("rung2 without id 38 would shift every id past it")
+    if warp is not None and rung2 is None:
+        raise ValueError("warp without rung2 would shift every id past it")
     out = [ifetch, blk[0], blk[1], blk[2],
            dopc[0], dopc[1], dopc[2], dopc[3]] + list(iv)
     if with_skip:
         out.append(cacr_skip)
     if rung2 is not None:
         out += list(rung2)
+    if warp is not None:
+        out.append(retired)
+        out += list(warp)
     return out
 
 
@@ -1089,34 +1128,58 @@ def main():
           boot_v2() + probe_cal()
           + stats_dump_v2(appended=counters_appended(with_skip=False)))
 
-    # THE 46-COUNTER FIRMWARE: every id the firmware defines, and every row therefore named.
-    # This is the shape every capture taken since rung 1d has actually had, read for a long
-    # time by a tool whose table stopped at 38 -- so the seven rows below arrived, were
-    # reported as ids beyond the table, and never appeared in the counter table at all.
-    # Nothing was mislabelled and no id moved: the seam did what it is for.  The fixture is
-    # what stops the table from silently falling behind the firmware again, because a tool
-    # that had not been synced would leave seven rows out of a report that looks complete.
+    # THE PRE-WARP FIRMWARE: every id rung 2 defines, and every row therefore named -- but
+    # WARP (46..60) is a firmware the append seam has never seen, so those fifteen ids must
+    # read as "did not arrive" rather than absent-by-loss or, worse, invented as zero.  This
+    # was the FULL firmware before the WARP engine landed, and stays a fixture in its own
+    # right for exactly that reason: a tool synced to WARP still has to read an un-WARPed
+    # capture correctly, which is the append seam's whole promise and not a one-time fact
+    # about 2026-08-23's firmware.
     rung2_head = ["Z3660 firmware boot"] + boot_v2() + probe_cal() + [ARMED]
     write(d, "capture-v2rung2.txt",
           rung2_head
           + stats_dump_v2(appended=counters_appended(rung2=RUNG2), spans=SPANS_V2))
 
+    # THE 61-COUNTER FIRMWARE: every id the firmware defines, INCLUDING the permanently
+    # retired id 46 and the WARP engine block, and every row therefore named.  This is the
+    # shape every capture taken since WARP M1 round 2 has actually had, read for a long time
+    # by a tool whose table stopped at 45 -- so the fifteen rows below arrived, were reported
+    # as ids beyond the table, and never appeared in the counter table at all.  Nothing was
+    # mislabelled and no id moved: the seam did what it is for.  The fixture is what stops the
+    # table from silently falling behind the firmware again.
+    #
+    # Id 46 reads its default of 0, so this is also the ordinary case of the retired-counter
+    # rendering: `(retired)` in the value column, no warning.  `capture-v2retired.txt` below
+    # is the other case.
+    full61 = counters_appended(rung2=RUNG2, warp=WARP)
+    write(d, "capture-v2warp.txt",
+          rung2_head + stats_dump_v2(appended=full61, spans=SPANS_V2))
+
+    # ID 46 NON-ZERO: the shape the withdrawn IVSUP build's IV_SUPPRESSED produces, and the
+    # one value this row must never be read as a plain measurement of.  The report must still
+    # print `(retired)` in the value column -- never the number -- and warn that the capture
+    # came from a deliberately unsound machine.  Otherwise identical to capture-v2warp.txt, so
+    # the assertion can isolate exactly this one row's effect.
+    write(d, "capture-v2retired.txt",
+          rung2_head
+          + stats_dump_v2(appended=counters_appended(rung2=RUNG2, warp=WARP, retired=777),
+                          spans=SPANS_V2))
+
     # ONE COUNTER PAST THE TABLE, which is the seam itself under test rather than its
     # consequences.  A capture from a firmware NEWER than the reader is the normal case and
-    # not an error case -- it is how all twenty-six appended ids arrived -- so the row must be
-    # reported under the name the DUMP carries, marked uninterpreted, with every row above it
-    # read exactly as it would have been had the row not been there at all.  The alternatives
-    # are both silent: refusing the capture loses a measurement nobody can re-take, and
-    # folding the row into the table under a guessed name puts a number in it that means
-    # something else.
+    # not an error case -- it is how every appended id from 20 to 60 arrived -- so the row
+    # must be reported under the name the DUMP carries, marked uninterpreted, with every row
+    # above it read exactly as it would have been had the row not been there at all.  The
+    # alternatives are both silent: refusing the capture loses a measurement nobody can
+    # re-take, and folding the row into the table under a guessed name puts a number in it
+    # that means something else.
     #
-    # It is capture-v2rung2's own bytes plus one line, so the assertion can be the IDENTITY of
+    # It is capture-v2warp's own bytes plus one line, so the assertion can be the IDENTITY of
     # the two report bodies rather than a spot check: an id the reader has never heard of must
     # cost the rest of the report NOTHING.
     write(d, "capture-v2beyond.txt",
           rung2_head
-          + stats_dump_v2(appended=counters_appended(rung2=RUNG2), spans=SPANS_V2,
-                          beyond=4242))
+          + stats_dump_v2(appended=full61, spans=SPANS_V2, beyond=4242))
 
     # DOPC_HIT + DOPC_MISS against INSNS + FAULTS, broken.  Every dispatch consults the cache
     # exactly once and every dispatch either retires or throws, so this holds exactly on a

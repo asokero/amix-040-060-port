@@ -177,14 +177,15 @@ COUNTER_NAMES_V1 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "IPAGE_HIT", "IPAGE_MISS", "DPAGE_RHIT", "DPAGE_RMISS",
                     "DPAGE_WHIT", "DPAGE_WMISS", "XLATE", "ATC_HIT", "ATC_MISS",
                     "MISALIGN_R", "MISALIGN_W", "FAULTS", "TRANSITIONS", "STACK_OVF"]
-# Ids 0..19 are the version-2 bump.  Ids 20..45 were APPENDED to the same version -- see
+# Ids 0..19 are the version-2 bump.  Ids 20..60 were APPENDED to the same version -- see
 # COUNTER_APPEND_BASE below for why that is safe and what it costs a reader.
 #
 # THIS TABLE IS TRANSCRIBED FROM THE FIRMWARE'S OWN `z3660_prof_counter_names[]`, never from
 # a capture.  A name read off a dump would be a name this tool then checked the dump against,
 # which tests nothing; the firmware's list is the only independent source, and it is guarded
-# there by a compile-time tripwire against Z3660_PROF_C_COUNT.  Ids 39..45 below are
-# transcribed from Z3660 6afc8f9, where C_COUNT is 46.
+# there by a compile-time tripwire against Z3660_PROF_C_COUNT.  Ids 39..45 were transcribed
+# from Z3660 6afc8f9 (C_COUNT 46); ids 46..60 -- the retired placeholder and the WARP engine
+# block -- are transcribed from Z3660 a392fbe, where C_COUNT is 61.
 COUNTER_NAMES_V2 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "IPAGE_HIT", "IPAGE_MISS", "DPAGE_RHIT", "DPAGE_RMISS",
                     "DPAGE_WHIT", "DPAGE_WMISS", "XLATE", "XLATE_OK", "ATC_MISS",
@@ -201,7 +202,15 @@ COUNTER_NAMES_V2 = ["INSNS", "INSNS_SUPER", "FETCH", "READ", "WRITE",
                     "DOPC_WAY0", "DOPC_WAY1", "DOPC_WAY2",
                     "DOPC_WAY3",                                      # 39..42  way histogram
                     "MISALIGN_I",                                     # 43      rung 2
-                    "DFAST_HIT", "DFAST_XPAR"]                        # 44..45  rung 2
+                    "DFAST_HIT", "DFAST_XPAR",                        # 44..45  rung 2
+                    "(retired)",                                      # 46      see below
+                    "WARP_ENTER", "WARP_BLK", "WARP_INSNS",
+                    "WARP_BAIL", "WARP_BAIL_ST",                      # 47..51  WARP M1
+                    "WARP_COMPILE", "WARP_CINSNS", "WARP_CBYTES",
+                    "WARP_CFETCH",                                    # 52..55  WARP M1
+                    "WARP_DISC", "WARP_DISC_ROOT", "WARP_FLUSH",
+                    "WARP_DECLINE",                                   # 56..59  WARP M1
+                    "WARP_EVICT"]                                     # 60      WARP M1 rd 2
 C_INSNS, C_INSNS_SUPER, C_FETCH, C_READ, C_WRITE, \
     C_IPAGE_HIT, C_IPAGE_MISS, C_DPAGE_RHIT, C_DPAGE_RMISS, \
     C_DPAGE_WHIT, C_DPAGE_WMISS, C_XLATE, C_XLATE_OK, C_ATC_MISS, \
@@ -213,17 +222,32 @@ C_INSNS, C_INSNS_SUPER, C_FETCH, C_READ, C_WRITE, \
     C_IV_WRAP, C_IV_MAP, C_IV_PFLUSH, C_IV_PFLUSHA, C_IV_CACR, \
     C_IV_CACR_SKIP, \
     C_DOPC_WAY0, C_DOPC_WAY1, C_DOPC_WAY2, C_DOPC_WAY3, \
-    C_MISALIGN_I, C_DFAST_HIT, C_DFAST_XPAR = range(46)
+    C_MISALIGN_I, C_DFAST_HIT, C_DFAST_XPAR, \
+    C_RETIRED_46, \
+    C_WARP_ENTER, C_WARP_BLK, C_WARP_INSNS, C_WARP_BAIL, C_WARP_BAIL_ST, \
+    C_WARP_COMPILE, C_WARP_CINSNS, C_WARP_CBYTES, C_WARP_CFETCH, \
+    C_WARP_DISC, C_WARP_DISC_ROOT, C_WARP_FLUSH, C_WARP_DECLINE, \
+    C_WARP_EVICT = range(61)
 
-# AND IT STOPS AT 45 ON PURPOSE.  An experiment held a `SPEC_HIT` at id 46 and its revert
-# took the id with it, so no shipping firmware has ever emitted the row.  Naming it here
-# would put an id in the table that can only ever print `absent` -- a non-measurement in a
-# column of measurements, which is the ATC_HIT defect the append seam exists to prevent.  The
-# table grows when the firmware's list does, and by transcription from it.
+# ID 46 IS PERMANENTLY RETIRED, and this is the one id in the table that must never be read
+# as a live measurement.  It held `SPEC_HIT` in an experiment whose revert took the id with
+# it -- exactly the shape that used to keep 46 out of this table entirely -- and then the
+# withdrawn `f`-measurement build (IVSUP) reused it for `IV_SUPPRESSED`, whose non-zero value
+# means "this capture came from a deliberately unsound machine".  The firmware settled the
+# question by retiring the id for good: `z3660_prof_counter_names[46]` is the literal string
+# `"(retired)"`, so every later index stays aligned and the dump itself says, in the name
+# column, that nothing increments it.  A shipping firmware writes it as 0, always; the
+# counter table built in `report_stats` below prints `(retired)` in the value column
+# regardless, and warns rather than trusts a non-zero reading -- see the C_RETIRED_46 special
+# case there.
+#
+# WARP_* (47..60) is the next block the firmware actually emits -- the WARP engine's entries,
+# blocks, bails, compiles and the M1-round-2 eviction counter -- transcribed the same way as
+# everything above it and named only: nothing here reads them yet.
 
 # THE APPEND SEAM, and why absent is not zero.
 #
-# Ids 0..19 are what version 2 bumped for.  Ids 20..45 arrived later, into the SAME version,
+# Ids 0..19 are what version 2 bumped for.  Ids 20..60 arrived later, into the SAME version,
 # because a pure append moves no existing id's meaning and the firmware's rule is to bump
 # only when a meaning moves -- bumping would make every v2 tool refuse a capture it can read
 # correctly.  The cost of that choice lands here: two v2 captures can legitimately carry
@@ -327,7 +351,7 @@ TWO32 = 1 << 32
 #   `clk` is parsed and surfaced wherever it appears, and `clk=bsp` is warned about hard --
 #   see _clk_note(), which also states why the wrap cross-check cannot stand in for it.
 #
-#   AND VERSION 2 GREW AFTER IT SHIPPED, WITHOUT MOVING.  Counter ids 20..45 and the
+#   AND VERSION 2 GREW AFTER IT SHIPPED, WITHOUT MOVING.  Counter ids 20..60 and the
 #   per-bucket `[PROF] s` span block were appended to version 2 rather than bumped into a
 #   version 3, and that is the right call under the firmware's own rule: a bump is for a
 #   MEANING that moves under a reader's feet, and an append moves nothing.  So this table
@@ -3261,6 +3285,25 @@ def report_stats(st, idx, probe_cyc, probe_src, bracket, out, warn):
             out.append("  %2d  %-12s  %21s  %10s" % (i, counter_names[i], "absent", "-"))
             continue
         v = c[i]
+        if i == C_RETIRED_46:
+            # ID 46 IS PERMANENTLY RETIRED (see the comment beside COUNTER_NAMES_V2 above).
+            # A shipping firmware writes it as 0, always -- but printing that number here
+            # would be the ATC_HIT defect wearing a new name: a reader has no way to tell a
+            # real zero measurement from a placeholder nothing was ever wired to.  So the
+            # row always reads `(retired)`, and a non-zero value -- the shape the withdrawn
+            # IVSUP build's IV_SUPPRESSED produces -- is a warning rather than a number: it
+            # means this capture came from a deliberately unsound machine and is not a
+            # profile of a correct one.
+            out.append("  %2d  %-12s  %21s  %10s" % (i, counter_names[i], "(retired)", "-"))
+            if v:
+                warn.append(
+                    "stats dump #%d: counter id %d (%s) is %d, not zero. This id is "
+                    "PERMANENTLY RETIRED -- it held the withdrawn IVSUP build's "
+                    "IV_SUPPRESSED -- and no shipping firmware increments it. A non-zero "
+                    "value means this capture came from a deliberately unsound machine; it "
+                    "is not a profile of a correct one and nothing in this report should be "
+                    "trusted." % (idx, i, counter_names[i], v))
+            continue
         per = ("%10.4f" % (float(v) / insns)) if insns else "         -"
         out.append("  %2d  %-12s  %21d  %s" % (i, counter_names[i], v, per))
     if absent_appended:
