@@ -299,7 +299,9 @@ early does not cost the whole session.
 4. **CPU- and change-specific tests**, each with its own counter delta rather than one delta for
    everything.
 5. **Device and graphics tests.** `cmfcensus` with X stopped; `busbench -r` before any aperture.
-6. **Burst and stress.**
+6. **Burst and stress.** ⚠ `burstloop11.sh` invokes `/tmp/hat_dup_cow`, for which **this
+   repository has no source** — see ISSUE-50. A fresh clone cannot execute this step; it runs only
+   where an earlier session left the binary. Check for it before planning a session around it.
 7. **Power cut last.** The first actions of the next boot are identity, `fsck`, and the byte
    comparison — in that order, before anything else touches the disk.
 

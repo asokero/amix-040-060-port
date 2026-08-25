@@ -6143,3 +6143,46 @@ The two decisive cells are **A7 after step 0** (did the `lea` compute the right 
 step 1** (did the `lea` consume the right length?). Either being wrong pins it to the Z3660 040
 core's handling of the full-format PC-relative `lea`. No kernel change is proposed — if confirmed,
 the fix is emulator-side.
+
+---
+
+## ⚠ ISSUE-50 (2026-08-25, OPEN): the burst step depends on a binary no clone can build, and nothing says so
+
+> **Ledger: OPEN** — found while preparing the first acceptance run on merged `main`.
+
+`test-tools/burstloop11.sh` runs `/tmp/hat_dup_cow`, and **there is no source for it anywhere in
+this repository** — not in `test-tools/`, not under any other name, and no `.c` file mentions it.
+Neither `docs/ACCEPTANCE.md` nor `test-tools/README.md` records that omission.
+
+So step 6 of the acceptance procedure — burst and stress — cannot be run from a fresh clone. It
+can only be run on a machine where some earlier session happened to leave the binary behind, and
+whoever runs it there has no way to know what that binary was built from.
+
+### Why this is the same defect twice
+
+The 2026-08-19 run found `test-tools/burst4.sh` untracked but not ignored: present on the machine
+that wrote it, absent from every clone. It was committed. This is the same shape one level down —
+the script is now tracked, but the program it invokes is not, and the procedure that depends on
+both says nothing about either.
+
+The pattern worth naming: **a test tool is not delivered until a clone can build it.** A file that
+exists only where it was first written is indistinguishable, to the person running the procedure,
+from a file that was never needed.
+
+### What it does not mean
+
+`hat_dup_cow` is the fork/COW exerciser behind the burst suite's 24-sum rounds, and the suite has
+been run and accepted repeatedly — most recently 96/96 on `68060-260819-13`. Those results stand;
+they were produced by a real program doing real work. What is missing is the ability to reproduce
+them somewhere else.
+
+### Options
+
+1. Recover or rewrite the source and track it. The behaviour is documented by `burstloop11.sh`'s
+   expectations (24 good sums per round, `1570 8192` per file) well enough to re-derive.
+2. Failing that, record in `ACCEPTANCE.md` that step 6 requires a pre-existing binary, name it, and
+   say where the surviving copy lives — so that the limitation is visible rather than discovered by
+   whoever next tries to run the procedure cleanly.
+
+Option 2 is the honest minimum and costs nothing. Doing only option 2 leaves the procedure with a
+step that a fresh clone cannot execute, which is worth knowing before the next person tries.
