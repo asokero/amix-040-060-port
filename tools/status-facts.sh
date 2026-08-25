@@ -13,6 +13,22 @@
 # .data, so "what the counter block must read at runtime" always comes from the thing that will
 # actually be booted.
 #
+# COMMON COUNTERS ARE NOT IN .data AND CANNOT BE COMPUTED.  A driver's counters (z3660scsi,
+# z3660eth) and several stock ones (putbuf) are COMMON, so the loader chooses their addresses
+# and no arithmetic on this file will produce them.  They are readable anyway: every reference
+# is an R_68K_32 relocation, so the loader wrote the resolved address INTO the instruction
+# stream, and the longword at `load_base + site` IS the counter's address.  This script lists
+# those sites, derived from the ELF's own relocation sections.  Two properties matter and both
+# are why the list is derived rather than kept by hand:
+#   * a symbol with more than one site must have its sites AGREE before any value read through
+#     it is believed -- and a hand-kept table that lists one site where the file has two turns
+#     that cross-check off silently.  `z3660_range_ovf` was exactly that case;
+#   * this ELF carries SHT_RELA, not SHT_REL.  A scanner that looks only for SHT_REL reports
+#     "no relocation targets this symbol" and reads like an instrument defect.
+# The default symbol selection is the driver gates and putbuf; override it with
+#         AMIX_COMMON_SYMS='z3660 putbuf availrmem'
+# where each word matches by exact name or by prefix.
+#
 # usage:  sh tools/status-facts.sh [kernel-image] [load-base]
 #           sh tools/status-facts.sh                        build/unix-040 at 0x08000000
 #           sh tools/status-facts.sh build/unix-040-rtg
@@ -89,11 +105,12 @@ echo
 # ------------------------------------------------- magics, counters, bindings
 # The ELF work is one python block: it needs the symbol table, the section headers and the
 # .data bytes at once, and doing that in sh with readelf+od is where transcription errors live.
-python3 - "$IMG" "$TEXT" "$BASE" <<'PY'
+python3 - "$IMG" "$TEXT" "$BASE" "${AMIX_COMMON_SYMS:-z3660 putbuf}" <<'PY'
 import struct, subprocess, sys
 
 img, textsize = sys.argv[1], int(sys.argv[2])
 BASE = int(sys.argv[3], 0)               # load base: where the loader bound the kernel
+WANT = sys.argv[4].split()               # COMMON symbols to list sites for (name or prefix)
 
 f = open(img, 'rb').read()
 def u16(o): return struct.unpack('>H', f[o:o+2])[0]
@@ -104,7 +121,7 @@ secs = []
 for i in range(e_shnum):
     b = e_shoff + i*e_shentsize
     secs.append(dict(name=u32(b), type=u32(b+4), flags=u32(b+8), addr=u32(b+12),
-                     off=u32(b+16), size=u32(b+20)))
+                     off=u32(b+16), size=u32(b+20), link=u32(b+24), info=u32(b+28)))
 shstr = secs[e_shstrndx]['off']
 for s in secs:
     o = shstr + s['name']; s['nm'] = f[o:f.index(b'\0', o)].decode('latin1')
@@ -164,6 +181,65 @@ for block in sorted(n[:-6] for n in syms if n.endswith('_magic')):
     for i, (v, n) in enumerate(members):
         print("  +%-5s %-20s @ %08X" % ("0x%x" % (v - base), n, BASE + textsize + v))
     print('```')
+    print()
+
+# ---- COMMON counters, through their R_68K_32 relocation sites ------------------------------
+# Derived from the ELF's relocation sections, never from a kept list: a hand-written table that
+# names one site where the file has two silently disables the agreement check that makes a
+# COMMON reading trustworthy at all.
+SHT_SYMTAB, SHT_RELA, SHT_REL, SHN_COMMON, R_68K_32 = 2, 4, 9, 0xFFF2, 1
+
+symtab = next((s for s in secs if s['type'] == SHT_SYMTAB), None)
+relas  = [s for s in secs if s['type'] == SHT_RELA]
+rels   = [s for s in secs if s['type'] == SHT_REL]
+
+print("## COMMON counters (loader-chosen addresses, read through their relocation sites)")
+print()
+if symtab is None or not relas:
+    print("Not listable: this image has %s symtab and %d SHT_RELA / %d SHT_REL section(s)."
+          % ("no" if symtab is None else "a", len(relas), len(rels)))
+    print()
+else:
+    strtab = secs[symtab['link']]
+
+    def sym_name(i):
+        o = strtab['off'] + u32(symtab['off'] + i*16)
+        return f[o:f.index(b'\0', o)].decode('latin1')
+
+    def sym_shndx(i):
+        return u16(symtab['off'] + i*16 + 14)
+
+    sites = {}
+    for s in relas:
+        target = secs[s['info']]['nm'] if s['info'] < len(secs) else '?'
+        for r in range(s['size'] // 12):
+            b = s['off'] + r*12
+            r_off, r_info = u32(b), u32(b+4)
+            si, rtype = r_info >> 8, r_info & 0xff
+            if rtype == R_68K_32 and sym_shndx(si) == SHN_COMMON:
+                sites.setdefault(sym_name(si), []).append((target, r_off))
+
+    total = sum(len(v) for v in sites.values())
+    multi = sum(1 for v in sites.values() if len(v) > 1)
+    print("%d COMMON symbols carry %d `R_68K_32` sites in this image; %d of them are multi-site."
+          % (len(sites), total, multi))
+    print("Read the longword at **load base + site** and it IS the counter's address. Where a")
+    print("symbol has more than one site the sites must **agree**, and two different symbols must")
+    print("resolve to two different addresses, before any value read through them is believed.")
+    print()
+    print("Selection: `%s` (exact name or prefix; set `AMIX_COMMON_SYMS` to change)."
+          % " ".join(WANT))
+    print()
+    shown = sorted(n for n in sites if any(n == w or n.startswith(w) for w in WANT))
+    if not shown:
+        print("No COMMON symbol matched the selection.")
+    else:
+        print("| symbol | sites | `.text` offsets |")
+        print("|---|---:|---|")
+        for n in shown:
+            v = sites[n]
+            print("| `%s` | %d | %s |" % (n, len(v),
+                  ", ".join("`%s 0x%06x`" % (t, o) for t, o in v)))
     print()
 
 # ---- override bindings ---------------------------------------------------------------------
