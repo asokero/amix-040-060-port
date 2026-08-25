@@ -29,6 +29,11 @@ do
 	n=`grep -c "$pat" /tmp/burstloop11.log`
 	echo "  $pat : $n"
 done
-echo "---- wrong sums (any line with 8192 that is not 1570) ----"
-grep '8192' /tmp/burstloop11.log | grep -v '1570 8192'
+# The sum lines are `1570 8192 /pressN.bin`, so match on the FILENAME, not on the
+# size alone.  The previous form -- grep 8192, minus 1570 8192 -- read the very log it
+# was writing into, and its own header contains 8192 without 1570 8192, so the check
+# matched itself and always emitted one false line (2026-08-25).  A check that reports
+# on its own output cannot report zero, which is the reading everybody wants from it.
+echo "---- wrong sums (a burst line whose checksum is not the expected one) ----"
+grep '8192 /press' /tmp/burstloop11.log | grep -v '1570 8192 /press'
 echo BURSTLOOP11-DONE
