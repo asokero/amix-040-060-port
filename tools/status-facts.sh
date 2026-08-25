@@ -183,6 +183,38 @@ for block in sorted(n[:-6] for n in syms if n.endswith('_magic')):
     print('```')
     print()
 
+# ---- the ucp shadow ring, which is deliberately OUTSIDE its counter block -------------------
+# src/ucp_dbg.s keeps 3280 bytes of shadowed ucontext next to its counters.  Inside the block
+# that would break the one-kpeek read the sheet tells the operator to take, so the ring is
+# named `ucpshadow` and stays out of the `ucp_` prefix -- which also means its address is not
+# derivable from the block and has to be printed.  The GEOMETRY is read out of the artifact's
+# own .data (ucp_slots / ucp_slot / ucp_doff), never carried here, so a ring re-sized in the
+# source re-prints correctly without anyone remembering to edit this file.
+ring, _ = one('ucpshadow', 'Dd')
+if ring is not None and data is not None:
+    def dval(name):
+        v, _t = one(name, 'Dd')
+        if v is None:
+            return None
+        o = data['off'] + (v - data['addr'])
+        return u32(o) if 0 <= o < len(f) - 4 else None
+
+    nslot, slot, doff = dval('ucp_slots'), dval('ucp_slot'), dval('ucp_doff')
+    print("**`ucp` shadow ring** — outside the counter block, so it is printed here:")
+    print()
+    print('```')
+    print("  ucpshadow        @ %08X" % (BASE + textsize + ring))
+    if nslot and slot and doff is not None:
+        print("  %d slots of %d bytes; %d shadowed bytes at slot+%d"
+              % (nslot, slot, slot - doff, doff))
+        print("  slot+0 seq (0 = NEVER WRITTEN)  +4 stamp  +8 ucp  +12 save-time fold")
+        for i in range(nslot):
+            print("  slot %d           @ %08X" % (i, BASE + textsize + ring + i * slot))
+    else:
+        print("  geometry unreadable: ucp_slots / ucp_slot / ucp_doff are not all in .data")
+    print('```')
+    print()
+
 # ---- COMMON counters, through their R_68K_32 relocation sites ------------------------------
 # Derived from the ELF's relocation sections, never from a kept list: a hand-written table that
 # names one site where the file has two silently disables the agreement check that makes a
