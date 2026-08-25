@@ -207,11 +207,31 @@ if ring is not None and data is not None:
     if nslot and slot and doff is not None:
         print("  %d slots of %d bytes; %d shadowed bytes at slot+%d"
               % (nslot, slot, slot - doff, doff))
-        print("  slot+0 seq (0 = NEVER WRITTEN)  +4 stamp  +8 ucp  +12 save-time fold")
+        # The metadata layout is read from ucp_doff: round 7 / ucz carry four longwords
+        # (doff 16), the round-8 rotating-fold arm carries a fifth at +16 (doff 20).
+        if doff >= 20:
+            print("  slot+0 seq (0 = NEVER WRITTEN)  +4 stamp  +8 ucp  +12 save-time plain fold"
+                  "  +16 save-time rot fold")
+        else:
+            print("  slot+0 seq (0 = NEVER WRITTEN)  +4 stamp  +8 ucp  +12 save-time fold")
         for i in range(nslot):
             print("  slot %d           @ %08X" % (i, BASE + textsize + ring + i * slot))
     else:
         print("  geometry unreadable: ucp_slots / ucp_slot / ucp_doff are not all in .data")
+    print('```')
+    print()
+
+# ---- the ucp2 evidence slot, also OUTSIDE its counter block -------------------------------
+# The round-8 rotating-fold arm (src/ucp2_dbg.s) keeps one 820-byte ucpev slot beside the ring,
+# holding the whole restore-side region of the first differing restore.  It is named ucpev (not
+# ucp_*) for the same reason the ring is, so its address is printed here rather than derived.
+ev, _ = one('ucpev', 'Dd')
+if ev is not None:
+    print("**`ucp2` evidence slot** — the first differing restore-side frame, printed here:")
+    print()
+    print('```')
+    print("  ucpev            @ %08X   820 bytes" % (BASE + textsize + ev))
+    print("  +0 seq  +4 stamp  +8 ucp  +12 slot ; then 804 bytes at +16 = mc_state[0..200]")
     print('```')
     print()
 
