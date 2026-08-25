@@ -23,9 +23,9 @@ framed to `sum -r` **52867**. Two facts about it, both measured rather than assu
   | binding in 52867 | verdict | the fix it is missing |
   |---|---|---|
   | `usrxmemflt` strong, `usrxmemflt_stock` **missing** | CHECK | the ISSUE-10 cure (`hgfault040.o`) |
-  | `sync` still stock at `0x5d21a` | CHECK | ISSUE-46, the `sync()` guard on the panic path |
-  | `page_init` still stock at `0xaf42a` | CHECK | ISSUE-48, the page-frame database zero fix |
-  | `setregs` still stock at `0x58b62` | CHECK | the ISSUE-50/51/52 setregs work |
+  | `sync` still stock at `0x5d21a` | CHECK | ISSUE-100, the `sync()` guard on the panic path |
+  | `page_init` still stock at `0xaf42a` | CHECK | ISSUE-102, the page-frame database zero fix |
+  | `setregs` still stock at `0x58b62` | CHECK | the ISSUE-104/51/52 setregs work |
 
 The first row is the one that showed. On its first boot the installed system reached
 `/sbin/sh /var/adm/firstboot/firstboot.sh` and then repeated `User BUS ERROR at 4AFC0003,

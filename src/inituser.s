@@ -1,4 +1,4 @@
-| inituser.s -- ISSUE-52 round 5: catch the ONE user-transition RTE, gated on the
+| inituser.s -- ISSUE-106 round 5: catch the ONE user-transition RTE, gated on the
 | frame actually dropping to user.  (2026-08-21)
 |
 | ROUND 4 CAUGHT THE WRONG RTE, and the miss named the mechanism.  Round 4 latched
@@ -46,7 +46,7 @@
 |      dropped bit is in the VALUE read, not the address -- the concrete
 |      table-walked-frame case the core's exoneration did not cover.  Firmware.
 |   iur_pc 0x80000000     -> d0 lost bit 23 between proc 1's main-return and here.
-|      Kernel-side, ISSUE-49 family.
+|      Kernel-side, ISSUE-103 family.
 |   iur_f_pc 0x80000000 while iur_pc 0x80800000
 |                         -> the `movel %d0,%sp@-` push truncated the store.
 |

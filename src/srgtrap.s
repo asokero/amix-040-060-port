@@ -1,4 +1,4 @@
-| srgtrap.s -- ISSUE-52 round 2: measure the USP handoff AT setregs, which is the
+| srgtrap.s -- ISSUE-106 round 2: measure the USP handoff AT setregs, which is the
 | moment the last round got wrong.  (2026-08-21)
 |
 | WHY A SECOND INSTRUMENT.  Round 1 latched `u.u_ar0` inside the fatal-fault NOTICE
@@ -91,7 +91,7 @@ srg_utraps:
 	movel	%sp,%d0
 	addil	&20,%d0			| 16 saved regs + 4 return address = the pushed slot
 	movel	%d0,srg_pushslot
-| --- ISSUE-52 round 6 ring: the first 4 user traps, so the SEQUENCE is visible.
+| --- ISSUE-106 round 6 ring: the first 4 user traps, so the SEQUENCE is visible.
 |     Round 2 proved every user trap (syscall AND fault) routes through this edge
 |     (srg_ut_n = 1 was the fault).  With bit 23 fixed, PID 1 may now reach its
 |     trap #0 before faulting, and the ring shows exactly what happens in order.
@@ -234,7 +234,7 @@ srg_pcb0_pre:
 	.globl	srg_pcb0_post
 srg_pcb0_post:
 	.long	0
-| ---- ISSUE-52 round 6: ring of the first 4 user traps (syscall + fault), in order.
+| ---- ISSUE-106 round 6: ring of the first 4 user traps (syscall + fault), in order.
 | srt_vec[i] = frame fmt+vec word (vector*4 in the low 12 bits: trap #0 -> 0x0080,
 | access-error -> 0x7008); srt_pc[i] = user PC; srt_usp[i] = A7 at the trap (the SP
 | the icode's lea should have set to ~0x8080002A -- if it reads 0x40001FC0 or

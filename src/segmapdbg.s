@@ -1,4 +1,4 @@
-| segmapdbg.s -- ISSUE-49: latch the state segmap_unlock panics on, and answer the
+| segmapdbg.s -- ISSUE-103: latch the state segmap_unlock panics on, and answer the
 | one question statics cannot.  (2026-08-20)
 |
 | THE PANIC.  On metal, the 68040 kernel now boots past console init and dies:
@@ -16,15 +16,15 @@
 |
 |   `btst #0,%a2@` is p_pagein and `btst #5,%a2@` is p_free -- byte 0 of the page
 |   bitfield unit is p_lock(7) p_want(6) p_free(5) p_intrans(4) p_gone(3) p_mod(2)
-|   p_ref(1) p_pagein(0), the same layout page_free's asserts pin (ISSUE-48).
+|   p_ref(1) p_pagein(0), the same layout page_free's asserts pin (ISSUE-102).
 |
 | **All three conditions branch to the SAME cmn_err**, so the panic text cannot say
-| which one fired -- the identical problem ISSUE-48 had, and the reason this unit
+| which one fired -- the identical problem ISSUE-102 had, and the reason this unit
 | exists rather than another reading of the disassembly.
 |
 | WHAT THE STATICS ALREADY SETTLED, so the next boot does not re-ask it:
 |
-|   * segmap's own memory is NOT a dirty-DRAM repeat of ISSUE-48.  segmap_create
+|   * segmap's own memory is NOT a dirty-DRAM repeat of ISSUE-102.  segmap_create
 |     (0xa8ea8) takes both the segmap data and the whole smap array from
 |     **kmem_zalloc**, so every sm_vp/sm_off/sm_refcnt starts zeroed.
 |   * the page-hash shift is CONSISTENT.  page_find, page_exists, page_hashin,
@@ -73,7 +73,7 @@
 |
 | The scan is bounded twice (per-chain and total) because it runs inside a panic on
 | a machine whose page structures are already suspect, and an unbounded walk through
-| a corrupt chain is exactly how ISSUE-46 turned a panic into a dead machine.
+| a corrupt chain is exactly how ISSUE-100 turned a panic into a dead machine.
 |
 | PRE-REGISTERED PREDICTIONS, written before the run:
 |   * smu_n == 1 and smu_addr == smu_addr0 -- it fails on the FIRST page of the run,

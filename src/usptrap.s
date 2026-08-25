@@ -1,7 +1,7 @@
-| usptrap.s -- ISSUE-52: latch the user stack pointer, u.u_ar0 and u_comm at the
+| usptrap.s -- ISSUE-106: latch the user stack pointer, u.u_ar0 and u_comm at the
 | NOTICE that kills PID 1.  (2026-08-21)
 |
-| THE FAULT.  With the 68040 emulation core fixed (ISSUE-49) the kernel boots and
+| THE FAULT.  With the 68040 emulation core fixed (ISSUE-103) the kernel boots and
 | runs, and PID 1 dies at exec:
 |
 |     NOTICE: User BUS ERROR at 40001FC0, PC:80000012 FAULT:6 PID:1 CMD:
@@ -41,7 +41,7 @@
 | -- the icode's `trap #0` -- so if nothing established `u_ar0` for PID 1 before
 | it, `setregs` writes the new SP through an inherited or stale pointer, the real
 | saved-USP slot never receives it, and the trap exit restores the old value.  That
-| is precisely the ISSUE-48 shape: a field consumed but not written, benign where
+| is precisely the ISSUE-102 shape: a field consumed but not written, benign where
 | memory happens to be favourable and fatal where it is not.
 |
 | It is a LEAD, not a conclusion.  What has not been established statically is
@@ -51,7 +51,7 @@
 | HOW IT HOOKS.  patch_usptrap.py retargets the single `cmn_err` relocation at
 | 0x5a640 -- the NOTICE call itself -- to this island, which latches, then
 | tail-jumps into the real `cmn_err` so the NOTICE prints unchanged.  The same
-| one-relocation idiom as patch_sdtfail.py and the ISSUE-49 latch.  **Blast radius
+| one-relocation idiom as patch_sdtfail.py and the ISSUE-103 latch.  **Blast radius
 | on a healthy kernel is zero**: the only path here is one already reporting a
 | fatal user fault.
 |

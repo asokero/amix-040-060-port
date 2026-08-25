@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# patch_btwalk.py -- ISSUE-50: replace backtrace's 64 KiB frame-pointer window with
+# patch_btwalk.py -- ISSUE-104: replace backtrace's 64 KiB frame-pointer window with
 # a real validity test (2026-08-21).  Companion object: src/btwalk.s.
 #
 # backtrace @0x595a4 accepted a frame pointer only inside [0x40000000, 0x4000FFFF]
@@ -95,7 +95,7 @@ def main():
 
     buf[TEXT_OFF + SITE:TEXT_OFF + END] = new
     open(IMG, "wb").write(buf)
-    print("  [ok]   ISSUE-50 frame test installed @0x%05x (%s): bsr.l %s @0x%05x, %d NOPs"
+    print("  [ok]   ISSUE-104 frame test installed @0x%05x (%s): bsr.l %s @0x%05x, %d NOPs"
           % (SITE, state, ISLAND, target, (span - 6) // 2))
 
 

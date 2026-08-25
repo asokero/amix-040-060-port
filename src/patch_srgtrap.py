@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# patch_srgtrap.py -- ISSUE-52 round 2: retarget the utraps -> u_trap edge so the
+# patch_srgtrap.py -- ISSUE-106 round 2: retarget the utraps -> u_trap edge so the
 # pushed-USP slot address can be recorded for the CURRENT trap (2026-08-21).
 # Companion object: src/srgtrap.s.
 #
@@ -68,7 +68,7 @@ def main():
             if symname(j) == NEW:
                 struct.pack_into(">I", buf, o + 4, (j << 8) | (r_info & 0xFF))
                 open(IMG, "wb").write(buf)
-                print("  [ok]   ISSUE-52 utraps edge installed @0x%x  u_trap -> %s" % (RELOC, NEW))
+                print("  [ok]   ISSUE-106 utraps edge installed @0x%x  u_trap -> %s" % (RELOC, NEW))
                 return
         raise SystemExit("ABORT: %s not defined (is srgtrap.o linked?)" % NEW)
 

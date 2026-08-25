@@ -137,7 +137,7 @@ The guest's memory is the card's DDR after a cold ARM boot. It is **not zero-fil
 because it is not, it is deterministic — the same garbage in the same places on every boot.
 
 That is not a gap; it is the platform's most valuable property so far. It is what exposed
-**ISSUE-48** in this repository's ledger: stock AMIX maps the page-frame database into existing
+**ISSUE-102** in this repository's ledger: stock AMIX maps the page-frame database into existing
 DRAM and zeroes nothing, so `page_free` panics on the first structure whose fields arrive
 non-zero. Zero-filled emulator RAM hides that defect completely. The bug is generic SVR4 VM code
 and has nothing to do with the 68040 — it simply cannot be found on a platform that hands the

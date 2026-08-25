@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# patch_inittrap.py -- ISSUE-52 round 3: capture the user PC main hands to the
+# patch_inittrap.py -- ISSUE-106 round 3: capture the user PC main hands to the
 # initial rte (2026-08-21).  Companion object: src/inittrap.s.
 #
 # _start @0x44 is `jsr main` with its relocation at 0x46.  Retarget it to ini_main,
@@ -59,7 +59,7 @@ def main():
             if symname(j) == NEW:
                 struct.pack_into(">I", buf, o + 4, (j << 8) | (r_info & 0xFF))
                 open(IMG, "wb").write(buf)
-                print("  [ok]   ISSUE-52 init entry latch installed @0x%x  main -> %s" % (RELOC, NEW))
+                print("  [ok]   ISSUE-106 init entry latch installed @0x%x  main -> %s" % (RELOC, NEW))
                 return
         raise SystemExit("ABORT: %s not defined (is inittrap.o linked?)" % NEW)
 

@@ -1,4 +1,4 @@
-| btwalk.s -- ISSUE-50: give the panic backtrace a frame-pointer test that admits
+| btwalk.s -- ISSUE-104: give the panic backtrace a frame-pointer test that admits
 | the kernel's real stacks, and a walk that cannot run away.  (2026-08-21)
 |
 | WHY THIS EXISTS.  Twice during the 68040 metal campaign a panic printed exactly
@@ -17,15 +17,15 @@
 | own .bss, entirely outside it.  So the walk stopped at the first frame every
 | time:
 |
-|   * `Backtrace: 80F4964:` (ISSUE-48) -- 0x080F4964 is `pstack`, in .bss;
-|   * `40001DF4: 803E66C->80595` (ISSUE-49) -- in window, so that one frame and its
+|   * `Backtrace: 80F4964:` (ISSUE-102) -- 0x080F4964 is `pstack`, in .bss;
+|   * `40001DF4: 803E66C->80595` (ISSUE-103) -- in window, so that one frame and its
 |     return address printed, and the next frame pointer left the window.
 |
 | WHY WIDENING THE WINDOW ALONE WOULD HAVE BEEN A BUG.  **That test was the walk's
 | only terminator.**  The loop (0x5978e-0x59796) simply follows `*fp` back to the
 | top; there is no frame counter and no ordering check.  A wider window on its own
 | lets a corrupt chain walk forever *inside a panic* -- which is the failure
-| ISSUE-46 exists to prevent, reintroduced by the fix meant to help.  So all three
+| ISSUE-100 exists to prevent, reintroduced by the fix meant to help.  So all three
 | bounds land together, and none of them is optional:
 |
 |   1. RANGE -- the whole u-block [0x40000000, 0x40040000) **or** the kernel's own

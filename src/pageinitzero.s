@@ -1,9 +1,9 @@
 | pageinitzero.s -- the page-frame database is raw DRAM, and nothing zeroes it.
-| ISSUE-48.  Zero it before page_init() publishes it, and count what was in it.
+| ISSUE-102.  Zero it before page_init() publishes it, and count what was in it.
 | (2026-08-20)
 |
 | WHY THIS EXISTS.  Measured on the card, 2026-08-20, from the first 68040 boot
-| whose panic path survived long enough to be read (ISSUE-46):
+| whose panic path survived long enough to be read (ISSUE-100):
 |
 |     PANIC: page_free
 |     Backtrace: 80F4964:

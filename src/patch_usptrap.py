@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# patch_usptrap.py -- ISSUE-52: latch the user stack pointer, u.u_ar0 and u_comm at
+# patch_usptrap.py -- ISSUE-106: latch the user stack pointer, u.u_ar0 and u_comm at
 # the NOTICE that kills PID 1 (2026-08-21).  Companion object: src/usptrap.s.
 #
 # u_trap @0x5a47e reports a fatal user fault with
@@ -64,7 +64,7 @@ def main():
             if symname(j) == NEW:
                 struct.pack_into(">I", buf, o + 4, (j << 8) | (r_info & 0xFF))
                 open(IMG, "wb").write(buf)
-                print("  [ok]   ISSUE-52 latch installed @0x%x  cmn_err -> %s" % (RELOC, NEW))
+                print("  [ok]   ISSUE-106 latch installed @0x%x  cmn_err -> %s" % (RELOC, NEW))
                 return
         raise SystemExit("ABORT: %s not defined (is usptrap.o linked?)" % NEW)
 

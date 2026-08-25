@@ -4383,7 +4383,7 @@ say something falsifiable, or it is decoration.
 the pre-change build in exactly **two bytes**, both inside the build-id string (`260813-09` →
 `260814-01`). All six variant kernels build; all reloc checks pass against their own image.
 
-## ✅ ISSUE-46 (2026-08-20, FIXED THE SAME DAY): the panic path destroys its own diagnosis — `sync()` walks the vfs switch through a NULL pointer
+## ✅ ISSUE-100 (2026-08-20, FIXED THE SAME DAY): the panic path destroys its own diagnosis — `sync()` walks the vfs switch through a NULL pointer
 
 > **Ledger: FIXED, and CONFIRMED ON HARDWARE 2026-08-20** (same day). Not yet reflected
 > in [`STATUS.md`](STATUS.md). The hardware evidence is at the end of this entry; the
@@ -4501,12 +4501,12 @@ link time — is now a measurement.
 
 Two things that had never been observed before this boot: the panic path ran to completion, and
 the panic message survived long enough to be read and acted on. The `page_free` panic it exposed
-is ISSUE-48.
+is ISSUE-102.
 
 **One defect this uncovered, not fixed here:** the kernel's own backtrace printer emitted a single
 frame address (`80F4964:`) and then stalled, so the `Backtrace:` line is a stub. The chain was
 recovered by dumping the boot stack and walking the frame pointers by hand. That is a separate
-(minor) defect of the panic printer, recorded here so it is not rediscovered as part of ISSUE-48.
+(minor) defect of the panic printer, recorded here so it is not rediscovered as part of ISSUE-102.
 
 ### What this unblocks, and one static correction to go with it
 
@@ -4537,11 +4537,11 @@ still unmeasured** — that is a runtime fact, and it is exactly what the guard 
 boot print alongside the backtrace.
 
 *(Resolved 2026-08-20, the same day, by the boot the guard made readable: the panic is reached
-from `memialloc` during `kvm_init`, and the four fields are not state at all — see ISSUE-48.
+from `memialloc` during `kvm_init`, and the four fields are not state at all — see ISSUE-102.
 The four branches converging on one `cmn_err` is why the panic text names no field, and is why
 the fix had to bring its own counters.)*
 
-## ⚠ ISSUE-47 (2026-08-20, RECORDED NOT FIXED): `config()`'s memory-sizing fallback is `0x07000000`-shaped and silently wrong at load base `0x08000000`
+## ⚠ ISSUE-101 (2026-08-20, RECORDED NOT FIXED): `config()`'s memory-sizing fallback is `0x07000000`-shaped and silently wrong at load base `0x08000000`
 
 > **Ledger: OPEN, deliberately not fixed in this pass.** Latent: the path has not been
 > observed to run. Recorded now because it is cheap to record and expensive to rediscover,
@@ -4595,7 +4595,7 @@ there.
 
 **Inference, not measurement:** the 68040 boots on an accelerator card at `0x08000000` did *not*
 take this path, because the panic they produced is the held-page `cmn_err(CE_PANIC, "page_free")`
-at `0xafb00` (ISSUE-46), not the line-622 assertion this would cause. That is an argument from
+at `0xafb00` (ISSUE-100), not the line-622 assertion this would cause. That is an argument from
 which panic fired, not a reading of `MAINSTORE`; the fallback's condition (`VSIZOFMEM` still zero
 after the fixpoint) has not been observed either way, and `MAINSTORE`/`VSIZOFMEM` have not been
 read out of a running kernel on that machine.
@@ -4611,18 +4611,18 @@ cache handoff), so the wiring cost is near zero. It is left undone here delibera
 the memory sizing of every kernel this port builds, including the 030-based lines that boot from
 motherboard RAM today, and that is a change that wants its own A/B rather than a ride-along.
 
-## ✅ ISSUE-48 (2026-08-20): `PANIC: page_free` at boot — the page-frame database is mapped-in DRAM and **nothing zeroes it**
+## ✅ ISSUE-102 (2026-08-20): `PANIC: page_free` at boot — the page-frame database is mapped-in DRAM and **nothing zeroes it**
 
 > **Ledger: FIXED in the port tree, NOT YET CONFIRMED ON HARDWARE.** The diagnosis is static
 > and complete; the fix ships its own falsifier (`pgz_held_n`) and the next boot either proves
 > or refutes it. Not yet reflected in [`STATUS.md`](STATUS.md).
 
-**Not a 68040 defect either.** Like ISSUE-46 this is generic SVR4 VM code, and like ISSUE-46 the
+**Not a 68040 defect either.** Like ISSUE-100 this is generic SVR4 VM code, and like ISSUE-100 the
 040 lane is simply where it finally got hit.
 
 ### How it was found
 
-The first 68040 boot on an accelerator card whose panic path survived (ISSUE-46) printed
+The first 68040 boot on an accelerator card whose panic path survived (ISSUE-100) printed
 `PANIC: page_free` and nothing else useful — the kernel's own backtrace printer stalls after one
 frame. The boot stack was dumped live and the frame chain walked by hand; symbolised against the
 booted image (`68040-260820-18`, load base `0x08000000`) it reads:
@@ -4726,7 +4726,7 @@ some other reason, and finding out which is worth more than the fix.
 the artifact. The zero loop and the scan loop cover the same 15 longs (60 bytes) per struct that
 `memialloc` steps over. **No boot has run this code.**
 
-## ✅ ISSUE-49 (2026-08-20, CLOSED 2026-08-21 — a symptom record, not a defect of this port): `PANIC: segmap_unlock` at first root-mount I/O
+## ✅ ISSUE-103 (2026-08-20, CLOSED 2026-08-21 — a symptom record, not a defect of this port): `PANIC: segmap_unlock` at first root-mount I/O
 
 > **Ledger: CLOSED 2026-08-21 — symptom record, no kernel change.** The defect was in the
 > accelerator card's 68040 emulation core, which ran bitfield operations through the 68030
@@ -4741,7 +4741,7 @@ the artifact. The zero loop and the scan loop cover the same 15 longs (60 bytes)
 
 ### Symptom
 
-With ISSUE-46 and ISSUE-48 in, the 68040 kernel on the accelerator card boots past console init
+With ISSUE-100 and ISSUE-102 in, the 68040 kernel on the accelerator card boots past console init
 and dies ~10 s after MMU-on — where root-mount I/O begins. Recovered verbatim from the dead
 kernel's `putbuf` ring through the firmware debug console:
 
@@ -4752,8 +4752,8 @@ PANIC: segmap_unlock
 ```
 
 The version banner is in the ring, so the console `printf` path is alive; `0x0803E66C` is
-`xpanic`. The guest then warm-reboots cleanly — the ISSUE-46 guard doing its job — which is what
-makes the ring readable in the reset window at all. (The truncated `Backtrace:` is ISSUE-50, not
+`xpanic`. The guest then warm-reboots cleanly — the ISSUE-100 guard doing its job — which is what
+makes the ring readable in the reset window at all. (The truncated `Backtrace:` is ISSUE-104, not
 this.)
 
 ### What segmap_unlock actually asserts
@@ -4767,14 +4767,14 @@ if (pp == NULL || pp->p_pagein || pp->p_free)
         cmn_err(CE_PANIC, "segmap_unlock");
 ```
 
-`btst #0` is `p_pagein`, `btst #5` is `p_free` — the byte-0 bitfield layout ISSUE-48 pinned. **All
+`btst #0` is `p_pagein`, `btst #5` is `p_free` — the byte-0 bitfield layout ISSUE-102 pinned. **All
 three guards branch to the same `cmn_err` at `0xa907e`**, so the panic text cannot name the
-condition. Exactly ISSUE-48's problem, and the reason this entry ships an instrument instead of
+condition. Exactly ISSUE-102's problem, and the reason this entry ships an instrument instead of
 another reading of the disassembly.
 
 ### Settled statically — do not re-ask these
 
-* **Not an ISSUE-48 repeat.** `segmap_create` (`0xa8ea8`) takes both the segmap data and the whole
+* **Not an ISSUE-102 repeat.** `segmap_create` (`0xa8ea8`) takes both the segmap data and the whole
   smap array from **`kmem_zalloc`**. segmap's own memory arrives zeroed; the dirty-DRAM story does
   not apply here.
 * **The page-hash shift is uniform.** `page_find`, `page_exists`, `page_hashin`, `page_hashout`
@@ -4816,7 +4816,7 @@ reconstructed: `a2` = pp (or NULL), `a3` = smp, `a4` = seg, `d2` = the failing p
 
 The scan is bounded per-chain (1024) and in total (100000) because it runs inside a panic on a
 machine whose page structures are already suspect, and an unbounded walk through a corrupt chain
-is precisely how ISSUE-46 turned a panic into a dead machine.
+is precisely how ISSUE-100 turned a panic into a dead machine.
 
 ### Predictions, registered before the run
 
@@ -4853,7 +4853,7 @@ Kernel `68040-260821-02`, death ~22 s post-MMU, block read post-mortem from the 
 
 `smu_pp - 0x40040000 = 0x33E28 = 212520`, and `212520 / 60 = 3542` **exactly** — so `pages[]` is at
 `0x40040000` and this is page index 3542 of 3688, click `0x8F6E`. The array length `60 * 0xE68 =
-0x36060` is the same `0x00036060` that appeared in ISSUE-48's stack frames. Three independent
+0x36060` is the same `0x00036060` that appeared in ISSUE-102's stack frames. Three independent
 numbers agreeing is what says the decode is right.
 
 **Correction to this entry's own instrument.** The `smu_scan` interpretation table above was
@@ -4889,7 +4889,7 @@ twice (`p_keepcnt = 2`). `p_ref = 1` and `p_keepcnt` rising from 1 to 2 are exac
   which sets its own condition codes, so the classic "a `jsr` where an `addql` set the CCR" trap
   does not apply here. Checked because it is exactly the trap this repository documents.
 
-So `p_free` was set by `page_free` (`0xafb3a`, the only remaining setter, and its ISSUE-48 guard
+So `p_free` was set by `page_free` (`0xafb3a`, the only remaining setter, and its ISSUE-102 guard
 means `p_keepcnt` was 0 at that moment), and then **the page was taken for a pagein without ever
 being reclaimed** — neither `page_get`'s cascade nor `page_unfree` cleared the bit.
 
@@ -4948,7 +4948,7 @@ result is decoration — the same lesson ISSUE-44 recorded, re-learned here at t
 hardware run. A future all-zero stage-2 read now means "did not run" only if `smu_s2ran` is also
 zero.
 
-**ISSUE-48 confirmed a third time** in the same read: `pgz_held_n` = 1380, after 150 and 1225 on
+**ISSUE-102 confirmed a third time** in the same read: `pgz_held_n` = 1380, after 150 and 1225 on
 the two previous boots, and `pgz_hash_n` = 71 after 2. Both counts vary run to run exactly as an
 uninitialised-DRAM story predicts, and the boot gets past `kvm_init` every time.
 
@@ -4988,7 +4988,7 @@ round (the following instruction is a `btst`, which sets its own condition codes
 
 There are exactly **two** instructions in the kernel that set `p_free`: `orib #32,%a2@` in
 `page_free` (`0xafb3a`) and in `free_vp_pages` (`0xafe04`). Both are guarded by assertions that
-this page violates — `page_free` by the four held-page tests (ISSUE-48), `free_vp_pages` by
+this page violates — `page_free` by the four held-page tests (ISSUE-102), `free_vp_pages` by
 `p_free == 0`, `p_intrans == 0`, `p_keepcnt == 0` (lines 753–755). **Had either run on this page
 it would have produced a different panic, and it did not.**
 
@@ -5202,7 +5202,7 @@ accelerator's 68040 emulation core mishandled bitfield operations**, executing t
 to the same byte did. Fixed in the firmware (`6e8e33a`) and **validated on metal 2026-08-21
 03:40**: the kernel boots, prints its banner and runs. `PANIC: segmap_unlock` is gone.
 
-**The kernel needed no change.** ISSUE-49 is therefore a **symptom record**, not a defect of this
+**The kernel needed no change.** ISSUE-103 is therefore a **symptom record**, not a defect of this
 port — kept in full because the ladder that got here (which guard fired → which list → which
 population → which instruction) is the reusable part, and because two of its rounds were wrong in
 instructive ways: the "deterministic write to a fixed address" reading, retracted by the census,
@@ -5211,14 +5211,14 @@ whether it had.
 
 The frontier moved to userland (init's exec fault), which is a different lane.
 
-**Instrument retirement — candidates, not yet retired.** The ISSUE-46 (`syncg`) and ISSUE-48
+**Instrument retirement — candidates, not yet retired.** The ISSUE-100 (`syncg`) and ISSUE-102
 (`pgz`) counter blocks have each done their job and been confirmed on metal (three times for
-ISSUE-48). They are candidates for retirement once the userland case closes. **Do not retire them
-yet**: the pinned diagnostic medium still carries them usefully, ISSUE-48's fix itself must stay
+ISSUE-102). They are candidates for retirement once the userland case closes. **Do not retire them
+yet**: the pinned diagnostic medium still carries them usefully, ISSUE-102's fix itself must stay
 regardless (only its counters are optional), and `pgz_held_n` remains the cheapest live proof that
 boot memory arrives dirty on this machine.
 
-## ✅ ISSUE-50 (2026-08-20, FIXED 2026-08-21): the panic backtrace stopped after one frame because its frame-pointer window was 64 KiB wide
+## ✅ ISSUE-104 (2026-08-20, FIXED 2026-08-21): the panic backtrace stopped after one frame because its frame-pointer window was 64 KiB wide
 
 > **Ledger: FIXED in the port tree 2026-08-21, NOT YET EXERCISED ON HARDWARE** (no panic has
 > occurred since it landed). Not yet reflected in [`STATUS.md`](STATUS.md). The diagnosis below is
@@ -5240,9 +5240,9 @@ i.e. a frame pointer is accepted only in **`[0x40000000, 0x4000FFFF]`** — a 64
 u-block base. So the printer emits the address, rejects it, and stops. That is the whole
 behaviour, and it explains both observations exactly:
 
-* ISSUE-48's boot printed `Backtrace: 80F4964:` and stopped — `0x080F4964` is the boot stack
+* ISSUE-102's boot printed `Backtrace: 80F4964:` and stopped — `0x080F4964` is the boot stack
   `pstack`, which lives in `.bss` and is nowhere near the window.
-* ISSUE-49's boot printed `40001DF4: 803E66C->80595` — that frame **is** in the window, so it
+* ISSUE-103's boot printed `40001DF4: 803E66C->80595` — that frame **is** in the window, so it
   printed the frame and its return address; the next frame pointer left the window.
 
 The window is too narrow for the kernel's real stacks: AMIX's u-block is `[0x40000000,
@@ -5254,7 +5254,7 @@ kernel's own `.bss` entirely outside it.
 **The window is the walk's only terminator.** The loop (`0x5978e`–`0x59796`) simply follows
 `*fp` back to the top; there is no frame counter and no monotonicity check. Widening the window
 without adding a bound would let a corrupt chain walk forever *inside a panic* — the exact
-failure mode ISSUE-46 exists to prevent, reintroduced by the fix meant to help.
+failure mode ISSUE-100 exists to prevent, reintroduced by the fix meant to help.
 
 ### The fix, when it is taken
 
@@ -5264,7 +5264,7 @@ frame pointer to **increase** each step (stacks grow down, so caller frames are 
 addresses — this alone kills every cycle); and cap the frame count outright.
 
 Not done in that pass on purpose: it would have put a second, unproven variable into a kernel
-whose one job was to diagnose ISSUE-49.
+whose one job was to diagnose ISSUE-103.
 
 ### Fixed 2026-08-21, all three bounds together
 
@@ -5294,7 +5294,7 @@ Output format, symbol lookup and print order are deliberately unchanged: a frame
 before it is judged, so the frame that *ended* the walk still appears. That address is itself
 diagnostic — it is what made this defect findable at all — and `bt_laststop` now latches it.
 
-## ✅ ISSUE-51 (2026-08-21, FIXED THE SAME DAY): `xpanic` decided whether to `sync()` from uninitialised bits
+## ✅ ISSUE-105 (2026-08-21, FIXED THE SAME DAY): `xpanic` decided whether to `sync()` from uninitialised bits
 
 > **Ledger: FIXED in the port tree 2026-08-21, NOT YET EXERCISED ON HARDWARE.** Not yet reflected
 > in [`STATUS.md`](STATUS.md). It mattered because it decided how much to trust a post-mortem
@@ -5302,11 +5302,11 @@ diagnostic — it is what made this defect findable at all — and `bt_laststop`
 
 ### The observation that forced it
 
-Two panics on the same kernel family, both with ISSUE-46's guarded `sync()` linked in:
+Two panics on the same kernel family, both with ISSUE-100's guarded `sync()` linked in:
 
-* ISSUE-46's boot (`PANIC: page_free`): `syncg_calls = 1`, `syncg_skip_ops = 11` — `sync()` ran
+* ISSUE-100's boot (`PANIC: page_free`): `syncg_calls = 1`, `syncg_skip_ops = 11` — `sync()` ran
   and skipped all eleven unfilled `vfssw` rows.
-* ISSUE-49's boot (`PANIC: segmap_unlock`): **`syncg_calls = 0`** — `sync()` was never entered,
+* ISSUE-103's boot (`PANIC: segmap_unlock`): **`syncg_calls = 0`** — `sync()` was never entered,
   though the machine warm-rebooted cleanly and the `putbuf` ring was intact.
 
 ### Why
@@ -5336,9 +5336,9 @@ boots differ because `sysdump` returned different values.
 * **`syncg_calls` is not a reliable indicator that the panic path ran.** A zero means "`sync()`
   was not called this time", not "the panic path failed". For post-mortems the trustworthy signals
   are the `putbuf` ring contents and a clean warm reboot.
-* **ISSUE-46's guard is not made redundant by this.** It was simply not exercised on the second
+* **ISSUE-100's guard is not made redundant by this.** It was simply not exercised on the second
   boot. Had those bits fallen the other way — a coin toss on every early panic — the unguarded
-  `sync()` would have walked the NULL `vfssw` and destroyed the ring that produced ISSUE-49's
+  `sync()` would have walked the NULL `vfssw` and destroyed the ring that produced ISSUE-103's
   entire diagnosis. The guard remains load-bearing precisely because the gate is unpredictable.
 
 ### Fixed 2026-08-21 — one instruction, same length
@@ -5353,14 +5353,14 @@ Three things make that the safe direction rather than the clever one:
   the register, which this does not touch;
 * always-sync is the intended SVR4 panic semantic (flush filesystems on the way out); skipping
   would silently drop it;
-* `sync()` on the panic path is safe at any point in boot **since ISSUE-46** — it skips vfs switch
+* `sync()` on the panic path is safe at any point in boot **since ISSUE-100** — it skips vfs switch
   rows `vfsinit` has not filled instead of calling through NULL. Landing this without that guard
   would be reckless; with it, it is the behaviour the code always meant to have.
 
-The ordering is worth keeping in view: ISSUE-46 made this fix safe, and this fix makes ISSUE-46's
+The ordering is worth keeping in view: ISSUE-100 made this fix safe, and this fix makes ISSUE-100's
 guard reachable on every panic instead of on a coin toss.
 
-## ✅ ISSUE-52 (2026-08-21, CLOSED 2026-08-21 — a symptom record, not a defect of this port): PID 1 dies at exec with a kernel-shaped user stack pointer
+## ✅ ISSUE-106 (2026-08-21, CLOSED 2026-08-21 — a symptom record, not a defect of this port): PID 1 dies at exec with a kernel-shaped user stack pointer
 
 > **Ledger: CLOSED 2026-08-21 — symptom record, no kernel change.** Two defects in the
 > accelerator card's 68040 emulation, both fixed there and validated on metal the same day: the
@@ -5371,7 +5371,7 @@ guard reachable on every panic instead of on a coin toss.
 > below is kept in full, including the rounds it got wrong — the note as it stood while the entry
 > was open:
 >
-> > **Ledger: OPEN.** With ISSUE-49 closed (an emulation-core defect, not a kernel one) the kernel
+> > **Ledger: OPEN.** With ISSUE-103 closed (an emulation-core defect, not a kernel one) the kernel
 > > boots and runs, and the frontier is userland. The statics below are settled; the build carries a
 > > latch that decides the rest in one boot. Not yet reflected in [`STATUS.md`](STATUS.md).
 
@@ -5426,7 +5426,7 @@ pointer **through that pointer** (`u_ar0[60]` at `0x58c12`) and the new PC at `u
 **PID 1's first ever entry into the kernel is a syscall** — the icode's `trap #0`. If nothing
 established `u_ar0` for PID 1 before it, `setregs` writes the new SP through an inherited or stale
 pointer, the real saved-USP slot never receives it, and the trap exit restores the old value. That
-is the ISSUE-48 shape exactly: a field consumed but not written, harmless where memory happens to
+is the ISSUE-102 shape exactly: a field consumed but not written, harmless where memory happens to
 be favourable and fatal where it is not — which is also the shape of the bench/card divergence,
 since the bench boots these same bits to the installer prompt.
 
@@ -5440,7 +5440,7 @@ the NOTICE call itself — to `unt_latch`, which latches and tail-jumps into the
 the message prints unchanged. Verified surgical: one relocation moved, the other 531 `cmn_err`
 sites untouched. Blast radius on a healthy kernel is zero — the only path here is one already
 reporting a fatal user fault. `unt_magic2` is stamped `"USP!"` as the first act of the latch body,
-so silence cannot be mistaken for a negative result (the ISSUE-49 stage-2 lesson).
+so silence cannot be mistaken for a negative result (the ISSUE-103 stage-2 lesson).
 
 | latched | what it decides |
 |---|---|
@@ -5467,9 +5467,9 @@ readings and `unt_comm0` separates them:
 * `unt_uar0` inside `0x4000xxxx`. A value outside the u-block **refutes** the inheritance reading.
 * `unt_n == 1`.
 
-**Nothing here is measured yet.** If the latch confirms the reading, the fix follows the ISSUE-48
+**Nothing here is measured yet.** If the latch confirms the reading, the fix follows the ISSUE-102
 pattern — establish the field explicitly on the path that consumes it, rather than zero-filling
-every frame — and it will be a kernel-side fix in this port, unlike ISSUE-49.
+every frame — and it will be a kernel-side fix in this port, unlike ISSUE-103.
 
 ### Latch read 2026-08-21 — the lead above is REFUTED, and two of the four fields say so
 
@@ -5486,7 +5486,7 @@ inside the NOTICE, which is inside `u_trap`, i.e. **after** `u_trap` has already
 `u_ar0` with the *fault's* frame pointer. `0x40001F44` is that frame, not the value `setregs`
 used at exec. Any reading built on it — including "the inheritance arm holds" — has to be
 withdrawn. Latching a field that the measuring path itself rewrites is the same error class as the
-stage-2 label bug in ISSUE-49, in a new disguise: **the value was real, the moment was wrong.**
+stage-2 label bug in ISSUE-103, in a new disguise: **the value was real, the moment was wrong.**
 
 #### What the read does establish
 
@@ -5659,8 +5659,8 @@ at the frame build), `iur_f_pc` (the PC longword actually in the frame):
 | reading | verdict |
 |---|---|
 | all three `0x80800000` | frame correct, **RTE delivered `0x80000000`** — back to the CPU core, but with the exact failing frame address (`iur_a7` ≈ `0x40001FB8`, u-block/table-walked) and the exact bit: the concrete case the "exact delivery on table-walked frames" exoneration did not cover |
-| `iur_pc = 0x80000000`, `ini_ret = 0x80800000` | `d0` lost bit 23 between `ini_main`'s `rts` and here — an ISSUE-49-family data-path bit-drop, **kernel-side fix** |
-| `iur_f_pc = 0x80000000`, `iur_pc = 0x80800000` | the `movel %d0,%sp@-` push truncated the store — a store bit-drop, the nearest cousin of ISSUE-49's BFINS finding |
+| `iur_pc = 0x80000000`, `ini_ret = 0x80800000` | `d0` lost bit 23 between `ini_main`'s `rts` and here — an ISSUE-103-family data-path bit-drop, **kernel-side fix** |
+| `iur_f_pc = 0x80000000`, `iur_pc = 0x80800000` | the `movel %d0,%sp@-` push truncated the store — a store bit-drop, the nearest cousin of ISSUE-103's BFINS finding |
 
 #### Predictions, registered
 
@@ -5781,7 +5781,7 @@ not recorded here (per the repository's own rule against hand-carried volatile n
 counters), not `.bss`. `mlsetup`'s `bzero(edata, end)` clears `.bss` only, so it does **not** wipe
 them; they are reset only when `boot2` reloads the kernel image on the next warm boot. PID 1's
 fatal user fault → `SIGBUS` to init → init dies → the kernel panics ("init died") → `xpanic` →
-(ISSUE-46 guard) `sync` → `rtnfirm` → warm reboot, on the observed ~90 s cycle. So within a
+(ISSUE-100 guard) `sync` → `rtnfirm` → warm reboot, on the observed ~90 s cycle. So within a
 cycle, `pgz` is populated from `kvm_init` onward and `srt` from the init fault onward; both
 persist until the reload. A correct-address read at almost any time after early boot shows `pgz`
 non-zero.
@@ -5838,7 +5838,7 @@ between the stock kernel and the 040 build** — the port does not patch it. Sec
 (Amiberry's 040 core) boots this same miniroot to the installer prompt, so init runs there; and
 the same full-format PC-relative addressing is a 68020+ mode the 030 executes too. **The bytes are
 correct and run on two other cores. The divergence is the Z3660 card's 68040 execution of this
-instruction stream** — the same shape as ISSUE-49 (bitfield ops) and the bit-23 bus-misalign, both
+instruction stream** — the same shape as ISSUE-103 (bitfield ops) and the bit-23 bus-misalign, both
 of which were advanced-040 gaps Amiberry handled and the Z3660 core did not, until fixed.
 
 **Prime suspect — the icode's first instruction.** `lea %pc@(L%stack),%sp` = `4ffb 0170 0000

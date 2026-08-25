@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# patch_segmapdbg.py -- ISSUE-49: latch the state segmap_unlock panics on
+# patch_segmapdbg.py -- ISSUE-103: latch the state segmap_unlock panics on
 # (2026-08-20).
 #
 # segmap_unlock @0xa8fec has exactly one cmn_err call.  Its three guards --
@@ -69,7 +69,7 @@ def main():
             if symname(j) == NEW:
                 struct.pack_into(">I", buf, o + 4, (j << 8) | (r_info & 0xFF))
                 open(IMG, "wb").write(buf)
-                print("  [ok]   ISSUE-49 latch installed @0x%x  cmn_err -> %s" % (RELOC, NEW))
+                print("  [ok]   ISSUE-103 latch installed @0x%x  cmn_err -> %s" % (RELOC, NEW))
                 return
         raise SystemExit("ABORT: %s not defined (is segmapdbg.o linked?)" % NEW)
 

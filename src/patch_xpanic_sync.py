@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# patch_xpanic_sync.py -- ISSUE-51: xpanic decided whether to sync() from
+# patch_xpanic_sync.py -- ISSUE-105: xpanic decided whether to sync() from
 # uninitialised bits (2026-08-21).
 #
 # xpanic @0x3e668 gates its sync() call like this:
@@ -30,7 +30,7 @@
 #     comes from %d0, the register, which this does not touch;
 #   * always-sync is the intended SVR4 panic semantic (flush filesystems on the way
 #     out), and skipping would silently drop that;
-#   * sync() on the panic path is safe at any point in boot since ISSUE-46 -- it
+#   * sync() on the panic path is safe at any point in boot since ISSUE-100 -- it
 #     skips vfs switch rows that vfsinit has not filled instead of calling NULL.
 #     Landing this without that guard in place would be reckless; with it, it is
 #     the behaviour the code always meant to have.
@@ -50,14 +50,14 @@ def main():
     buf = bytearray(open(IMG, "rb").read())
     cur = bytes(buf[TEXT_OFF + SITE:TEXT_OFF + SITE + 4])
     if cur == NEW:
-        print("  [skip] ISSUE-51 sync gate already deterministic @0x%05x" % SITE)
+        print("  [skip] ISSUE-105 sync gate already deterministic @0x%05x" % SITE)
         return
     if cur != OLD:
         raise SystemExit("ABORT: xpanic @0x%05x has %s, expected %s (base drifted?)"
                          % (SITE, cur.hex(), OLD.hex()))
     buf[TEXT_OFF + SITE:TEXT_OFF + SITE + 4] = NEW
     open(IMG, "wb").write(buf)
-    print("  [ok]   ISSUE-51 sync gate @0x%05x: movel %%d0 -> clrl (always sync)" % SITE)
+    print("  [ok]   ISSUE-105 sync gate @0x%05x: movel %%d0 -> clrl (always sync)" % SITE)
 
 
 main()

@@ -1,4 +1,4 @@
-| inittrap.s -- ISSUE-52 round 3: capture the value _start hands to the initial
+| inittrap.s -- ISSUE-106 round 3: capture the value _start hands to the initial
 | `rte`, because PID 1 never reached its first intended instruction.  (2026-08-21)
 |
 | WHAT ROUND 2 SETTLED, and it killed both of its own registered forks.

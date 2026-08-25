@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# patch_inituser.py -- ISSUE-52 round 4: replace _start's frame-build + user RTE
+# patch_inituser.py -- ISSUE-106 round 4: replace _start's frame-build + user RTE
 # with a jump to the capture island (2026-08-21).  Companion object: src/inituser.s.
 #
 # _start builds PID 1's launch frame and RTEs to user at 0x4a..0x5f:
@@ -97,7 +97,7 @@ def main():
 
     buf[TEXT_OFF + SITE:TEXT_OFF + END] = new
     open(IMG, "wb").write(buf)
-    print("  [ok]   ISSUE-52 user-RTE capture installed @0x%05x (%s): bra.l %s @0x%05x, %d NOPs"
+    print("  [ok]   ISSUE-106 user-RTE capture installed @0x%05x (%s): bra.l %s @0x%05x, %d NOPs"
           % (SITE, state, ISLAND, target, (span - 6) // 2))
 
 

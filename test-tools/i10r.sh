@@ -65,7 +65,7 @@
 # kernel 68040-260819-41 and its byte-identical control rebuilds -42 and -43 (the
 # three differ only in the build-id sequence byte).
 #
-# STALE SINCE 2026-08-20: ISSUE-46 added src/syncguard.s to the link, which grows
+# STALE SINCE 2026-08-20: ISSUE-100 added src/syncguard.s to the link, which grows
 # .text and so moves every counter block.  build/unix-040 no longer holds -43, and
 # the addresses below no longer describe it.  Re-read them before the next run;
 # i10r_magic reading 49315221 at neither base is what a stale address looks like.

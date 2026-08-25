@@ -241,20 +241,20 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/ptdatfree040.s" -o "$HERE/build/ptdatfr
 # read.  This override is the stock loop plus two null checks and a counter block.
 # CPU-independent: it is a defect in generic vfs code, not in anything 040.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/syncguard.s" -o "$HERE/build/syncguard.o"
-# pageinitzero (2026-08-20, ISSUE-48): the page-frame database is sptalloc'd with a
+# pageinitzero (2026-08-20, ISSUE-102): the page-frame database is sptalloc'd with a
 # non-zero base, which is segkmem_mapin -- it MAPS existing DRAM and clears nothing --
 # and page_init only ORs p_lock into each struct.  Every other field arrives as
 # whatever the DRAM held, so memialloc's page_free() walk panics on the first struct
 # whose p_keepcnt/p_mapping/p_lckcnt/p_cowcnt garbage is non-zero.  Zero-filled
 # emulator RAM hides this completely; AmigaOS-dirty Fast RAM on metal does not.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/pageinitzero.s" -o "$HERE/build/pageinitzero.o"
-# segmapdbg (2026-08-20, ISSUE-49): segmap_unlock's three guards -- pp NULL,
+# segmapdbg (2026-08-20, ISSUE-103): segmap_unlock's three guards -- pp NULL,
 # p_pagein, p_free -- all branch to ONE cmn_err, so the panic text cannot say which
 # fired.  This island latches segmap_unlock's live registers plus a full-hash search
 # for the page it could not find, then tail-jumps into cmn_err so the panic prints
 # unchanged.  Only reachable from a path that was already panicking.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segmapdbg.s" -o "$HERE/build/segmapdbg.o"
-# btwalk (2026-08-21, ISSUE-50): backtrace accepted a frame pointer only inside a
+# btwalk (2026-08-21, ISSUE-104): backtrace accepted a frame pointer only inside a
 # 64 KiB window at the u-block base, and that test was the walk's ONLY terminator --
 # so the panic backtrace stopped at the first frame every time, twice costing this
 # campaign a hand-walked stack dump.  The island widens the range to the whole
@@ -262,25 +262,25 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segmapdbg.s" -o "$HERE/build/segmapdbg.
 # bounds that make widening safe: strictly increasing frame pointers, and a hard
 # 64-frame cap.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/btwalk.s" -o "$HERE/build/btwalk.o"
-# usptrap (2026-08-21, ISSUE-52): PID 1 dies at exec with a kernel-shaped user
+# usptrap (2026-08-21, ISSUE-106): PID 1 dies at exec with a kernel-shaped user
 # stack pointer (fa 0x40001FC0 == u+0x1FC0, the constant _start loads into %sp).
 # The island latches the actual USP, u.u_ar0 and u_comm at the NOTICE, then
 # tail-jumps into cmn_err so the message prints unchanged.  Only reachable from a
 # path already reporting a fatal user fault.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/usptrap.s" -o "$HERE/build/usptrap.o"
-# srgtrap (2026-08-21, ISSUE-52 round 2): round 1 latched u.u_ar0 inside u_trap,
+# srgtrap (2026-08-21, ISSUE-106 round 2): round 1 latched u.u_ar0 inside u_trap,
 # AFTER u_trap had already overwritten it -- the value was real, the moment was
 # wrong.  This unit measures at the two moments that matter: the utraps push (the
 # slot the trap exit pops USP from) and setregs (the pointer it writes the new SP
 # through).  srg_match is the verdict word.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/srgtrap.s" -o "$HERE/build/srgtrap.o"
-# inittrap (2026-08-21, ISSUE-52 round 3): round 2 proved exec never ran at all --
+# inittrap (2026-08-21, ISSUE-106 round 3): round 2 proved exec never ran at all --
 # u_trap has exactly one caller, so srg_ut_n=1 means ONE user trap in the whole
 # boot, and it was the fault.  PID 1 died on its FIRST user instruction, so the
 # question moved to what _start hands the initial rte.  This wraps `jsr main` and
 # latches main's return value, the user PC.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/inittrap.s" -o "$HERE/build/inittrap.o"
-# inituser (2026-08-21, ISSUE-52 round 4): round 3 proved exec never ran -- PID 1
+# inituser (2026-08-21, ISSUE-106 round 4): round 3 proved exec never ran -- PID 1
 # died on its FIRST user instruction (fault PC 0x80000012 = icode base 0x80800000
 # with bit 23 dropped, +0x12).  main returns the right entry (ini_ret 0x80800000),
 # but the user-transition RTE delivered the wrong PC.  This island IS that RTE:
@@ -572,7 +572,7 @@ if m68k-linux-gnu-nm "$OUT" | grep -E ' U hat_sdtfree$' >/dev/null 2>&1; then
 fi
 echo "[OK] ISSUE-40 ptdat edge bound: hat_ptdat_retire @0x$PRADDR -> retained hat_sdtfree @0x$SFADDR."
 
-# HARD CHECK (2026-08-20, ISSUE-46): syncguard.o replaces sync() so the panic path
+# HARD CHECK (2026-08-20, ISSUE-100): syncguard.o replaces sync() so the panic path
 # survives a vfs switch that vfsinit has not filled yet.  This one fails QUIETLY in
 # the worst possible way: a missing --weaken-symbol, or the object dropped from the
 # link list, leaves the stock body strong, `ld -r` succeeds, and the kernel is
@@ -590,9 +590,9 @@ fi
 if [ -z "$(m68k-linux-gnu-nm "$OUT" | awk '$3=="syncg_magic" && $2=="D" {print $1}')" ]; then
 	echo "[FAIL] syncg_magic missing -> syncguard.o's counter block is not in the image"; exit 1
 fi
-echo "[OK] ISSUE-46 panic-path guard bound: sync @0x$SGADDR (stock body was 0x5d21a)."
+echo "[OK] ISSUE-100 panic-path guard bound: sync @0x$SGADDR (stock body was 0x5d21a)."
 
-# HARD CHECK (2026-08-20, ISSUE-48): pageinitzero.o wraps page_init so the page-frame
+# HARD CHECK (2026-08-20, ISSUE-102): pageinitzero.o wraps page_init so the page-frame
 # database is zeroed before it is published.  Both directions matter and each fails
 # silently on its own: without the weaken, the stock body stays strong and the boot
 # panics on metal exactly as before; without the retained alias the wrapper tail-jumps
@@ -602,7 +602,7 @@ echo "[OK] ISSUE-46 panic-path guard bound: sync @0x$SGADDR (stock body was 0x5d
 PZADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="page_init" && $2=="T" {print $1}')
 PZORIG=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="page_init_orig" && $2=="T" {print $1}')
 if [ -z "$PZADDR" ] || [ "$PZADDR" = "000af42a" ]; then
-	echo "[FAIL] page_init did not move off the stock body 0xaf42a -> ISSUE-48 fix not in"; exit 1
+	echo "[FAIL] page_init did not move off the stock body 0xaf42a -> ISSUE-102 fix not in"; exit 1
 fi
 if [ "$PZORIG" != "000af42a" ]; then
 	echo "[FAIL] page_init_orig is '$PZORIG', not 000af42a -> the wrapper would tail-jump wrong"; exit 1
@@ -610,7 +610,7 @@ fi
 if [ -z "$(m68k-linux-gnu-nm "$OUT" | awk '$3=="pgz_magic" && $2=="D" {print $1}')" ]; then
 	echo "[FAIL] pgz_magic missing -> pageinitzero.o's counter block is not in the image"; exit 1
 fi
-echo "[OK] ISSUE-48 page-database zero bound: page_init @0x$PZADDR -> page_init_orig @0x$PZORIG."
+echo "[OK] ISSUE-102 page-database zero bound: page_init @0x$PZADDR -> page_init_orig @0x$PZORIG."
 
 # HARD CHECK (2026-08-19, ISSUE-10): wb040.o's usrxmemflt tail now `jsr`s i10p_probe
 # (i10rev040.o).  `ld -r` does not fail on an unresolved symbol, so dropping
@@ -931,7 +931,7 @@ run_step 3 python3 "$HERE/src/patch_config_cachefix.py" "$OUT"
 echo "[*] ISSUE-39: count hat_sdtalloc out-of-contiguous-memory warnings"
 python3 "$HERE/src/patch_sdtfail.py" "$OUT"
 
-echo "[*] ISSUE-49: latch which of segmap_unlock's three guards panics"
+echo "[*] ISSUE-103: latch which of segmap_unlock's three guards panics"
 run_step 2 python3 "$HERE/src/patch_segmapdbg.py" "$OUT"
 
 echo "[*] per-process fault-depth gate: assert v.v_proc matches the table size"
@@ -943,26 +943,26 @@ run_step 4 python3 "$HERE/src/patch_dbgpublish.py" "$OUT"
 echo "[*] B2 page-release barrier: page_free + free_vp_pages choke-point hooks (CB-PAGE-LIFECYCLE-CLOSURE.md)"
 run_step 3 python3 "$HERE/src/patch_cb_release.py" "$OUT"
 
-# ISSUE-50 (2026-08-21): PC-relative like the cb_release hook above and for the same
+# ISSUE-104 (2026-08-21): PC-relative like the cb_release hook above and for the same
 # reason -- an absolute byte-patched target would need loader rebasing.  Must run
 # after the core ld -r; the FPSP link that follows appends to $OUT and leaves our
 # .text where it is, so the displacement stays valid.
-echo "[*] ISSUE-50: backtrace frame test -> bt_frame_ok (range + order + cap)"
+echo "[*] ISSUE-104: backtrace frame test -> bt_frame_ok (range + order + cap)"
 run_step 1 python3 "$HERE/src/patch_btwalk.py" "$OUT"
 
-echo "[*] ISSUE-51: xpanic's sync gate reads uninitialised bits -- make it deterministic"
+echo "[*] ISSUE-105: xpanic's sync gate reads uninitialised bits -- make it deterministic"
 run_step 1 python3 "$HERE/src/patch_xpanic_sync.py" "$OUT"
 
-echo "[*] ISSUE-52: latch USP/u_ar0/u_comm at the fatal user-fault NOTICE"
+echo "[*] ISSUE-106: latch USP/u_ar0/u_comm at the fatal user-fault NOTICE"
 run_step 2 python3 "$HERE/src/patch_usptrap.py" "$OUT"
 
-echo "[*] ISSUE-52 round 2: retarget the utraps -> u_trap edge (pushed-USP slot)"
+echo "[*] ISSUE-106 round 2: retarget the utraps -> u_trap edge (pushed-USP slot)"
 run_step 2 python3 "$HERE/src/patch_srgtrap.py" "$OUT"
 
-echo "[*] ISSUE-52 round 3: latch the user PC _start hands to the initial rte"
+echo "[*] ISSUE-106 round 3: latch the user PC _start hands to the initial rte"
 run_step 2 python3 "$HERE/src/patch_inittrap.py" "$OUT"
 
-echo "[*] ISSUE-52 round 4: capture the user-transition RTE (frame + SSP + USP)"
+echo "[*] ISSUE-106 round 4: capture the user-transition RTE (frame + SSP + USP)"
 run_step 1 python3 "$HERE/src/patch_inituser.py" "$OUT"
 
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
