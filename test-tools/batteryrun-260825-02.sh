@@ -16,36 +16,36 @@
 #
 #   (nohup sh -c "sh /tmp/batteryrun-260825-02.sh > /tmp/battery.log 2>&1" &)
 K=/kpeek
-CMF         =0810D548 ; CMF_N=5
-WBF         =0810D89C ; WBF_N=27
-SEGVN_PROT  =0810D9BC ; SEGVN_PROT_N=5
-ISP61       =0810DA28 ; ISP61_N=15
-FPC         =0810DA64 ; FPC_N=13
-KVP         =0810DA98 ; KVP_N=9
-I39         =0810DFD8 ; I39_N=14
-I40         =0810E010 ; I40_N=13
-PTD         =0810E044 ; PTD_N=11
-SYNCG       =0810E070 ; SYNCG_N=5
-PGZ         =0810E084 ; PGZ_N=12
-SMU         =0810E0B4 ; SMU_N=44
-BT          =0810E164 ; BT_N=7
-UNT         =0810E180 ; UNT_N=10
-SRG         =0810E1A8 ; SRG_N=17
-INI         =0810E234 ; INI_N=7
-IUR         =0810E250 ; IUR_N=16
-HG          =0810E290 ; HG_N=16
-I10         =0810E2D0 ; I10_N=6
-I10P        =0810E2E8 ; I10P_N=77
-I10W        =0810E41C ; I10W_N=59
-I10G        =0810E508 ; I10G_N=132
-I10T        =0810E718 ; I10T_N=50
-I10R        =0810E7E0 ; I10R_N=79
-I10S        =0810E91C ; I10S_N=46
-I10A        =0810E9D4 ; I10A_N=31
-I10B        =0810EA50 ; I10B_N=23
-I10C        =0810EAAC ; I10C_N=37
-I10D        =0810EB40 ; I10D_N=14
-F60         =0810EDC0 ; F60_N=31
+CMF=0810D548          ; CMF_N=5
+WBF=0810D89C          ; WBF_N=27
+SEGVN_PROT=0810D9BC   ; SEGVN_PROT_N=5
+ISP61=0810DA28        ; ISP61_N=15
+FPC=0810DA64          ; FPC_N=13
+KVP=0810DA98          ; KVP_N=9
+I39=0810DFD8          ; I39_N=14
+I40=0810E010          ; I40_N=13
+PTD=0810E044          ; PTD_N=11
+SYNCG=0810E070        ; SYNCG_N=5
+PGZ=0810E084          ; PGZ_N=12
+SMU=0810E0B4          ; SMU_N=44
+BT=0810E164           ; BT_N=7
+UNT=0810E180          ; UNT_N=10
+SRG=0810E1A8          ; SRG_N=17
+INI=0810E234          ; INI_N=7
+IUR=0810E250          ; IUR_N=16
+HG=0810E290           ; HG_N=16
+I10=0810E2D0          ; I10_N=6
+I10P=0810E2E8         ; I10P_N=77
+I10W=0810E41C         ; I10W_N=59
+I10G=0810E508         ; I10G_N=132
+I10T=0810E718         ; I10T_N=50
+I10R=0810E7E0         ; I10R_N=79
+I10S=0810E91C         ; I10S_N=46
+I10A=0810E9D4         ; I10A_N=31
+I10B=0810EA50         ; I10B_N=23
+I10C=0810EAAC         ; I10C_N=37
+I10D=0810EB40         ; I10D_N=14
+F60=0810EDC0          ; F60_N=31
 
 echo "=== IDENTITY ==="
 uname -m
