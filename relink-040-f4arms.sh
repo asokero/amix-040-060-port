@@ -16,27 +16,40 @@
 #                and one word away from the arm it is the control for.
 #                The driver's own repository is NOT modified -- a defined symbol simply
 #                beats a common at link time.
+#                N is a CPU-FAMILY LABEL, not a bitmask: amix-z3660scsi/src/z3660.c tests
+#                the knob for zero versus non-zero at every site and no site distinguishes
+#                40 from 60, so the arm is binary and 40 and 60 select the same behaviour.
 #
-# usage: sh relink-040-f4arms.sh [--dbg] [--cache N] <in-kernel> <out-kernel>
+#   --ufault     link src/ufault_dbg.s and chain it in front of the ISSUE-52 latch at the
+#                fatal user-fault NOTICE.  Census only: it latches the first fault in full
+#                (registers, FSLW, break, u_ar0, rootdir), rewrites a LAST block on every
+#                fault, and keeps the user-stack watermarks that say whether signal frames
+#                are stacking.  It changes no behaviour and dereferences no user address --
+#                the round-5 instrument for the /sbin/init wall arm B reached.
+#
+# usage: sh relink-040-f4arms.sh [--dbg] [--ufault] [--cache N] <in-kernel> <out-kernel>
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/tools/config-load.sh"
 . "$HERE/tools/build-step.sh"
 
 DBG=0
+UFAULT=0
 CACHE=""
 while [ $# -gt 2 ]; do
 	case "$1" in
-	--dbg)   DBG=1; shift ;;
-	--cache) CACHE="$2"; shift 2 ;;
-	*)       echo "ERROR: unknown option $1"; exit 1 ;;
+	--dbg)    DBG=1; shift ;;
+	--ufault) UFAULT=1; shift ;;
+	--cache)  CACHE="$2"; shift 2 ;;
+	*)        echo "ERROR: unknown option $1"; exit 1 ;;
 	esac
 done
-[ $# -eq 2 ] || { echo "usage: sh relink-040-f4arms.sh [--dbg] [--cache N] <in> <out>"; exit 1; }
+[ $# -eq 2 ] || { echo "usage: sh relink-040-f4arms.sh [--dbg] [--ufault] [--cache N] <in> <out>"; exit 1; }
 IN="$1"; OUT="$2"
 [ -f "$IN" ] || { echo "ERROR: base kernel missing: $IN"; exit 1; }
-[ "$DBG" = 1 ] || [ -n "$CACHE" ] || { echo "ERROR: nothing to do -- pass --dbg and/or --cache N"; exit 1; }
-echo "[*] base: $(basename "$IN")   arms: dbg=$DBG cache=${CACHE:-none}"
+[ "$DBG" = 1 ] || [ "$UFAULT" = 1 ] || [ -n "$CACHE" ] \
+	|| { echo "ERROR: nothing to do -- pass --dbg, --ufault and/or --cache N"; exit 1; }
+echo "[*] base: $(basename "$IN")   arms: dbg=$DBG ufault=$UFAULT cache=${CACHE:-none}"
 
 # The base has to be a Z3660-carrying kernel: --cache has no reader without the driver,
 # and --dbg without it produces an artifact that cannot open this rig's root device --
@@ -71,6 +84,17 @@ if [ "$DBG" = 1 ]; then
 	m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/swapconf_dbg.s" -o "$HERE/build/swapconf_dbg.o"
 	OBJS="$OBJS $HERE/build/swapconf_dbg.o"
 	OC="$OC --weaken-symbol swapconf --add-symbol swapconf_orig=.text:${SWAPCONF_ADDR},function,global"
+fi
+
+if [ "$UFAULT" = 1 ]; then
+	# The census chains in FRONT of the ISSUE-52 latch, so that latch has to be there
+	# already.  Asserting it here as well as in the patcher means the build stops before it
+	# assembles anything, rather than after.
+	m68k-linux-gnu-nm "$IN" | grep -qE " [Tt] unt_latch\$" \
+		|| { echo "[FAIL] $IN has no unt_latch -- run relink-040.sh (patch_usptrap.py) first"; exit 1; }
+	echo "[OK] the ISSUE-52 latch is present; the census will chain in front of it"
+	m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/ufault_dbg.s" -o "$HERE/build/ufault_dbg.o"
+	OBJS="$OBJS $HERE/build/ufault_dbg.o"
 fi
 
 if [ -n "$CACHE" ]; then
@@ -108,6 +132,32 @@ fi
 LEAK=$(m68k-linux-gnu-nm "$OUT" | awk '$1=="U" && $2!="edata" && $2!="end" && $2!="etext" {print $2}')
 [ -z "$LEAK" ] || { echo "[FAIL] unresolved symbols:"; echo "$LEAK"; exit 1; }
 echo "[OK] no unresolved symbols"
+
+if [ "$UFAULT" = 1 ]; then
+	echo "[*] fatal user-fault census"
+	m68k-linux-gnu-nm "$OUT" | grep -qE " [Tt] uft_latch\$" \
+		|| { echo "[FAIL] uft_latch missing -- ufault_dbg.o is not in the link"; exit 1; }
+	m68k-linux-gnu-nm "$OUT" | grep -qE " [Dd] uft_magic\$" \
+		|| { echo "[FAIL] uft_magic is not a .data symbol -- the block has no file storage"; exit 1; }
+	# The copy loop writes sixteen consecutive longwords starting at uft_f_d0, so d0-d7/a0-a7
+	# must be adjacent AND in that order.  An edit that reordered the .data declarations would
+	# still assemble, still link, and quietly mislabel every register on the console -- which
+	# is worse than not reading them at all.  So the link is asked, not the source file.
+	WANT="uft_f_d0 uft_f_d1 uft_f_d2 uft_f_d3 uft_f_d4 uft_f_d5 uft_f_d6 uft_f_d7"
+	WANT="$WANT uft_f_a0 uft_f_a1 uft_f_a2 uft_f_a3 uft_f_a4 uft_f_a5 uft_f_a6 uft_f_a7"
+	PREV=""
+	for R in $WANT; do
+		A=$(m68k-linux-gnu-nm "$OUT" | awk -v r="$R" '$3==r && ($2=="D" || $2=="d") {print $1}')
+		[ -n "$A" ] || { echo "[FAIL] $R is not a .data symbol in $OUT"; exit 1; }
+		A=$(( 0x$A ))
+		if [ -n "$PREV" ] && [ $(( A - PREV )) -ne 4 ]; then
+			echo "[FAIL] $R is $(( A - PREV )) bytes after its predecessor, expected 4"; exit 1
+		fi
+		PREV=$A
+	done
+	echo "[OK] uft_f_d0..a7 are sixteen adjacent longwords, in declaration order"
+	run_step indent python3 "$HERE/src/patch_ufault.py" "$OUT"
+fi
 
 if [ -n "$CACHE" ]; then
 	echo "[*] z3660_cache arm"
