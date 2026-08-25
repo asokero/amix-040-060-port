@@ -58,10 +58,35 @@
 |
 |     u_trap+0x12  movel %d4,u+0x864     with %d4 = %fp+8   -- u.u_ar0 IS this fault's frame,
 |                                          set at u_trap+0x12 and read here at u_trap+0x1c0
-|     u_ar0+0   .. +63   d0-d7 then a0-a7 (setregs writes the new SP at u_ar0[60] = a7)
+|     u_ar0+0            the USP `utraps` pushed -- i.e. the user A7
+|     u_ar0+4   .. +63   nullvect_orig's 60 saved registers, d0-d7 then a0-a6
 |     u_ar0+64  SR word      +66  PC long   (setregs writes the new PC at u_ar0+66)
 |     u_ar0+70  format/vector word, high nibble = frame format
 |     u_ar0+72  fault address    +76  FSLW      -- 68060 FORMAT 4 ONLY (framesz[4] = 16)
+|
+| THE REGISTER SLOTS ARE NAMED ONE LONGWORD LOW, and the correction is documented here
+| rather than applied, because the VALUES are right and only the NAMES are wrong -- renaming
+| the slots would silently re-interpret every register file attempts 4, 5 and 6 recorded.
+| This file's first version modelled the frame as `u_ar0+0 .. +63 = d0-d7 then a0-a7`.  It is
+| not: `u_ar0` points at the slot `utraps` pushed the USP into, and nullvect_orig's own 60
+| bytes (d0-d7 then a0-a6 -- `moveml %d0-%fp,%sp@-`, 15 registers) begin one longword later.
+| The self-checks below do not catch it because they are all at u_ar0+64 and above, which the
+| wrong model and the right one agree on; what they DO prove is the base, because a long read
+| at u_ar0+66 returns the PC only if u_ar0 is the USP slot (from the d0 slot it would return
+| the format/vector word joined to the fault address).  So the 16-longword copy below stores:
+|
+|     uft_f_d0            <- the USP (user A7)
+|     uft_f_d1 .. uft_f_a0   <- d0 .. d7
+|     uft_f_a1 .. uft_f_a7   <- a0 .. a6
+|
+| Three independent confirmations from the attempt-6 metal capture, all on the same fault:
+| `uft_f_d0` equalled `uft_f_usp` to the digit (and `uft_f_usp` is read from %usp by its own
+| instruction, so under the old names that identity is an unexplained coincidence); the
+| faulting EA composed exactly -- true a0 + true d2 * 8 = the recorded fault address, where
+| the old names give a number 0x4AFC0006 away from it; and true a6 came out at USP+0x10, a
+| frame pointer, where the old names put an odd value from another segment there.  The
+| "uft_f_a7 != uft_f_usp" mismatch previously written off as a known-bad bench check is this
+| off-by-one, and it was the instrument saying so.
 |
 | The 68040 stacks format 7 and puts a 16-bit SSW at +76 instead, so +72/+76 are read only
 | when the format nibble is 4 and carry the sentinel 0xffffffff otherwise.  Never guessed:
@@ -86,10 +111,11 @@
 |                    monotonically and (uft_f_usp - uft_usp_min) / uft_n is one frame.  If
 |                    the loop is stable, min == max == the first USP and nothing is stacking.
 |                    These two longwords separate "runaway" from "steady state" outright.
-|   uft_f_d0..a7     the register set the static analysis could not produce.  %a0 and %d2
-|                    are the two that compose the faulting EA; %a5 is libc's GOT base and
-|                    reads 0xC102FD8C if the process was executing libc normally, which is
-|                    what separates "a corrupt table pointer" from "entered wild".
+|   uft_f_d0..a7     the register set the static analysis could not produce.  READ THESE
+|                    THROUGH THE ONE-LONGWORD CORRECTION at the head of this file: the
+|                    architectural %a0 and %d2 -- the two that compose the faulting EA --
+|                    are in the slots named uft_f_a1 and uft_f_d3, and the architectural
+|                    %a5, libc's GOT base, is in uft_f_a6.
 |   uft_f_fslw       RW (bit 24, 1 = read) and TM (bits 18-16, 001 = user data,
 |                    010 = user code).  TM says whether this was a data access or an
 |                    instruction fetch, i.e. whether an I-cache reading is even admissible.
@@ -237,7 +263,10 @@ Luft_regs:
 	lea	uft_f_d0,%a1
 	moveq	&16,%d1
 Luft_rl:
-	movel	%a0@+,%a1@+		| d0-d7 then a0-a7, in that order
+	movel	%a0@+,%a1@+		| the USP, then d0-d7, then a0-a6 -- so every slot
+					| below is named one longword low.  See the frame
+					| layout at the head of this file; the values are
+					| right, the names are not, and the mapping is there
 	subql	&1,%d1
 	bnew	Luft_rl
 
