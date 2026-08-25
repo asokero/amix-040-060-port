@@ -307,3 +307,22 @@ early does not cost the whole session.
 
 `protfault` a and b can be run targeted, before the stress. Case c and any other probe known to be
 able to hang the machine belong in a separate supervised run.
+
+### Anything longer than a short command belongs in a script
+
+Measured 2026-08-25, and it cost fifteen minutes before it was recognised. A `for` loop sent to
+the machine as one telnet line was **silently truncated** at roughly 250 characters — AMIX's tty
+line discipline has a canonical-input limit — so the shell sat waiting for the rest of a
+`for … do` block that never arrived. Nothing compiled, no sentinel came back, and the only
+visible symptom was a command that did not return.
+
+**It looks exactly like a slow compile.** The tell is in the echoed command: the machine echoes
+what it actually received, so compare the echo against what you sent. Here it ended mid-word at
+`cc -o $f $f.c > `, which is the whole diagnosis in one line.
+
+This is why the guest-side tooling in `test-tools/` is written as `.sh` files invoked with a
+short command rather than as command lines — `mk060.sh`, `batteryrun-*.sh`, `burstloop11.sh` all
+follow that shape. Copy the script over, then run `sh /tmp/name.sh`, and use
+`(nohup sh -c "… > /tmp/name.log 2>&1" &)` for anything slow so the run survives the connection.
+A remote shell that is holding your only session is not a good place to keep a fifteen-minute
+compile.
