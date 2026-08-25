@@ -6186,3 +6186,22 @@ them somewhere else.
 
 Option 2 is the honest minimum and costs nothing. Doing only option 2 leaves the procedure with a
 step that a fresh clone cannot execute, which is worth knowing before the next person tries.
+
+### Where the surviving copies are (checked 2026-08-25)
+
+It is **not** on the machine: `/tmp/hat_dup_cow` is gone, because `/tmp` is where it lived and the
+machine has rebooted since. For a while that looked like the program being lost outright.
+
+It is not. `burstloop11.sh`'s own header names the location, and five copies survive on the NAS:
+
+    amix/hwtest-260801/hat_dup_cow      8071 bytes, 2026-08-01   <- the one the header names
+    amix/hwtest-260727/hat_dup_cow
+    amix/hw260719/hat_dup_cow
+    va2000dev/b1dc/hat_dup_cow
+    va2000dev/modelb-b/hat_dup_cow
+
+So the burst step runs, by copying the binary from the NAS first. What remains true is that
+**nobody can rebuild it or say what it was built from** — five identical-looking binaries with no
+source between them is provenance by folklore. The header naming the path is what saved this, and
+is worth copying as a habit: when a tool cannot be built, the procedure that needs it should say
+where it lives.
