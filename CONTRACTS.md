@@ -54,8 +54,13 @@ that can be skipped eventually is; a mechanism cannot be.
 Every `ISSUE-N` introduced in that range must lie inside its author's block. Run it before
 merging a branch from another line. A rule with no instrument is a wish, and this one is
 cheap: the partition does not merely prevent collisions, it makes violations **visible** —
-`ISSUE-53` authored from `jussi@alanara.fi` is wrong at a glance, where `ISSUE-46` against
-`ISSUE-46` was indistinguishable.
+a number below 100 authored from `jussi@alanara.fi` is wrong at a glance, where `ISSUE-46`
+against `ISSUE-46` was indistinguishable.
+
+(Written that way on purpose: an illustrative `ISSUE-<n>` in prose is indistinguishable from a
+real reference, both to `check-blocks.sh` and to a reader who goes looking for it. The first
+draft of this paragraph used a concrete number and the orphan check caught it immediately --
+which is the check working, not the check being fussy.)
 
 ---
 
