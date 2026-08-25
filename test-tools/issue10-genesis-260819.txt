@@ -1,0 +1,96 @@
+ISSUE-10 GENESIS capture -- 2026-08-19 -- EMU (Amiberry, 68040+MMU, 16 MB,
+load base 0x07000000).  Kernel 68040-260819-37 (src/i10rev040.s + i10g_hook,
+src/wb040.s resolved-tail hooks).  Guest driver test-tools/i10g.sh.
+
+WHAT THIS IS.  i10w_hook (write-watch) had named the PROPAGATION -- sh's coalescing
+loop at PC 0x800023F8 copying an already-corrupt free-list link into 0x80014AA0 --
+and left the GENESIS open: what FIRST put 0x4AFC0000 into a link, and whether that is
+a kernel store, a user store, or inherited frame content.  i10g_hook answers it.  It
+write-protects a heap band and, on the store faults that forces, records for the FIRST
+resolved fault whose landed value is the poison: the storing PC and privilege (PART W),
+the frame the poison appears in with its fill census (PART I), and -- the decisive
+field -- the value each of the store's address registers points at (so a genuine copy,
+whose source memory holds the poison, is told from a store whose write-back value has
+no source at all).
+
+THE WALL STILL REPRODUCES UNDER THE WATCH.  Console during the run:
+  NOTICE: User BUS ERROR at 4AFC0003, PC:800023FC FAULT:6 PID:23 CMD:sh -n /cdrom/install/bin/setup.sh
+  ... (the full flood) ...
+  I10G-PUBLISHED
+So the instrument does not mask the trigger.
+
+i10g block (kpeek 0710C8B4 132), decoded:
+
+  --- state ---
+  i10g_magic    49314721   "I1G!"
+  i10g_on       00000001   armed for the run
+  i10g_wantval  4afc0000   the poison value hunted for
+  i10g_plo/phi  80014000 / 80015000   the write-protect band: the single page 0x80014
+  i10g_armproc  4013be00   curproc at the first armed fault == the wall's own sh
+  i10g_seq      ~          resolved faults seen since arming
+  i10g_p_fault_n 0000074e  1870 store faults forced on page 0x80014 (i10w saw 1869)
+  i10g_scan_hits 00000001  PART I found the poison in exactly one frame
+  --- PART W: the store that landed the poison ---
+  i10g_wlatched 00000001   caught
+  i10g_wctx     00000001   usrxmemflt (the USER-fault wrapper)
+  i10g_wsr      00000000   SR S-bit CLEAR -> a USER store (NOT a kernel copyout)
+  i10g_wpc      800023fa   the store's frame PC (one past it: the 040 defers the WB)
+  i10g_wb3a     80014aa0   WB3 address = the store target
+  i10g_wb3d     4afc0000   WB3 data    = the value landed
+  i10g_wmem     4afc0000   the target re-read after the store (confirms it landed)
+  --- PART I: the poison's FIRST appearance in the arena ---
+  i10g_ilatched 00000001   caught, at the SAME fault as PART W
+  i10g_ifa      80014aa0   i10g_iuva 80014000   i10g_ioff 00000aa0
+  i10g_iself    00000003   this store's own WB3 wrote that offset (first appearance,
+                           not a pre-existing value the frame arrived carrying)
+  i10g_ipc      800023fa   i10g_isr 00000000   (the storing instruction, USER)
+  i10g_ivnode   40078704   i10g_ioffp 00036000   (sh's anon/swap vnode -- a heap page)
+  i10g_inzlo 411  i10g_inzhi 102  i10g_izrun 343
+                           the page is CLEANLY zero-filled (a 343-long = 1372-byte zero
+                           run), poison isolated -- identical to the i10cen census, so
+                           the frame was NOT handed out carrying foreign content
+  --- the DECISIVE field: what the store's operands point at ---
+  a0 80013d2c  *(a0) 5b000000   "["        (a valid sh parse token)
+  a1 80014aa0  *(a1) 4afc0000   the poison -- but a1 == WB3A == the DESTINATION the
+                                store just wrote; it is not a source
+  a2 00000000  *(a2) 00000000
+  a3 80013d14  *(a3) 24656c65   "$ele"     (a valid sh parse token)
+  a4 80013d14  *(a4) 24656c65   "$ele"
+  a5 80013d28  *(a5) 5b000000   "["
+  a6 00000000  *(a6) 00000000
+  i10g_wsrcr    ffffffff   -1: NO address register except the destination points at the
+                           poison.  For a faithful move.l (aSrc),(aDst) the write-back
+                           data must equal *(aSrc); here every candidate source holds a
+                           valid sh token.  0x4AFC0000 is in no data register (see the
+                           16-register file, none == 4AFC0000) and is not an immediate
+                           (the byte string 4A FC 00 00 occurs zero times in /bin/sh).
+
+VERDICT.
+  * WRITTEN, not inherited.  The page is cleanly zero-filled; PART I catches the poison's
+    FIRST appearance as a store (iself=3), not as pre-existing content.  A companion run
+    that write-protected page 0x80013 and scanned it after all 3320 of its forced store
+    faults found the poison there ZERO times, so it does not transit that page either.
+  * A USER store, not a kernel one.  SR S-bit clear, PC in /bin/sh's own text; and the
+    kernel-store wrapper (krnxmemflt, ctx=2) never latched.  So no copyout/bcopy/mis-
+    addressed kernel write put it there.
+  * The value has NO SOURCE.  Not copied from memory (no operand points at it), not a
+    register value, not an immediate.  For a move that lands 0x4AFC0000 while its source
+    holds a valid token, the value is generated by the 68040 store / deferred-write-back
+    mechanism itself -- the "write-back fidelity" family.  This is consistent with the
+    two facts the record already held: the constant is 0x4AFC = the m68k ILLEGAL opcode,
+    and the fault does NOT reproduce on the 68060 (whose write-back path differs).
+
+  STATED CONFOUND.  The capture forces the store to fault (write-protect), which routes
+  its completion through the 68040 write-back replay (src/wb040.s).  So this capture, by
+  itself, cannot separate "the emulator's 040 core fabricates the value on the ordinary
+  store" from "the fault-driven replay fabricates it"; both are the same 68040-write-back
+  surface.  The poison is independently real -- i10cen.sh detected 0x4AFC0000 at 0x80014AA0
+  read-side, with no write-protection at all -- so the corruption is not an artifact of the
+  watch; what the watch adds is that the landed value has no data source.
+
+  NEVER RUN ON 68040 SILICON.  All of this is emulated, on two different emulators, and
+  the 68060 does not reproduce it.  A store-mechanism defect that is 040-specific and
+  emulator-reproduced may be a 68040 EMULATION defect rather than a port defect -- in
+  which case the setup.sh wall would not occur on real 040 hardware.  A non-write-protect,
+  single-step capture of the ordinary (non-faulting) store is the follow-up that separates
+  the emulator core from wb040_replay and, ultimately, from real silicon.

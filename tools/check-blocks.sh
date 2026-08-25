@@ -19,6 +19,15 @@
 #      heading.  This catches the typo and the number that was used in a source comment
 #      and never written down -- the second of which is how a number gets minted twice.
 #
+# WHERE IT IS MEANT TO BE RUN: on a branch from another line, BEFORE merging it.  There its
+# verdict is actionable -- "these numbers are out of block, renumber them before this lands",
+# which is exactly what it would have said on 2026-08-19 had it existed.
+#
+# Run over history that predates the partition (2026-08-25) it will report the pre-partition
+# mints as failures, and it is right to: those commits did mint out of block, and the fix came
+# later as a renumbering commit rather than by rewriting them.  That is history being accurate,
+# not the check being wrong.  Judge a merged branch by its tree, which check 2 covers.
+#
 # Usage: tools/check-blocks.sh [<base>..<tip>]     (default: origin/main..HEAD)
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)

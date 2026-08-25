@@ -551,12 +551,32 @@ Lrp_find:
 	cmpal	%a1@,%a4		| *a1 == &leaf ?
 	beq	Lrp_unlink
 	subql	&1,%d3
-	beq	Lrp_status		| not found -> give up (leave list as-is)
+	beq	Lrp_exhaust		| not found -> give up (leave list as-is)
 	moveal	%a1@,%a1		| follow: cur = *a1
 	addaw	&256,%a1		| next-pointer slot = cur + NPGPT*4
 	bra	Lrp_find
+| --- ISSUE-10 instrument (2026-08-19, src/i10rev040.s).  This give-up used to
+|     branch straight to Lrp_status and was the only one of the three bounded
+|     reverse-map unlinks that said NOTHING -- yet it is the worst of them: the
+|     leaf is about to be overwritten with a DIFFERENT pfn a few instructions
+|     later, so the old page is left holding a chain node that names a slot now
+|     mapping somebody else.  Counting it costs one increment.  Lrp_status opens
+|     with `moveq &7,%d3`, which reads neither %d3's old value nor the condition
+|     codes, so nothing is consumed across this. ---
+Lrp_exhaust:
+	addql	&1,i10_rpfail_n		| UNCAPPED (i10rev040.s)
+	bra	Lrp_status
 Lrp_unlink:
 	movel	%a4@(256),%a1@		| splice &leaf out: *a1 = leaf->next
+| --- ISSUE-10 invariant: how much of the 256-node budget did this search use?
+|     %d3 counts DOWN from 256, so %d3 < 128 means more than half the chain was
+|     walked.  Once per successful search, not per iteration.  %d3 is dead here
+|     (Lrp_status reloads it immediately) and the CCs this cmpil sets are not
+|     read by that `moveq`. ---
+	cmpil	&128,%d3
+	bcc	Lrp_nodeep
+	addql	&1,i10_deep_n
+Lrp_nodeep:
 | (2) compute the PTE status from prot (mirror Lw_st).
 Lrp_status:
 	moveq	&7,%d3
@@ -1091,6 +1111,11 @@ Lhl_findmap:
 	addaw	&256,%a3
 	braw	Lhl_findmap
 Lhl_findfail:
+| ISSUE-10 instrument (2026-08-19, src/i10rev040.s): the cmn_err below stops
+| after 4 for the whole uptime, so this site's real rate has never been known.
+| The counter is uncapped.  The `movel` that follows loads %d0 outright and does
+| not read the condition codes.
+	addql	&1,i10_hlfail_n
 | DEBUG one-shot: report a missing reverse-map entry (pte value, pfn-derived pp, pte addr)
 	movel	Lhl_failn,%d0
 	cmpil	&4,%d0
@@ -1107,6 +1132,13 @@ Lhl_findfail:
 	braw	Lhl_aftermap
 Lhl_unlink:
 	movel	%a2@(256),%a3@
+| ISSUE-10 invariant (see Lrp_unlink): %d1 counted down from 256, so %d1 < 128
+| means this search walked past the halfway mark of its budget.  %d1 is only
+| READ here, and Lhl_aftermap opens with `tstl`, which sets the CCs itself.
+	cmpil	&128,%d1
+	bcc	Lhl_nodeep
+	addql	&1,i10_deep_n
+Lhl_nodeep:
 Lhl_aftermap:
 	tstl	%fp@(-84)		| flag8
 	beqw	Lhl_flag4
@@ -1590,6 +1622,11 @@ Lf_find:
 	addaw	&256,%a4
 	braw	Lf_find
 Lf_findfail:
+| ISSUE-10 instrument (2026-08-19, src/i10rev040.s): as at Lhl_findfail, the
+| print below is capped at 4.  hat_free clears the leaf PTE on this path anyway
+| (Lf_fail_clr), so an exhausted search leaves a chain node naming a zeroed
+| slot.  The `movel` that follows does not read the condition codes.
+	addql	&1,i10_hffail_n
 	movel	Lhf_failn,%d0
 	cmpil	&4,%d0
 	bccw	Lf_fail_clr		| cap exceeded: still must clear the stale PTE
@@ -1606,6 +1643,12 @@ Lf_fail_clr:
 	braw	Lf_nextPTE
 Lf_unlink:
 	movel	%a3@(256),%a4@		| *a4 = pte->revmap_next
+| ISSUE-10 invariant (see Lrp_unlink): %d1 counted down from 256.  Read-only
+| here; the `clrl` that follows sets its own condition codes.
+	cmpil	&128,%d1
+	bcc	Lf_nodeep
+	addql	&1,i10_deep_n
+Lf_nodeep:
 	clrl	%a3@			| FIX: clear the 040 leaf PTE -- hat_free only unlinked
 					|   p_mapping (pp->p_mapping=0) but left PTE valid.
 					|   Later anon_decref->page_abort(p_mapping=0) skips

@@ -12,9 +12,11 @@
 # See docs/Z3660-KERNEL-FEASIBILITY-260731.md for the evidence and the wiring map.
 #
 # Registration (patch_z3660.py): a four-row scsicard[] table replacing the stock
-# three, the cdevsw[48].d_str streamtab store from the parinit hook, and the
+# three, the cdevsw[51].d_str streamtab store from the parinit hook, and the
 # dd.c completion-ordering island (their src/kernel-patches/dd.c.patch, which we
 # can only apply as a relocation retarget because we have dd.c as a binary).
+# The ethernet char major is 51, renumbered from 48 upstream on 2026-07-30; the
+# offset arithmetic and the evidence for it are in src/z3660_glue040.s.
 #
 # NOT the standard kernel.  usage: sh relink-040-z3660.sh [base-kernel] [output]
 set -e
@@ -41,11 +43,25 @@ export AMIX_SYSROOT
 echo "[*] Model-B source copies (phystopfn 2 KiB -> 4 KiB; page counts halved, bytes unchanged)"
 python3 "$HERE/src/z3660_modelb.py"
 
+# z3660.c includes the alien SCSI headers by bare name (`#include "rico.h"`,
+# `"sd.h"`), so they have to arrive on an -I.  They live in a full AMIX tree at
+# usr/sys/amiga/alien -- but an AMIX_ROOT that is a STAGING directory holding
+# only stand/unix (which is all a relink needs, and all config.sh is required to
+# provide) does not have them, and the -I then silently points at nothing until
+# the compile fails on a missing header.  The cross sysroot ships the same
+# headers and the Model-B mirror re-exports them through its usr/sys symlink, so
+# resolve the directory instead of assuming it, and say which one was used.
+ALIEN="$V/usr/sys/amiga/alien"
+[ -f "$ALIEN/rico.h" ] || ALIEN="$AMIX_SYSROOT/usr/sys/amiga/alien"
+[ -f "$ALIEN/rico.h" ] || { echo "ERROR: rico.h/sd.h not found under $V/usr/sys/amiga/alien"; \
+	echo "       nor under $AMIX_SYSROOT/usr/sys/amiga/alien"; exit 1; }
+echo "[*] alien SCSI headers (rico.h, sd.h): $ALIEN"
+
 echo "[*] cross-compiling both drivers"
 CF=$(echo "$AMIX_KERNEL_CFLAGS" | sed 's/-m68020/-m68040/')
-m68k-cbm-sysv4-gcc $CF -I"$V/usr/sys/amiga/alien" -I"$HERE/build" \
+m68k-cbm-sysv4-gcc $CF -I"$ALIEN" -I"$HERE/build" \
 	-c "$HERE/build/z3660_040.c"    -o "$HERE/build/z3660_040.o"
-m68k-cbm-sysv4-gcc $CF -I"$V/usr/sys/amiga/alien" -I"$HERE/build" \
+m68k-cbm-sysv4-gcc $CF -I"$ALIEN" -I"$HERE/build" \
 	-c "$HERE/build/z3660eth_040.c" -o "$HERE/build/z3660eth_040.o"
 
 # Guard the conversion at the OBJECT level, not at the source level: the whole
@@ -125,6 +141,6 @@ python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
 echo "[OK] built $OUT"
 echo "     boot: unix_boot040 $(basename "$OUT")   <- unix_boot040 is MANDATORY"
-echo "     nodes: mknod /dev/zen0 c 48 0     (ethernet; then slink + ifconfig)"
+echo "     nodes: mknod /dev/zen0 c 51 0     (ethernet; then slink + ifconfig)"
 echo "     NOTE: with no Z3660 present, autocon() misses the board and z3660queue is"
 echo "           never called -- the kernel is safe to boot on this A3000."

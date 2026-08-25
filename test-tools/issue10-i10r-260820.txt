@@ -1,0 +1,572 @@
+ISSUE-10 RESOLUTION AUDIT (i10r) capture -- 2026-08-20 -- EMU (Amiberry,
+68040+MMU, 16 MB, load base 0x07000000).  Kernel 68040-260819-43 (src/i10rev040.s
+PART SIX; two jsr sites in src/wb040.s: i10r_pre before usrxmemflt_orig and
+i10r_post at the wrapper's single exit join).  Guest driver test-tools/i10r.sh.
+The raw log at the end of this file is the guest's own /i10r.log, read back byte
+for byte out of slice-5 1 KiB block 25728
+(sha256 8429bb82cfac786e282d2b5df03083724a89e347e64ac53aec6f84f2f8988d7c, 465 lines).
+
+WHAT THIS IS.  The emulator-side watch (ISSUE10-SETUPSH-WALL-260819.md section 14)
+established the mechanism from OUTSIDE the guest: a user write-class first-touch
+fault on a freshly brk'd anon page returns without mapping the page, without zero-
+filling it, and without replaying the valid pending write-back the 68040 handed
+over -- so the marker store (value _end+1 = 0x800114B5, destination 0x800152A0)
+VANISHES, the coalescing walk later reads a NULL where its terminator should be,
+follows the NULL to user VA 0, reads the kernel's own ILLEGAL-at-null sentinel
+0x4AFC0000, and walls on btst at 0x4AFC0003.  Section 14 could see that the kernel
+did nothing; it could not see WHERE inside the kernel.  i10r rides the user fault
+path itself -- both ends of the usrxmemflt wrapper -- and latches ONE watched
+fault so the swallowing branch is named rather than inferred.  It is armed with a
+single kpoke of the address to audit (0x800152A0, the store section 14 measured
+vanishing) and write-protects NOTHING: i10g_on and i10w_on stay 0, so the audited
+fault is the ordinary one the uninstrumented wall takes.
+
+RESULT: THE BRANCH IS NAMED, AND SECTION 14's "returns as-if-resolved" IS REFINED.
+The audited fault is a 68040 format-7 user-data WRITE (fmtvec 0x7008, pre_ssw 0x0401
+-> ATC set, RW bit clear = write, TM 1 = user data; pre_sr 0x0008 -> S clear).  The
+kernel received EXACTLY the frame the CPU pushed -- pre_w3s 0x81 (valid, size long,
+TM 1), pre_w3a 0x800152A0, pre_w3d 0x800114B5, and the post_ copies are identical:
+no frame-copy discrepancy, so the emulator's arming is faithful (it matches the
+emulator's own WB7 decode of the same fault).  ptest is real and active in this
+kernel (ptest040.s) and reports the page ABSENT: pt_pre = pt_post = 0x400 (030-form
+I, invalid), mmusr_pre = post = 0 (040 MMUSR R clear), pte_pre = post = 0.  So the
+stock classifier takes branch 3 -- the F_INVAL demand path (5aff6) -- which is the
+CORRECT classification for an absent page.  It then calls as_fault(F_INVAL, S_WRITE),
+and that call FAILS: ret = 0x0B (11 = SIGSEGV), sisig = 0x0B, sicode = 1
+(SEGV_MAPERR), siaddr = 0x800152A0, and nothing is mapped or stored (pte_post = 0,
+tv_pre = tv_post = 0 -- the marker 0x800114B5 never lands).  Because usrxmemflt_orig
+returned nonzero, the wb040 wrapper's `tstl %d4; bnew Lu_done` SKIPS the write-back
+replay entirely (wbrep_pre = wbrep_post = 0xC8 = 200, delta 0), so the valid pending
+store dec3 = 1 says the frame carried is dropped -- a direct consequence of the
+SIGSEGV verdict.  wbfail_d = wbsig_d = x60sig_d = 0, so ret = 11 IS usrxmemflt_orig's
+OWN return, not a wrapper substitution.  nest_n = 0, match_n = 1, alien_n = 1 pending
+frame accounted; proc 0x4013BE00 is the wall's own sh.  The faulting store's own
+registers confirm the source value is correct, not fabricated: r2 (d2) = 0x800114B5
+(the marker) and r9 (a1) = 0x800152A0 (the target) -- i.e. `move.l %d2,(%a1)` at
+sh's addblok, one instruction before the deferred-write-back PC 0x8000250E.
+
+READING (analysis, not measurement).  Two things this refines in section 14:
+
+  1. Section 14's "no signal is delivered" was the emulator watch's inference from
+     memory and frames.  i10r reads the resolver's OWN output and it is a SIGSEGV
+     (sisig = 11, SEGV_MAPERR, siaddr = 0x800152A0).  Per wb040.s Lu_siginfo, u_trap
+     selects its fault class from infop->si_signo and queues a signal whenever it is
+     nonzero; si_signo = 11 here, so this is a REAL, queued SIGSEGV, not a silent
+     as-if-resolved return.  That sh nonetheless continues to the later wall in the
+     same run means sh SURVIVES the signal (Bourne sh catches memory faults for arena
+     growth; the flood's closing "no space" is that same catch-and-retry giving up).
+     i10r's hooks end at the wrapper exit and cannot see psig/sendsig or sh's signal
+     disposition, so whether "sh sails on" is delivered+caught+resumed or a delivery-
+     path defect is the one field this instrument does not capture (see the doc's
+     section 16 for the exact next latch).
+
+  2. The store did not "vanish silently into a resolved fault"; it vanished because
+     the demand WRITE fault FAILED (as_fault returned an error) and the replay was
+     therefore skipped.  The genesis is a segvn/as_fault WRITE-demand-fill failure on
+     a first-touch write to a freshly grown anon page -- NOT a segment-table (sdt)
+     allocation failure: the fatal page 0x80015000 shares an already-resident leaf
+     page-table with the prior arena top 0x80014AA0 (both A=64,B=0 in the 040 walk),
+     so no table is allocated at fault time, and the native 040 hat_pteload uses
+     hat_ptalloc/page_get, never hat_sdtalloc.  The proof that the page is mappable is
+     section 14's own reading: the READ fault five ticks later maps and zero-fills the
+     same page.  Only the WRITE variant fails.
+
+The two passes below are the SAME event with a coarser aim: pass 1 armed the exact
+address (famask 0xFFFFFFFF, watchva 0x800152A0) and latched it; pass 2 widened
+famask to 0xFFFFF000 and re-aimed at the page (watchva 0x80015000).  Both latched
+the identical frame.  The wall reproduced byte-for-byte in both passes
+("/cdrom/install/bin/setup.sh: no space", WALL rc=1), so the instrument does not
+mask the trigger.  The base-0x08 pokes that report REFUSED / READBACK-MISMATCH /
+rc=5 / rc=8 are the dead-base twins -- the base pick confirming itself, exactly as in
+the i10t capture; the live base-0x07 poke of i10r_watchva is the only arm this run
+makes.  The "/i10r.sh: grep: not found" line is the miniroot lacking grep and is
+harmless (the block is read back whole regardless).
+
+Field map for the 79-long block (kpeek <i10r_magic> 79), base 0x07:
+  0710d2ec i10r_magic=49315221 "I1R!"   0710d2f0 watchva   0710d2f4 famask
+  0710d2f8 rwsel=0(write)                0710d2fc ptest_on=1
+  0710d300 seen_n   0710d304 match_n=1   0710d308 nest_n=0  0710d30c alien_n
+  0710d310 post_n=1 0710d314 pend=0      0710d318 pendfp    0710d31c latched=1
+  0710d320 proc=4013be00                 0710d324 frame     0710d328 fmtvec=7008
+  0710d32c pre_sr=8  0710d330 pre_pc=8000250e  0710d334 pre_fa=800152a0
+  0710d338 pre_ssw=401  0710d33c pre_w3s=81  0710d340 pre_w3a=800152a0
+  0710d344 pre_w3d=800114b5  0710d348..d35c pre_w2*/pre_w1* = 0
+  0710d360 post_ssw=401  0710d364 post_w3s=81  0710d368 post_w3a=800152a0
+  0710d36c post_w3d=800114b5  0710d370 post_w2s=0  0710d374 post_w1s=0
+  0710d378 ret=0b(11)  0710d37c sisig=0b(11)  0710d380 sicode=1(MAPERR)
+  0710d384 siaddr=800152a0
+  0710d388 wbrep_pre=c8  0710d38c wbrep_post=c8  0710d390 wb_d=0
+  0710d394 wbslot=3(stale)  0710d398 wbfail_pre=0  0710d39c wbfail_d=0
+  0710d3a0 wbsig_pre=0  0710d3a4 wbsig_d=0  0710d3a8 x60sig_pre=0  0710d3ac x60sig_d=0
+  0710d3b0 wbf_addr=0  0710d3b4 wbf_wbs=0
+  0710d3b8 dec1=0  0710d3bc dec2=0  0710d3c0 dec3=1  0710d3c4 branch=3(F_INVAL)
+  0710d3c8 pt_pre=400  0710d3cc pt_post=400  0710d3d0 mmusr_pre=0  0710d3d4 mmusr_post=0
+  0710d3d8 pte_pre=0  0710d3dc pte_post=0  0710d3e0 tv_pre=0  0710d3e4 tv_post=0
+  0710d3e8..d424 r0..r15 (d0-d7,a0-a6,a7): d2=800114b5 marker, a1=800152a0 target
+
+=============================== RAW LOG (verbatim) ===============================
+I10R-START
+--- reclaim what earlier runs left on this miniroot ---
+--- stage kpeek + kpoke out of the raw slice tail ---
+32+0 records in
+32+0 records out
+32+0 records in
+32+0 records out
+--- BASE PICK: i10r_magic must read 49315221 (I1R!) at the live base ---
+base 0x07:
+KPEEK 0710d2ec = 49315221  (/dev/mem)
+base 0x08:
+KPEEK 0810d2ec = 00000000  (/dev/mem)
+--- BEFORE: the i10r block (magic first; watchva/pend/latched must be 0) ---
+KPEEK 0710d2ec = 49315221  (/dev/mem)
+KPEEK 0710d2f0 = 00000000  (/dev/mem)
+KPEEK 0710d2f4 = ffffffff  (/dev/mem)
+KPEEK 0710d2f8 = 00000000  (/dev/mem)
+KPEEK 0710d2fc = 00000001  (/dev/mem)
+KPEEK 0710d300 = 00000000  (/dev/mem)
+KPEEK 0710d304 = 00000000  (/dev/mem)
+KPEEK 0710d308 = 00000000  (/dev/mem)
+KPEEK 0710d30c = 00000000  (/dev/mem)
+KPEEK 0710d310 = 00000000  (/dev/mem)
+KPEEK 0710d314 = 00000000  (/dev/mem)
+KPEEK 0710d318 = 00000000  (/dev/mem)
+KPEEK 0710d31c = 00000000  (/dev/mem)
+KPEEK 0710d320 = 00000000  (/dev/mem)
+KPEEK 0710d324 = 00000000  (/dev/mem)
+KPEEK 0710d328 = 00000000  (/dev/mem)
+KPEEK 0710d32c = 00000000  (/dev/mem)
+KPEEK 0710d330 = 00000000  (/dev/mem)
+KPEEK 0710d334 = 00000000  (/dev/mem)
+KPEEK 0710d338 = 00000000  (/dev/mem)
+KPEEK 0710d33c = 00000000  (/dev/mem)
+KPEEK 0710d340 = 00000000  (/dev/mem)
+KPEEK 0710d344 = 00000000  (/dev/mem)
+KPEEK 0710d348 = 00000000  (/dev/mem)
+KPEEK 0710d34c = 00000000  (/dev/mem)
+KPEEK 0710d350 = 00000000  (/dev/mem)
+KPEEK 0710d354 = 00000000  (/dev/mem)
+KPEEK 0710d358 = 00000000  (/dev/mem)
+KPEEK 0710d35c = 00000000  (/dev/mem)
+KPEEK 0710d360 = 00000000  (/dev/mem)
+KPEEK 0710d364 = 00000000  (/dev/mem)
+KPEEK 0710d368 = 00000000  (/dev/mem)
+KPEEK 0710d36c = 00000000  (/dev/mem)
+KPEEK 0710d370 = 00000000  (/dev/mem)
+KPEEK 0710d374 = 00000000  (/dev/mem)
+KPEEK 0710d378 = 00000000  (/dev/mem)
+KPEEK 0710d37c = 00000000  (/dev/mem)
+KPEEK 0710d380 = 00000000  (/dev/mem)
+KPEEK 0710d384 = 00000000  (/dev/mem)
+KPEEK 0710d388 = 00000000  (/dev/mem)
+KPEEK 0710d38c = 00000000  (/dev/mem)
+KPEEK 0710d390 = 00000000  (/dev/mem)
+KPEEK 0710d394 = 00000000  (/dev/mem)
+KPEEK 0710d398 = 00000000  (/dev/mem)
+KPEEK 0710d39c = 00000000  (/dev/mem)
+KPEEK 0710d3a0 = 00000000  (/dev/mem)
+KPEEK 0710d3a4 = 00000000  (/dev/mem)
+KPEEK 0710d3a8 = 00000000  (/dev/mem)
+KPEEK 0710d3ac = 00000000  (/dev/mem)
+KPEEK 0710d3b0 = 00000000  (/dev/mem)
+KPEEK 0710d3b4 = 00000000  (/dev/mem)
+KPEEK 0710d3b8 = 00000000  (/dev/mem)
+KPEEK 0710d3bc = 00000000  (/dev/mem)
+KPEEK 0710d3c0 = 00000000  (/dev/mem)
+KPEEK 0710d3c4 = 00000000  (/dev/mem)
+KPEEK 0710d3c8 = 00000000  (/dev/mem)
+KPEEK 0710d3cc = 00000000  (/dev/mem)
+KPEEK 0710d3d0 = 00000000  (/dev/mem)
+KPEEK 0710d3d4 = 00000000  (/dev/mem)
+KPEEK 0710d3d8 = 00000000  (/dev/mem)
+KPEEK 0710d3dc = 00000000  (/dev/mem)
+KPEEK 0710d3e0 = 00000000  (/dev/mem)
+KPEEK 0710d3e4 = 00000000  (/dev/mem)
+KPEEK 0710d3e8 = 00000000  (/dev/mem)
+KPEEK 0710d3ec = 00000000  (/dev/mem)
+KPEEK 0710d3f0 = 00000000  (/dev/mem)
+KPEEK 0710d3f4 = 00000000  (/dev/mem)
+KPEEK 0710d3f8 = 00000000  (/dev/mem)
+KPEEK 0710d3fc = 00000000  (/dev/mem)
+KPEEK 0710d400 = 00000000  (/dev/mem)
+KPEEK 0710d404 = 00000000  (/dev/mem)
+KPEEK 0710d408 = 00000000  (/dev/mem)
+KPEEK 0710d40c = 00000000  (/dev/mem)
+KPEEK 0710d410 = 00000000  (/dev/mem)
+KPEEK 0710d414 = 00000000  (/dev/mem)
+KPEEK 0710d418 = 00000000  (/dev/mem)
+KPEEK 0710d41c = 00000000  (/dev/mem)
+KPEEK 0710d420 = 00000000  (/dev/mem)
+KPEEK 0710d424 = 00000000  (/dev/mem)
+--- ARM the audit: i10r_watchva 0 -> 800152A0 (both bases) ---
+KPOKE 0710d2f0 = 800152a0 (was 00000000) OK
+KPOKE 0810d2f0 = 00000000 (was 00000000) READBACK-MISMATCH
+KPOKE i10r_watchva rc=8
+KPEEK 0710d2ec = 49315221  (/dev/mem)
+KPEEK 0710d2f0 = 800152a0  (/dev/mem)
+KPEEK 0710d2f4 = ffffffff  (/dev/mem)
+KPEEK 0710d2f8 = 00000000  (/dev/mem)
+KPEEK 0710d2fc = 00000001  (/dev/mem)
+KPEEK 0710d300 = 00000058  (/dev/mem)
+KPEEK 0710d304 = 00000000  (/dev/mem)
+KPEEK 0710d308 = 00000000  (/dev/mem)
+KPEEK 0710d30c = 00000000  (/dev/mem)
+KPEEK 0710d310 = 00000000  (/dev/mem)
+KPEEK 0710d314 = 00000000  (/dev/mem)
+KPEEK 0710d318 = 00000000  (/dev/mem)
+KPEEK 0710d31c = 00000000  (/dev/mem)
+KPEEK 0710d320 = 00000000  (/dev/mem)
+KPEEK 0710d324 = 00000000  (/dev/mem)
+KPEEK 0710d328 = 00000000  (/dev/mem)
+KPEEK 0710d32c = 00000000  (/dev/mem)
+KPEEK 0710d330 = 00000000  (/dev/mem)
+KPEEK 0710d334 = 00000000  (/dev/mem)
+KPEEK 0710d338 = 00000000  (/dev/mem)
+KPEEK 0710d33c = 00000000  (/dev/mem)
+KPEEK 0710d340 = 00000000  (/dev/mem)
+KPEEK 0710d344 = 00000000  (/dev/mem)
+KPEEK 0710d348 = 00000000  (/dev/mem)
+KPEEK 0710d34c = 00000000  (/dev/mem)
+KPEEK 0710d350 = 00000000  (/dev/mem)
+KPEEK 0710d354 = 00000000  (/dev/mem)
+KPEEK 0710d358 = 00000000  (/dev/mem)
+KPEEK 0710d35c = 00000000  (/dev/mem)
+KPEEK 0710d360 = 00000000  (/dev/mem)
+KPEEK 0710d364 = 00000000  (/dev/mem)
+KPEEK 0710d368 = 00000000  (/dev/mem)
+KPEEK 0710d36c = 00000000  (/dev/mem)
+KPEEK 0710d370 = 00000000  (/dev/mem)
+KPEEK 0710d374 = 00000000  (/dev/mem)
+KPEEK 0710d378 = 00000000  (/dev/mem)
+KPEEK 0710d37c = 00000000  (/dev/mem)
+KPEEK 0710d380 = 00000000  (/dev/mem)
+KPEEK 0710d384 = 00000000  (/dev/mem)
+KPEEK 0710d388 = 00000000  (/dev/mem)
+KPEEK 0710d38c = 00000000  (/dev/mem)
+KPEEK 0710d390 = 00000000  (/dev/mem)
+KPEEK 0710d394 = 00000000  (/dev/mem)
+KPEEK 0710d398 = 00000000  (/dev/mem)
+KPEEK 0710d39c = 00000000  (/dev/mem)
+KPEEK 0710d3a0 = 00000000  (/dev/mem)
+KPEEK 0710d3a4 = 00000000  (/dev/mem)
+KPEEK 0710d3a8 = 00000000  (/dev/mem)
+KPEEK 0710d3ac = 00000000  (/dev/mem)
+KPEEK 0710d3b0 = 00000000  (/dev/mem)
+KPEEK 0710d3b4 = 00000000  (/dev/mem)
+KPEEK 0710d3b8 = 00000000  (/dev/mem)
+KPEEK 0710d3bc = 00000000  (/dev/mem)
+KPEEK 0710d3c0 = 00000000  (/dev/mem)
+KPEEK 0710d3c4 = 00000000  (/dev/mem)
+KPEEK 0710d3c8 = 00000000  (/dev/mem)
+KPEEK 0710d3cc = 00000000  (/dev/mem)
+KPEEK 0710d3d0 = 00000000  (/dev/mem)
+KPEEK 0710d3d4 = 00000000  (/dev/mem)
+KPEEK 0710d3d8 = 00000000  (/dev/mem)
+KPEEK 0710d3dc = 00000000  (/dev/mem)
+KPEEK 0710d3e0 = 00000000  (/dev/mem)
+KPEEK 0710d3e4 = 00000000  (/dev/mem)
+KPEEK 0710d3e8 = 00000000  (/dev/mem)
+KPEEK 0710d3ec = 00000000  (/dev/mem)
+KPEEK 0710d3f0 = 00000000  (/dev/mem)
+KPEEK 0710d3f4 = 00000000  (/dev/mem)
+KPEEK 0710d3f8 = 00000000  (/dev/mem)
+KPEEK 0710d3fc = 00000000  (/dev/mem)
+KPEEK 0710d400 = 00000000  (/dev/mem)
+KPEEK 0710d404 = 00000000  (/dev/mem)
+KPEEK 0710d408 = 00000000  (/dev/mem)
+KPEEK 0710d40c = 00000000  (/dev/mem)
+KPEEK 0710d410 = 00000000  (/dev/mem)
+KPEEK 0710d414 = 00000000  (/dev/mem)
+KPEEK 0710d418 = 00000000  (/dev/mem)
+KPEEK 0710d41c = 00000000  (/dev/mem)
+KPEEK 0710d420 = 00000000  (/dev/mem)
+KPEEK 0710d424 = 00000000  (/dev/mem)
+--- mount the install source (slice 4, s5) at /cdrom, READ-ONLY ---
+MOUNT rc=0
+--- THE WALL: sh -n parses the whole script and executes none of it ---
+/cdrom/install/bin/setup.sh: no space
+WALL rc=1
+--- AFTER (pass 1, exact address): the i10r block, 79 longs ---
+KPEEK 0710d2ec = 49315221  (/dev/mem)
+KPEEK 0710d2f0 = 800152a0  (/dev/mem)
+KPEEK 0710d2f4 = ffffffff  (/dev/mem)
+KPEEK 0710d2f8 = 00000000  (/dev/mem)
+KPEEK 0710d2fc = 00000001  (/dev/mem)
+KPEEK 0710d300 = 000020cc  (/dev/mem)
+KPEEK 0710d304 = 00000001  (/dev/mem)
+KPEEK 0710d308 = 00000000  (/dev/mem)
+KPEEK 0710d30c = 00000000  (/dev/mem)
+KPEEK 0710d310 = 00000001  (/dev/mem)
+KPEEK 0710d314 = 00000000  (/dev/mem)
+KPEEK 0710d318 = 40001f44  (/dev/mem)
+KPEEK 0710d31c = 00000001  (/dev/mem)
+KPEEK 0710d320 = 4013be00  (/dev/mem)
+KPEEK 0710d324 = 40001f44  (/dev/mem)
+KPEEK 0710d328 = 00007008  (/dev/mem)
+KPEEK 0710d32c = 00000008  (/dev/mem)
+KPEEK 0710d330 = 8000250e  (/dev/mem)
+KPEEK 0710d334 = 800152a0  (/dev/mem)
+KPEEK 0710d338 = 00000401  (/dev/mem)
+KPEEK 0710d33c = 00000081  (/dev/mem)
+KPEEK 0710d340 = 800152a0  (/dev/mem)
+KPEEK 0710d344 = 800114b5  (/dev/mem)
+KPEEK 0710d348 = 00000000  (/dev/mem)
+KPEEK 0710d34c = 00000000  (/dev/mem)
+KPEEK 0710d350 = 00000000  (/dev/mem)
+KPEEK 0710d354 = 00000000  (/dev/mem)
+KPEEK 0710d358 = 00000000  (/dev/mem)
+KPEEK 0710d35c = 00000000  (/dev/mem)
+KPEEK 0710d360 = 00000401  (/dev/mem)
+KPEEK 0710d364 = 00000081  (/dev/mem)
+KPEEK 0710d368 = 800152a0  (/dev/mem)
+KPEEK 0710d36c = 800114b5  (/dev/mem)
+KPEEK 0710d370 = 00000000  (/dev/mem)
+KPEEK 0710d374 = 00000000  (/dev/mem)
+KPEEK 0710d378 = 0000000b  (/dev/mem)
+KPEEK 0710d37c = 0000000b  (/dev/mem)
+KPEEK 0710d380 = 00000001  (/dev/mem)
+KPEEK 0710d384 = 800152a0  (/dev/mem)
+KPEEK 0710d388 = 000000c8  (/dev/mem)
+KPEEK 0710d38c = 000000c8  (/dev/mem)
+KPEEK 0710d390 = 00000000  (/dev/mem)
+KPEEK 0710d394 = 00000003  (/dev/mem)
+KPEEK 0710d398 = 00000000  (/dev/mem)
+KPEEK 0710d39c = 00000000  (/dev/mem)
+KPEEK 0710d3a0 = 00000000  (/dev/mem)
+KPEEK 0710d3a4 = 00000000  (/dev/mem)
+KPEEK 0710d3a8 = 00000000  (/dev/mem)
+KPEEK 0710d3ac = 00000000  (/dev/mem)
+KPEEK 0710d3b0 = 00000000  (/dev/mem)
+KPEEK 0710d3b4 = 00000000  (/dev/mem)
+KPEEK 0710d3b8 = 00000000  (/dev/mem)
+KPEEK 0710d3bc = 00000000  (/dev/mem)
+KPEEK 0710d3c0 = 00000001  (/dev/mem)
+KPEEK 0710d3c4 = 00000003  (/dev/mem)
+KPEEK 0710d3c8 = 00000400  (/dev/mem)
+KPEEK 0710d3cc = 00000400  (/dev/mem)
+KPEEK 0710d3d0 = 00000000  (/dev/mem)
+KPEEK 0710d3d4 = 00000000  (/dev/mem)
+KPEEK 0710d3d8 = 00000000  (/dev/mem)
+KPEEK 0710d3dc = 00000000  (/dev/mem)
+KPEEK 0710d3e0 = 00000000  (/dev/mem)
+KPEEK 0710d3e4 = 00000000  (/dev/mem)
+KPEEK 0710d3e8 = c07ffca0  (/dev/mem)
+KPEEK 0710d3ec = fffff800  (/dev/mem)
+KPEEK 0710d3f0 = 800114b5  (/dev/mem)
+KPEEK 0710d3f4 = 00000800  (/dev/mem)
+KPEEK 0710d3f8 = 00000001  (/dev/mem)
+KPEEK 0710d3fc = 00000000  (/dev/mem)
+KPEEK 0710d400 = 00000000  (/dev/mem)
+KPEEK 0710d404 = 0000ffff  (/dev/mem)
+KPEEK 0710d408 = 80013d2c  (/dev/mem)
+KPEEK 0710d40c = 800152a0  (/dev/mem)
+KPEEK 0710d410 = 80014aa0  (/dev/mem)
+KPEEK 0710d414 = 80013d14  (/dev/mem)
+KPEEK 0710d418 = 80013d14  (/dev/mem)
+KPEEK 0710d41c = 80013d28  (/dev/mem)
+KPEEK 0710d420 = 00000000  (/dev/mem)
+KPEEK 0710d424 = c07ffca8  (/dev/mem)
+/i10r.sh: grep: not found
+--- pass 1 did NOT latch: widen i10r_famask to the PAGE and re-run ---
+KPOKE 0710d2f4 = fffff000 (was ffffffff) OK
+KPOKE 0810d2f4 REFUSED: holds 00000000, expected ffffffff
+KPOKE i10r_famask rc=5
+KPOKE 0710d2f0 = 80015000 (was 800152a0) OK
+KPOKE 0810d2f0 REFUSED: holds 00000000, expected 800152a0
+KPOKE i10r_watchva rc=5
+KPEEK 0710d2ec = 49315221  (/dev/mem)
+KPEEK 0710d2f0 = 80015000  (/dev/mem)
+KPEEK 0710d2f4 = fffff000  (/dev/mem)
+KPEEK 0710d2f8 = 00000000  (/dev/mem)
+KPEEK 0710d2fc = 00000001  (/dev/mem)
+KPEEK 0710d300 = 000021f1  (/dev/mem)
+KPEEK 0710d304 = 00000001  (/dev/mem)
+KPEEK 0710d308 = 00000000  (/dev/mem)
+KPEEK 0710d30c = 00000000  (/dev/mem)
+KPEEK 0710d310 = 00000001  (/dev/mem)
+KPEEK 0710d314 = 00000000  (/dev/mem)
+KPEEK 0710d318 = 40001f44  (/dev/mem)
+KPEEK 0710d31c = 00000001  (/dev/mem)
+KPEEK 0710d320 = 4013be00  (/dev/mem)
+KPEEK 0710d324 = 40001f44  (/dev/mem)
+KPEEK 0710d328 = 00007008  (/dev/mem)
+KPEEK 0710d32c = 00000008  (/dev/mem)
+KPEEK 0710d330 = 8000250e  (/dev/mem)
+KPEEK 0710d334 = 800152a0  (/dev/mem)
+KPEEK 0710d338 = 00000401  (/dev/mem)
+KPEEK 0710d33c = 00000081  (/dev/mem)
+KPEEK 0710d340 = 800152a0  (/dev/mem)
+KPEEK 0710d344 = 800114b5  (/dev/mem)
+KPEEK 0710d348 = 00000000  (/dev/mem)
+KPEEK 0710d34c = 00000000  (/dev/mem)
+KPEEK 0710d350 = 00000000  (/dev/mem)
+KPEEK 0710d354 = 00000000  (/dev/mem)
+KPEEK 0710d358 = 00000000  (/dev/mem)
+KPEEK 0710d35c = 00000000  (/dev/mem)
+KPEEK 0710d360 = 00000401  (/dev/mem)
+KPEEK 0710d364 = 00000081  (/dev/mem)
+KPEEK 0710d368 = 800152a0  (/dev/mem)
+KPEEK 0710d36c = 800114b5  (/dev/mem)
+KPEEK 0710d370 = 00000000  (/dev/mem)
+KPEEK 0710d374 = 00000000  (/dev/mem)
+KPEEK 0710d378 = 0000000b  (/dev/mem)
+KPEEK 0710d37c = 0000000b  (/dev/mem)
+KPEEK 0710d380 = 00000001  (/dev/mem)
+KPEEK 0710d384 = 800152a0  (/dev/mem)
+KPEEK 0710d388 = 000000c8  (/dev/mem)
+KPEEK 0710d38c = 000000c8  (/dev/mem)
+KPEEK 0710d390 = 00000000  (/dev/mem)
+KPEEK 0710d394 = 00000003  (/dev/mem)
+KPEEK 0710d398 = 00000000  (/dev/mem)
+KPEEK 0710d39c = 00000000  (/dev/mem)
+KPEEK 0710d3a0 = 00000000  (/dev/mem)
+KPEEK 0710d3a4 = 00000000  (/dev/mem)
+KPEEK 0710d3a8 = 00000000  (/dev/mem)
+KPEEK 0710d3ac = 00000000  (/dev/mem)
+KPEEK 0710d3b0 = 00000000  (/dev/mem)
+KPEEK 0710d3b4 = 00000000  (/dev/mem)
+KPEEK 0710d3b8 = 00000000  (/dev/mem)
+KPEEK 0710d3bc = 00000000  (/dev/mem)
+KPEEK 0710d3c0 = 00000001  (/dev/mem)
+KPEEK 0710d3c4 = 00000003  (/dev/mem)
+KPEEK 0710d3c8 = 00000400  (/dev/mem)
+KPEEK 0710d3cc = 00000400  (/dev/mem)
+KPEEK 0710d3d0 = 00000000  (/dev/mem)
+KPEEK 0710d3d4 = 00000000  (/dev/mem)
+KPEEK 0710d3d8 = 00000000  (/dev/mem)
+KPEEK 0710d3dc = 00000000  (/dev/mem)
+KPEEK 0710d3e0 = 00000000  (/dev/mem)
+KPEEK 0710d3e4 = 00000000  (/dev/mem)
+KPEEK 0710d3e8 = c07ffca0  (/dev/mem)
+KPEEK 0710d3ec = fffff800  (/dev/mem)
+KPEEK 0710d3f0 = 800114b5  (/dev/mem)
+KPEEK 0710d3f4 = 00000800  (/dev/mem)
+KPEEK 0710d3f8 = 00000001  (/dev/mem)
+KPEEK 0710d3fc = 00000000  (/dev/mem)
+KPEEK 0710d400 = 00000000  (/dev/mem)
+KPEEK 0710d404 = 0000ffff  (/dev/mem)
+KPEEK 0710d408 = 80013d2c  (/dev/mem)
+KPEEK 0710d40c = 800152a0  (/dev/mem)
+KPEEK 0710d410 = 80014aa0  (/dev/mem)
+KPEEK 0710d414 = 80013d14  (/dev/mem)
+KPEEK 0710d418 = 80013d14  (/dev/mem)
+KPEEK 0710d41c = 80013d28  (/dev/mem)
+KPEEK 0710d420 = 00000000  (/dev/mem)
+KPEEK 0710d424 = c07ffca8  (/dev/mem)
+--- THE WALL again, page-aimed ---
+/cdrom/install/bin/setup.sh: no space
+WALL2 rc=1
+--- AFTER (pass 2, page-aimed): the i10r block, 79 longs ---
+KPEEK 0710d2ec = 49315221  (/dev/mem)
+KPEEK 0710d2f0 = 80015000  (/dev/mem)
+KPEEK 0710d2f4 = fffff000  (/dev/mem)
+KPEEK 0710d2f8 = 00000000  (/dev/mem)
+KPEEK 0710d2fc = 00000001  (/dev/mem)
+KPEEK 0710d300 = 00004219  (/dev/mem)
+KPEEK 0710d304 = 00000001  (/dev/mem)
+KPEEK 0710d308 = 00000000  (/dev/mem)
+KPEEK 0710d30c = 00000000  (/dev/mem)
+KPEEK 0710d310 = 00000001  (/dev/mem)
+KPEEK 0710d314 = 00000000  (/dev/mem)
+KPEEK 0710d318 = 40001f44  (/dev/mem)
+KPEEK 0710d31c = 00000001  (/dev/mem)
+KPEEK 0710d320 = 4013be00  (/dev/mem)
+KPEEK 0710d324 = 40001f44  (/dev/mem)
+KPEEK 0710d328 = 00007008  (/dev/mem)
+KPEEK 0710d32c = 00000008  (/dev/mem)
+KPEEK 0710d330 = 8000250e  (/dev/mem)
+KPEEK 0710d334 = 800152a0  (/dev/mem)
+KPEEK 0710d338 = 00000401  (/dev/mem)
+KPEEK 0710d33c = 00000081  (/dev/mem)
+KPEEK 0710d340 = 800152a0  (/dev/mem)
+KPEEK 0710d344 = 800114b5  (/dev/mem)
+KPEEK 0710d348 = 00000000  (/dev/mem)
+KPEEK 0710d34c = 00000000  (/dev/mem)
+KPEEK 0710d350 = 00000000  (/dev/mem)
+KPEEK 0710d354 = 00000000  (/dev/mem)
+KPEEK 0710d358 = 00000000  (/dev/mem)
+KPEEK 0710d35c = 00000000  (/dev/mem)
+KPEEK 0710d360 = 00000401  (/dev/mem)
+KPEEK 0710d364 = 00000081  (/dev/mem)
+KPEEK 0710d368 = 800152a0  (/dev/mem)
+KPEEK 0710d36c = 800114b5  (/dev/mem)
+KPEEK 0710d370 = 00000000  (/dev/mem)
+KPEEK 0710d374 = 00000000  (/dev/mem)
+KPEEK 0710d378 = 0000000b  (/dev/mem)
+KPEEK 0710d37c = 0000000b  (/dev/mem)
+KPEEK 0710d380 = 00000001  (/dev/mem)
+KPEEK 0710d384 = 800152a0  (/dev/mem)
+KPEEK 0710d388 = 000000c8  (/dev/mem)
+KPEEK 0710d38c = 000000c8  (/dev/mem)
+KPEEK 0710d390 = 00000000  (/dev/mem)
+KPEEK 0710d394 = 00000003  (/dev/mem)
+KPEEK 0710d398 = 00000000  (/dev/mem)
+KPEEK 0710d39c = 00000000  (/dev/mem)
+KPEEK 0710d3a0 = 00000000  (/dev/mem)
+KPEEK 0710d3a4 = 00000000  (/dev/mem)
+KPEEK 0710d3a8 = 00000000  (/dev/mem)
+KPEEK 0710d3ac = 00000000  (/dev/mem)
+KPEEK 0710d3b0 = 00000000  (/dev/mem)
+KPEEK 0710d3b4 = 00000000  (/dev/mem)
+KPEEK 0710d3b8 = 00000000  (/dev/mem)
+KPEEK 0710d3bc = 00000000  (/dev/mem)
+KPEEK 0710d3c0 = 00000001  (/dev/mem)
+KPEEK 0710d3c4 = 00000003  (/dev/mem)
+KPEEK 0710d3c8 = 00000400  (/dev/mem)
+KPEEK 0710d3cc = 00000400  (/dev/mem)
+KPEEK 0710d3d0 = 00000000  (/dev/mem)
+KPEEK 0710d3d4 = 00000000  (/dev/mem)
+KPEEK 0710d3d8 = 00000000  (/dev/mem)
+KPEEK 0710d3dc = 00000000  (/dev/mem)
+KPEEK 0710d3e0 = 00000000  (/dev/mem)
+KPEEK 0710d3e4 = 00000000  (/dev/mem)
+KPEEK 0710d3e8 = c07ffca0  (/dev/mem)
+KPEEK 0710d3ec = fffff800  (/dev/mem)
+KPEEK 0710d3f0 = 800114b5  (/dev/mem)
+KPEEK 0710d3f4 = 00000800  (/dev/mem)
+KPEEK 0710d3f8 = 00000001  (/dev/mem)
+KPEEK 0710d3fc = 00000000  (/dev/mem)
+KPEEK 0710d400 = 00000000  (/dev/mem)
+KPEEK 0710d404 = 0000ffff  (/dev/mem)
+KPEEK 0710d408 = 80013d2c  (/dev/mem)
+KPEEK 0710d40c = 800152a0  (/dev/mem)
+KPEEK 0710d410 = 80014aa0  (/dev/mem)
+KPEEK 0710d414 = 80013d14  (/dev/mem)
+KPEEK 0710d418 = 80013d14  (/dev/mem)
+KPEEK 0710d41c = 80013d28  (/dev/mem)
+KPEEK 0710d420 = 00000000  (/dev/mem)
+KPEEK 0710d424 = c07ffca8  (/dev/mem)
+--- context: the write-back denial + replay counters (wbf_magic = WBF!, 32 longs
+    reaching past the wbf block into wb_dfc_on .. wb_replay_n/wb_replay_odd) ---
+KPEEK 0710c65c = 57424621  (/dev/mem)
+KPEEK 0710c660 = 00000001  (/dev/mem)
+KPEEK 0710c664 = 00000001  (/dev/mem)
+KPEEK 0710c668 = 00000000  (/dev/mem)
+KPEEK 0710c66c = 00000000  (/dev/mem)
+KPEEK 0710c670 = 00000000  (/dev/mem)
+KPEEK 0710c674 = 00000000  (/dev/mem)
+KPEEK 0710c678 = 00000003  (/dev/mem)
+KPEEK 0710c67c = 00000000  (/dev/mem)
+KPEEK 0710c680 = 00000000  (/dev/mem)
+KPEEK 0710c684 = 00000000  (/dev/mem)
+KPEEK 0710c688 = 00000000  (/dev/mem)
+KPEEK 0710c68c = 00000000  (/dev/mem)
+KPEEK 0710c690 = 00000000  (/dev/mem)
+KPEEK 0710c694 = 00000000  (/dev/mem)
+KPEEK 0710c698 = 00000000  (/dev/mem)
+KPEEK 0710c69c = 00000000  (/dev/mem)
+KPEEK 0710c6a0 = 00000000  (/dev/mem)
+KPEEK 0710c6a4 = 00000000  (/dev/mem)
+KPEEK 0710c6a8 = 00000000  (/dev/mem)
+KPEEK 0710c6ac = 00000000  (/dev/mem)
+KPEEK 0710c6b0 = 00000000  (/dev/mem)
+KPEEK 0710c6b4 = 00000000  (/dev/mem)
+KPEEK 0710c6b8 = 00000000  (/dev/mem)
+KPEEK 0710c6bc = 00000000  (/dev/mem)
+KPEEK 0710c6c0 = 00000001  (/dev/mem)
+KPEEK 0710c6c4 = 000090b5  (/dev/mem)
+KPEEK 0710c6c8 = 0000000f  (/dev/mem)
+KPEEK 0710c6cc = 00000001  (/dev/mem)
+KPEEK 0710c6d0 = 00000005  (/dev/mem)
+KPEEK 0710c6d4 = 00000139  (/dev/mem)
+KPEEK 0710c6d8 = 0000000f  (/dev/mem)
+I10R-END

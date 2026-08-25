@@ -189,6 +189,28 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/codepub040.s" -o "$HERE/build/codepub04
 # kpeek can follow; (2) hat_sdtfail_count now also latches the memory state at
 # the first and last failure, so the warning stops being just a count.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/issue39_040.s" -o "$HERE/build/issue39_040.o"
+# i10rev040 (2026-08-19): ISSUE-10 reverse-map instrumentation.  The three HAT
+# routines that UNLINK a leaf PTE from a page's p_mapping chain all walk it with
+# a 256-node safety bound, and all three give up quietly when the bound runs out
+# -- hat_pteload's replacement path completely silently, hat_unload's and
+# hat_free's behind a 4-print cap that goes dark for the rest of the uptime.  A
+# give-up removes or overwrites the PTE without unlinking its chain node, which
+# is the exact shape of the corruption ISSUE-10 keeps producing, so "how often"
+# needs to be a number rather than a cap.  This is a data-only island: uncapped
+# counters in the shape of kdbg040.s's hat_pfnmiss_n, incremented from the sites
+# themselves, plus i10_deep_n -- the how-close-did-a-search-get reading that
+# makes a zero fail count mean something.  hat_dup040 is counted too, as the
+# chain-growth PRODUCER: it has no bound of its own because it never searches.
+#   It is no longer data-only: the same file now carries i10p_probe, the one-shot
+# capture that answers the question the counters raised but cannot settle -- WHAT
+# the page holding the corrupt word is.  wb040.s's usrxmemflt tail calls it at the
+# moment a user fault is known unresolved, and it walks the victim's own page tree
+# looking for the value the fault died on, latching that page's whole identity
+# (pfn, page_t, p_vnode, p_mapping and what the chain names, plus the frame's own
+# first words) together with what the KERNEL'S map says about the value.  Gated on
+# the fault address lying in the kernel VA band, so ordinary user faults pay one
+# masked compare; see the header of the file for the register/safety contract.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/i10rev040.s" -o "$HERE/build/i10rev040.o"
 # legacysdt040 (2026-08-01, ISSUE-40 fix): hat_free040 tore down only the native
 # 040 A/B/C tree and never released the LEGACY SDT allocations that the retained
 # stock hat_map -> hat_growsdt -> hat_sdtalloc path still makes on every exec --
@@ -212,6 +234,59 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/legacysdt040.s" -o "$HERE/build/legacys
 # from hat_ptfree.  It CALLS retained hat_sdtfree -- hence the globalize below.
 # Contract: analyysirepo vm-map/ISSUE40-PTDAT-TEARDOWN-CONTRACT.md.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/ptdatfree040.s" -o "$HERE/build/ptdatfree040.o"
+# syncguard (2026-08-20): sync() walks vfssw[] through vsw_vfsops with no null
+# check, and xpanic calls sync() -- so ANY panic before vfsinit() has filled the
+# switch dereferences NULL, lands on low-memory vector 4 (the exec ROM trap stub
+# AmigaOS left there), and turns into DOUBLE PANIC before the first panic can be
+# read.  This override is the stock loop plus two null checks and a counter block.
+# CPU-independent: it is a defect in generic vfs code, not in anything 040.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/syncguard.s" -o "$HERE/build/syncguard.o"
+# pageinitzero (2026-08-20, ISSUE-102): the page-frame database is sptalloc'd with a
+# non-zero base, which is segkmem_mapin -- it MAPS existing DRAM and clears nothing --
+# and page_init only ORs p_lock into each struct.  Every other field arrives as
+# whatever the DRAM held, so memialloc's page_free() walk panics on the first struct
+# whose p_keepcnt/p_mapping/p_lckcnt/p_cowcnt garbage is non-zero.  Zero-filled
+# emulator RAM hides this completely; AmigaOS-dirty Fast RAM on metal does not.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/pageinitzero.s" -o "$HERE/build/pageinitzero.o"
+# segmapdbg (2026-08-20, ISSUE-103): segmap_unlock's three guards -- pp NULL,
+# p_pagein, p_free -- all branch to ONE cmn_err, so the panic text cannot say which
+# fired.  This island latches segmap_unlock's live registers plus a full-hash search
+# for the page it could not find, then tail-jumps into cmn_err so the panic prints
+# unchanged.  Only reachable from a path that was already panicking.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segmapdbg.s" -o "$HERE/build/segmapdbg.o"
+# btwalk (2026-08-21, ISSUE-104): backtrace accepted a frame pointer only inside a
+# 64 KiB window at the u-block base, and that test was the walk's ONLY terminator --
+# so the panic backtrace stopped at the first frame every time, twice costing this
+# campaign a hand-walked stack dump.  The island widens the range to the whole
+# u-block plus the kernel's own data+bss (where pstack lives) and adds the two
+# bounds that make widening safe: strictly increasing frame pointers, and a hard
+# 64-frame cap.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/btwalk.s" -o "$HERE/build/btwalk.o"
+# usptrap (2026-08-21, ISSUE-106): PID 1 dies at exec with a kernel-shaped user
+# stack pointer (fa 0x40001FC0 == u+0x1FC0, the constant _start loads into %sp).
+# The island latches the actual USP, u.u_ar0 and u_comm at the NOTICE, then
+# tail-jumps into cmn_err so the message prints unchanged.  Only reachable from a
+# path already reporting a fatal user fault.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/usptrap.s" -o "$HERE/build/usptrap.o"
+# srgtrap (2026-08-21, ISSUE-106 round 2): round 1 latched u.u_ar0 inside u_trap,
+# AFTER u_trap had already overwritten it -- the value was real, the moment was
+# wrong.  This unit measures at the two moments that matter: the utraps push (the
+# slot the trap exit pops USP from) and setregs (the pointer it writes the new SP
+# through).  srg_match is the verdict word.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/srgtrap.s" -o "$HERE/build/srgtrap.o"
+# inittrap (2026-08-21, ISSUE-106 round 3): round 2 proved exec never ran at all --
+# u_trap has exactly one caller, so srg_ut_n=1 means ONE user trap in the whole
+# boot, and it was the fault.  PID 1 died on its FIRST user instruction, so the
+# question moved to what _start hands the initial rte.  This wraps `jsr main` and
+# latches main's return value, the user PC.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/inittrap.s" -o "$HERE/build/inittrap.o"
+# inituser (2026-08-21, ISSUE-106 round 4): round 3 proved exec never ran -- PID 1
+# died on its FIRST user instruction (fault PC 0x80000012 = icode base 0x80800000
+# with bit 23 dropped, +0x12).  main returns the right entry (ini_ret 0x80800000),
+# but the user-transition RTE delivered the wrong PC.  This island IS that RTE:
+# it rebuilds the exact frame from d0, latches d0 / SSP / USP / the frame words the
+# RTE reads back, then RTEs -- so a good kernel still launches PID 1 identically.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/inituser.s" -o "$HERE/build/inituser.o"
 # btrace (2026-07-20): early-boot serial phase trace, flag-gated.  Called from
 # pstart040 (A-H), sysseginit (S/s), first hat_pteload (P).  btrace_on ships 0 =>
 # base/quiet are behaviour-identical (silent no-op).  relink-040-dbg.sh flips
@@ -231,7 +306,31 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/config040.s" -o "$HERE/build/config040.
 # The wb040.s public wrapper is UNCHANGED: its krnxmemflt_orig call now binds to this
 # strong def (the stock body stays reachable as krnxmemflt_stock, reference only).
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/krnxmemflt040.s" -o "$HERE/build/krnxmemflt040.o"
+# hgfault040 (2026-08-21, ISSUE-10 CURE): the USER-side counterpart of the line above,
+# and the same idiom -- a strong usrxmemflt_orig here, the stock body retained as
+# usrxmemflt_stock.  On the 68040 only, a USER-mode WRITE that the stock resolver has
+# just refused, whose page is EXACTLY the page above the process break, grows the break
+# by ONE page through brk's own as_map/segvn_create/zfod path and is handed back to the
+# stock body, which then resolves it -- so wb040.s's replay gate sees a resolved fault
+# and completes the pending write-back instead of discarding it.  Behind hg_on (one
+# .data long, 0 = byte-exact stock).
+#   WHY NOT as_fault, which is where the FC_NOMAP is returned: because for this fault
+# as_fault is NEVER CALLED.  usrxmemflt tests coverage itself at 0x5afc2 and, finding
+# no segment and no stack fault, takes the 0x5b02a shortcut straight to SIGSEGV.  That
+# is measured, not deduced: the i10a as_fault audit was armed on the page and then on
+# the exact address while the wall fired, and recorded i10a_vamatch_n = 0 against
+# i10a_seen_n of 417 and 1024.  See src/hgfault040.s's header.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/hgfault040.s" -o "$HERE/build/hgfault040.o"
 m68k-linux-gnu-objcopy --redefine-sym segu_get=segu_get_lockfix "$HERE/build/segu_lockfix.o"
+# i10s (2026-08-20, ISSUE-10 resolution audit PART SEVEN): i10rev040.o carries an OUTER
+# tail-call wrapper on segvn_faultpage that observes the per-page decision and then hands
+# off to segvn_prot040's per-page restorer.  For the wrapper to take the segvn_faultpage
+# symbol, segvn_prot040.o's own definition is renamed to segvn_faultpage_prot here -- a
+# relink-time rename (the segu_get idiom above) so segvn_prot040.s stays untouched and
+# standalone-upstreamable, knowing nothing about the audit.  The chain then binds as
+# segvn_faultpage (i10rev040.o) -> segvn_faultpage_prot (segvn_prot040.o) ->
+# segvn_faultpage_orig (0xac01a stock body).  The hard check after the link asserts it.
+m68k-linux-gnu-objcopy --redefine-sym segvn_faultpage=segvn_faultpage_prot "$HERE/build/segvn_prot040.o"
 
 echo "[*] globalize local fns (so overrides + cross-refs bind); weaken the replaced ones"
 cp "$STOCK" "$HERE/build/unix-stage1"
@@ -254,6 +353,8 @@ m68k-linux-gnu-objcopy \
 	--globalize-symbol usrxmemflt \
 	--globalize-symbol segvn_faultpage \
 	--globalize-symbol krnxmemflt \
+	--globalize-symbol page_cachelist \
+	--globalize-symbol page_cachelist_size \
 	"$HERE/build/unix-stage1"
 
 # HARD CHECK (2026-08-12, ISSUE-43): fpu060.o replaces the three FP-context routines and keeps
@@ -300,21 +401,31 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol prfastmapin \
 	--weaken-symbol haltsys \
 	--weaken-symbol rtnfirm \
+	--weaken-symbol sync \
 	"$HERE/build/unix-stage1"
 
 # Genuine 040 trap/fault runtime overrides (getfault040/userspace040/vtop040/wb040).
 # usrxmemflt is file-LOCAL ('t') -> globalized above so wb040's strong def binds and the
 # original is reachable via the alias.  vtop040 tail-jmps the aliased original for the
 # kvseg/user path.  get_fault and userspace are GLOBAL T -> plain weaken is enough.
+#   2026-08-21 (ISSUE-10 cure): the retained user-side body is now aliased
+# usrxmemflt_STOCK, not usrxmemflt_orig, because usrxmemflt_orig is a real routine in
+# src/hgfault040.s that screens the fault and then tail-calls the stock body.  Exactly the
+# krnxmemflt_orig / krnxmemflt_stock split three lines below, and for the same reason:
+# wb040.s calls *_orig and must not know whether that is ours or the vendor's.
 m68k-linux-gnu-objcopy \
 	--weaken-symbol get_fault \
 	--weaken-symbol userspace \
 	--weaken-symbol vtop \
 	--add-symbol vtop_orig=.text:0xb7568,function,global \
 	--weaken-symbol usrxmemflt \
-	--add-symbol usrxmemflt_orig=.text:0x5aede,function,global \
+	--add-symbol usrxmemflt_stock=.text:0x5aede,function,global \
 	--weaken-symbol segvn_faultpage \
 	--add-symbol segvn_faultpage_orig=.text:0xac01a,function,global \
+	--weaken-symbol as_fault \
+	--add-symbol as_fault_orig=.text:0xae108,function,global \
+	--weaken-symbol brk \
+	--add-symbol brk_orig=.text:0x580e8,function,global \
 	--weaken-symbol krnxmemflt \
 	--add-symbol krnxmemflt_stock=.text:0x5b140,function,global \
 	--weaken-symbol segu_get \
@@ -323,6 +434,10 @@ m68k-linux-gnu-objcopy \
 	--add-symbol swapinub_stock=.text:0x000a9e5c,function,global \
 	--weaken-symbol inituname \
 	--add-symbol inituname_orig=.text:0x00049140,function,global \
+	--weaken-symbol page_init \
+	--add-symbol page_init_orig=.text:0xaf42a,function,global \
+	--weaken-symbol setregs \
+	--add-symbol setregs_orig=.text:0x58b62,function,global \
 	--weaken-symbol nullvect \
 	--add-symbol nullvect_orig=.text:0x11b4,function,global \
 	--weaken-symbol lmul \
@@ -366,16 +481,47 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
 	"$HERE/build/config040.o" "$HERE/build/cb_icode040.o" "$HERE/build/kdbg040.o" \
 	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o" \
-	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o"
+	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o" \
+	"$HERE/build/syncguard.o" "$HERE/build/pageinitzero.o" "$HERE/build/segmapdbg.o" \
+	"$HERE/build/btwalk.o" "$HERE/build/usptrap.o" "$HERE/build/srgtrap.o" "$HERE/build/inittrap.o" "$HERE/build/inituser.o" \
+	"$HERE/build/hgfault040.o" \
+	"$HERE/build/i10rev040.o"
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig segvn_faultpage segvn_faultpage_orig segvn_prot_magic segvn_prot_pp_n segvn_prot_n x60_far_addr x60_siginfo_n krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem \
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig usrxmemflt_stock hg_magic hg_on hg_seen_n hg_cand_n hg_win_n hg_cover_n hg_lim_n hg_grow_n hg_landed_n hg_mapfail_n hg_unres_n hg_far_n segvn_faultpage segvn_faultpage_orig segvn_prot_magic segvn_prot_pp_n segvn_prot_n x60_far_addr x60_siginfo_n krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem \
          hat_growsdt hat_legacy_sdt_free i40_magic i40_on i40_calls i40_sec2_n i40_sec3_n i40_empty_n i40_bad_n i40_err_n i40_pgfreed_n i40_held_n i40_last_n i40_last_base i40_last_bits \
+         i10_magic i10_rpfail_n i10_hlfail_n i10_hffail_n i10_dupreg_n i10_deep_n \
+         i10p_probe i10p_magic i10p_gmask i10p_gwant i10p_vmask i10p_n i10p_done i10p_have \
+         i10p_fa i10p_lastfa i10p_want i10p_maxtry i10p_tries i10p_busy i10p_why \
+         i10p_as i10p_rootraw i10p_curproc i10p_uprocp i10p_comm0 i10p_comm1 i10p_comm2 i10p_comm3 \
+         i10p_kdesca i10p_kdesc i10p_kpte i10p_root i10p_pgs i10p_hits i10p_chbad \
+         i10p_uva i10p_pte i10p_ptea i10p_pfn i10p_pp i10p_pflags i10p_vnode i10p_off \
+         i10p_hash i10p_map i10p_map0 i10p_mapn i10p_min i10p_hoff i10p_hitv \
+         i10p_w0 i10p_w1 i10p_w2 i10p_w3 i10p_w4 i10p_w5 i10p_w6 i10p_w7 \
+         i10p_p_kvseg i10p_p_segu i10p_p_segkmap i10p_p_pages i10p_p_pgbase i10p_p_pgend \
+         i10g_hook i10g_magic i10g_on i10g_wantval i10g_lova i10g_hiva i10g_armed i10g_armproc \
+         i10g_seq i10g_arena_n i10g_scan_hits i10g_wlatched i10g_wseq i10g_wctx i10g_wsr i10g_wpc \
+         i10g_wfa i10g_wslot i10g_wb3a i10g_wb3d i10g_wtgt i10g_wtoff i10g_wmem \
+         i10g_ilatched i10g_iseq i10g_ifa i10g_iuva i10g_iframe i10g_ipfn i10g_iproc i10g_ioff \
+         i10g_iself i10g_ipp i10g_ipflags i10g_ivnode i10g_ioffp i10g_imap i10g_inzlo i10g_inzhi i10g_izrun \
+         i10g_plo i10g_phi i10g_p_armed i10g_p_proc i10g_p_fault_n i10g_ipc i10g_isr i10g_iwb3a i10g_iwb3d i10g_wsrc i10g_wsrcr i10g_wsrcv i10g_wpv0 i10g_wpv1 i10g_wpv6 \
          hat_sdtfree hat_ptdat_retire ptd_magic ptd_on ptd_calls ptd_retired_n ptd_pgfreed_n \
          ptd_keep0_n ptd_keepn_n ptd_meta_n ptd_badlink_n ptd_wake_n ptd_tblfreed_n \
          nullvect nullvect_orig kvp_magic kvp_on kvp_n kvp_user_n kvp_super_n kvp_over_n \
          kvp_last_vec kvp_last_pc kvp_vec \
+         sync syncg_magic syncg_calls syncg_skip_ops syncg_skip_fn syncg_last_i \
+         page_init page_init_orig pgz_magic pgz_calls pgz_npages pgz_dirty_n pgz_held_n \
+         smu_panic_latch smu_magic smu_n smu_why smu_scan smu_bucket smu_want smu_pp \
+         bt_frame_ok bt_magic bt_walks bt_frames bt_stops bt_laststop bt_prev bt_budget \
+         unt_latch unt_magic unt_n unt_magic2 unt_usp unt_uar0 unt_comm0 unt_comm1 unt_u0 unt_u1 \
+         setregs setregs_orig srg_utraps srg_magic srg_match srg_ut_stamp srg_stamp1 srg_stamp2 \
+         srg_ut_n srg_n srg_pushslot srg_slot_at srg_uar0_pre srg_uar0_post srg_ar0_0 srg_pcb0_post \
+         ini_main ini_magic ini_stamp1 ini_stamp2 ini_n ini_ret ini_pcb0 ini_uar0 \
+         ini_user_rte iur_magic iur_stamp1 iur_stamp2 iur_n iur_pc iur_a7 iur_usp \
+         iur_f_sr iur_f_pc iur_f_fmt \
+         smu_addr smu_off smu_addr0 smu_vp smu_smoff smu_hashsz smu_pflags \
+         pgz_have pgz_first_i pgz_first_w0 pgz_first_map pgz_first_lc pgz_hash_n pgz_hashsz \
          fpsp060_top fpsp060_image fpsp060_vec11 f60_magic f60_entry_n f60_mem_n f60_real_n \
          f60_access_n f60_done_n f60_reserved_n f60_last_co f60_memfail_n f60_arith_n \
          f60_bsun_n f60_fline_n f60_trap_n f60_trace_n f60_fpudis_n f60_superdone_n \
@@ -425,6 +571,226 @@ if m68k-linux-gnu-nm "$OUT" | grep -E ' U hat_sdtfree$' >/dev/null 2>&1; then
 	echo "[FAIL] hat_sdtfree still UND after globalize -> the call would go to 0"; exit 1
 fi
 echo "[OK] ISSUE-40 ptdat edge bound: hat_ptdat_retire @0x$PRADDR -> retained hat_sdtfree @0x$SFADDR."
+
+# HARD CHECK (2026-08-20, ISSUE-100): syncguard.o replaces sync() so the panic path
+# survives a vfs switch that vfsinit has not filled yet.  This one fails QUIETLY in
+# the worst possible way: a missing --weaken-symbol, or the object dropped from the
+# link list, leaves the stock body strong, `ld -r` succeeds, and the kernel is
+# byte-plausible -- and then the next early panic destroys its own diagnosis exactly
+# as before, with nothing in the build output to say the fix was not in it.  So
+# assert both directions: our strong def must have MOVED OFF the stock address, and
+# the counter block must be there to read it by.
+SGADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="sync" && $2=="T" {print $1}')
+if [ -z "$SGADDR" ]; then
+	echo "[FAIL] sync is not a global T -> syncguard.o did not link"; exit 1
+fi
+if [ "$SGADDR" = "0005d21a" ]; then
+	echo "[FAIL] sync is still the stock body at 0x5d21a -> the weaken/override did not take"; exit 1
+fi
+if [ -z "$(m68k-linux-gnu-nm "$OUT" | awk '$3=="syncg_magic" && $2=="D" {print $1}')" ]; then
+	echo "[FAIL] syncg_magic missing -> syncguard.o's counter block is not in the image"; exit 1
+fi
+echo "[OK] ISSUE-100 panic-path guard bound: sync @0x$SGADDR (stock body was 0x5d21a)."
+
+# HARD CHECK (2026-08-20, ISSUE-102): pageinitzero.o wraps page_init so the page-frame
+# database is zeroed before it is published.  Both directions matter and each fails
+# silently on its own: without the weaken, the stock body stays strong and the boot
+# panics on metal exactly as before; without the retained alias the wrapper tail-jumps
+# to address 0 and the machine dies in kvm_init with no message at all.  page_init has
+# exactly ONE caller in the image (kvm_init @0x48eaa), so this is also the whole
+# blast radius.
+PZADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="page_init" && $2=="T" {print $1}')
+PZORIG=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="page_init_orig" && $2=="T" {print $1}')
+if [ -z "$PZADDR" ] || [ "$PZADDR" = "000af42a" ]; then
+	echo "[FAIL] page_init did not move off the stock body 0xaf42a -> ISSUE-102 fix not in"; exit 1
+fi
+if [ "$PZORIG" != "000af42a" ]; then
+	echo "[FAIL] page_init_orig is '$PZORIG', not 000af42a -> the wrapper would tail-jump wrong"; exit 1
+fi
+if [ -z "$(m68k-linux-gnu-nm "$OUT" | awk '$3=="pgz_magic" && $2=="D" {print $1}')" ]; then
+	echo "[FAIL] pgz_magic missing -> pageinitzero.o's counter block is not in the image"; exit 1
+fi
+echo "[OK] ISSUE-102 page-database zero bound: page_init @0x$PZADDR -> page_init_orig @0x$PZORIG."
+
+# HARD CHECK (2026-08-19, ISSUE-10): wb040.o's usrxmemflt tail now `jsr`s i10p_probe
+# (i10rev040.o).  `ld -r` does not fail on an unresolved symbol, so dropping
+# i10rev040.o from the link list -- or renaming the entry -- would leave a call to
+# address 0 on the UNRESOLVED USER FAULT path: the kernel would survive until the
+# first process took a fault it could not resolve, and then die somewhere that looks
+# nothing like the cause.  Same shape as the two edges above, for the same reason.
+IPADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="i10p_probe" && $2=="T" {print $1}')
+if [ -z "$IPADDR" ]; then
+	echo "[FAIL] i10p_probe is not a global T -> the usrxmemflt capture edge is unbound"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U i10p_probe$' >/dev/null 2>&1; then
+	echo "[FAIL] i10p_probe still UND -> the unresolved-fault path would call address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 capture edge bound: usrxmemflt -> i10p_probe @0x$IPADDR."
+
+# HARD CHECK (2026-08-19, ISSUE-10 write-watch): both usrxmemflt and krnxmemflt now
+# `jsr` i10w_hook (i10rev040.o) at their RESOLVED tails.  Same trap as the probe edge
+# above: `ld -r` does not fail on an unresolved symbol, so a dropped object or a renamed
+# entry would leave a call to address 0 on the resolved-fault path -- taken by every
+# memory fault the moment the watch is armed.  Shaped like the i10p_probe guard.
+IWADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="i10w_hook" && $2=="T" {print $1}')
+if [ -z "$IWADDR" ]; then
+	echo "[FAIL] i10w_hook is not a global T -> the write-watch capture edge is unbound"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U i10w_hook$' >/dev/null 2>&1; then
+	echo "[FAIL] i10w_hook still UND -> the resolved-fault path would call address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 write-watch edge bound: usrxmemflt/krnxmemflt -> i10w_hook @0x$IWADDR."
+
+# HARD CHECK (2026-08-19, ISSUE-10 genesis watch): both usrxmemflt and krnxmemflt now
+# also `jsr` i10g_hook (i10rev040.o) at their RESOLVED tails, right after i10w_hook.
+# Same trap as the two edges above: a dropped object or renamed entry would leave a
+# call to address 0 on the resolved-fault path, taken by every memory fault once the
+# watch is armed.  Shaped like the i10w_hook guard.
+IGADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="i10g_hook" && $2=="T" {print $1}')
+if [ -z "$IGADDR" ]; then
+	echo "[FAIL] i10g_hook is not a global T -> the genesis-watch capture edge is unbound"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U i10g_hook$' >/dev/null 2>&1; then
+	echo "[FAIL] i10g_hook still UND -> the resolved-fault path would call address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 genesis-watch edge bound: usrxmemflt/krnxmemflt -> i10g_hook @0x$IGADDR."
+
+# HARD CHECK (2026-08-19, ISSUE-10 resolution audit): usrxmemflt now `jsr`s i10r_pre
+# on ENTRY and i10r_post at its exit join (i10rev040.o).  Both edges are on the path
+# EVERY user fault takes -- not just the resolved ones -- so an unbound entry here is
+# a call to address 0 on the first user fault of the boot.  Shaped like the i10w/i10g
+# guards, and checking both symbols because a half-linked pair is the shape that
+# would survive a build and die at run time.
+for h in i10r_pre i10r_post; do
+	HADDR=$(m68k-linux-gnu-nm "$OUT" | awk -v h="$h" '$3==h && $2=="T" {print $1}')
+	if [ -z "$HADDR" ]; then
+		echo "[FAIL] $h is not a global T -> the resolution-audit edge is unbound"; exit 1
+	fi
+	if m68k-linux-gnu-nm "$OUT" | grep -E " U $h\$" >/dev/null 2>&1; then
+		echo "[FAIL] $h still UND -> every user fault would call address 0"; exit 1
+	fi
+	echo "[OK] ISSUE-10 resolution-audit edge bound: usrxmemflt -> $h @0x$HADDR."
+done
+
+# HARD CHECK (2026-08-20, ISSUE-10 decision audit PART SEVEN): i10rev040.o's i10s outer
+# wrapper now OWNS the strong segvn_faultpage and tail-jmps segvn_faultpage_prot -- the
+# per-page restorer, renamed above from segvn_prot040.o.  Two ways this can silently
+# break, both of which `ld -r` links cleanly through: the wrapper never took the symbol
+# (segvn_faultpage still resolves to the stock body at 0xac01a, so the audit is dead and
+# the per-page check runs unobserved), or the tail target is unbound (segvn_faultpage_prot
+# left UND -> the jmp goes to address 0 on the FIRST VM fault of the boot).  Assert both,
+# and that the per-page body is still reachable off its stock address, before trusting it.
+SFPADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="segvn_faultpage" && $2=="T" {print $1}')
+SFPPADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="segvn_faultpage_prot" && $2=="T" {print $1}')
+if [ -z "$SFPADDR" ]; then
+	echo "[FAIL] segvn_faultpage is not a global T -> the i10s wrapper is unbound"; exit 1
+fi
+if [ "$SFPADDR" = "000ac01a" ]; then
+	echo "[FAIL] strong segvn_faultpage is still the stock body 0xac01a -> i10s wrapper did not take the symbol"; exit 1
+fi
+if [ -z "$SFPPADDR" ]; then
+	echo "[FAIL] segvn_faultpage_prot is not a global T -> the per-page restorer rename did not take"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U segvn_faultpage_prot$' >/dev/null 2>&1; then
+	echo "[FAIL] segvn_faultpage_prot still UND -> the i10s tail jmp would go to address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 decision-audit edge bound: segvn_faultpage (i10s @0x$SFPADDR) -> segvn_faultpage_prot @0x$SFPPADDR -> segvn_faultpage_orig @0xac01a."
+
+# HARD CHECK (2026-08-20, ISSUE-10 as_fault audit PART EIGHT): i10rev040.o's i10a
+# wrapper now OWNS the strong as_fault and CALLS as_fault_orig (the stock body, kept
+# at 0xae108).  Same silent-break shapes `ld -r` links through: the wrapper never took
+# the symbol (as_fault still resolves to 0xae108, audit dead and the fault path
+# unobserved), or as_fault_orig is unbound (the wrapper's jsr goes to address 0 on the
+# first matched fault).  Assert both.  as_segat is a pre-existing global the wrapper
+# also calls; a stray UND on it would be caught by the reloc census, but check it here
+# too since the audit's whole result is that call.
+AFADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="as_fault" && $2=="T" {print $1}')
+AFOADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="as_fault_orig" && $2=="T" {print $1}')
+if [ -z "$AFADDR" ]; then
+	echo "[FAIL] as_fault is not a global T -> the i10a wrapper is unbound"; exit 1
+fi
+if [ "$AFADDR" = "000ae108" ]; then
+	echo "[FAIL] strong as_fault is still the stock body 0xae108 -> i10a wrapper did not take the symbol"; exit 1
+fi
+if [ -z "$AFOADDR" ] || [ "$AFOADDR" != "000ae108" ]; then
+	echo "[FAIL] as_fault_orig missing or not at 0xae108 (nm: '$AFOADDR') -> the i10a call target is wrong"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U as_fault_orig$' >/dev/null 2>&1; then
+	echo "[FAIL] as_fault_orig still UND -> the i10a jsr would go to address 0"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U as_segat$' >/dev/null 2>&1; then
+	echo "[FAIL] as_segat still UND -> the i10a lookup would call address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 as_fault-audit edge bound: as_fault (i10a @0x$AFADDR) -> as_fault_orig @0x$AFOADDR, as_segat resolved."
+
+# HARD CHECK (2026-08-20, ISSUE-10 grow-failure probe PART NINE): i10rev040.o's i10b
+# wrapper OWNS the strong brk and CALLS brk_orig (the stock body at 0x580e8).  brk has a
+# SINGLE reference in the whole ET_REL image -- the sysent dispatch slot -- so taking the
+# symbol is what puts the probe on the live syscall path; if the wrapper did not take it
+# (brk still 0x580e8) the probe is dead, and if brk_orig is unbound the wrapper's jsr goes
+# to address 0 on the first brk of the boot.  Assert both.
+BKADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="brk" && $2=="T" {print $1}')
+BKOADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="brk_orig" && $2=="T" {print $1}')
+if [ -z "$BKADDR" ]; then
+	echo "[FAIL] brk is not a global T -> the i10b wrapper is unbound"; exit 1
+fi
+if [ "$BKADDR" = "000580e8" ]; then
+	echo "[FAIL] strong brk is still the stock body 0x580e8 -> i10b wrapper did not take the symbol"; exit 1
+fi
+if [ -z "$BKOADDR" ] || [ "$BKOADDR" != "000580e8" ]; then
+	echo "[FAIL] brk_orig missing or not at 0x580e8 (nm: '$BKOADDR') -> the i10b call target is wrong"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U brk_orig$' >/dev/null 2>&1; then
+	echo "[FAIL] brk_orig still UND -> the i10b jsr would go to address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 grow-probe edge bound: brk (i10b @0x$BKADDR) -> brk_orig @0x$BKOADDR."
+
+# HARD CHECK (2026-08-21, ISSUE-10 CURE): hgfault040.o owns the strong usrxmemflt_orig --
+# the routine src/wb040.s calls -- and tail-calls the retained stock body as
+# usrxmemflt_stock.  Four ways this breaks silently, all of which `ld -r` links through:
+# the object is dropped from the link (usrxmemflt_orig falls back to the 0x5aede alias,
+# the cure is absent and NOTHING says so); the alias was left named usrxmemflt_orig (two
+# definitions, or ours never taking the name); usrxmemflt_stock is unbound (our tail jmp
+# goes to address 0 on the FIRST user memory fault of the boot -- i.e. instant death); or
+# one of the three grow edges is unbound (as_map / segvn_create / zfod_argsp), which would
+# call or push address 0 the first time a heap page is grown on a fault.  Assert all of it.
+UXOADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="usrxmemflt_orig" && $2=="T" {print $1}')
+UXSADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="usrxmemflt_stock" && $2=="T" {print $1}')
+if [ -z "$UXOADDR" ]; then
+	echo "[FAIL] usrxmemflt_orig is not a global T -> wb040's jsr is unbound"; exit 1
+fi
+if [ "$UXOADDR" = "0005aede" ]; then
+	echo "[FAIL] usrxmemflt_orig is still the stock body 0x5aede -> hgfault040.o is NOT in the kernel"; exit 1
+fi
+if [ -z "$UXSADDR" ] || [ "$UXSADDR" != "0005aede" ]; then
+	echo "[FAIL] usrxmemflt_stock missing or not at 0x5aede (nm: '$UXSADDR') -> the tail call is wrong"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U usrxmemflt_stock$' >/dev/null 2>&1; then
+	echo "[FAIL] usrxmemflt_stock still UND -> every user memory fault would jmp to address 0"; exit 1
+fi
+if [ -z "$(m68k-linux-gnu-nm "$OUT" | awk '$3=="hg_magic" && $2=="D" {print $1}')" ]; then
+	echo "[FAIL] hg_magic missing -> hgfault040.o's counter block is not in the image"; exit 1
+fi
+for hgs in as_map segvn_create zfod_argsp as_segat; do
+	if m68k-linux-gnu-nm "$OUT" | grep -E " U $hgs\$" >/dev/null 2>&1; then
+		echo "[FAIL] $hgs still UND -> the ISSUE-10 grow edge would use address 0"; exit 1
+	fi
+done
+echo "[OK] ISSUE-10 cure bound: usrxmemflt_orig (hgfault040 @0x$UXOADDR) -> usrxmemflt_stock @0x$UXSADDR; as_map/segvn_create/zfod_argsp/as_segat resolved."
+
+# HARD CHECK (2026-08-20, ISSUE-10 genesis introspection PART TEN): wb040.o's usrxmemflt
+# and krnxmemflt now `jsr` i10c_hook (i10rev040.o) right after wbf_dropwarn -- the site
+# that fires exactly once for a dropped pending write-back.  `ld -r` does not fail on an
+# unresolved symbol, so a dropped object or renamed entry would leave a call to address 0
+# on the first such drop.  Shaped like the i10w/i10g hook guards.
+ICADDR=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="i10c_hook" && $2=="T" {print $1}')
+if [ -z "$ICADDR" ]; then
+	echo "[FAIL] i10c_hook is not a global T -> the genesis-introspection edge is unbound"; exit 1
+fi
+if m68k-linux-gnu-nm "$OUT" | grep -E ' U i10c_hook$' >/dev/null 2>&1; then
+	echo "[FAIL] i10c_hook still UND -> the drop-warning path would call address 0"; exit 1
+fi
+echo "[OK] ISSUE-10 genesis-introspection edge bound: usrxmemflt/krnxmemflt -> i10c_hook @0x$ICADDR."
 
 # HARD CHECK (2026-07-12): the RUNTIME kernel must carry the NATIVE resume (fixed-u
 # remap) and the crossing-page hardbus -- stock resume (.text 0x9c) writes the retired
@@ -565,6 +931,9 @@ run_step 3 python3 "$HERE/src/patch_config_cachefix.py" "$OUT"
 echo "[*] ISSUE-39: count hat_sdtalloc out-of-contiguous-memory warnings"
 python3 "$HERE/src/patch_sdtfail.py" "$OUT"
 
+echo "[*] ISSUE-103: latch which of segmap_unlock's three guards panics"
+run_step 2 python3 "$HERE/src/patch_segmapdbg.py" "$OUT"
+
 echo "[*] per-process fault-depth gate: assert v.v_proc matches the table size"
 python3 "$HERE/src/check_vproc.py" "$OUT"
 
@@ -573,6 +942,28 @@ run_step 4 python3 "$HERE/src/patch_dbgpublish.py" "$OUT"
 
 echo "[*] B2 page-release barrier: page_free + free_vp_pages choke-point hooks (CB-PAGE-LIFECYCLE-CLOSURE.md)"
 run_step 3 python3 "$HERE/src/patch_cb_release.py" "$OUT"
+
+# ISSUE-104 (2026-08-21): PC-relative like the cb_release hook above and for the same
+# reason -- an absolute byte-patched target would need loader rebasing.  Must run
+# after the core ld -r; the FPSP link that follows appends to $OUT and leaves our
+# .text where it is, so the displacement stays valid.
+echo "[*] ISSUE-104: backtrace frame test -> bt_frame_ok (range + order + cap)"
+run_step 1 python3 "$HERE/src/patch_btwalk.py" "$OUT"
+
+echo "[*] ISSUE-105: xpanic's sync gate reads uninitialised bits -- make it deterministic"
+run_step 1 python3 "$HERE/src/patch_xpanic_sync.py" "$OUT"
+
+echo "[*] ISSUE-106: latch USP/u_ar0/u_comm at the fatal user-fault NOTICE"
+run_step 2 python3 "$HERE/src/patch_usptrap.py" "$OUT"
+
+echo "[*] ISSUE-106 round 2: retarget the utraps -> u_trap edge (pushed-USP slot)"
+run_step 2 python3 "$HERE/src/patch_srgtrap.py" "$OUT"
+
+echo "[*] ISSUE-106 round 3: latch the user PC _start hands to the initial rte"
+run_step 2 python3 "$HERE/src/patch_inittrap.py" "$OUT"
+
+echo "[*] ISSUE-106 round 4: capture the user-transition RTE (frame + SSP + USP)"
+run_step 1 python3 "$HERE/src/patch_inituser.py" "$OUT"
 
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/src/patch_framesz060.py" "$OUT"

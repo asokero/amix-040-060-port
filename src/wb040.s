@@ -76,17 +76,51 @@ usrxmemflt:
 					| synthesis above has just destroyed in the frame.
 					| It must live in a register wb040_replay preserves
 					| (it clobbers d0-d3/a3), hence d5 rather than d3.
+| --- ISSUE-10 resolution audit (2026-08-19, src/i10rev040.s PART SIX).  The FIRST of
+|     its two hooks: the frame as this wrapper RECEIVED it, before the stock resolver
+|     has looked at it -- the write-back fields the CPU pushed, and what ptest says
+|     about the fault address.  The second hook is at the exit join below, and the
+|     pair is what makes "the fault returned as-if-resolved and landed nothing" a
+|     measurement rather than an inference.  Dormant (one tstl) until i10r_watchva;
+|     preserves d4/d5, every other register, and both function-code registers. ---
+	movel	%fp@(8),%sp@-		| the frame
+	jsr	i10r_pre
+	addqw	&4,%sp
 	movel	%fp@(12),%sp@-		| arg2 (fault info)
 	movel	%fp@(8),%sp@-		| arg1 = trap frame
 	jsr	usrxmemflt_orig
 	addqw	&8,%sp
 	movel	%d0,%d4			| save return (0 = demand-fault resolved)
 	tstl	%d4
-	bnew	Lu_done
+	beqs	Lu_replay		| resolved: complete the pending write-back below
+	moveq	&1,%d0			| UNRESOLVED user fault, ctx = 1: a pending store is
+	bsrw	wbf_dropwarn		| about to be dropped by skipping the replay -- name it
+	movel	&1,%sp@-		| ISSUE-10 genesis introspection (i10c), ctx = 1: this is
+	movel	%fp@(8),%sp@-		| the site that fires exactly once for the dropped store.
+	jsr	i10c_hook		| Dormant (one tstl) until i10c_on; report-only, preserves d4.
+	addqw	&8,%sp
+	braw	Lu_done			| OUTCOME UNCHANGED: still skip replay and signal
+Lu_replay:
 	moveal	%fp@(8),%a2		| a2 = frame
 	bsrw	wb040_replay
 	tstl	%d0			| ISSUE-42: 0 = every valid WB completed;
 	bnew	Lu_wbdenied		| nonzero = one was permanently DENIED
+| --- ISSUE-10 write-watch (2026-08-19, src/i10rev040.s).  The store this fault
+|     completed has now landed; i10w_hook watches the poisoned longword and, when
+|     it appears, latches THIS frame -- the writer's PC, privilege and registers.
+|     Dormant (one tstl) until i10w_on; preserves d4/d5 and every other register. ---
+	movel	&1,%sp@-		| ctx = 1: a USER store
+	movel	%fp@(8),%sp@-		| the frame
+	jsr	i10w_hook
+	addqw	&8,%sp
+| --- ISSUE-10 genesis watch (2026-08-19, src/i10rev040.s).  Same resolved frame,
+|     one hop upstream of i10w_hook: it names the FIRST store of 0x4AFC0000 (PART W)
+|     or the frame that arrived carrying it (PART I).  Dormant (one tstl) until
+|     i10g_on; preserves d4/d5 and every other register, exactly like i10w_hook. ---
+	movel	&1,%sp@-		| ctx = 1: a USER store
+	movel	%fp@(8),%sp@-		| the frame
+	jsr	i10g_hook
+	addqw	&8,%sp
 	moveal	u+0x730,%a0		| 060-B: fmt-4 page-crossing completion
 	moveal	%a0@(124),%a1		| a1 = as = curproc->p_as
 	bsrw	wb060_xpage
@@ -118,6 +152,18 @@ Lu_done:
 	cmpiw	&7,%d0			| page_base+0.  Format 7 only: that is the only frame
 	bnes	Lu_norec		| carrying an FA at +84, and the only CPU that makes one.
 	movel	%a0@(84),wbf_fa
+| --- ISSUE-10 capture (2026-08-19, src/i10rev040.s).  This is the moment the wall
+|     is real: the resolver gave up (d4 != 0), so the process is about to be told
+|     about a fault it cannot survive -- and the word it tripped over is still
+|     sitting in its own memory, in its own context, unwritten-over.  Nowhere
+|     later is that true.  i10p_probe gates itself on the fault address being in
+|     the kernel VA band, and stops walking for good once it finds something;
+|     every other unresolved user fault pays one masked compare.  a0 and d0/d1 are dead here -- Lu_norec's
+|     first act is bsrw Lwb_dfcinject, which writes d0 before it reads it -- and
+|     the probe preserves everything else, d4 (the return value) included. ---
+	movel	%a0@(84),%sp@-		| the fault address, as the CPU reported it
+	jsr	i10p_probe
+	addqw	&4,%sp
 Lu_norec:
 	bsrw	Lwb_dfcinject		| ISSUE-22 fault injection (see Lwb_dfcinject)
 	bsrw	Lwb_dfccheck		| count DFC corruption whether or not the fix is on
@@ -129,6 +175,19 @@ Lu_norec:
 	.word	0x4e7b,0x0000		| movec %d0,%sfc  -- same contract for the source side
 	addql	&1,wb_dfc_n
 Lu_nodfc:
+| --- ISSUE-10 resolution audit, second hook.  EVERY path this wrapper has joins
+|     here -- resolved, unresolved, write-back denied, far-page failed -- which is
+|     why the audit completes here and not at the resolved tail where i10w_hook and
+|     i10g_hook ride: a fault that returned NONZERO would otherwise leave the whole
+|     block at its ship-time zeros, and reading those back as a measurement is the
+|     error section 13 of the ISSUE-10 document had to record.  Placed AFTER the
+|     DFC/SFC restore so it cannot perturb Lwb_dfccheck's count; it saves and
+|     restores both registers itself.  Dormant (one tstl) until a latch is pending. ---
+	movel	%d4,%sp@-		| arg3 = the verdict this wrapper is about to return
+	movel	%fp@(12),%sp@-		| arg2 = infop, the k_siginfo_t the resolver writes
+	movel	%fp@(8),%sp@-		| arg1 = the frame
+	jsr	i10r_post
+	lea	%sp@(12),%sp
 	movel	%d4,%d0			| restore usrxmemflt's return value
 	moveml	%fp@(-32),%d2-%d5/%a2-%a3
 	unlk	%fp
@@ -151,13 +210,33 @@ krnxmemflt:
 	addqw	&4,%sp
 	movel	%d0,%d4			| save return (0 = demand-fault resolved)
 	tstl	%d4
-	bnew	Lk_done
+	beqs	Lk_replay		| resolved: complete the pending write-back below
+	moveq	&2,%d0			| UNRESOLVED kernel fault, ctx = 2: a pending store is
+	bsrw	wbf_dropwarn		| about to be dropped by skipping the replay -- name it
+	movel	&2,%sp@-		| ISSUE-10 genesis introspection (i10c), ctx = 2: same
+	movel	%fp@(8),%sp@-		| fire-once site, kernel store variant.  Dormant until
+	jsr	i10c_hook		| i10c_on; report-only, preserves d4.
+	addqw	&8,%sp
+	braw	Lk_done			| OUTCOME UNCHANGED: still skip replay
+Lk_replay:
 	moveal	%fp@(8),%a2		| a2 = frame
 	bsrw	wb040_replay
 	tstl	%d0			| ISSUE-42 item 9: the kernel path stops the replay for
 	beqs	Lk_wbok			| the same reason the user path does -- a later WB must
 	addql	&1,wbf_krn_n		| not run as though a failed earlier one completed --
 Lk_wbok:				| but it has no infop and must NOT enter the signal ABI.
+| --- ISSUE-10 write-watch: a KERNEL store into the write-protected user page --
+|     copyout / bcopy / uiomove -- faults here.  i10w_hook names its exact PC. ---
+	movel	&2,%sp@-		| ctx = 2: a KERNEL store
+	movel	%fp@(8),%sp@-		| the frame
+	jsr	i10w_hook
+	addqw	&8,%sp
+| --- ISSUE-10 genesis watch: a KERNEL store of 0x4AFC0000 into the arena would be
+|     named here with its exact PC, exactly as i10w_hook names a kernel propagation. ---
+	movel	&2,%sp@-		| ctx = 2: a KERNEL store
+	movel	%fp@(8),%sp@-		| the frame
+	jsr	i10g_hook
+	addqw	&8,%sp
 	lea	kas,%a1			| 060-B: fmt-4 page-crossing completion, as = &kas
 	bsrw	wb060_xpage
 	tstl	%d0			| item 4: propagate a permanent far-page failure
@@ -177,6 +256,52 @@ Lk_nodfc:
 	movel	%d4,%d0			| restore krnxmemflt's return value
 	moveml	%fp@(-32),%d2-%d5/%a2-%a3
 	unlk	%fp
+	rts
+
+| --- wbf_dropwarn (2026-08-20): name a silently-dropped pending write-back.
+|
+| When a user or kernel memory fault comes back UNRESOLVED (the wrapper's d4 != 0), the
+| replay is skipped and the 68040's deferred write-back is discarded.  If that frame still
+| carried a VALID pending store (WB3S bit 7 set), a real datum has just been dropped on the
+| floor with no trace -- the first-touch-write data-loss this port kept hitting silently.
+| This makes the drop a NAMED, counted, attributable console event (on emulator AND real
+| silicon).  It does NOT change the outcome: the caller still skips the replay and signals,
+| exactly as before -- the cure is a separate change.  Report-only.
+|
+| Called by bsr with the wrapper's frame still live, so %fp is the wrapper's frame pointer
+| and %fp@(8) is the trap frame; d0 = ctx (1 = user, 2 = kernel).  cmn_err preserves
+| d2-d7/a2-a6 (the wrapper's d4 verdict, d5 FSLW and %fp included); d0/d1/a0/a1 are dead at
+| both call sites.  Gated on a format-7 frame, so it never reads write-back fields on a
+| 68060 (which pushes a format-4 frame and has no such fields).  Rate-limited: it counts
+| every drop but prints only the first wbf_drop_max, so a fault flood cannot bury the console.
+	.globl	wbf_dropwarn
+wbf_dropwarn:
+	movel	%d2,%sp@-		| d2 = ctx, held across the cmn_err (which preserves it)
+	movel	%d0,%d2
+	moveal	%fp@(8),%a0		| the wrapper's trap frame
+	moveq	&0,%d0
+	moveb	%a0@(70),%d0		| format/vector byte: high nibble = frame format
+	lsrb	&4,%d0
+	cmpiw	&7,%d0
+	bnes	Lwd_ret			| not a 68040 format-7 frame: no write-back fields to read
+	moveq	&0,%d0
+	movew	%a0@(78),%d0		| WB3 status word
+	btst	&7,%d0			| bit 7 = a VALID pending write-back
+	beqs	Lwd_ret			| none pending: nothing was dropped
+	addql	&1,wbf_dropped_n	| UNCAPPED: every dropped valid write-back
+	movel	wbf_dropped_n,%d0
+	cmpl	wbf_drop_max,%d0
+	bhis	Lwd_ret			| past the notice budget: count on, spare the console
+	movel	%a0@(66),%sp@-		| the faulting instruction's PC
+	movel	%a0@(92),%sp@-		| WB3D -- the datum being dropped
+	movel	%a0@(88),%sp@-		| WB3A -- where it should have landed
+	movel	%d2,%sp@-		| ctx (1 = user, 2 = kernel)
+	pea	Lwd_msg
+	pea	2			| cmn_err level 2 -- the console NOTICE level userspace040 uses
+	jsr	cmn_err
+	lea	%sp@(24),%sp
+Lwd_ret:
+	movel	%sp@+,%d2
 	rts
 
 | --- Lwb_dfccheck (ISSUE-22, 2026-07-28): does this fault return with a DIFFERENT DFC than it
@@ -988,6 +1113,19 @@ wbf_code:
 	.globl	wbf_fa
 wbf_fa:
 	.long	0			| the CPU's fault address for the denied byte (frame+84)
+| --- ISSUE-10 safety net (2026-08-20, wbf_dropwarn): a valid pending write-back discarded
+|     because its fault came back unresolved.  Report-only; the outcome is unchanged. ---
+	.globl	wbf_dropped_n
+wbf_dropped_n:
+	.long	0			| UNCAPPED: unresolved faults whose 040 frame still held a
+					| VALID pending store, silently dropped by the skipped replay
+					| -- the first-touch-write data-loss class, now counted
+	.globl	wbf_drop_max
+wbf_drop_max:
+	.long	8			| emit the console NOTICE for only the first this-many drops,
+					| then count quietly so a fault flood cannot bury the console
+Lwd_msg:
+	.asciz	"unresolved fault dropped a pending write-back: ctx=%d addr=%x data=%x pc=%x"
 	.balign	4
 
 | --- ISSUE-22 (2026-07-28): DFC restore, and the one .data long that turns it off ---
