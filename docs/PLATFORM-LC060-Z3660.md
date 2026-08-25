@@ -86,6 +86,19 @@ That cuts both ways, and the list must say both:
 not. A first boot that survives is not a coherency result — a wild write of this class is silent
 and is caught by whole-file checksums and canary binaries, not by "it booted".
 
+> **Amended 2026-08-25 by measurement (attempt 4, `docs/060-F4-M2-ATT4-RESULTS-260825.md`).** The
+> piscsi driver's maintenance has now executed on real 68060 caches, and a **single-variable
+> three-byte A/B** settled one direction of the question: with `z3660_cache = 0` the boot dies at
+> `swapconf lookupname … error 20`, with it armed the same lookup succeeds and the boot enters
+> userland. `z3660_push_n = 189` and advancing proves the maintenance ran on the path that
+> mattered, and a companion probe showed a CPU-side `cpusha dc` between two identical lookups
+> changed nothing — so the wrong bytes were in RAM and the surviving mechanism is the **write-back**
+> form of the defect. What may now be claimed is exactly that: *the driver's maintenance, as
+> implemented, closes that stop on this silicon.* What still may **not** be claimed is that the
+> drivers are coherent here — that is a load protocol (15/15 cycles, 8/8 canary binaries
+> byte-identical) and **the canary is still owed**. One boot is at best one cycle. Nothing about
+> `z3660eth` was measured; its arm was deliberately left at 0.
+
 ### 2.3 A real bus — but an FPGA-mediated one, which is a different bus from every `HW` row.
 
 RAM is Zynq DDR presented through an FPGA, not a local 68k bus. Three named consequences:
@@ -153,6 +166,13 @@ calibrated mouse click through the KVM, and it is a workaround, not a fix.
 **May not claim:** any result whose method requires unattended boots — long soaks, boot-loop
 statistics, power-cut durability with an automatic restart. Those shapes are not available on this
 platform today, and saying "we did not run them" is different from "they passed".
+
+> **Amended 2026-08-25 (attempt 4).** The requester is worse than "one dismissal per boot": on one
+> of three boots it **re-raised on the post-reset pass** and needed a second `Escape`, which it had
+> not done on any earlier run. So the dismissal count per boot is not a constant either. Its A2
+> ladder reproduced exactly across attempts (Board 1 Z2 vendor 15163 product 200 `$40000000` 4MB
+> Bad; Board 2 Z2 5195 3 `$00E90000` 64KB OK; Board 3 Z3 5195 1 `$10000000` 128MB OK) — the ghost
+> board still reads vendor 15163 while everything the card itself emits reads 5195.
 
 ### 2.6 The memory contract is undetermined — both shapes are still live.
 
@@ -228,6 +248,12 @@ reading `PCR` on both sides and saying so. The Mercury's `916.1 dhry/MHz` refere
 `ESS = 1`; comparing a native-boot number to it without that annotation compares two different
 machines.
 
+> **Confirmed 2026-08-25 by measurement, three independent silicon readings** (attempts 1, 3 and 4,
+> `pcr_pre = pcr_post = 04310402` every time): **bit 0 `ESS` reads CLEAR** on this platform, exactly
+> as the native-boot argument predicted. This is no longer an expectation — it is a reading, and the
+> annotation requirement above is now mandatory rather than precautionary. Bit 1 `DFP` reads set,
+> which is the FPU-disable bit and is consistent with the part having no FPU.
+
 ### 2.10 There is no oracle. Zero LC060 results exist anywhere, including the identity reading.
 
 `STATUS.md`'s matrix has four `untested, unknown` cells for `68LC060 / EC variants`, and no LC060
@@ -240,6 +266,14 @@ that expectation rests on **two implementations agreeing** — an emulator model
 `0x0431`, and the card's own extension ROM gates its FPU-disable code on `== $430` and branches
 away otherwise — and **not on the manual**. A real part reading `$0430` with no FPU is a possible
 outcome and would be a finding about everyone's gate, not a failure of the boot.
+
+> **Settled 2026-08-25 by measurement.** The PCR ID high word reads **`$0431`** on this part —
+> three independent silicon readings (attempts 1, 3 and 4), identical to the digit. The possible
+> outcome this section registered, "a real part reading `$0430` with no FPU", did **not** occur, so
+> nobody's gate is wrong. The prediction is discharged; the sentence above stays as the record of
+> what it rested on before the measurement existed. The **oracle problem itself is unchanged**:
+> these are still the only LC060 readings in existence anywhere in this project, so they are the
+> reference rather than a check against one.
 
 **The vector-11 probe remains the authoritative negative probe**, exactly as
 `docs/contracts/FPU-TIER1-ENABLE-SPEC.md:238-240` pre-refutes the shortcut: *"Do not simply clear
@@ -265,6 +299,14 @@ f60_fpudis_nofpu_n == f60_fpudis_n
 
 and the outcome, **never the arm split**. A prediction that pins the split will score a correct
 kernel as a miss the first time silicon classifies differently from the emulator.
+
+> **Still open as of 2026-08-25 (attempt 4), and here is why that is not the same as "it held".**
+> The invariant has now been read on silicon three times and passed every time — but always as
+> `0 == 0 + 0`, because no boot has yet executed a single floating-point instruction: every run
+> stopped in the kernel or in `init` before any userland FP could happen. A trivially satisfied
+> invariant is not evidence about the split. **The arm split remains unmeasured on real LC
+> silicon**, and the first boot that reaches a shell owes a deliberate FP event (the standing
+> `awk 'BEGIN{print 1.5*2.5}'` probe) before any `f60_*` row is claimed.
 
 ---
 
