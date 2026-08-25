@@ -41,6 +41,39 @@
 | Plus one free check: an ODD frame pointer is refused outright, because the next
 | thing the walk does with it is a longword read.
 |
+| RULE 4 -- THE RETURN ADDRESS (2026-08-25, the first boot on real 68LC060 silicon).
+| The three bounds above validate the frame POINTER.  Nothing validated the return
+| address read out of it, and the walk's very next act is to dereference it:
+|
+|     5962e:  moveal %fp@(-4),%a0 / addqw #4,%a0 / movel %a0@,%d1
+|     59636:  subql  #6,%d1                    -> the call instruction to decode
+|     59640:  movew  %a0@,%d0                  -> and eight more reads follow
+|
+| The walk decodes the call by reading [ret-6, ret) -- one word, sometimes a
+| longword two bytes in -- to tell `jsr abs.l` (0x4EB9) from `bsr.l` (0x61FF) and
+| the rest.  The last frame of every pid-0 walk is u+0x1FC0, the constant `_start`
+| loads into %sp, whose return-address slot was never written.  It reads 0, so the
+| walk read the instruction word at 0-6 = **0xFFFFFFFA** and took a second access
+| fault INSIDE the panic printer:
+|
+|     PANIC: KERNEL FAULT ... pc=0x800D578      <- the fault being reported
+|     40001FC0:                                 <- printed, then the walk faulted
+|     WARNING: DBG krnxflt FAILEXIT w=2 va=FFFFFFFA rw=1 depth=1
+|     DOUBLE PANIC: KERNEL FAULT ... pc=0x8059640   <- backtrace+0x9C
+|
+| On an emulated bus that read returns garbage and the walk prints one wrong line.
+| On real silicon it is a bus error, and it costs the tail of the backtrace -- the
+| evidence the panic path exists to produce.  A panic path may not dereference an
+| unvalidated pointer.  So the return address must land in the kernel's own text
+| before anything reads through it, and the borrow out of `ret - 6` is itself the
+| test that catches the zero slot.
+|
+| Refusing it STOPS the walk rather than skipping the frame, which is correct here:
+| the only frame that fails this test is the one above the outermost, and the walk
+| was going to end there anyway.  The frame address still prints first, so the
+| output loses nothing but the crash.  This code runs only on a path that is
+| already panicking, so it cannot change a boot that does not panic.
+|
 | HOW IT HOOKS.  patch_btwalk.py replaces the 26 bytes of the old test with
 | `bsr.l bt_frame_ok` and NOP padding, leaving the `tstl %d0 / beqw` that follows
 | it untouched -- so this routine's contract is exactly the old code's: return
@@ -70,6 +103,7 @@
 	.globl	bt_frame_ok
 bt_frame_ok:
 	movel	%d1,%sp@-
+	movel	%a0,%sp@-		| rule 4 needs an address register; %a6 is untouched
 	movel	%a6@(-4),%d0		| the candidate frame pointer
 | --- first frame of this walk?  backtrace seeds it with its own %fp ---
 	cmpl	%a6,%d0
@@ -92,24 +126,43 @@ Lbt_armed:
 	cmpil	&0x40000000,%d0
 	bcsw	Lbt_krn
 	cmpil	&0x40040000,%d0
-	bcsw	Lbt_ok
+	bcsw	Lbt_ret
 Lbt_krn:
 | --- ... or the kernel's own data+bss, where pstack and the interrupt stack are ---
 	cmpil	&edata,%d0
 	bcsw	Lbt_bad
 	cmpil	&end,%d0
 	bccw	Lbt_bad
+| --- 4. RETURN ADDRESS: the frame is good, so reading it is safe -- but the walk is
+|     about to dereference what it finds, at [ret-6, ret).  Bound that first. ---
+Lbt_ret:
+	moveal	%d0,%a0
+	movel	%a0@(4),%d1		| this frame's saved return address
+	subql	&6,%d1			| -> the call instruction the walk decodes
+	bcsw	Lbt_badret		| borrowed: ret was 0..5, the never-written slot
+	btst	&0,%d1
+	bnew	Lbt_badret		| odd: the walk reads words through it
+	cmpil	&_start,%d1
+	bcsw	Lbt_badret		| below the kernel's own text
+	cmpil	&etext,%d1
+	bccw	Lbt_badret		| at or past the end of it
 Lbt_ok:
 	movel	%d0,bt_prev
 	subql	&1,bt_budget
 	addql	&1,bt_frames
 	moveq	&1,%d0			| continue the walk
+	movel	%sp@+,%a0
 	movel	%sp@+,%d1
 	rts
+Lbt_badret:
+	addql	&1,bt_badret
+	movel	%d1,bt_lastbadret	| the call site we refused to read: diagnostic
+	braw	Lbt_bad
 Lbt_bad:
 	addql	&1,bt_stops
 	movel	%d0,bt_laststop		| the frame that ended the walk: diagnostic
 	moveq	&0,%d0			| stop
+	movel	%sp@+,%a0
 	movel	%sp@+,%d1
 	rts
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
@@ -142,5 +195,15 @@ bt_prev:
 	.long	0
 	.globl	bt_budget
 bt_budget:
+	.long	0
+| Rule 4.  Appended, never inserted: every address above is published in a counter
+| recipe, and status-facts.sh derives them from the symbol table of the image being
+| booted.  On a pid-0 panic bt_badret reads 1 -- the top-of-stack frame always fails
+| this test, and that is the walk ending, not a defect.
+	.globl	bt_badret
+bt_badret:
+	.long	0
+	.globl	bt_lastbadret
+bt_lastbadret:
 	.long	0
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

@@ -293,6 +293,11 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segmapdbg.s" -o "$HERE/build/segmapdbg.
 # u-block plus the kernel's own data+bss (where pstack lives) and adds the two
 # bounds that make widening safe: strictly increasing frame pointers, and a hard
 # 64-frame cap.
+# Rule 4 (2026-08-25, first silicon): the walk dereferences the RETURN ADDRESS it
+# reads out of each accepted frame, at [ret-6, ret), and nothing bounded that.  The
+# last pid-0 frame is u+0x1FC0 whose slot reads 0, so the panic printer read
+# 0xFFFFFFFA and double-faulted on real silicon.  The island now bounds the return
+# address to [_start, etext) before anything reads through it.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/btwalk.s" -o "$HERE/build/btwalk.o"
 # usptrap (2026-08-21, ISSUE-106): PID 1 dies at exec with a kernel-shaped user
 # stack pointer (fa 0x40001FC0 == u+0x1FC0, the constant _start loads into %sp).
@@ -552,6 +557,7 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          page_init page_init_orig pgz_magic pgz_calls pgz_npages pgz_dirty_n pgz_held_n \
          smu_panic_latch smu_magic smu_n smu_why smu_scan smu_bucket smu_want smu_pp \
          bt_frame_ok bt_magic bt_walks bt_frames bt_stops bt_laststop bt_prev bt_budget \
+         bt_badret bt_lastbadret \
          unt_latch unt_magic unt_n unt_magic2 unt_usp unt_uar0 unt_comm0 unt_comm1 unt_u0 unt_u1 \
          setregs setregs_orig srg_utraps srg_magic srg_match srg_ut_stamp srg_stamp1 srg_stamp2 \
          srg_ut_n srg_n srg_pushslot srg_slot_at srg_uar0_pre srg_uar0_post srg_ar0_0 srg_pcb0_post \
