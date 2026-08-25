@@ -6152,7 +6152,15 @@ the fix is emulator-side.
 
 `test-tools/burstloop11.sh` runs `/tmp/hat_dup_cow`, and **there is no source for it anywhere in
 this repository** — not in `test-tools/`, not under any other name, and no `.c` file mentions it.
-Neither `docs/ACCEPTANCE.md` nor `test-tools/README.md` records that omission.
+
+> **Correction (2026-08-25, same day).** This entry first said nothing recorded the omission. That
+> is wrong, and the way it was wrong is worth keeping. `test-tools/burst4.sh` documents it
+> prominently, in a block headed **STILL MISSING**, naming every NAS path the binary survives at
+> and stating what a run without it does and does not prove. I searched `ACCEPTANCE.md` and
+> `test-tools/README.md` — the two files I expected it to be in — and concluded from their silence
+> that the project was silent. The script that needs the binary was the obvious place to look and
+> the one place I did not. Note also who wrote that block: I did, on 2026-08-19, when recovering
+> `burst4.sh` from the NAS.
 
 So step 6 of the acceptance procedure — burst and stress — cannot be run from a fresh clone. It
 can only be run on a machine where some earlier session happened to leave the binary behind, and
