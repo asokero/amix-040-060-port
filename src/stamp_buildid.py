@@ -9,6 +9,17 @@ per-day counter kept in <builddir>/.build-seq, shared across the 040 variants
 so any two kernels built the same day are distinguishable
 (e.g. " 68040-260709-01", " 68040-260709-02", ...).
 
+That promise held for exactly as long as there was one build directory.  Since 2026-08-19
+this project is built on two machines, and the counter is per-DIRECTORY: "68060-260825-03"
+from one and "68060-260825-03" from the other were different kernels with the same name --
+in a field that every acceptance record uses as the identity of what was tested.  Unlike
+the issue-number collision found the same week, this one produces no merge conflict, no
+build error, and nothing that would ever draw attention to itself.
+
+So the sequence is now PARTITIONED per machine, and this script performs the lookup itself
+rather than asking anyone to remember a range: `git config user.email` -> CONTRACTS.md via
+tools/blocks.py.  A rule that can be skipped eventually is; a mechanism cannot be.
+
 The reserved literal in inituname040.s is " 68040-000000-00" (16 chars); this
 script overwrites those 16 chars in place (the trailing NUL is left intact), so
 the field length never changes.  It resolves the `buildid` symbol and the .data
@@ -49,7 +60,25 @@ def sym_value(path, name):
             return int(m.group(1), 16)
     die(f"{path}: no `{name}` symbol (inituname040.o not linked?)")
 
+def seq_block():
+    """This machine's build-id sequence range, from CONTRACTS.md.
+
+    Exit 3 from blocks.py means the identity holds no block.  That is a hard stop rather
+    than a fallback to the old shared counter: an unpartitioned stamp is precisely the
+    silent collision this lookup exists to prevent, so producing one "just this once" would
+    defeat the mechanism at the only moment it matters.
+    """
+    tools = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, 'tools')
+    r = subprocess.run([sys.executable, os.path.join(tools, 'blocks.py'), 'buildseq'],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.stderr.write(r.stderr)
+        die("no build-id block for this machine -- claim one in CONTRACTS.md (see above)")
+    lo, hi = (int(x) for x in r.stdout.split())
+    return lo, hi
+
 def next_seq(builddir, today):
+    lo, hi = seq_block()
     seqfile = os.path.join(builddir, '.build-seq')
     date, seq = None, 0
     if os.path.exists(seqfile):
@@ -58,7 +87,13 @@ def next_seq(builddir, today):
             seq = int(s)
         except ValueError:
             pass
-    seq = seq + 1 if date == today else 1
+    # A stored value from outside this block is a pre-partition file, or a clone of someone
+    # else's build tree.  Restart inside the block rather than carrying it forward.
+    seq = seq + 1 if (date == today and lo <= seq <= hi) else lo
+    if seq > hi:
+        die(f"build-id sequence {lo}-{hi} exhausted for today ({seq} > {hi}).  "
+            f"Take a second block in CONTRACTS.md rather than spilling into another "
+            f"machine's range -- a spill is silent, an extra row is not.")
     with open(seqfile, 'w') as f:
         f.write(f"{today} {seq}\n")
     return seq

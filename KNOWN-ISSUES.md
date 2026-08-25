@@ -2,6 +2,11 @@
 
 > **Canonical status: [`STATUS.md`](STATUS.md).** Where this file and STATUS.md disagree,
 > STATUS.md is right and this file is history.
+>
+> **Do not mint a number by reading this file.** Issue numbers are allocated in per-machine
+> blocks — run **`tools/next-issue.sh`**, which resolves yours from `git config user.email`.
+> The registry and the reason are in [`CONTRACTS.md`](CONTRACTS.md). Taking "the highest
+> number here, plus one" is how 46–49 came to mean two different things each.
 
 ## ISSUE-1: our rebuilt `unix_boot` causes a 68030 MMU Configuration Error at the kernel's `pstart` (clib2/bebbo build)
 

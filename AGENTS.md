@@ -22,6 +22,7 @@ Fetch these when the task needs them, not at the start — both are large:
 |---|---|
 | `KNOWN-ISSUES.md` | every defect found, including the ones that were not defects. Search it for the subsystem you are touching |
 | `docs/contracts/` | the static contract a source unit was written against. `docs/contracts/INDEX.md` maps units to contracts |
+| `CONTRACTS.md` | what the parallel lines have agreed **between** themselves — allocation blocks, and the request channel. Canonical for those agreements |
 
 **Do not add a parallel description of status, of the build, or of the override mechanism** —
 those subjects are owned. New acceptance records and new contracts are a different matter: this
@@ -142,6 +143,13 @@ from where it was written.
 
 ## How claims are made here
 
+* **Never take an issue number by hand — run `tools/next-issue.sh`.** This project is
+  developed on more than one machine, so issue numbers are allocated in per-machine blocks
+  recorded in `CONTRACTS.md`; the script resolves yours from `git config user.email`. Reading
+  `KNOWN-ISSUES.md`, finding the highest number and adding one is a correct-looking inference
+  that produced four duplicate numbers on 2026-08-19, because two lines drew it at once. The
+  same partition covers build ids, but there `src/stamp_buildid.py` does the lookup itself and
+  nothing is left to remember. `tools/check-blocks.sh` verifies a range before you merge it.
 * **Read the magic word before believing a counter.** Every counter block starts with one
   (`fpc_`, `wbf_`, `f60_`, …). A stale address does not fail — it returns a plausible number from
   whatever now lives there. `tools/status-facts.sh` prints the current addresses and the magic
