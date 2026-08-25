@@ -605,10 +605,14 @@ Lrp_flush:
 |                    highest priority: segu pages have pp!=NULL but must NOT get
 |                    the managed-RAM class -- resume/prumap alias the same frames)
 |   pp == NULL    -> 0x40 NCS  (hat_devload path: unmanaged PFN / MMIO;
-|                    noncacheable-serialized in B1+B2)
+|                    noncacheable-serialized in B1+B2) UNLESS the pfn falls in a
+|                    registered framebuffer interval, which gets 0x60 NC -- see
+|                    Lcm_dev and hat_cm_fb below (Zorro III track, change D)
 |   else          -> hat_cm_ram (managed RAM stage class: 0x00 WT in B1;
 |                    B2 flips the DATA global to 0x20 copyback -- one switch)
-| Inputs: fp@(8) = seg (arg0), a2 = pp (live in all three paths).  Clobbers d0.
+| Inputs: fp@(8) = seg (arg0), a2 = pp (live in all three paths), fp@(20) = pfn
+| (the same slot in all three constructors -- checked, and it is what makes the
+| framebuffer test possible without touching any signature).  Clobbers d0.
 | DORMANT until CACR DC-enable + DTT0 handling (Step B, HW-gated): with the data
 | cache off these bits are ignored by the 040, so this is a no-op port that can
 | run (and be byte-inspected) on the emulator.
@@ -624,8 +628,114 @@ Lcm_sel:
 Lcm_nc:
 	oril	&0x60,%fp@(-44)		| segu window -> NC
 	rts
+| --- Lcm_dev: unmanaged PFN.  Default NCS, except for pfns inside a registered
+| framebuffer interval (change D, 2026-08-19).
+|
+| WHY A FRAMEBUFFER IS DIFFERENT.  Serialisation exists so MMIO register accesses
+| cannot be reordered.  A framebuffer is memory-like and does not need it, and on
+| a Zorro III aperture the serialisation would eat the bandwidth the wider bus is
+| there to deliver.  It buys nothing on Zorro II -- measured 2026-08-19, the bus
+| is saturated there (docs/Z3-BUSBENCH-VA2000-Z2-260819.md) -- which is exactly
+| why it belongs to the Zorro III work and not to a standalone "optimisation".
+|
+| ORDERING IS SAFE, and it was read out of the manuals rather than assumed:
+| write-to-write order is architectural on both CPUs, so an NC framebuffer store
+| cannot be overtaken by a later NCS command-register store, and this survives
+| enabling the 68060 store buffer.  docs/Z3-CACHE-CLASS-ORDERING-260819.md.
+|
+| The table is compared with ABSOLUTE addressing so this costs no address
+| register: a0/a1 are scratch at all three call sites but relying on that would
+| be an invariant nobody restates when the constructors change.
+|
+| Empty table (the default, both longs zero) can never match: `pfn < 0` is false
+| for every unsigned pfn, so both tests fall through to NCS and the behaviour is
+| bit-for-bit what it was before this change.
 Lcm_dev:
-	oril	&0x40,%fp@(-44)		| unmanaged PFN -> NCS
+	movel	%fp@(20),%d0		| pfn being mapped
+	cmpl	hat_cm_fb+0,%d0
+	bcs	Lcm_d1			| pfn < lo0 -> not in slot 0
+	cmpl	hat_cm_fb+4,%d0
+	bcs	Lcm_fb			| lo0 <= pfn < hi0 -> framebuffer
+Lcm_d1:
+	cmpl	hat_cm_fb+8,%d0
+	bcs	Lcm_dncs
+	cmpl	hat_cm_fb+12,%d0
+	bcs	Lcm_fb
+Lcm_dncs:
+	oril	&0x40,%fp@(-44)		| unmanaged PFN -> NCS (unchanged default)
+	addql	&1,cmf_ncs_n
+	movel	%a4,cmf_ncs_leaf	| a4 = &leaf, live in all three constructors
+	rts
+Lcm_fb:
+	oril	&0x60,%fp@(-44)		| registered framebuffer -> NC, not serialised
+	addql	&1,cmf_fb_n
+	movel	%a4,cmf_fb_leaf
+	rts
+
+| ===========================================================================
+| hat_cm_fb_add(lo_pfn, hi_pfn) -- register one half-open framebuffer PFN
+| interval.  Returns 1 if the interval is installed (or was already), 0 if it
+| was refused.  Change D, 2026-08-19.
+|
+| THE OWNERSHIP CONTRACT, which is the part that is easy to get wrong:
+|   * intervals are half-open [lo, hi) in PAGE FRAME NUMBERS, page-aligned by
+|     construction;
+|   * a board's interval must be installed BEFORE the device can be opened or
+|     mapped, i.e. before any first fault on it;
+|   * once installed it is IMMUTABLE for the lifetime of every mapping, and it is
+|     never removed on last close -- a mapping can outlive the file descriptor
+|     that created it;
+|   * re-registering the identical interval succeeds and changes nothing, so an
+|     init path that runs twice is harmless.
+| Changing a live interval is refused rather than supported.  The retained 2 KiB
+| segdev stepping means offsets 0 and 0x800 fault to the SAME 4 KiB pfn, so a
+| mapping is re-classified through Lcm_sel more than once; that is only idempotent
+| while the classification is stable.  And a same-pfn reclassification would leave
+| one leaf in the old class and another in the new one, which is the alias hazard
+| docs/contracts/CM-PTE-WRITER-MATRIX.md refuses without a cache-maintenance
+| contract.  An immutable table means that case cannot arise.
+|
+| PUBLICATION.  The two stores go to kernel .data, which lives below 1 GB and is
+| therefore reached through the DTT0 identity window uncached -- the same
+| assumption bp_map040 already relies on -- so no cache push is needed.  The
+| STORE ORDER is load-bearing: LO is written first, because a slot with LO set and
+| HI still zero matches nothing, while HI set and LO still zero would match every
+| pfn below HI.  HI is the store that arms the interval.
+| ===========================================================================
+	.globl	hat_cm_fb_add
+hat_cm_fb_add:
+	linkw	%fp,&0
+	moveml	%d2-%d3/%a2,%sp@-
+	movel	%fp@(8),%d2		| lo
+	movel	%fp@(12),%d3		| hi
+	clrl	%d0
+	cmpl	%d2,%d3
+	blsw	Lfa_out			| hi <= lo: empty or inverted -> refuse
+	lea	hat_cm_fb,%a2
+	moveq	&2,%d1			| slot count
+Lfa_loop:
+	movel	%a2@(0),%d0
+	orl	%a2@(4),%d0
+	beqw	Lfa_free		| both zero -> slot unused
+	cmpl	%a2@(0),%d2
+	bne	Lfa_next
+	cmpl	%a2@(4),%d3
+	bne	Lfa_next
+	moveq	&1,%d0			| identical interval already installed
+	braw	Lfa_out
+Lfa_next:
+	addal	&8,%a2
+	subql	&1,%d1
+	bnew	Lfa_loop
+	clrl	%d0			| table full -> refuse
+	braw	Lfa_out
+Lfa_free:
+	movel	%d2,%a2@(0)		| LO first -- see PUBLICATION above
+	movel	%d3,%a2@(4)		| HI arms the interval
+	moveq	&1,%d0
+Lfa_out:
+	moveml	%fp@(-12),%d2-%d3/%a2
+	unlk	%fp
 	rts
 
 | ===========================================================================
@@ -1821,6 +1931,88 @@ Lhfa_n:
 | instruction fetch does not snoop (docs/ISSUE38-ICODE-CACHE-FINDING-260730.md,
 | src/cb_icode040.s).  The WRITE-THROUGH control is now the derived image:
 |   python3 src/patch_b2_flip.py build/unix-040 build/unix-040-wt --wt
+| ===========================================================================
+| cmf_* -- the framebuffer cache-class census block (change D, 2026-08-19).
+|
+| WHY IT RECORDS AN ADDRESS RATHER THAN A VALUE.  What has to be proved is what
+| ended up IN THE PAGE TABLE, not what the selector decided; those differ if any
+| later modifier rewrites the CM field.  So each branch stores the LEAF ADDRESS
+| it classified, and the census reads the live PTE from that address afterwards
+| through /dev/mem (kernel .data and the leaf tables both sit below 1 GB and are
+| identity-mapped, which is what kpeek already relies on).  The counters say the
+| branch ran at all; the address says where to look.
+|
+| a4 holds &leaf at all three Lcm_sel call sites (Lpfnok, Lwleaf, Lreplace) --
+| each one stores through it immediately after returning.  INDEPENDENTLY VERIFIED
+| against the linked image: the three calls are the only ones in the image, they
+| are at 0xd7b10 / 0xd7b84 / 0xd7c80, the callee does not modify a4, and a4 is
+| still the leaf at each store.  fp@(20) is the pfn argument at all three, which
+| is the other invariant change D rests on.
+|
+| Unconditional rather than kdbg_on-gated: two instructions on the pp==NULL path
+| only, no effect on managed-RAM loads, no live register or condition code
+| disturbed, and every hat_pteload exit already pays for cpusha bc + pflusha.
+| A gate would weaken the acceptance evidence rather than protect anything.
+| hat_pfnmiss_n a few hundred lines up is the precedent for an uncapped counter
+| here.  It is an INSTRUMENT: keeping it is a decision to take deliberately, not
+| something that should become permanent telemetry by drifting.
+|
+| WHAT IT DOES AND DOES NOT SUPPORT -- state these before trusting a reading:
+|   * cmf_*_n count SELECTOR EVENTS, not unique pages.  The retained 2 KiB segdev
+|     stepping can classify the same 4 KiB leaf twice, so require a positive
+|     delta, never exactly one.
+|   * cmf_magic is an IMAGE SIGNATURE, not a consistency guard: it says the
+|     addresses belong to this build, not that the latch is fresh.
+|   * the latch is valid only after the faulting access has returned and before
+|     the mapping is torn down.
+|   * it is a SAMPLER.  Fault ONE page at a time with everything else quiescent,
+|     or the most recent leaf belongs to somebody else.
+|   * a leaf address masked to its table base describes 64 pages = 256 KiB ONLY.
+|     A 4 MB aperture spans at least 16 such tables and a 32 MB one at least 128,
+|     so this cannot seed a whole-aperture walk.  Minimum and maximum leaf
+|     addresses do not repair that, because page-table allocation order is not VA
+|     order.
+| A complete per-VA census would need the test process's root.  The cheap way to
+| get it, if it is ever wanted, is to latch it at the same event: fp@(8) is the
+| seg, seg@(12) its address space, as@(20) the root hat_pteload already uses.
+| Deliberately NOT added: nothing uses it yet, and unexercised code is not code
+| that works.
+| ===========================================================================
+	.globl	cmf_magic
+	.balign 4
+cmf_magic:
+	.long	0x434d4642		| "CMFB"
+	.globl	cmf_fb_n
+cmf_fb_n:
+	.long	0			| leaves classified as registered framebuffer (0x60)
+	.globl	cmf_fb_leaf
+cmf_fb_leaf:
+	.long	0			| address of the most recent such leaf
+	.globl	cmf_ncs_n
+cmf_ncs_n:
+	.long	0			| leaves classified as unmanaged/MMIO (0x40)
+	.globl	cmf_ncs_leaf
+cmf_ncs_leaf:
+	.long	0			| address of the most recent such leaf
+
+| --- hat_cm_fb: the registered framebuffer PFN intervals, two slots of
+| {lo, hi} half-open PFNs, all zero = none registered = pre-change-D behaviour.
+| Two slots because the VA2000 driver supports two boards; written only by
+| hat_cm_fb_add, read only by Lcm_dev.  GLOBAL so a census probe can read it.
+|
+| LAYOUT CONTRACT: this table must stay IMMEDIATELY AFTER the cmf_* block above,
+| i.e. at cmf_magic+20, because test-tools/cmfcensus.c reads the intervals at
+| that fixed offset from the one address it is given.  Moving it apart is
+| allowed, but then the tool needs a second address -- do not let them drift
+| silently, which is the whole failure mode the magic word exists for.
+	.globl	hat_cm_fb
+	.balign 4
+hat_cm_fb:
+	.long	0			| slot 0 lo
+	.long	0			| slot 0 hi
+	.long	0			| slot 1 lo
+	.long	0			| slot 1 hi
+
 	.globl	hat_cm_ram
 	.balign 4
 hat_cm_ram:

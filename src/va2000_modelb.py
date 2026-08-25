@@ -2,9 +2,11 @@
 # va2000_modelb.py -- Model B (4 KiB page frame) adaptation of the MNT VA2000
 # driver source for the EXPERIMENTAL 040 va2000 kernel (2026-07-24).
 #
-# The upstream driver (VA2000_SRC, repo va2000-amix) targets the
-# vanilla 68030/2 KiB kernel (that repo is a SEPARATE project -- DO NOT MODIFY
-# IT).  It has exactly ONE page-size dependency: va2000mmap() returns
+# The driver (VA2000_SRC, repo va2000-amix) is a SEPARATE project that also has
+# to keep building for the vanilla 68030/2 KiB kernel.  (Until 2026-08-19 this
+# header said "DO NOT MODIFY IT"; the Zorro III track does modify it, on its own
+# branch, and the pin below is what keeps that honest.)  Against the vanilla
+# kernel it has exactly ONE page-size dependency: va2000mmap() returns
 # phystopfn(pa) with the stock 2 KiB shift `>> 11` (PNUMSHFT=11).  Our 040
 # kernel uses 4 KiB pages (Model B, PNUMSHFT=12), so a VM mapping built from an
 # unconverted >>11 value would land at (pa>>11)<<12 = 2*pa -- the same
@@ -68,10 +70,15 @@ NEW = ("        /* Model-B (4 KiB page, PNUMSHFT=12) adaptation of the vanilla\n
 #
 # Same hazard, same fix as the Xsvga `exp` object whose path used to default into a /tmp scratchpad:
 # pin the content and fail closed.  Updating the pin is a deliberate act; drifting past it is not.
-EXPECT_SHA256 = "f5aa2c04beb3a7513380769f106c6b3aedf4233383116cdde52d94d8d7bd3595"
-EXPECT_BRANCH = "va2000-8bit-support"     # va2000-amix commit 3f3af25
-EXPECT_NOTE = ("the 8-bit display mode support wolf3d needs lives ONLY on this branch; "
-               "main is 16-bit only")
+# Re-pinned 2026-08-19 for the Zorro III track: the driver is now address-agnostic
+# (va2000_regs[] for register access, va2000_boards[] still PHYSICAL for d_mmap) and
+# takes its aperture size from AutoConfig instead of a 4 MB constant.  That work sits
+# on wip/zorro3, which BRANCHED FROM the 8-bit branch -- so the wolf3d 8-bit support
+# is still in, and this pin still fails closed if the checkout moves back to main.
+EXPECT_SHA256 = "97ac5cd1483bad520af9e22cf3e2cbfa092abca3a5b8122fedc00ef09674c394"
+EXPECT_BRANCH = "wip/zorro3"              # va2000-amix, branched from va2000-8bit-support
+EXPECT_NOTE = ("the 8-bit display mode support wolf3d needs, plus the Zorro III "
+               "address-agnostic work; main is 16-bit only and Zorro II only")
 
 
 def check_provenance():

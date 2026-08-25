@@ -84,7 +84,11 @@ address by −16 MiB, which is why `tools/status-facts.sh` takes a load base.
 
 **The current image has run on 68040 hardware.** `68060/68040-260812-06` was accepted on an
 A3640 on 2026-08-13 — the first dual-silicon image here — which is what closed ISSUE-42. The
-machine carries whichever CPU card is physically installed; as of 2026-08-13 that is the A3640.
+machine carries whichever CPU card is physically installed. **As of 2026-08-19 that is the Mercury
+with the 68060 again** — the A3640 went back out after the 2026-08-13 session, so any measurement
+compared against an 060-era number (the `busbench` Zorro II baseline among them) is comparable
+today. This line is dated deliberately: it was read as current on 2026-08-19 and was wrong by six
+days, which cost an argument.
 
 The 040 run-list `docs/archive/NEXT-040-SESSION-RUNLIST.md` is **partly** discharged by that
 session: items 1 and 2 (ISSUE-42, and a 040 hardware baseline) are done, and the battery, burst
@@ -185,7 +189,15 @@ into. Codex's analysis found **no technical ceiling**; the blocker is that the b
 algorithm does not recognise A and B as one pool. Bounded boot/startup work, not a counter bump.
 
 **Zorro III.** The Z3 device aperture is not reachable by a driver (DTT0 covers 0–1 GB;
-`0x40000000` is a fill-on-fault kvseg). Measured 2026-08-10: the Z2 aperture sustains
+`0x40000000` is the fixed u-area, and the rest of region 1 is live kernel virtual space --
+**not** a "fill-on-fault kvseg", which this repository believed for months and which
+`docs/AMIGA-PHYSICAL-MEMORY-MAP.md` refutes from `segkmem_fault`). **The pattern is Commodore's own, not something a
+third-party driver invented**: their TIGA driver dereferences the `autocon()` board address
+directly as a kernel pointer (`amix-src` `sys/amiga/driver/tiga.c:45`, in its read/write path)
+and returns `phystopfn(board + offset)` from `timmap` (`:104`). So this is a stock limitation
+with a source citation rather than an inference. Note also that AMIX ships **no source at all**
+for the layer that would have to change — `sys/vm/` and `sys/ml/` contain only `exp` objects —
+which is why the work there is disassembly-led by necessity. Measured 2026-08-10: the Z2 aperture sustains
 3.09 MB/s against 28.66 MB/s local, and a width test says the **bus is saturated**, not
 serialised. Order if resumed: VA2000 driver address fix → test in Z2 mode → `Lcm_sel`
 framebuffer class → firmware.
@@ -319,6 +331,8 @@ hypothesis, but nothing new should be built on any of it.
 
 | Refuted claim | Where it still appears | What is actually true |
 |---|---|---|
+| `devmaptest` T1 passing means device mmap PFNs are correct | acceptance records up to 2026-08-13 | It was green because two defects cancelled: `d_mmap`'s round-up made both the `base` and `base+2048` mappings land on the same wrong page. Removing the round-up (ISSUE-46) exposed ISSUE-49 — a 2048-aligned device mmap offset yields the NEXT page, because the retained 2 KiB `segdev` stepping's second `d_mmap` call overwrites the first |
+| `kvseg` is fill-on-fault, so an access to a Zorro III address lands on a zero page | `KNOWN-ISSUES.md`, `docs/archive/RESUME-HERE-260727.md`, `test-tools/b1-dcwt-verify-260723.txt` | `segkmem_fault` (`0xa83d6`) returns 0 only for `F_SOFTLOCK`/`F_SOFTUNLOCK` and **-1** for an ordinary `F_INVAL`; the 3B2 reference returns -1 unconditionally. Nothing there allocates a zero page. The symptom was real but the mechanism was wrong: **`0x40000000` is the fixed u-area**, so the read was serviced by a live kernel mapping. `docs/AMIGA-PHYSICAL-MEMORY-MAP.md` |
 | A null FSAVE frame means "no live FP state" on the 68060 | ISSUE-43 rounds 1–3 | Byte zero is the **source operand's exponent**; the discriminator is byte two |
 | DZ proved a null frame | ISSUE-43 round 1 | It proved its own operand was zero |
 | "7100 null saves per boot" | ISSUE-43 round 3 | Collected through the wrong predicate. Remeasured: 8048 null / 17 idle per boot on hardware |

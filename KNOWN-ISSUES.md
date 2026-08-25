@@ -3235,7 +3235,11 @@ Xsvga exp @39f6:  moveal %a1@(0,%d2:l),%a0   | a0 = cd_boardaddr
 Zorro II:lla se toimii koska **DTT0 = 0x003fc060 identity-mappaa 0x00000000–0x3FFFFFFF**.
 **Zorro III osoitteessa 0x40000000 ei ole identity-mappausta** — se VA-alue on kernelin
 **kvsegiä** ja aktiivisessa käytössä (havaitut VA:t 0x40440000–0x40449000).
-**Ja kvseg on fill-on-fault**, joten pääsy Z3-osoitteeseen **ei faulttaa** vaan osuu hiljaa
+**Ja pääsy Z3-osoitteeseen ei faulttaa** vaan osuu hiljaa
+[REFUTED 2026-08-20: tämä sanoi "kvseg on fill-on-fault". Se on väärin -- `segkmem_fault`
+palauttaa -1 tavalliselle F_INVAL/F_PROT-faultille. Oire on oikea, mekanismi oli väärä:
+`0x40000000` on KIINTEÄ U-AREA, eli luku palveltiin elävästä kernel-mappauksesta.
+Ks. `docs/AMIGA-PHYSICAL-MEMORY-MAP.md`.]
 kernelin muistiin: luku palauttaa nollia (→ "ei lautaa"), kirjoitus menisi kernelin dataan.
 
 **Mitä Z3-tuki siis vaatii:** kernelin on mapattava Z3-aukko kernel-VA:han ja ajurin on
@@ -4387,3 +4391,255 @@ say something falsifiable, or it is decoration.
 **Byte-exact regression:** rebuilding the base after all of this yields an image differing from
 the pre-change build in exactly **two bytes**, both inside the build-id string (`260813-09` →
 `260814-01`). All six variant kernels build; all reloc checks pass against their own image.
+
+---
+
+## ⚠ ISSUE-46 (2026-08-19, OPEN): `/dev/mem` mmap lands one page high, and the test written to catch this class of bug cannot see it
+
+> **Ledger: OPEN** — one 6-byte fix, not yet applied. Canonical: [`STATUS.md`](STATUS.md) §4.
+
+Found by accident, while building a Zorro III probe that mapped `/dev/mem` and checked itself
+against an independent path before trusting the result. The self-check failed:
+
+```
+Z3 selftest phys 08000000: lseek=46fc2700 mmap=2f004eb9  DISAGREE
+```
+
+`46fc 2700` is `movew #0x2700,%sr`, the kernel's first instruction, and it is what the image
+holds at `.text+0`. So `lseek`+`read` is right and the **mapping is not where it was asked for**.
+The value it did return, `2f00 4eb9`, is at `.text+0x1000` in the same image. The mapping is
+**exactly one 4 KiB page high**.
+
+### Mechanism
+
+`mmmmap` (`0x2062c`) computes its page frame number with a **round-up**:
+
+```
+20688:  addil #4095,%d0
+2068e:  moveq #12,%d1
+20690:  lsrl  %d1,%d0            pfn = (offset + 0xfff) >> 12
+```
+
+and the retained 2 KiB `segdev` stepping calls `d_mmap` **twice per 4 KiB page**, at `X` and
+`X+0x800`:
+
+```
+call 1:  (X + 0xfff) >> 12         = n      correct
+call 2:  (X + 0x800 + 0xfff) >> 12 = n + 1  wrong
+```
+
+Both calls write the **same** 4 KiB leaf, so the second overwrites the first and the whole page
+maps `n+1`. The double call is not speculation: the cache-class census measured exactly `+2`
+classification events for every single-page probe (`docs/REALHW-Z3-CHANGE-D-260819.md`).
+
+### It was introduced by the Model-B conversion, not inherited
+
+With the stock 2 KiB geometry the round-up was harmless: each call covered its own 2 KiB page and
+an aligned offset rounded to itself. `patch_devmmap2.py` converted the constant (`0x7ff` →
+`0xfff`) and the shift (`11` → `12`), which makes the site 4 KiB-correct **in isolation** — but a
+round-up is only correct when `d_mmap` is called once per page, and under Model B it is called
+twice. Converting the constant preserved the bug instead of removing it.
+
+### Scope: exactly one producer
+
+Checked in the linked image, all of them: `scrmmap`, `ammmap`, `timmap`, `va2000mmap` and
+`resmmap` contain **no** `addil #4095` — they truncate, which is the correct `btop` contract for
+`d_mmap`. `mmmmap` is the only site with the round-up and therefore the only affected path.
+Nothing in the kernel uses `/dev/mem`; the blast radius is userspace tools that map it.
+
+### Why the existing test could not catch it
+
+`test-tools/devmaptest.c` T1 exists to check exactly this — `/dev/mem` mmap PFN correctness — and
+it passes. Its own header explains why it cannot help here: it is deliberately
+*provenance-independent*, checking that offset `P` and `P+4096` differ and that `P` twice is
+identical. **A uniform one-page offset satisfies both.** A self-consistency test cannot detect a
+systematic displacement; only a comparison against an independent path can, which is what the
+Zorro III probe happened to do.
+
+That is the reusable lesson, and it is worth more than the bug: an instrument that only checks
+itself will agree with itself while being wrong.
+
+### Fix
+
+Remove the round-up at `0x20688` so `mmmmap` truncates like every other producer. Six bytes, and
+it belongs in `patch_devmmap2.py`, which already owns and asserts that site. Not applied yet: it
+was found during a Zorro III hardware session and lands with its own before/after evidence rather
+than being folded into unrelated work.
+
+---
+
+## ⚠ ISSUE-47 (2026-08-19, OPEN): a user-mode bus error is mishandled — two different ways
+
+> **CORRECTED THE SAME DAY.** This entry first said "retried forever instead of signalling". That
+> is one of the two behaviours, not the whole of it. With a Zorro III card present, the serial
+> console showed the other:
+>
+> ```
+> DBG as_fault FAIL pid=277 addr=4200F000 type=0 rw=1 ret=505
+> Hardware Bus Error @ C1033000, (4200F000 physical)
+> NOTICE: User BUS ERROR at C1033000, PC:8000095E FAULT:1 PID:277
+> DBG SIG sig=9 pid=277
+> ```
+>
+> The kernel **does** recognise the bus error and report it — and then kills the process with
+> **`SIGKILL`**, not `SIGBUS`. Reproduced twice, on `cmfcensus` at `0x4200F000` and on `busbench`
+> at `0x42001000`, both in the VA2000's undecoded gap.
+>
+> That explains a failure that looked like an instrument bug: `z3probe` had handlers armed for
+> `SIGBUS` and `SIGSEGV` and neither fired. They were waiting for the wrong signal, and `SIGKILL`
+> cannot be caught at all.
+>
+> **So there are two distinct faults, and they need separate fixes.** Which one occurs is not yet
+> attributed — the retry-forever case was an uninitialised Piccolo aperture at `0x40000000`, the
+> `SIGKILL` case an undecoded gap inside a live board's aperture. The original text follows.
+
+## ⚠ ISSUE-47 (2026-08-19, OPEN): original text: a user-mode bus error is retried forever instead of signalling the process
+
+> **Ledger: OPEN** — found while probing a Zorro III aperture; no fix attempted. Canonical:
+> [`STATUS.md`](STATUS.md) §4.
+
+A user process mapped physical `0x40000000` — a Zorro III aperture belonging to a card nothing had
+initialised — and touched it. The debug kernel logged, repeatedly:
+
+```
+WARNING: DBG hardbus pid=283 addr=C1033000 pte=40000049 ret=0 upc=80000B74 uva=48478000 n=800
+```
+
+`n=0x800` is 2048 occurrences on one address. `ret=0` means `hardbus` reported the fault handled,
+so the instruction was restarted, so it faulted again.
+
+**Observed:** the process ran forever, consuming CPU (`18%`, `0:07` accumulated and rising). It
+never returned and **never received a signal** — the probe had handlers armed for both `SIGBUS`
+and `SIGSEGV` and neither fired. The machine stayed responsive and `kill -9` ended it, so this is
+an ordinary fault-retry loop in user context, not a stalled bus cycle.
+
+**Expected:** an unresolvable bus error on a user access delivers `SIGBUS` to that process. A
+process that touches a non-responding physical address should die, not spin.
+
+### Why it matters beyond this probe
+
+Any user mapping of an address that does not answer — a device aperture that is powered down,
+unconfigured, or simply absent — hangs the process indefinitely. It is recoverable (the machine is
+fine, `kill -9` works), so it is a robustness defect rather than a stability one. But it also
+**hides** the underlying condition: the probe was written specifically to turn "no response" into
+a reported result, with both plausible signals handled, and it still could not report, because no
+signal was ever sent.
+
+### Not yet established
+
+Whether `hardbus` is deciding to retry, or is falling through to a default that retries; and
+whether the same happens for a supervisor-mode access, which would be considerably more serious.
+Both are readable from the handler; neither was chased during a hardware session that was there
+for something else.
+
+Full context: `docs/REALHW-Z3-APERTURE-PROBE-260819.md`.
+
+
+---
+
+## ⚠ ISSUE-48 (2026-08-19, OPEN): `va2_restore_passthrough()` does not restore passthrough on Zorro III firmware
+
+> **Ledger: OPEN** — driver defect in `va2000-amix`, found the evening the Zorro III firmware went
+> in. Canonical: [`STATUS.md`](STATUS.md) §4.
+
+When a client exits, the VA2000 driver's `close` path calls `va2_restore_passthrough()` to hand the
+display back to the Amiga's native output. On the Zorro III firmware the display **freezes**
+instead — it keeps showing a stale image rather than the passthrough picture.
+
+**Reproducible and client-independent**: observed first when X11 exited, then again when wolf3d
+exited. It is the routine, not something about one client's teardown.
+
+### The card is not crashed, and that is the point
+
+Measured immediately afterwards, without rebooting:
+
+* `open("/dev/va2000")` still succeeds, which requires `va2000_present()` to read a sane firmware
+  version **through the Zorro III kernel mapping**;
+* the register window still reads `0x005a` — firmware 90 — the same as before;
+* every subsequent open/close makes the display **flicker**, so the register writes are reaching
+  the card and changing its state.
+
+So the routine is not ineffective. It is doing the **wrong thing**: it writes a hardcoded 640×480
+timing set (`H_SS 840`, `H_SE 968`, `H_MAX 1056`, `V_*`, `PIX_CLK 40 MHz`, `ROW_PITCH 320`) plus
+`CAPTURE_MODE = 1`, all tuned against the Zorro II firmware's state machine.
+
+**Recovery is a full mode set**: starting wolf3d, which issues `SVGAIOCSetScreenMode`, woke the
+display immediately.
+
+### Scope
+
+Cosmetic-but-annoying rather than dangerous: nothing is corrupted, the machine is unaffected, and
+any client that sets a mode restores the display. It matters because leaving X should not leave the
+screen dead.
+
+The fix belongs in the driver and needs the Zorro III firmware's own passthrough contract, which is
+readable in `va2000.v` — not guessable from the Zorro II values that are there now.
+
+---
+
+## ⚠ ISSUE-49 (2026-08-21, OPEN): a 2048-aligned device mmap offset yields the NEXT page — and two bugs were cancelling to keep the test green
+
+> **Ledger: OPEN** — found by the first run of the documented acceptance battery, on
+> `68060-260819-13`. Canonical: [`STATUS.md`](STATUS.md) §4.
+
+`devmaptest` T1 failed:
+
+```
+T1 FAIL: /dev/mem same-offset identical=1, base+2048 aliases correctly=0
+DEVMAPTEST-RESULT FAIL
+```
+
+It has been passing since at least 2026-08-07 (`docs/REALHW-260807-11-ACCEPTANCE.md` §5 records
+`DEVMAPTEST-RESULT PASS`). **It was passing for the wrong reason.**
+
+### What the test asks
+
+That a device mapping at offset `base+2048` be the **same 4 KiB page** as one at `base`. That is
+correct 4 KiB semantics and the test says so at the site: "mmap maps WHOLE PAGES from the PFN
+d_mmap returns, so the sub-page 2048 is dropped".
+
+### Why it now fails, and why it did not before
+
+The retained 2 KiB `segdev` stepping calls `d_mmap` **twice per 4 KiB page**, and both calls write
+the same leaf, so **the second one wins**. That is not speculation — it is ISSUE-46's mechanism and
+it was measured as `+2` classification events per page in
+`docs/REALHW-Z3-CHANGE-D-260819.md`.
+
+| | map at `base` | map at `base+2048` | T1 |
+|---|---|---|---|
+| **before the ISSUE-46 fix** (`d_mmap` rounded up) | steps give pfn `n`, `n+1` → leaf **`n+1`** | steps give `n+1`, `n+1` → leaf **`n+1`** | identical → **PASS** |
+| **after the fix** (`d_mmap` truncates) | steps give `n`, `n` → leaf **`n`** | steps give `n`, `n+1` → leaf **`n+1`** | differ → **FAIL** |
+
+So the round-up made *both* mappings wrong in the same direction, which made them equal, which the
+test read as correct aliasing. **Two defects were cancelling into a green result.** Removing one
+exposed the other.
+
+### The remaining defect is the stepping, not the fix
+
+`patch_devmmap2.py` records the `segdev` family as **deliberately not converted** and argues its
+external crossings are benign, on the grounds that "because d_mmap now returns a 4 KiB PFN both
+calls carry the SAME pfn". That holds when the mapping offset is 4 KiB-aligned. It does **not**
+hold when the offset is 2048-aligned: the two steps then straddle a page boundary and the second
+call legitimately returns `n+1`, which overwrites `n`.
+
+The public mmap ABI admits 2048-aligned offsets (the five sites named in `devmaptest.c`'s header:
+`sysconfig 0x44e7c`, `mmap 0x583a6`, `MAP_FIXED 0x5844c`, `munmap 0x584f2`, `mprotect 0x58572`), so
+**a program can ask for one and will silently receive the following page.** Same family as
+ISSUE-46, reached by a different route, and equally silent.
+
+### Not the scenario the test's own header anticipated
+
+`devmaptest.c` warns that T1 will fail if the public five-site ABI is ever moved to 4 KiB, and that
+this would look like a regression without being one. That is a different case. This is a third one:
+the ABI has not moved; a producer stopped being wrong and the consumer's 2 KiB stepping became
+visible.
+
+### What to do — not decided
+
+Either convert the `segdev` family to 4 KiB as one unit (the `vpage` array size and every
+`seg_page()` index together, which `patch_devmmap2.py` declines as unjustified risk without a
+demonstrated defect — there is now a demonstrated defect), or reject non-page-aligned device mmap
+offsets at the ABI, or accept and document the behaviour. `devmaptest` T1's expectation is correct
+and should not be relaxed to make the red go away.
+
+**Do not "fix" this by restoring the round-up.** That would re-mask it and reinstate ISSUE-46.
