@@ -95,27 +95,42 @@ srg_utraps:
 |     Round 2 proved every user trap (syscall AND fault) routes through this edge
 |     (srg_ut_n = 1 was the fault).  With bit 23 fixed, PID 1 may now reach its
 |     trap #0 before faulting, and the ring shows exactly what happens in order.
-|     Stack from here (after our 16-byte moveml):
+|     Stack from here (after our 16-byte moveml).  CORRECTED 2026-08-25: the
+|     first version of this ring omitted nullvect_orig's own register save and
+|     so read every frame word SIXTY BYTES TOO LOW.  nullvect_orig enters with
+|     the RAW frame on (sp) and pushes `moveml %d0-%fp,%sp@-` = d0-d7 then
+|     a0-a6 = 15 registers = 60 bytes -- its own `btst #5,%sp@(60)` counts them
+|     -- and only then does utraps push the USP and the jsr push the return
+|     address.  So:
 |       %sp+16 jsr retaddr   %sp+20 pushed USP (== A7 at the trap)
-|       %sp+24 frame SR.w    %sp+26 frame PC.l   %sp+30 frame fmt+vec.w
-|     (SR/PC/fmt sit at the same low offsets for a format-0 trap frame and a
-|      format-7 access-error frame alike.)  User d0 is our lowest saved reg (%sp@).
+|       %sp+24 .. %sp+83     nullvect_orig's 60 saved registers, d0-d7 then a0-a6
+|       %sp+84 frame SR.w    %sp+86 frame PC.l   %sp+90 frame fmt+vec.w
+|     (SR/PC/fmt sit at the same offsets for a format-0 trap frame and a
+|      format-4 or format-7 access-error frame alike.)  The pushed USP at
+|      %sp+20 was already right and does not move.  User d0 is nullvect_orig's
+|      LOWEST saved register, %sp@(24) -- not %sp@, which holds OUR saved d0,
+|      and which nullvect_orig had already overwritten with sup_cacr before
+|      this code ever ran.
+|     These offsets are not a re-derivation on paper: src/kvecdisp040.s hooks
+|     this exact edge with the same layout and carries three self-checks for it
+|     (saved-SR S bit clear, pushed USP == %usp read now, VBR == &M68Kvec), and
+|     all three passed on the bench and on three metal boots.
 	movel	srt_i,%d0
 	cmpil	&4,%d0
 	bccw	Lsrg_ut_done
 	movel	%d0,%d1
 	asll	&2,%d1			| d1 = index * 4
 	moveq	&0,%d0
-	movew	%sp@(30),%d0		| frame fmt+vec word -> vector*4 in low bits
+	movew	%sp@(90),%d0		| frame fmt+vec word -> vector*4 in low bits
 	lea	srt_vec,%a0
 	movel	%d0,%a0@(0,%d1:l)
-	movel	%sp@(26),%d0		| frame user PC
+	movel	%sp@(86),%d0		| frame user PC
 	lea	srt_pc,%a0
 	movel	%d0,%a0@(0,%d1:l)
-	movel	%sp@(20),%d0		| pushed USP = A7 at the trap
+	movel	%sp@(20),%d0		| pushed USP = A7 at the trap (already correct)
 	lea	srt_usp,%a0
 	movel	%d0,%a0@(0,%d1:l)
-	movel	%sp@,%d0		| user d0 (syscall number on a trap #0)
+	movel	%sp@(24),%d0		| user d0 (syscall number on a trap #0)
 	lea	srt_d0,%a0
 	movel	%d0,%a0@(0,%d1:l)
 	addql	&1,srt_i
