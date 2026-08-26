@@ -130,3 +130,53 @@ That the wedge is reproducible. Three sightings across an unknown span is not a 
 observed here followed a battery, a burst and several hours of use. Establishing whether it
 reproduces is the point of the next session, and the counters above are what will make the answer
 mean something either way.
+
+---
+
+## The instrument, built 2026-08-26
+
+`src/a3091dbg040.s` + `src/patch_a3091_badhardware.py`, in the base link. It interposes on the
+a3091 `badhardware()` call, prints three bounded lines and latches the surrounding state, then
+tail-jumps to the stock body — so the stock line still appears and `DEAD` is still returned.
+**Nothing about the driver's behaviour changes.**
+
+It is reached by retargeting **one relocation** (`0xd3a6`, inside `a3091intr`) rather than by
+weakening a symbol, because `badhardware` is a file-LOCAL static and the image holds two: the
+other belongs to `service`, whose call site at `0xcba6` the patcher reports leaving alone. The
+three source-level calls (cases 1, 3 and 8) share one compiled tail, which is why one
+relocation covers all of them.
+
+What it captures at the moment of death:
+
+    a3091dbg ss=%x istate=%d unit=%x head=%x dmaon=%d
+    a3091dbg segstate=%d segseq=%d segpa=%x seglen=%x segdir=%d
+    a3091dbg zarm=%d rarm=%d owned=%d noprep=%d ovf=%d whole=%d
+
+`head` is the decisive one for the open question: `starthead == 0` proves the start queue was
+empty, which is what separates "IDLE with nothing to do" from "IDLE with work waiting".
+
+**It prints as well as latches, and that is the point.** When the dying unit is the root disk the
+machine wedges, and a latched block is then unreachable — telnet never gets past `accept()`, and
+even a console login needs `/bin/login` off that same disk. The print reaches the screen in that
+instant, which is proven, since the stock line did; and the serial cable is now attached.
+
+**It does not touch the device.** `reg()` would give phase and status, and reading them is
+deliberately omitted: this runs at the moment of a hardware anomaly, in an interrupt handler, and
+reading `SS` is what acknowledges the interrupt. Adding register reads is a later decision to be
+made with evidence.
+
+### Verified, both directions
+
+    [left] @0x0cba6 -> badhardware@0xcf46 (service; not ours)
+    [ok]   @0x0d3a6  badhardware@0xd666 -> a3091_badhardware_dbg
+
+and on a booted 68060 emulator, `68060-260826-03`:
+
+    a3d_magic = 41334421   "A3D!"   the block is where it is said to be
+    a3d_ran   = 00000000            the body has never run
+
+The first draft had a single magic written only when the body ran — so an all-zero block could
+not distinguish *never fired* from *wrong address*, which for an instrument expected to read zero
+for its whole life is the one distinction that matters. `a3d_magic` is now static and `a3d_ran`
+carries the fired flag, following `usptrap.s`'s pattern.
+
