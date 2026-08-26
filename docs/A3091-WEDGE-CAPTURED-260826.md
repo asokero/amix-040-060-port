@@ -234,3 +234,53 @@ Boot `-06` again. If it dies early a second time, that is a great deal stronger 
 above. If it runs the same sequence `-04` just ran, the first occurrence was stochastic and the
 merge is clear. Either outcome is worth one kernel swap.
 
+---
+
+## Fourth occurrence, and what four samples now say
+
+`68060-260826-08` (the ISSUE-49 bridge), early in the run under light load:
+
+    a3091dbg ss=16 istate=0 unit=81130B4 head=0 dmaon=0
+    a3091dbg segstate=0 segseq=9976 segpa=91E5000 seglen=1000 segdir=0
+    a3091dbg zarm=0 rarm=0 owned=0 noprep=0 ovf=0 whole=9976
+    a3091: 0x16 0 0x81130B4
+
+`units[6]` again — computed from this image's own `.bss` layout, which differs from the other
+two. Fourth time on the root disk.
+
+| # | kernel | `segseq` | `segdir` | `seglen` | context |
+|---|---|---|---|---|---|
+| 1 | `-02` | — | — | — | after a burst |
+| 2 | `-04` | 168 807 | 0 | `0x800` | after a 4-round burst |
+| 3 | `-06` | 7 300 | 1 | `0x800` | ~2 min in, light load |
+| 4 | `-08` | 9 976 | 0 | `0x1000` | early, light load |
+
+### What is constant, and what is not
+
+**Constant across all four:** `ss=0x16`, `istate=0`, `head=0`, `dmaon=0`, `segstate=0`, and
+`units[6]`. The driver is completely idle, with an empty queue, no transfer armed and no DMA
+ownership held, and a completion interrupt arrives for the root disk.
+
+**Varies:** the kernel (three different ones, three different `.bss` layouts), the position in
+the DMA sequence (7 300 to 168 807), the direction of the last transfer, its length, and whether
+a burst had just run.
+
+That is a thorough negative result and it is worth stating as one. **The wedge is independent of
+which kernel is running, of the load, of the transfer direction, of the transfer size and of
+where in the run it happens.** Every variable this project controls has now been varied without
+changing the outcome; the two that never change are the unit and the fact that the driver has
+nothing outstanding.
+
+Nothing this port has done is implicated by any of it. The signature is the controller
+delivering a completion with no request outstanding, which is where the prestudy's remaining
+hypothesis already pointed: `istr` bit 4 set without a new event, and `SS` still holding `0x16`
+from the last transaction.
+
+### Practical consequence
+
+Four wedges in one day, three of them during acceptance runs. Testing is now being interrupted
+by this often enough that it costs a power cycle and an `fsck` each time. Reading `istr` at the
+moment of death — the one safe device register, unlike `SS` whose read acknowledges the
+interrupt — is the next measurement, and it is now clearly worth the small risk of touching the
+device at all.
+
