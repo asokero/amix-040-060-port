@@ -4581,6 +4581,14 @@ readable in `va2000.v` — not guessable from the Zorro II values that are there
 
 > **Ledger: OPEN** — found by the first run of the documented acceptance battery, on
 > `68060-260819-13`. Canonical: [`STATUS.md`](STATUS.md) §4.
+>
+> **Two reproducers, two symptoms, two sites (2026-08-26).** The title describes the
+> first only. `devmaptest` T1 is the **fault path** (`segdev_fault`, `0xa7fe4`): a
+> 2048-aligned offset yields the next page. The Deluxe Paint port then hit the **mmap
+> path** (`spec_segmap`, `0x6766a`): ENXIO, or SIGBUS on the tail, for any mapping whose
+> length is not a 4 KiB multiple. Same root cause — 2 KiB stepping retained under a
+> 4 KiB MMU — reached two different ways, and they do **not** share a fix. See the
+> 2026-08-26 section below before acting on the options list.
 
 `devmaptest` T1 failed:
 
@@ -4643,6 +4651,11 @@ offsets at the ABI, or accept and document the behaviour. `devmaptest` T1's expe
 and should not be relaxed to make the red go away.
 
 **Do not "fix" this by restoring the round-up.** That would re-mask it and reinstate ISSUE-46.
+
+> **This list is incomplete as of 2026-08-26.** A fourth option exists for the second
+> reproducer and is driver-side rather than kernel-side, and the second option — rejecting
+> non-page-aligned offsets at the ABI — does not address it at all, since that offset is
+> 0 and page-aligned and it is the *length* that is not a 4 KiB multiple. See below.
 
 ### 2026-08-26: a second, independent reproducer — and it is a DIFFERENT site
 
@@ -4753,6 +4766,32 @@ decides whether this is done driver-side at all.
 This does **not** address T1, whose aliasing is a separate live defect on the fault path
 and still wants the family conversion. That one reaches every device that maps memory,
 VA2000 and ZZ9000 included.
+
+### Handoff
+
+Owned by this project, not by the Deluxe Paint port: the analysis below is read from
+`svr4-src-3b2` and wants confirming against this image's disassembly, which is the skill
+and the material that live here.
+
+What the Deluxe Paint port supplies and will keep maintaining:
+
+- **The reproducer.** `dpaint-amix/probe/scrprobe.c`, cross-compiled, self-terminating,
+  subcommands `info` / `modes` / `pokeall` / `splitmap`. `pokeall` prints a writability
+  matrix with a page count per mode, so a fix shows up as three `NO`s becoming `YES`.
+- **A stock 68030 reference machine**, `dpaint-amix/tools/emu-dpaint.sh`, for diffing
+  behaviour against a real 2 KiB kernel.
+- **Verification on request** — measurements on either kernel, before and after any patch.
+
+Open questions, with the one that decides the driver-side route marked:
+`dpaint-amix/docs/ISSUE-49-REVIEW-BRIEF.md`. Question 3 — whether anything besides
+`allocbmap`/`freebmap`/`scrmmap` derives plane size or inter-plane contiguity — gates
+whether the cheap fix is available at all, and it is answerable by reading
+`sys/amiga/console/` out of `amix-sources.tar`.
+
+Note for whoever picks this up: the `STATUS.md` §4 ledger table stops at issue 45, so
+ISSUE-46 and everything above it — this one included — has no row there, despite the
+header above pointing at §4 as canonical. Not touched from here; flagged because a
+handoff that relies on the ledger would miss this entirely.
 
 **A clean 2 KiB reference platform now exists** for this class:
 `dpaint-amix/tools/emu-dpaint.sh` boots stock AMIX on a stock 68030 (own image, own
