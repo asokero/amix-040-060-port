@@ -6213,3 +6213,76 @@ So the burst step runs, by copying the binary from the NAS first. What remains t
 source between them is provenance by folklore. The header naming the path is what saved this, and
 is worth copying as a habit: when a tool cannot be built, the procedure that needs it should say
 where it lives.
+
+---
+
+## ⚠ ISSUE-51 (2026-08-26, OPEN): a burst read returned wrong bytes, silently, and the file was fine
+
+> **Ledger: OPEN** — found by the first burst run with the DMA counters read on both sides.
+> Image `68060-260826-04`, 4 rounds, `hat_dup_cow` pressure present.
+
+    rounds=4
+    good_sums (expect 24 per round):
+    95
+    ---- wrong sums ----
+    1522 8192 /press6.bin
+
+**95 of 96.** One file summed to `1522` instead of `1570`, at the right length (8192 blocks).
+
+### The file was never wrong
+
+Re-read immediately afterwards, twice, it sums to `1570`. `b2verify` against `/payload.bin` says
+`CLASS=V0_COMPLETE_MATCH size=4194304 crc=50250`, and so do the other five. **Nothing wrote
+`/press6.bin` between the bad read and the good ones** — the burst's last round wrote it and
+summed it immediately, and the run ended there.
+
+So the write landed correctly and **a read returned different bytes than the same file yields
+now**. Silently: no error, no short count, the full 8192 blocks.
+
+### What is ruled out
+
+* **A race in the test.** `burst4.sh` runs six `cp`s and `hat_dup_cow` in the background and then
+  `wait`s before `sum`. The copies had completed.
+* **`sum` misreporting a read error.** That is the 2026-07-23 lesson — AMIX's `sum` prints a
+  partial block count after `ferror()`, so a read error looks like a short file. Here the block
+  count is right and only the checksum differs, and `b2verify`, which reports the real errno,
+  finds nothing wrong now.
+* **A missing or unbalanced DMA prepare/complete.** The counters were read before and after, which
+  had never been done. Across the burst's **155 788** transactions:
+
+        dma_prep_from + dma_prep_to  =  42629 + 120975  =  163604
+        dma_cmpl_count               =                     163604
+        dma_prep_whole               =                     163604
+        dma_seg_seq                  =                     163604
+        dma_cmpl_from = dma_prep_from,  dma_cmpl_to = dma_prep_to
+
+  and every must-stay-zero diagnostic stayed zero: `dma_prep_owned`, `dma_cmpl_noprep`,
+  `dma_range_ovf`, `dma_zero_arm`, `dma_reconn_arm`.
+
+**That last point is the useful one.** The B2 ownership protocol did exactly what it claims,
+every prepare matched a complete in the right direction, and a read still came back wrong. So
+this is not a dropped or mispaired cache operation — which is what the counters exist to rule
+out, and the first time they have been in a position to rule anything out.
+
+### What it is not (yet)
+
+Not the A3091 wedge: `a3d_ran` stayed `0` and the machine survived the run. Not necessarily new
+either — this is the first burst ever run with a wrong-sums check that could report cleanly (the
+previous one matched its own header, see 2026-08-26's fix), so an earlier occurrence at this rate
+would have been indistinguishable from the check's own noise.
+
+Family resemblance to ISSUE-10 is obvious — a silent wrong value under concurrent
+copy-plus-fork/COW pressure — but resemblance is not identity and nothing here has been tied to
+a stale PTE.
+
+### Next
+
+1. **Rate.** One in 96 is a single event. Repeat the burst and count: two runs of 4 rounds each
+   would say whether this is ~1 %, rarer, or a one-off.
+2. **Catch it in the act.** The ISSUE-10 instruments (`i10w_*`, `i10g_*`) watch for a poisoned
+   value at a watched address; this needs the analogous thing for a read that disagrees with the
+   file. `b2verify` in a loop over freshly written files would at least turn "one wrong sum" into
+   "the read that disagreed, with its errno and offsets".
+3. **The `dma_*` block has no magic word**, which is why `status-facts.sh` never listed it and no
+   battery driver ever dumped it. Giving it one costs nothing and makes it visible to every tool
+   automatically.
