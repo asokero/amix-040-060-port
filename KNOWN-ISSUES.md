@@ -4696,32 +4696,63 @@ call lands at `off + 10240` — one 2 KiB step past the object. `scrmmap`'s boun
 fails. **The producer/consumer split is between the 4 KiB ABI and this 2 KiB loop, not
 inside segdev.**
 
-**This one is cheap, and it is not the vpage risk.** `patch_devmmap2.py` declines to
-convert the family because "the vpage array size and every `seg_page()` index" must move
-together. That argument is about `seg_dev.c`'s internal geometry and it stands. It does
-**not** cover `0x6766a`: `spec_segmap` lives in specfs, the loop is pure validation, it
-allocates nothing, indexes nothing, and its result is discarded the moment it finishes.
-`segdev_create`/`as_map` build the vpage array afterwards and are untouched by the step
-used to pre-validate. Converting this one site leaves the family internally consistent
-at 2 KiB. It also halves the `d_mmap` calls on the validation path, the same direction
-ISSUE-46 and T1 want to go.
+**CORRECTED the same day — there is no cheap kernel-side subset.** The first version of
+this entry claimed `0x6766a` could be converted alone, since `spec_segmap` is pure
+validation and never touches the vpage array. That premise is true; the conclusion was
+wrong, because it stopped reading before the fault path. **`segdev_fault` steps `d_mmap`
+the same way and fails identically** (`seg_dev.c:370`):
 
-**Before patching it, confirm by disassembly** that `0x6766a`'s `adda.w #0x800,a2` is
-the increment of `i` (or of `off+i`) and that the loop bound is `i < len` evaluated
-separately — a compiler that precomputed an end pointer from the 2 KiB step would need
-both changed together. `patch_devmmap2.py` currently asserts these bytes unchanged, so
-that assertion moves from `CANARY_OLD` to a `TEXT` entry if this is taken.
+```c
+	for (adr = addr; adr < addr + len; adr += PAGESIZE) {
+		...
+		pf = (*sdp->mapfunc)(sdp->vp->v_rdev,
+		    sdp->offset + (adr - seg->s_base), prot);
+		if (pf == -1)
+```
 
-**Residual, and not a blocker.** At 4 KiB a 10240-byte plane maps 12288 bytes, so the
-last page is half plane and half whatever `AllocMem` handed out next — `scrdev.c:71`
-allocates `width*height/8` exactly, and `memory.c:67`'s `MEMF_PAGEB` path explicitly
-frees the tail slack back to the chip pool. Stock never had this because at 2 KiB the
-length rounded to exactly 10240. It is the ordinary situation for any non-page-multiple
-device object on a 4 KiB system, but if it is worth closing, rounding the plane
-allocation (and `scrmmap`'s bound, and `freebmap`'s size, from one shared macro) up to
-4 KiB is contained driver-side hardening. Note `PAGESIZE` in `param.h` is still `0x800`,
-so such a patch must round to a literal 4096 — using `PAGESIZE` would compile to a
-no-op, since 10240 is already a 2 KiB multiple.
+Converting the validation loop alone would therefore turn the ENXIO back into a SIGBUS,
+not into a working mapping. That the two observed symptoms differ by request length is
+precisely this: `mmap(10240)` clears validation (last call 8192) and dies at fault time
+(call at 10240); `mmap(12288)` dies in validation. Both need `d_mmap` never to be asked
+past the object.
+
+And `segdev_fault`'s loop carries `vpage++` per `PAGESIZE`, indexed from
+`seg_page(seg, addr)` — so its step **is** tied to the vpage array geometry.
+`patch_devmmap2.py`'s refusal covers this site fully and stands unchanged. The family
+conversion is the expensive option and it is the only kernel-side one.
+
+Caveat on all of the above: it is read from `svr4-src-3b2`, not from this image's
+disassembly. Confirming that AMIX's specfs and seg_dev match that lineage here is the
+first question in `dpaint-amix/docs/ISSUE-49-REVIEW-BRIEF.md`.
+
+**The cheap fix is driver-side, and it is a fix rather than hardening.** Round the
+bitplane allocation up to 4 KiB so `d_mmap` is never asked past the end:
+
+- `allocbmap` (`scrdev.c:71`) — allocate the rounded size
+- `freebmap` (`scrdev.c:110`) — free the same size, or the chip map corrupts silently
+- `scrmmap` (`scrdev.c:766`) — the bound `offset < width*height/8` must round to match
+
+all three from one shared macro. Cost: at most 4095 bytes per plane, 10 KB for
+320x256x5. The rounded plane then genuinely owns its last page, which also closes the
+half-owned tail a 4 KiB mapping of a 10240-byte object would otherwise expose —
+`scrdev.c:71` allocates `width*height/8` exactly today, and `memory.c:67`'s `MEMF_PAGEB`
+path explicitly frees the slack back to the chip pool. Correct on both kernels: at 2 KiB
+a 12288-byte plane is simply 6 pages instead of 5.
+
+`PAGESIZE` in `param.h` is still `0x800`, so this must round to a **literal 4096**.
+Rounding to `PAGESIZE` compiles to a no-op, since 10240 is already a 2 KiB multiple —
+an easy way to ship a patch that looks correct and changes nothing.
+
+**Open before writing it:** whether `allocbmap`/`freebmap`/`scrmmap` are the only
+consumers of `width*height/8` or of an assumed plane size — copper-list bitplane
+pointers, display DMA, `screen_vbint`, `SIOCSELBMAP`, the console renderers in
+`c0.c`/`c1.c`/`c3.c`. `sys/amiga/console/` ships as source in `amix-sources.tar`, so it
+is answerable by reading. That is question 3 in the brief, and it is the one that
+decides whether this is done driver-side at all.
+
+This does **not** address T1, whose aliasing is a separate live defect on the fault path
+and still wants the family conversion. That one reaches every device that maps memory,
+VA2000 and ZZ9000 included.
 
 **A clean 2 KiB reference platform now exists** for this class:
 `dpaint-amix/tools/emu-dpaint.sh` boots stock AMIX on a stock 68030 (own image, own
