@@ -4644,6 +4644,90 @@ and should not be relaxed to make the red go away.
 
 **Do not "fix" this by restoring the round-up.** That would re-mask it and reinstate ISSUE-46.
 
+### 2026-08-26: a second, independent reproducer — and it is a DIFFERENT site
+
+Reported from the Deluxe Paint port (`~/kehitys/amix-playground/dpaint-amix`), which hit
+this while trying to use native 320x256 lores and spent a week routing around it.
+
+**The reproducer.** `/dev/screen`, `SIOCALLOCBMAP` a 320x256x5 bitmap, `mmap` one
+bitplane. The plane is `320*256/8` = **10240 bytes**. On `68060-260813-01`:
+
+```
+mmap(10240)                                   succeeds, reads fine, first STORE -> SIGBUS
+mmap(12288)                                   ENXIO
+mmap(8192)                                    fully writable   <- two whole 4 KiB pages
+MAP_FIXED tail page at offset 8192, len 4096  ENXIO
+```
+
+On **stock AMIX 2.1p2a on a 68030**, measured 2026-08-26 in a dedicated Amiberry
+instance, all of those work and `PAGESIZE` reads 2048:
+
+```
+>>> lores  non-lace   320x256 x5  10240   5.0 pages  YES
+>>> lores  HAM        320x256 x6  10240   5.0 pages  YES
+>>> lores  HalfBrite  320x256 x6  10240   5.0 pages  YES
+```
+
+So this is ours, not Commodore's: every geometry `scrdev.c` offers is an exact multiple
+of 2048, which is its own kernel's page size. Write-up and probe:
+`dpaint-amix/probe/results/2026-08-26-stock-030-emulator.md`.
+
+**Why it is a different site from T1's.** The two symptoms come from two separate
+2 KiB steppings, and conflating them would send the fix to the wrong place:
+
+| | site | what it does | symptom |
+|---|---|---|---|
+| **T1 / devmaptest** | `segdev_fault` `seg_page()` `0xa7fe4` | fault-time PTE load, twice per 4 KiB page, second wins | 2048-aligned offset yields the NEXT page |
+| **this reproducer** | `spec_segmap` loop step `0x6766a` | **mmap-time validation only** | ENXIO for any length that is not a 4 KiB multiple |
+
+The `spec_segmap` loop, in full (`svr4-src-3b2/.../fs/specfs/specvnops.c:1349`):
+
+```c
+	for (i = 0; i < len; i += PAGESIZE) {
+		if ((*mapfunc)(dev, off + i, maxprot) == -1)
+			return ENXIO;
+	}
+```
+
+`len` arrives already rounded up by the public mmap ABI, which **is** at 4 KiB. With
+`PAGESIZE` still 2048 here, a 10240-byte request becomes len 12288 and the loop's last
+call lands at `off + 10240` — one 2 KiB step past the object. `scrmmap`'s bound is
+`offset < bp->width*bp->height/8` (`scrdev.c:766`), so it returns -1 and the whole mmap
+fails. **The producer/consumer split is between the 4 KiB ABI and this 2 KiB loop, not
+inside segdev.**
+
+**This one is cheap, and it is not the vpage risk.** `patch_devmmap2.py` declines to
+convert the family because "the vpage array size and every `seg_page()` index" must move
+together. That argument is about `seg_dev.c`'s internal geometry and it stands. It does
+**not** cover `0x6766a`: `spec_segmap` lives in specfs, the loop is pure validation, it
+allocates nothing, indexes nothing, and its result is discarded the moment it finishes.
+`segdev_create`/`as_map` build the vpage array afterwards and are untouched by the step
+used to pre-validate. Converting this one site leaves the family internally consistent
+at 2 KiB. It also halves the `d_mmap` calls on the validation path, the same direction
+ISSUE-46 and T1 want to go.
+
+**Before patching it, confirm by disassembly** that `0x6766a`'s `adda.w #0x800,a2` is
+the increment of `i` (or of `off+i`) and that the loop bound is `i < len` evaluated
+separately — a compiler that precomputed an end pointer from the 2 KiB step would need
+both changed together. `patch_devmmap2.py` currently asserts these bytes unchanged, so
+that assertion moves from `CANARY_OLD` to a `TEXT` entry if this is taken.
+
+**Residual, and not a blocker.** At 4 KiB a 10240-byte plane maps 12288 bytes, so the
+last page is half plane and half whatever `AllocMem` handed out next — `scrdev.c:71`
+allocates `width*height/8` exactly, and `memory.c:67`'s `MEMF_PAGEB` path explicitly
+frees the tail slack back to the chip pool. Stock never had this because at 2 KiB the
+length rounded to exactly 10240. It is the ordinary situation for any non-page-multiple
+device object on a 4 KiB system, but if it is worth closing, rounding the plane
+allocation (and `scrmmap`'s bound, and `freebmap`'s size, from one shared macro) up to
+4 KiB is contained driver-side hardening. Note `PAGESIZE` in `param.h` is still `0x800`,
+so such a patch must round to a literal 4096 — using `PAGESIZE` would compile to a
+no-op, since 10240 is already a 2 KiB multiple.
+
+**A clean 2 KiB reference platform now exists** for this class:
+`dpaint-amix/tools/emu-dpaint.sh` boots stock AMIX on a stock 68030 (own image, own
+config, serial 1236 / telnet 2325 / tftp 1072, contends with nothing here). Device-mmap
+behaviour can be diffed against it, which `devmaptest` alone cannot do.
+
 ---
 
 ## ✅ ISSUE-100 (2026-08-20, FIXED THE SAME DAY): the panic path destroys its own diagnosis — `sync()` walks the vfs switch through a NULL pointer
