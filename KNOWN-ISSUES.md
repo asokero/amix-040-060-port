@@ -6438,3 +6438,60 @@ a stale PTE.
 3. **The `dma_*` block has no magic word**, which is why `status-facts.sh` never listed it and no
    battery driver ever dumped it. Giving it one costs nothing and makes it visible to every tool
    automatically.
+
+---
+
+## ⚠ ISSUE-52 (2026-08-26, OPEN): the load average freezes on garbage after FP-heavy graphics
+
+> **Ledger: OPEN** — an observation, not yet attributed. Seen on `68060-260826-07`, the RTG
+> variant built from the LC060 merge.
+
+After X11, wolf3d and Quake had been run and stopped:
+
+    9:12am  up 8 mins,  2 users,  load average: -2854062.34, 6910653.78, 1705065.05
+
+Every earlier reading in that session, across several kernels and hours, was
+`load average: 0.00, 0.00, 0.00`.
+
+### Frozen, not merely wrong
+
+Read three times at five-second intervals, the three numbers were **identical**. A real load
+average decays; one that does not move means the accumulator has stopped being updated rather
+than that it holds an unusual value. `w` prints the same figures, so both consumers read the same
+place.
+
+### What still works, which narrows it
+
+**The clock is alive.** `up N mins` advances and timestamps update, so the clock interrupt is
+running. It is the load-average computation specifically, not the tick.
+
+Nothing in the day's acceptance depends on it: the power-cut test uses `uptime`'s **duration**
+as its precondition, and that read correctly in both phases (`up 1:13` → `up 1 min`).
+
+### The obvious hypothesis, and why it is only that
+
+The load average is computed in floating point, and wolf3d and Quake are heavy FP users. Kernel
+FP arithmetic landing in the wrong FPU state after a heavy FP process would produce exactly this:
+garbage that then stops moving. And FPU changes landed the same day (the LC060 merge's
+`fpu_present` gates in `fpu060.s`).
+
+**That is a hypothesis and nothing more.** The gates were measured inert on this machine —
+`fpc_save_nofpu_n`, `fpc_rest_nofpu_n` and `fpc_setup_nofpu_n` all read zero after a full
+battery and a four-round burst — so the merge has no established connection to this.
+
+### Whether it is new is unknown, and that matters
+
+The 2026-08-19 acceptance ran the same three applications on the Zorro III branch. Nobody read
+`uptime` afterwards. So this may have been happening for weeks; it may equally be new today. The
+honest position is that there is no baseline.
+
+### What would settle it, cheapest first
+
+1. **Boot the base `-06` and run something FP-heavy.** If the load average rots there too, the
+   RTG driver is not involved.
+2. **Do the same on `-04`, which predates the LC060 merge.** If it rots there, the merge is not
+   involved either, and this is older than today.
+3. Only then look for the accumulator. `avenrun` is not a global symbol in this image, so
+   locating it needs the disassembly of whatever `/usr/ucb/uptime` reads through `/dev/kmem`.
+
+Step 2 is the one that matters, because it is the only one that can date the defect.
