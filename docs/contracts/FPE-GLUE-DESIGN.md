@@ -15,6 +15,13 @@ it says so and names the round-3 reading that will confirm or refute it.
 > line and mechanism; no vendor text is reproduced. Same class as
 > `docs/contracts/FPE-INTEGRATION-CONTRACT.md` and the ATT7/ATT8 results.
 
+> **SUPERSEDED IN PART by `docs/contracts/FPE-R4-DELTA.md`.** Round 3's bench run refuted four
+> claims made below — §4.4's "the two must be equal", §5.2's "the two agree without being made
+> to", §9 item 10's method, and §4.3's `short` premise — and reopened §5.3's deferred `issig`
+> gate and §6.3's exec/sendsig gap as defects rather than as registered divergences. This
+> document stays the round-2 record; the delta document is where the corrections and the round-4
+> fixes live. Read it before acting on §4.3, §4.4, §5.2, §5.3, §6.3 or §9.
+
 The normative inputs are `docs/contracts/FPE-INTEGRATION-CONTRACT.md` (round 1: the AMIX side
 of the seam, measured) and `docs/contracts/FPSP-INTEGRATION-PLAN.md` (the ureturn recipe, the
 memory-access ABI, and the mandatory copy-error rule). Where this document differs from the
