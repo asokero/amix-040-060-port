@@ -646,25 +646,49 @@ fpe_jb_active:
 	.long	0			| 1 = fpe_jb names a live frame
 
 | ---- instruction-length instrumentation -------------------------------------------------
-| Pre-registered for round 3, and free.  On a format-4 frame the CPU stacks the PC of the
-| instruction AFTER the faulting one, while the emulator computes its own resume PC as
-| f_pcfi + is_advance.  The two must agree.  Contract 6.3 names a wrong is_advance as the
-| sharpest standing risk in the package -- it resumes the process mid-instruction -- and this
-| compares them on every single emulated instruction at the cost of one compare.
-| NOTHING IS ACTED ON: the emulator's PC is used either way, so this measures without
-| changing what the lane does.
+| On a format-4 frame the CPU stacks the PC of the instruction AFTER the faulting one, while
+| the emulator computes its own resume PC as f_pcfi + is_advance.  For a STRAIGHT-LINE
+| instruction the two must agree.  Contract 6.3 names a wrong is_advance as the sharpest
+| standing risk in the package -- it resumes the process mid-instruction.
+|
+| ROUND 4: the comparison alone was saturated by a benign class.  A taken FBcc/FDBcc moves the
+| PC off the straight line legitimately, and round 3 read 7,909,400 "misses" that were all
+| exactly that -- an fbnel in libc's _doprnt, one per printf %f.  The glue now classifies the
+| disagreement with the emulator decoder's own optype (fpu_emulate.c:145) before counting it,
+| so fpe_advmiss_n is finally the length check it was written to be.
+| NOTHING IS ACTED ON: the emulator's PC is used either way.
 	.globl	fpe_advmiss_n
 fpe_advmiss_n:
-	.long	0			| resume PC != the CPU's own stacked next-PC
+	.long	0			| a STRAIGHT-LINE advance != the CPU's stacked next-PC.
+					| THE finding counter.  Must read 0 over a full session
+	.globl	fpe_advctl_n
+fpe_advctl_n:
+	.long	0			| ... the disagreement was a taken FBcc/FDBcc.  Benign,
+					| and free to be large: round 3's 7.9 M lands here
+	.globl	fpe_advnofetch_n
+fpe_advnofetch_n:
+	.long	0			| ... the opword could not be fetched, so the class is
+					| unknown.  Neither counted as a miss nor cleared.  Must be 0
 	.globl	fpe_b_pc
 fpe_b_pc:
-	.long	0xffffffff		| the first mismatch: faulting instruction address
+	.long	0xffffffff		| the first TRUE miss: faulting instruction address
 	.globl	fpe_b_stacked
 fpe_b_stacked:
 	.long	0xffffffff		| ... the PC the CPU stacked
 	.globl	fpe_b_resume
 fpe_b_resume:
 	.long	0xffffffff		| ... the PC the emulator computed
+	.globl	fpe_b_opword
+fpe_b_opword:
+	.long	0xffffffff		| ... and its opword, so the class is provable from the
+					| counter dump alone and not only from a disassembler
+	.globl	fpe_c_pc
+fpe_c_pc:
+	.long	0xffffffff		| the first EXCLUDED event: proof the exclusion fires
+	.globl	fpe_c_opword
+fpe_c_opword:
+	.long	0xffffffff		| ... its opword.  optype = opword & 0x01C0 must be
+					| 0x0080/0x00C0 (FBcc) or 0x0040 with (opword & 070) == 010
 
 | ---- the presented FP state -------------------------------------------------------------
 	.globl	fpe_save_n

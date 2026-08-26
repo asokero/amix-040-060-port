@@ -60,7 +60,8 @@ extern long fpe_sigfpe_n, fpe_sigill_n, fpe_sigsegv_n, fpe_sigother_n;
 extern long fpe_last_signo, fpe_last_code, fpe_last_fpsr, fpe_undecoded_n;
 extern long fpe_panic_n, fpe_panic_hard_n, fpe_copyfail_n;
 extern long fpe_ufetch_n, fpe_ufetchfail_n, fpe_fault_addr;
-extern long fpe_advmiss_n, fpe_b_pc, fpe_b_stacked, fpe_b_resume;
+extern long fpe_advmiss_n, fpe_b_pc, fpe_b_stacked, fpe_b_resume, fpe_b_opword;
+extern long fpe_advctl_n, fpe_advnofetch_n, fpe_c_pc, fpe_c_opword;
 extern long fpe_sigpend_n, fpe_sigdeliv_n;
 extern int fpe_setjmp();
 extern void fpe_longjmp();
@@ -506,25 +507,66 @@ fpe_trap(uspp, regs, xf)
 
 	if (r == 0) {
 		/*
-		 * INSTRUCTION-LENGTH INSTRUMENTATION, pre-registered for round 3 and free.
-		 * On a format-4 frame the CPU stacks the PC of the instruction AFTER the
-		 * faulting one, and the emulator independently computes f_pcfi +
-		 * insn.is_advance.  They must agree.  Contract 6.3 names a wrong is_advance as
-		 * the sharpest standing risk in the package -- NetBSD's own comment calls the
-		 * format-4 path a hack, because it presumes the emulator knows the length of
-		 * every instruction it meets, and on an LC060 it is not a corner case but the
-		 * only path.  Comparing the two costs one compare per instruction and turns
-		 * that from an argument into a number.
+		 * INSTRUCTION-LENGTH INSTRUMENTATION.  On a format-4 frame the CPU stacks the
+		 * PC of the instruction AFTER the faulting one, and the emulator independently
+		 * computes f_pcfi + insn.is_advance.  For a straight-line instruction they must
+		 * agree.  Contract 6.3 names a wrong is_advance as the sharpest standing risk
+		 * in the package -- NetBSD's own comment calls the format-4 path a hack,
+		 * because it presumes the emulator knows the length of every instruction it
+		 * meets, and on an LC060 it is not a corner case but the only path.
 		 *
-		 * MEASURED, NOT ACTED ON: the emulator's PC is used either way, so this cannot
-		 * change what the lane does.
+		 * ROUND 4 FIX: THE COMPARISON ALONE WAS MEASURING THE WRONG THING.  A TAKEN FP
+		 * conditional branch legitimately moves the PC off the straight line, and the
+		 * CPU stacks the fall-through as it always does for an instruction it never
+		 * executed.  Round 3 read fpe_advmiss_n = 7,909,400 and its latch named the
+		 * culprit exactly -- an fbnel in libc's _doprnt, one per printf %f conversion.
+		 * So the counter was saturated by a benign class and the length check that was
+		 * supposed to be round 3's primary number was never actually run.
+		 *
+		 * THE EXCLUSION SET IS THE EMULATOR DECODER'S OWN, not a guess.
+		 * fpu_emulate.c:145 computes optype = (opword & 0x01C0) and dispatches on it at
+		 * :162/:191/:196.  Types 2 and 3 (0x0080/0x00C0) are FBcc.  Type 1 (0x0040) is
+		 * FDBcc/FScc/FTRAPcc, and fpu_emul_type1 is explicit about which of the three
+		 * moves control flow: FDBcc alone, as `is_advance += displ` (:1030).  FScc
+		 * (:1073) and FTRAPcc (:1044-1068) always advance, so they STAY under test.
+		 * Types 4-7 never reach this path -- the emulator returns SIGILL.
+		 *
+		 * THE FETCH COSTS NOTHING ON AGREEMENT, which is 73% of the traffic: the opword
+		 * is read only when the two PCs differ.  It is a direct copyin rather than
+		 * ufetch_short so that the instrument does not perturb the emulator's own fetch
+		 * census (fpe_ufetch_n, fpe_ufetchfail_n, fpe_fault_addr) -- an instrument that
+		 * moves the numbers beside it is worse than none.
+		 *
+		 * MEASURED, NOT ACTED ON: the emulator's PC is used either way, so nothing here
+		 * can change what the lane does.
 		 */
 		if (f.f_pc != stacked_pc) {
-			fpe_advmiss_n++;
-			if ((unsigned long)fpe_b_pc == 0xffffffff) {
-				fpe_b_pc = (long)f.f_fmt4.f_fslw;
-				fpe_b_stacked = (long)stacked_pc;
-				fpe_b_resume = (long)f.f_pc;
+			unsigned short opw;
+			int optype;
+
+			if (copyin((char *)f.f_fmt4.f_fslw, (char *)&opw, 2) != 0) {
+				/* cannot classify it, so it is neither a miss nor benign */
+				fpe_advnofetch_n++;
+			} else {
+				optype = opw & 0x01C0;
+				if (optype == 0x0080 || optype == 0x00C0 ||
+				    (optype == 0x0040 && (opw & 0070) == 0010)) {
+					/* FBcc or FDBcc: the emulator took the branch */
+					fpe_advctl_n++;
+					if ((unsigned long)fpe_c_pc == 0xffffffff) {
+						fpe_c_pc = (long)f.f_fmt4.f_fslw;
+						fpe_c_opword = (long)opw;
+					}
+				} else {
+					/* a STRAIGHT-LINE advance disagreed.  This is the finding. */
+					fpe_advmiss_n++;
+					if ((unsigned long)fpe_b_pc == 0xffffffff) {
+						fpe_b_pc = (long)f.f_fmt4.f_fslw;
+						fpe_b_stacked = (long)stacked_pc;
+						fpe_b_resume = (long)f.f_pc;
+						fpe_b_opword = (long)opw;
+					}
+				}
 			}
 		}
 		fpe_done_n++;
