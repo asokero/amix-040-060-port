@@ -392,12 +392,22 @@ fpuinit:
 	tstl	fpe_enable
 	beqs	Lfe_i_off
 
-| NetBSD's cputype encoding, not AMIX's.  AMIX spells the CPU 40/60 in a SHORT
-| (sys/systm.h:18); the emulator compares against CPU_68060 == 3 in an int.  The two
-| are the same fact in two encodings and this is where they are reconciled -- see
-| src/fpe-compat/m68k/m68k.h for why the redirection is a header and not a -D.
+| NetBSD's cputype encoding, not AMIX's.  The emulator compares against CPU_68060 == 3;
+| AMIX spells the CPU 40/60.  The two are the same fact in two encodings and this is where they
+| are reconciled -- see src/fpe-compat/m68k/m68k.h for why the redirection is a header and not
+| a -D.
+|
+| READ IT AS A LONG.  <sys/systm.h>:18 declares `extern short cputype`, and round 2 took that
+| declaration at face value -- but THIS PORT'S OWN DEFINITION IS `.long 40` (src/cputype060.s:21)
+| and every other reader in the port agrees: inituname040.s, hgfault040.s, fpsp_glue040.s (x9),
+| isp61_060.s, fpu060.s (x3), fpuinit060.s (x2), ptest040.s, pstart040.s and
+| tools/kernel-cputype-stamp.py all use the 32-bit form.  The FPE lane was the only place that
+| used cmpiw, so on a big-endian long it compared the HIGH half-word -- always 0x0000, never 60 --
+| and fpe_cputype read 2 on a 68060.  Round 3 measured exactly that.
 	movel	&2,fpe_cputype		| CPU_68040
-	cmpiw	&60,cputype
+	movel	cputype,fpe_cputype_amix | the raw AMIX value, so the width is READABLE and not
+					| merely believed: 60 (0x3c) here, 0 with the old cmpiw
+	cmpil	&60,cputype
 	bnes	Lfe_i_arm
 	movel	&3,fpe_cputype		| CPU_68060
 Lfe_i_arm:
@@ -512,6 +522,15 @@ fpu_emul:
 fpe_cputype:
 	.long	2			| NetBSD's encoding (CPU_68040 2, CPU_68060 3), which is
 					| what the extracted tree compares against
+	.globl	fpe_cputype_amix
+fpe_cputype_amix:
+	.long	0xffffffff		| AMIX's own cputype as THIS LANE reads it -- the round-4
+					| assertion for the width defect.  60 on a 68060, 40 on a
+					| 68040; 0 would mean the half-word read is back.  SENTINEL
+					| 0xFFFFFFFF = the lane never armed, so nothing read it
+	.globl	fpe_cputype_bad_n
+fpe_cputype_bad_n:
+	.long	0			| entries where cputype was neither 40 nor 60.  Must stay 0
 	.globl	fpe_disabled_n
 fpe_disabled_n:
 	.long	0			| fpuinit found no FPU and fpe_enable was clear

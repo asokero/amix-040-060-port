@@ -178,7 +178,8 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$STAGE" $FPEOBJS "$OBJDIR/fpe_glue.o" "$OBJDIR/f
 # ---------------------------------------------------------------- 7. symbol assertions
 echo "[*] symbols that must be defined:"
 for s in fpe_magic fpe_vec11 fpe_decline fpe_trap fpe_setjmp fpe_longjmp fpu_emul fpe_sigpend \
-	 fpe_entry_n fpe_cputype fpu_emulate ufetch_short fpe_panic fpe_copyin fpe_copyout \
+	 fpe_entry_n fpe_cputype fpe_cputype_amix fpu_emulate ufetch_short \
+	 fpe_panic fpe_copyin fpe_copyout \
 	 prhasfp fpuinit fpu_save fpu_restore fpu_setup fpu_setup_gated setregs \
 	 fpuinit_fpe_orig fpu_save_fpe_orig fpu_restore_fpe_orig fpu_setup_fpe_orig \
 	 fpu_setup_gated_fpe_orig setregs_fpe_orig trapsig; do

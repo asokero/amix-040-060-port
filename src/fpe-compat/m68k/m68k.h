@@ -25,6 +25,15 @@
  * and merely move the failure.  Confining it to this header confines it to the one file that
  * includes it, and to the point AFTER systm.h has already been parsed.
  *
+ * CORRECTION (round 4, 2026-08-27).  The AMIX declaration quoted above says `short`, and it is
+ * quoted correctly -- but THIS PORT'S OWN DEFINITION IS `.long 40` (src/cputype060.s:21), and
+ * every other reader in the port treats it as 32 bits.  The FPE lane was the only place that
+ * believed the header, and it therefore read the high half-word of a big-endian long: always
+ * 0x0000, so fpe_cputype came out CPU_68040 on a 68060.  Round 3 measured it; src/fpe040.s and
+ * src/fpe_glue.c now read the long.  This header is unaffected -- it never referenced AMIX's
+ * variable, only redirected the NAME -- and the note is here because this is the file a reader
+ * comes to for the cputype story.
+ *
  * TODAY THE READ IS DEAD CODE, and that is measured rather than assumed: the only use of
  * cputype in the extracted tree is fpu_calcea.c:118, inside the "#if 0" block opened at :103.
  * fpe_cputype is maintained anyway -- fpuinit sets it and fpe_glue.c refreshes it per entry --

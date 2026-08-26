@@ -31,7 +31,14 @@
 #include "fpu_emulate.h"
 
 /* ------------------------------------------------------------------ AMIX kernel interface */
-extern short cputype;		/* sys/systm.h:18 -- 40 / 60 here, a SHORT */
+/*
+ * cputype -- 40 or 60.  A LONG, and that is measured rather than declared: <sys/systm.h>:18
+ * says `extern short cputype`, but this port's own definition is `.long 40`
+ * (src/cputype060.s:21) and every other reader in the port uses the 32-bit form.  Round 2
+ * believed the header, so this lane read the HIGH half-word of a big-endian long -- always
+ * 0x0000 -- and fpe_cputype came out 2 on a 68060.  Round 3 measured it.
+ */
+extern long cputype;
 extern fpu_info *fpu_ptr;	/* = u + 0x9c; asserted below and by check_fpu_relocs.py */
 extern char *curproc;
 extern int copyin();
@@ -46,7 +53,7 @@ extern int issig();
 extern void psig();
 
 /* ------------------------------------------------------------------- src/fpe040.s objects */
-extern long fpe_cputype;
+extern long fpe_cputype, fpe_cputype_amix, fpe_cputype_bad_n;
 extern long fpe_busy, fpe_lock_wait_n, fpe_jb[13], fpe_jb_active;
 extern long fpe_done_n, fpe_sig_n;
 extern long fpe_sigfpe_n, fpe_sigill_n, fpe_sigsegv_n, fpe_sigother_n;
@@ -396,8 +403,22 @@ fpe_trap(uspp, regs, xf)
 	 * Keep the CPU-type redirection current.  Cheap enough to do per entry rather than to
 	 * rely on a boot-time write staying true, and the value is the one the extracted tree
 	 * compares against, not AMIX's 40/60.
+	 *
+	 * TOTAL, NOT DEFAULTED.  The old form mapped everything that was not 60 to CPU_68040,
+	 * so a cputype the lane could not read -- which is exactly what the half-word defect
+	 * produced -- looked like a plausible answer.  fpe_cputype_amix carries the raw value
+	 * so the READ itself is checkable, and fpe_cputype_bad_n catches a third value at run
+	 * time rather than only at boot.
 	 */
-	fpe_cputype = (cputype == 60) ? NB_CPU_68060 : NB_CPU_68040;
+	if (cputype == 60)
+		fpe_cputype = NB_CPU_68060;
+	else if (cputype == 40)
+		fpe_cputype = NB_CPU_68040;
+	else {
+		fpe_cputype_bad_n++;
+		fpe_cputype = NB_CPU_68040;
+	}
+	fpe_cputype_amix = cputype;
 
 	/*
 	 * THE FRAME SHIM.  AMIX's trap block is FIFTEEN registers -- D0-D7 and A0-A6 -- with A7
