@@ -126,8 +126,13 @@ Lfpe_cen0:
 Lfpe_cen2:
 	addql	&1,fpe_v11_fmt2_n
 	movew	%sp@(6),fpe_v11_fmt2_word+2 | contract 8 item 2: the pairing, from a real frame
-	movel	%sp@(8),fpe_v11_fmt2_ia	| a format-2 frame is 12 bytes and +8 is the instruction
-					| address -- the field only this shape has
+	movel	%sp@(8),fpe_v11_fmt2_ia	| a format-2 frame is 12 bytes and +8 is the OPERAND
+					| EFFECTIVE ADDRESS -- the field only this shape has.
+					| Round 5 measured it: 0 on all 2,007 frames from a
+					| register-to-register fsin, and exactly the operand's
+					| data address from an fsin.d (%a0),%fp0 probe.  The _ia
+					| name predates that and is kept so the symbol stays
+					| stable; contract 6.2 carries the correction
 Lfpe_cen_done:
 
 	tstl	fpu_present		| real silicon: this lane does not exist.  Uncounted on
@@ -615,10 +620,14 @@ fpe_v11_last_fmtvec:
 fpe_v11_fmt2_word:
 	.long	0xffffffff		| the last format-2 frame's own word, low half.  Motorola's
 					| x_fline.sa says 0x202c; this is where the tree finally
-					| latches it from real silicon rather than citing it
+					| latches it from real silicon rather than citing it --
+					| round 5 read 0x202c off 2,057 genuine 68040 frames, which
+					| closes contract 8 item 2
 	.globl	fpe_v11_fmt2_ia
 fpe_v11_fmt2_ia:
-	.long	0xffffffff		| ... and its +8 instruction address
+	.long	0xffffffff		| ... and its +8 field: the OPERAND EFFECTIVE ADDRESS, 0
+					| when the operand is a register.  Named _ia before it was
+					| measured; nothing consumes it.  Contract 6.2
 
 | ---- the vector-11 arm ------------------------------------------------------------------
 	.globl	fpe_entry_n

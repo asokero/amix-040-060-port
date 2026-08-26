@@ -501,7 +501,7 @@ thing that distinguishes them**:
 | Cause | Frame | fmt nibble | fmt/vec word | size | extra fields |
 |---|---|---|---|---|---|
 | genuine line-F (non-FP opcode), any CPU | four-word, format 0 | 0 | `0x002c` | 8 bytes | — |
-| 68040 unimplemented FP instruction | six-word, format 2 | 2 | `0x202c` | 12 bytes | +8 instruction address |
+| 68040 unimplemented FP instruction | six-word, format 2 | 2 | `0x202c` | 12 bytes | +8 **operand effective address** (0 when the operand is a register) — corrected below |
 | 68060 FP disabled (incl. every LC060 event) | eight-word, format 4 | 4 | `0x402c` | 16 bytes | +8 `f_fea`, +12 `f_pcfi` |
 
 Evidence: the format-2/`0x202c` pairing is Motorola's own, from the FPSP source in the pinned
@@ -513,6 +513,24 @@ NetBSD `m68k/cpuframe.h:60-68`, a two-longword `struct fmt4` — `f_fa` and `f_f
 macro to `f_fea` and `f_pcfi`, the comment there recording those as the 060 FPU-disabled type-4
 names — and is corroborated by `src/fpsp060_glue.s:417`/`:422` reading `%sp@(0xc)` — the +12
 longword — which only exists in a 16-byte frame.
+
+**Round 5 measured the format-2 row instead of citing it, and corrected half of it**
+(`Amix/tmp/2026-08-27-fpe-r5/RESULTS.md` item 6). The pairing holds: `fpe_v11_fmt2_word` latched
+`0x202c` off **2,057 genuine 68040 vector-11 frames** on an FPU-present 040 rig, every event on
+that rig was format 2, and no other shape appeared — with `fpe_entry_n` still 0 and the FPSP's own
+transcendental answers still exact to 15 digits, so the census perturbs nothing. See §8 item 2,
+now closed.
+
+**The `+8` longword is the OPERAND EFFECTIVE ADDRESS, not the instruction address.** Rounds 1–4 of
+this table said "instruction address", and so did the matching comment in `src/fpe040.s`. Round 5
+discriminated the two readings rather than arguing them: 2,007 frames taken by a register-to-
+register `fsin` latched **0**, which no instruction-address reading permits; a second probe running
+`fsin.d (%a0),%fp0` — a **memory** source operand — latched **exactly `0x800025a8`, the operand's
+own data address**. The 68040 stacks the effective address of the instruction's memory operand
+there, and 0 when there is none. Nothing in this tree consumes the field, so the correction changes
+no behaviour and none of the census's scored readings; it changes what the field may be built on
+later. The symbol keeps its round-4 name `fpe_v11_fmt2_ia` — renaming it is a code change for a
+comment-level fact — and `src/fpe040.s` says so at both the store and the reservation.
 
 **Consequence, and it is the first thing the fpe entry must do:** dispatch on the format nibble.
 A format-0 frame at vector 11 is a genuinely illegal F-line word and must become SIGSYS
@@ -699,10 +717,15 @@ Two build facts follow, both already law in this tree:
    images, and extracting one needs image tooling that is out of scope for this round. The
    caveat's specific gap — `/bin`, `/sbin`, `sh`, `awk`, `ls`, `init`, `pkgadd` — remains
    unmeasured.
-2. **The 68040 format-2 frame is cited, not measured here.** §6.2's format-2/`0x202c` row rests on
-   Motorola's `x_fline.sa` and on `FPSP-INTEGRATION-PLAN.md:233`. No 68040 vector-11 frame was
-   latched in this round. It does not affect the LC060 lane (every event there is format 4), but
-   a three-armed dispatch that claims to handle the 040 should latch one.
+2. **The 68040 format-2 frame was cited, not measured — CLOSED in round 5.** §6.2's
+   format-2/`0x202c` row rested on Motorola's `x_fline.sa` and on `FPSP-INTEGRATION-PLAN.md:233`
+   through rounds 1–4, and no 68040 vector-11 frame had ever been latched in this tree. Round 4
+   moved the format census **ahead of** the `fpu_present` decline (which is why it had been
+   unreachable: every 040 available has an FPU, so the lane never armed on one), and round 5
+   latched **`fpe_v11_fmt2_word = 0x202c` off 2,057 genuine 68040 frames** with `fpe_entry_n`
+   still 0 and the FPSP's results still correct to 15 digits
+   (`Amix/tmp/2026-08-27-fpe-r5/RESULTS.md` item 6). The same measurement corrected the row's
+   `+8` field to the **operand effective address** — §6.2.
 3. **`ufetch_short`'s failure semantics on a sleeping fault** are inherited from the `copyin`
    shape (§3.5) and share the ownership hazard of §7.3.
 4. **`panic` interposition** (§3.6) has no decided mechanism.
