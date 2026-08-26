@@ -777,29 +777,66 @@ would otherwise pass silently through a lock designed for three specific files (
 One row per thing this document decided. A row with no number against it is a decision that was
 argued and never tested.
 
+**Rounds 3 and 5 have now measured all ten.** Round 3 booted the lane and found three defects,
+round 4 fixed them (`FPE-R4-DELTA.md`), and round 5 re-scored the list. Each row below carries a
+one-line pointer to the number it finally got; the rows themselves are **not** rewritten, because a
+registration is a record of what was asked for and not of what came back. The evidence for every
+round-5 pointer is `Amix/tmp/2026-08-27-fpe-r5/RESULTS.md`.
+
 1. **The exec/sendsig `fpu_setup` gap (§6.3).** Highest-value follow-up. Reading: exec a program
    that sets a distinctive FPCR and fp0 pattern, exec another, read `fpu_info` through /proc. The
    registered prediction is that the pattern survives. Two candidate fixes: extend the two gates to
    `fpu_present || fpu_emul`, or reset the model from the glue at the first FP trap after exec.
+   *Round 5 (item 4): DISCHARGED by candidate 1 — the LC bed reads `fpcr=0x0000 fp0=0.000` after
+   exec where round 3 read the pattern surviving, matching both FPU rigs; a handler no longer
+   inherits enabled traps and the interrupted context gets its model back; `fpi_ss_skip_n` 33 → 0.*
 2. **`fpe_advmiss_n == 0` (§4.4).** The instruction-length check. Non-zero is a finding with the
    offending instruction already latched, and it is the contract's sharpest standing risk.
+   *Round 5 (item 5): DISCHARGED — `fpe_advmiss_n = 0` and `fpe_advnofetch_n = 0` across 11,655,653
+   emulated instructions, `%f` storms and an FP dhrystone included, with 194,058 taken FP branches
+   absorbed by `fpe_advctl_n`. Residual gap unchanged: a wrong `is_advance` inside the
+   `FBcc`/`FDBcc` classes stays invisible from the glue's side.*
 3. **`fpe_entry_n == 0` and `fpu_emul == 0` on every FPU-present rig (decision 7).** The
    never-engage bar, readable from the first boot.
+   *Round 5 (the bar): DISCHARGED on three FPU-present rigs — 060+FPU, 040+FPU and 060+FPU+softfloat
+   — every behavioural counter at its initialiser and every latch at its sentinel, with the
+   pre-gate `fpe_v11_*` observers excepted by name.*
 4. **si_code agreement (§5.2).** The same enabled-exception test run on a real-FPU 040/060 rig and
    on the LC060: same signal, same `si_code`, same `si_addr`. This is the only way to show the
    derivation matches what stock would have said, since on the LC060 stock says SIGSYS.
+   *Round 5 (item 7): DISCHARGED, and further than registered — signal, `si_code` (3 and 4) **and**
+   `si_addr` all identical on both rows. `FPE-R4-DELTA.md` §6.1's predicted divergence did not
+   appear and that rule is refuted; see its annotation.*
 5. **Signal-delivery latency and the two omissions (§5.3).** A SIGALRM into a pure-FP loop must
    arrive; `stop_on_fault` and the /proc fault class do not run and a /proc `FLTFPE` watcher will
    not stop.
+   *Round 5 (item 3): DISCHARGED — SIGALRM due at t0+2 fired at t0+2 on both beds, `kill -9` removes
+   a spinner, and round 3's three-spinner scenario (which forced a power-cut) was reproduced and
+   survived. Cost 21 gate hits against 11,655,650 emulated instructions. The two omissions are
+   unchanged and still not implemented.*
 6. **`fpe_lock_wait_n` (§4.1).** Non-zero under a concurrent load with paged-out operands, and
    zero is a reason to strengthen the test, not to relax the lock.
+   *Round 5: NOT re-taken — it stayed 0 because the FP hogs' working set fit and the sleeping path
+   was barely entered. Round 3's 556 under real memory pressure stands as this row's discharge.*
 7. **`fpe_panic_n`, `fpe_panic_hard_n`, `fpe_fmtx_n`, `fpe_super_n` all 0** on every clean run;
    the copy-fault path exercised deliberately (§4.2).
+   *Round 5 (items 2 and 9): DISCHARGED — all four 0 at every observation, and the deliberate copy
+   fault delivered SIGSEGV with `si_code 2` at `0x80402acc`, `fpe_copyfail_n` 0 → 1 and
+   `fpe_fault_addr` naming the same address.*
 8. **The boot line.** On a 68LC060: `no fpu detected` followed by `fpu emulation enabled`. On an
    FPU part: neither, and every counter in `src/fpe040.s` at its initialiser.
+   *Round 5 (item 2): DISCHARGED — both lines, in that order, on the LC bed and neither on any
+   FPU rig; no new console line versus round 3.*
 9. **`ucp_magic` absent** from every kernel this lane produces (§7).
+   *Round 5 (artifact gate): DISCHARGED — absent by `nm`, re-checked on this round's own artifacts
+   rather than carried over.*
 10. **`fpe_fmt2_n`** on an 040 rig, which is how the format-2 frame finally gets latched (contract
     §8 item 2) without building its arm first.
+    *Round 5 (item 6): DISCHARGED, but by the round-4 pre-gate census and not by this counter —
+    `fpe_fmt2_n` sits behind the decline and stayed 0, which is §5 of the delta's point.
+    `fpe_v11_fmt2_n` latched **2,057** real 68040 frames and `fpe_v11_fmt2_word = 0x202c`, closing
+    contract §8 item 2. The same measurement corrected the frame's `+8` field to the **operand
+    effective address** — contract §6.2.*
 
 ---
 
