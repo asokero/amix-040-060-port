@@ -78,6 +78,47 @@
 | ============================================================================
 	.globl	fpe_vec11
 fpe_vec11:
+| ---- THE CENSUS, ahead of every gate (round 4 fix 5) --------------------------------------
+| fpe_fmt2_n used to sit BELOW the fpu_present decline, and every 68040 in this workspace's
+| bench and metal fleet has an FPU -- so on the only kind of 040 available the lane never armed
+| and the counter could never move.  FPE-GLUE-DESIGN.md 9 item 10 was therefore not merely 0,
+| it was unreachable, and contract 8 item 2's standing gap (the format-2/0x202c pairing rests on
+| Motorola's x_fline.sa and has never been latched from a real 68040 frame in this tree) stayed
+| open through a round that booted two 040 rigs.
+|
+| Counting here costs three to five instructions per vector-11 event and closes it for free on
+| ANY 040 boot: an FPU-present 040 takes format-2 frames at vector 11 for every unimplemented FP
+| instruction the FPSP handles.
+|
+| THE NEVER-ENGAGE BAR IS UNCHANGED.  fpe_entry_n stays behind both gates, below.  The fpe_v11_*
+| family are PRE-GATE OBSERVERS and are EXPECTED to move on FPU-present rigs -- that is their
+| whole purpose -- so any reading of the bar must exclude them by name.
+|
+| Memory-to-memory and memory-immediate throughout: CCR is the only thing this changes, which is
+| the same register discipline the rest of this arm keeps.  The decline path itself is untouched.
+	addql	&1,fpe_v11_n
+	cmpiw	&0x402c,%sp@(6)
+	beqs	Lfpe_cen4
+	cmpiw	&0x202c,%sp@(6)
+	beqs	Lfpe_cen2
+	cmpiw	&0x002c,%sp@(6)
+	beqs	Lfpe_cen0
+	addql	&1,fpe_v11_fmtx_n
+	movew	%sp@(6),fpe_v11_last_fmtvec+2
+	bras	Lfpe_cen_done
+Lfpe_cen4:
+	addql	&1,fpe_v11_fmt4_n
+	bras	Lfpe_cen_done
+Lfpe_cen0:
+	addql	&1,fpe_v11_fmt0_n
+	bras	Lfpe_cen_done
+Lfpe_cen2:
+	addql	&1,fpe_v11_fmt2_n
+	movew	%sp@(6),fpe_v11_fmt2_word+2 | contract 8 item 2: the pairing, from a real frame
+	movel	%sp@(8),fpe_v11_fmt2_ia	| a format-2 frame is 12 bytes and +8 is the instruction
+					| address -- the field only this shape has
+Lfpe_cen_done:
+
 	tstl	fpu_present		| real silicon: this lane does not exist.  Uncounted on
 	bnew	fpe_decline		| purpose -- fpe_entry_n == 0 is the never-engage bar
 	tstl	fpu_emul
@@ -534,6 +575,39 @@ fpe_cputype_bad_n:
 	.globl	fpe_disabled_n
 fpe_disabled_n:
 	.long	0			| fpuinit found no FPU and fpe_enable was clear
+
+| ---- the pre-gate census (round 4 fix 5) --------------------------------------------------
+| Counted BEFORE fpu_present and fpu_emul, so these move on every rig including FPU-present
+| ones.  They are observers, not behaviour, and they are explicitly OUTSIDE the never-engage
+| bar -- which remains fpe_entry_n == 0 and fpu_emul == 0 plus every behavioural counter at its
+| initialiser.
+	.globl	fpe_v11_n
+fpe_v11_n:
+	.long	0			| every vector-11 event: armed or not, user or supervisor
+	.globl	fpe_v11_fmt4_n
+fpe_v11_fmt4_n:
+	.long	0			| 0x402c  eight-word, 68060 FP disabled
+	.globl	fpe_v11_fmt2_n
+fpe_v11_fmt2_n:
+	.long	0			| 0x202c  six-word, 68040 unimplemented FP.  THE counter
+					| FPE-GLUE-DESIGN.md 9 item 10 wanted and could not reach
+	.globl	fpe_v11_fmt0_n
+fpe_v11_fmt0_n:
+	.long	0			| 0x002c  four-word, a genuine bad F-line word
+	.globl	fpe_v11_fmtx_n
+fpe_v11_fmtx_n:
+	.long	0			| any other shape.  Must stay 0
+	.globl	fpe_v11_last_fmtvec
+fpe_v11_last_fmtvec:
+	.long	0xffffffff		| ... its format/vector word, low half
+	.globl	fpe_v11_fmt2_word
+fpe_v11_fmt2_word:
+	.long	0xffffffff		| the last format-2 frame's own word, low half.  Motorola's
+					| x_fline.sa says 0x202c; this is where the tree finally
+					| latches it from real silicon rather than citing it
+	.globl	fpe_v11_fmt2_ia
+fpe_v11_fmt2_ia:
+	.long	0xffffffff		| ... and its +8 instruction address
 
 | ---- the vector-11 arm ------------------------------------------------------------------
 	.globl	fpe_entry_n
