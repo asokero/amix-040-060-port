@@ -58,6 +58,7 @@ extern long fpe_busy, fpe_lock_wait_n, fpe_jb[13], fpe_jb_active;
 extern long fpe_done_n, fpe_sig_n;
 extern long fpe_sigfpe_n, fpe_sigill_n, fpe_sigsegv_n, fpe_sigother_n;
 extern long fpe_last_signo, fpe_last_code, fpe_last_fpsr, fpe_undecoded_n;
+extern long fpe_last_si_addr, fpe_last_fault_pc;
 extern long fpe_panic_n, fpe_panic_hard_n, fpe_copyfail_n;
 extern long fpe_ufetch_n, fpe_ufetchfail_n, fpe_fault_addr;
 extern long fpe_advmiss_n, fpe_b_pc, fpe_b_stacked, fpe_b_resume, fpe_b_opword;
@@ -301,6 +302,20 @@ fpe_fltcode(fpf)
 	raised = fpf->fpf_fpsr & fpf->fpf_fpcr & FPSR_EXCP;
 	fpe_last_fpsr = (long)fpf->fpf_fpsr;
 
+	/*
+	 * ROUND 3 CONFIRMED THE ORDER AND THE MASKING, by an accident worth recording.  After
+	 * the overflow probe fpe_last_fpsr read 0x000032c8 -- OPERR *and* OVFL *and* INEX2 all
+	 * raised -- with only OVFL enabled in FPCR (0x1000).  OPERR is tested first below, so
+	 * an UNMASKED derivation would have returned FPE_FLTINV (7).  It returned 4.  The
+	 * (fpsr & fpcr & FPSR_EXCP) term above is what made the priority ladder look at the
+	 * enabled set rather than the raised set, and FPSR_EXCP (0x0000ff00) is what keeps
+	 * FPCR's mode byte (FPCR_MODE 0x000000ff) and FPSR's accrued byte (FPSR_AEX
+	 * 0x000000f8) out of an AND that would otherwise mix three unrelated fields.
+	 *
+	 * Both codes this derivation has been measured against agree with the real-FPU rig:
+	 * FPE_FLTDIV (3) for divide-by-zero and FPE_FLTOVF (4) for overflow.  Four of the six
+	 * enabled-exception classes are still uncompared.
+	 */
 	if (raised & (FPSR_BSUN | FPSR_SNAN | FPSR_OPERR))
 		return FPE_FLTINV;	/* 7 */
 	if (raised & FPSR_OVFL)
@@ -352,6 +367,7 @@ fpe_signal(signo, code, addr)
 
 	fpe_last_signo = (long)signo;
 	fpe_last_code = (long)code;
+	fpe_last_si_addr = addr;
 
 	trapsig(curproc, &si);
 	if (issig(0))
@@ -609,6 +625,27 @@ fpe_trap(uspp, regs, xf)
 	fpe_sig_n++;
 	signo = ksi.ksi_signo;
 	code = ksi.ksi_code;
+
+	/*
+	 * si_addr, AND WHY THE TWO LATCHES ARE BOTH NEEDED.  ksi_addr is frame->f_pc after the
+	 * emulator's own advance (fpu_emulate.c:54-59 and :217-218), i.e. the instruction after
+	 * the faulting one.  FPE-GLUE-DESIGN.md 5.2 registered that this "agrees without being
+	 * made to" with what a real FPU produces.  Round 3 measured that it is a coincidence,
+	 * not a property, and disassembling both probe binaries gave the rule: a real FPU
+	 * defers an enabled arithmetic exception to the NEXT FLOATING-POINT INSTRUCTION and
+	 * stacks that instruction's PC.  In the divide-by-zero probe the next instruction was
+	 * itself an fmoved, so the two agreed exactly; in the overflow probe the faulting fmulx
+	 * sat in a loop whose other instructions are integer, so the real FPU reported the
+	 * fmulx's own address on the next iteration and the glue reported the addql after it.
+	 * Both A/B rows are explained by that one rule and each of the two obvious alternative
+	 * rules is refuted by one of them -- FPE-R4-DELTA.md 6.1 carries the disassembly.
+	 *
+	 * Matching hardware exactly therefore means implementing deferred reporting, which
+	 * needs per-process pending state the u-area does not carry.  That is a design decision
+	 * for a round that can bench it as its subject; until then the two latches let the next
+	 * A/B state both addresses without a disassembler in the loop.
+	 */
+	fpe_last_fault_pc = (long)f.f_fmt4.f_fslw;
 
 	if (signo == SIGFPE && code == 0) {
 		code = fpe_fltcode(fpf);

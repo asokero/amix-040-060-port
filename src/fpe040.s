@@ -664,6 +664,17 @@ fpe_last_code:
 	.globl	fpe_last_fpsr
 fpe_last_fpsr:
 	.long	0xffffffff		| fpf_fpsr as the glue read it back, for the derivation
+| The si_addr pair (round 4 fix 6).  A real FPU defers an enabled arithmetic exception to the
+| NEXT FP instruction and stacks that instruction's PC; the glue reports the instruction after
+| the faulting one.  The two coincide whenever the next instruction is itself floating-point,
+| which is why round 3's divide-by-zero row agreed exactly and its overflow row -- a loop whose
+| only FP instruction is the faulting one -- did not.  Latching both ends the argument.
+	.globl	fpe_last_si_addr
+fpe_last_si_addr:
+	.long	0xffffffff		| the si_addr actually delivered
+	.globl	fpe_last_fault_pc
+fpe_last_fault_pc:
+	.long	0xffffffff		| ... and f_pcfi, the instruction that actually faulted
 	.globl	fpe_undecoded_n
 fpe_undecoded_n:
 	.long	0			| SIGFPE whose enabled-and-raised set was EMPTY, so no
