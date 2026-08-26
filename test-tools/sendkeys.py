@@ -9,9 +9,16 @@ US-position sends garbled every special char -- '/'->'-', '-'->'ss', y<->z).
 Default layout here is therefore 'de': each ASCII char is translated to the
 (rawkey, shift) pair that PRODUCES it under the guest's German keymap.
 Pass --us as the first arg for the old US-position behaviour."""
-import socket, sys, time
+import os, socket, sys, time
 
-SOCK = "/run/user/12044/amiberry.sock"
+# A SECOND AMIBERRY TAKES A DIFFERENT SOCKET NAME, and this tool used to be hardcoded to the
+# first.  Amiberry claims amiberry.sock, then amiberry_1.sock, and so on; if someone else's
+# session started first, ours is _1 and every keystroke sent here goes to THEIR guest.  That is
+# silent -- the keys land somewhere, just not where you are looking (2026-08-26, cost three
+# attempts and a screenshot of the wrong window).  Override with AMIBERRY_SOCK; `ls -lt
+# /run/user/$UID/amiberry*.sock` orders them by age, and `ss -ltnp | grep 2323` says which pid
+# actually owns the telnet port you are talking to.
+SOCK = os.environ.get("AMIBERRY_SOCK", "/run/user/12044/amiberry.sock")
 LSHIFT = 0x60
 RET = 0x44
 
