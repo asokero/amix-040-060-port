@@ -471,6 +471,30 @@ address and `fpe_last_si_addr` the one actually delivered, so the next A/B can s
 a disassembler in the loop — and the difference between them is, by §6.1's rule, exactly the
 distance to the next FP instruction.
 
+> **REFUTED BY MEASUREMENT — round 5** (`Amix/tmp/2026-08-27-fpe-r5/RESULTS.md` item 7). The rule
+> above does not reproduce. Applied to round 5's `ovf` probe it predicts `0x800006bc` — the loop's
+> next *FP* instruction. **The real-FPU reference reported `0x800006ce`**, the next instruction,
+> which is an `addql` and not an FP one. Nor does round 3's own row survive as stated: there the
+> reference reported the **faulting** `fmulx` itself. Across four observations no single rule fits,
+> and the one this section committed to is the one round 5 refutes. The coherent remaining reading
+> is that the report site depends on the **faulting instruction's class** — round 3's was a
+> register-to-register `fmulx`, round 5's an `fmove`-to-memory store — but round 5 did not test
+> that, and it is recorded as a hypothesis, not as a replacement rule.
+>
+> **And there was no divergence to bracket.** On both of round 5's rows the emulated bed and the
+> real-FPU reference agreed **exactly** — `si_code 3` / `si_addr 0x800007aa` for div-zero,
+> `si_code 4` / `si_addr 0x800006ce` for overflow, same binaries on both beds. The gap this
+> section predicted, and that FIX 6 exists to measure, did not appear at all.
+>
+> **STANDING RULING (orchestrator, round 5): deferred si_addr reporting is NOT implemented, and
+> immediate reporting is the accepted, documented behaviour of this lane.** Nothing in the emulated
+> path needs changing on this evidence. The `fpe_last_fault_pc` / `fpe_last_si_addr` pair stays in
+> as the instrument that brackets any future divergence, so the decision can be revisited on a
+> measurement rather than on the disassembly of two probes. The standing limits are unchanged and
+> neither is closed: the reference is Amiberry's softfloat model of the 68060 FPU rather than
+> silicon (the definitive A/B still wants a Mercury or an A3640), and 2 of the 6 enabled-exception
+> classes have been compared.
+
 ### 6.2 The derivation order, audited as asked
 
 Order in `fpe_fltcode`: `(BSUN|SNAN|OPERR)` → `OVFL` → `UNFL` → `DZ` → `(INEX1|INEX2)`. That is
@@ -497,6 +521,9 @@ rounding/precision **mode** bits (`FPCR_MODE 0x000000ff`, `:79`) and FPSR's low 
 * `si_addr` agrees whenever the instruction after the faulting one is itself an FP instruction,
   and differs otherwise. `fpe_last_fault_pc` names the faulting instruction on the emulated side
   so the difference is readable directly.
+  *Round 5: this registered reading is refuted — see the annotation at the end of §6.1. Both rows
+  agreed exactly, including the `ovf` row, where the rule predicts `0x800006bc` and both beds
+  reported `0x800006ce`.*
 * Limits unchanged from round 3, and neither is closed here: the reference side is Amiberry's
   softfloat model of the 68060 FPU, not silicon (the definitive A/B still wants a Mercury or
   A3640); and only two of the six enabled-exception classes have been compared.
