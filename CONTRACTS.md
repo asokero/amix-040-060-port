@@ -52,7 +52,13 @@ that can be skipped eventually is; a mechanism cannot be.
     tools/check-blocks.sh <base>..<tip>
 
 Every `ISSUE-N` introduced in that range must lie inside its author's block. Run it before
-merging a branch from another line. A rule with no instrument is a wish, and this one is
+merging a branch from another line.
+
+Two things it reports that are **not** faults in the tree: commits that predate the partition
+(they really did mint out of block, and were fixed by renumbering rather than by rewriting), and
+the renumbering commit itself — check 1 cannot tell minting from relocating somebody else's
+entry, so whoever does the tidying is reported for all of it. Check 2 looks at the tree instead
+of at authorship and is the one that says whether the ledger is sound. A rule with no instrument is a wish, and this one is
 cheap: the partition does not merely prevent collisions, it makes violations **visible** —
 a number below 100 authored from `jussi@alanara.fi` is wrong at a glance, where `ISSUE-46`
 against `ISSUE-46` was indistinguishable.

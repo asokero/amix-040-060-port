@@ -28,6 +28,14 @@
 # later as a renumbering commit rather than by rewriting them.  That is history being accurate,
 # not the check being wrong.  Judge a merged branch by its tree, which check 2 covers.
 #
+# IT ALSO FLAGS THE RENUMBERING COMMIT ITSELF, and that one IS a limitation rather than
+# accuracy.  Check 1 asks "did this commit introduce a ledger heading outside its author's
+# block", and it cannot tell minting from RELOCATING somebody else's entry.  c67d4ca moved the
+# z3660 line's issues into 100-106; the author of that commit holds 1-99, so all seven are
+# reported.  Nothing is wrong with the tree.  Expect this whenever one line tidies another's
+# entries, and read check 2 -- which looks at the tree rather than at authorship -- as the one
+# that says whether the ledger is actually sound.
+#
 # Usage: tools/check-blocks.sh [<base>..<tip>]     (default: origin/main..HEAD)
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
