@@ -128,3 +128,62 @@ current unit did not damage the filesystem's structure.
 That is worth knowing in both directions. The repair is real and the earlier "clean" readings
 were overstated; and the damage is confined to accounting the kernel rebuilds anyway.
 
+---
+
+## Third occurrence — and it breaks the correlation
+
+`68060-260826-06` (the LC060 merge), **~2 minutes after boot, no burst involved**:
+
+    a3091dbg ss=16 istate=0 unit=8113020 head=0 dmaon=0
+    a3091dbg segstate=0 segseq=7300 segpa=9EA0800 seglen=800 segdir=1
+    a3091dbg zarm=0 rarm=0 owned=0 noprep=0 ovf=0 whole=7300
+    a3091: 0x16 0 0x8113020
+
+`unit=8113020` resolves to `units[6]` on this build's layout — **the root disk, third time**.
+
+The signature is identical: `ss=16`, `istate=0`, `head=0`, `dmaon=0`, `segstate=0`. Everything
+said about the second occurrence holds here too.
+
+What differs:
+
+| | `-04`, occurrence 2 | `-06`, occurrence 3 |
+|---|---|---|
+| `segseq` | 168 807 | **7 300** |
+| `segdir` (last transfer) | 0, to device | **1, from device** |
+| context | end of a 4-round burst | ~2 min after boot, NFS mount and file copies |
+
+**The burst correlation is weakened, not confirmed.** Two occurrences at the end of bursts made a
+pattern worth naming; a third under light load, 23 times earlier in the DMA sequence, does not
+fit it. And the direction differing rules out a direction-specific fault.
+
+It also explains a symptom seen from the host at the time: telnet returned `NO-SHELL-PROMPT` —
+the login prompt appeared, because `getty` was already running, and the shell never came, because
+`login` must read `/etc/passwd` off the disk the driver had just stopped serving.
+
+### The merge is now a live suspect and cannot be dismissed
+
+This was the first run of the LC060 merge, and it died 23 times earlier in the DMA sequence than
+the previous occurrence. **n = 1.** Two readings the data does not separate:
+
+* the merge made this more likely
+* it is stochastic and landed early this time
+
+**The merge does not go anywhere until this is settled**, for the plain reason that the battery
+cannot be run on a kernel whose driver dies before login.
+
+### The A/B, and the one thing that would make it meaningless
+
+Boot `-04` again and repeat **the same activity** — NFS mount, the same file copies, the same
+guest build. `-06` did not die idle; it died under light disk load. Letting `-04` sit idle and
+survive would compare loads, not kernels, and would look like an answer.
+
+### fsck, second capture
+
+    FREE BLK COUNT(S) WRONG IN SUPERBLK
+    SALVAGE?  yes
+    ***** FILE SYSTEM WAS MODIFIED *****
+
+Phases 1–5 otherwise clean, same benign class as the first capture (`SUMMARY INFORMATION BAD`).
+Two captures now agree: a driver that dies holding the root disk leaves free-space accounting
+wrong and the structure intact.
+
