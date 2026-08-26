@@ -5,7 +5,10 @@
 # For a 68LC060 this is the difference between "awk 3.75 prints nothing and the process dies"
 # and a working libc.  On a part that HAS an FPU nothing here engages: fpuinit's probe is the
 # authority, the emulator arms only on its negative answer, and fpe_entry_n stays 0 for the
-# whole boot.  That counter is the regression bar.
+# whole boot.  That counter is the regression bar.  Its one deliberate exception is the
+# fpe_v11_* frame-format census, counted AHEAD of both gates and expected to move on any rig --
+# it is how an FPU-present 68040 latches the format-2 frame this tree has only ever cited
+# (docs/contracts/FPE-R4-DELTA.md 5).
 #
 #   sh relink-040-fpe.sh [base-kernel] [output]
 #   FPE=0 sh relink-040-fpe.sh ...        rollback: reproduce the base image byte for byte
@@ -249,4 +252,6 @@ python3 "$HERE/src/stamp_buildid.py" "$OUT"
 echo "[OK] built $OUT"
 echo "     boot: unix_boot040 $(basename "$OUT")   <- unix_boot040 is MANDATORY"
 echo "     expect on a part WITH an FPU:  fpe_entry_n == 0 and fpu_emul == 0, all boot"
+echo "                                    -- but the pre-gate fpe_v11_* census DOES move there"
 echo "     expect on a 68LC060:           'fpu emulation enabled' after 'no fpu detected'"
+echo "                                    fpe_cputype_amix == 60, fpe_cputype == 3"

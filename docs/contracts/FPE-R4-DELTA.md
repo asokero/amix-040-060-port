@@ -29,9 +29,12 @@ on every build. Everything below is in `src/fpe_glue.c`, `src/fpe040.s`, `relink
 
 **One property this round deliberately keeps: the base kernel does not move.** Every fix lives
 inside the FPE lane, so `build/unix-040` is byte-for-byte what round 3 booted and `FPE=0` still
-reproduces it under the script's own sha gate. That matters for §2 in particular, where the
-obvious place to put the fix is `src/fpuinit060.s` — a file every 040 kernel on this branch
-links — and where an override costs nothing and keeps the blast radius at zero.
+reproduces it under the script's own sha gate — checkably, because that base's sha256 is the one
+`FPE-INTEGRATION-CONTRACT.md:26` has pinned since round 1,
+`b1351544c151dc0d33715fe0bb42c86f119dc60e48b0c0d4d2be108826fc9fe4`. That matters for §2 in
+particular, where the obvious place to put the fix is `src/fpuinit060.s` — a file every 040
+kernel on this branch links — and where an override costs nothing and keeps the blast radius at
+zero.
 
 ---
 
@@ -464,8 +467,9 @@ because the divergence is a property of the *following code*, not of the excepti
 
 **So FIX 6 delivers an instrument and a correction, not a behaviour change**, and registers the
 decision for round 5 to take deliberately. `fpe_last_fault_pc` latches the faulting instruction's
-address alongside the `si_addr` actually delivered, so the next A/B can state both without a
-disassembler in the loop.
+address and `fpe_last_si_addr` the one actually delivered, so the next A/B can state both without
+a disassembler in the loop — and the difference between them is, by §6.1's rule, exactly the
+distance to the next FP instruction.
 
 ### 6.2 The derivation order, audited as asked
 
@@ -558,5 +562,5 @@ document, which stays the round-2 record.
 | 3 | `cputype` width | `fpe_cputype_amix = 60`, `fpe_cputype = 3`, `fpe_cputype_bad_n = 0` on the LC bed; initialisers on FPU rigs |
 | 4 | the length instrument | `fpe_advmiss_n = 0` and `fpe_advnofetch_n = 0` across a full session; `fpe_advctl_n` large; `fpe_c_opword` a real `FBcc` |
 | 5 | the format census | `fpe_v11_fmt2_n > 0` and `fpe_v11_fmt2_word = 0x202c` on a 68040 rig, with `fpe_entry_n` still 0 |
-| 6 | si_code / si_addr | codes agree (3, 4); `fpe_last_fault_pc` names the faulting instruction; the si_addr rule of §6.1 reproduces |
+| 6 | si_code / si_addr | codes agree (3, 4); `fpe_last_fault_pc` and `fpe_last_si_addr` bracket the divergence; the si_addr rule of §6.1 reproduces |
 | — | the bar | every behavioural `fpe_*` counter at its initialiser on both FPU rigs, `fpe_v11_*` excepted by name |

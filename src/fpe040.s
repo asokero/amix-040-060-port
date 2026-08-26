@@ -3,15 +3,16 @@
 |
 | FIRST-PARTY.  Nothing in this file is derived from the NetBSD FPE under build/fpe-src/;
 | it is the AMIX side of the seam that docs/contracts/FPE-INTEGRATION-CONTRACT.md measured, and
-| every decision it implements is argued in docs/contracts/FPE-GLUE-DESIGN.md.  Read that first:
-| this header states what the code does, not why it is shaped this way.
+| every decision it implements is argued in docs/contracts/FPE-GLUE-DESIGN.md, as amended by
+| docs/contracts/FPE-R4-DELTA.md.  Read those first: this header states what the code does, not
+| why it is shaped this way.
 |
 | Assemble: m68k-cbm-sysv4-gcc -m68040 -c src/fpe040.s -o build/fpe040.o
 | Link:     LAST of every object in the FPE link -- see the .balign note at the end of .text.
-| Externals: nullvect, ureturn, sup_cacr, cputype, fpu_present, fpu_ptr, reset_fregs, printf,
-|            and the five *_fpe_orig aliases relink-040-fpe.sh mints with objcopy.
+| Externals: nullvect, ureturn, sup_cacr, u, cputype, fpu_present, fpu_ptr, reset_fregs, printf,
+|            and the six *_fpe_orig aliases relink-040-fpe.sh mints with objcopy.
 |
-| ============================ THE FIVE THINGS IN HERE ============================
+| ============================ THE SEVEN THINGS IN HERE ============================
 |
 | 1. fpe_vec11 -- the vector-11 arm.  M68Kvec[11] is retargeted to it by
 |    src/patch_fpe_vec11.py, so it runs BEFORE fpsp_vec11's first instruction, which is
@@ -38,6 +39,16 @@
 |
 | 5. fpuinit -- arms the lane.  Runs the accepted probe first, byte for byte, and only if it
 |    comes back saying "no FPU" does the emulator arm.  This is the one place fpu_emul is set.
+|
+| 6. fpu_setup_gated / setregs -- the two call sites that gate fpu_setup on fpu_present alone
+|    and therefore skip it under emulation, so a freshly exec'd image and a signal handler
+|    inherit the previous programmer's model, FPCR included.  Round 3 measured OVFL and DZ
+|    traps surviving an exec on the LC bed and being reset on a real FPU.  Both are answered
+|    for the pair here; overriding rather than editing keeps the base kernel byte-identical.
+|
+| 7. fpe_sigpend -- u_trap's own three-condition signal gate, so the SUCCESSFUL-emulation path
+|    can reach issig/psig without paying for a call on every emulated instruction.  Without it
+|    a process in a pure-FP loop could not be signalled at all, SIGKILL included.
 |
 | ============================ REGISTER DISCIPLINE ============================
 | fpe_vec11 runs on the RAW exception frame with every user register still live in the CPU, so
