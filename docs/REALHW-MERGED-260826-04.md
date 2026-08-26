@@ -62,6 +62,12 @@ matters — and after a power cut it does — the run needs a kernel that mirror
 serial, or a post-boot read of the filesystem's clean flag. Neither was arranged. Recorded here
 rather than glossed, because "fsck passed" is exactly the sort of claim that hardens into fact.
 
+**Closed the same day.** The third dirty boot was photographed and shows `SUMMARY INFORMATION
+BAD` / `SALVAGE? yes` / `FILE SYSTEM WAS MODIFIED`, with phases 1–5 otherwise clean. So these
+boots *do* repair something, the caveat above was right, and what they repair is the stale
+cylinder-group summary an unclean shutdown always leaves. See
+[`A3091-WEDGE-CAPTURED-260826.md`](A3091-WEDGE-CAPTURED-260826.md).
+
 ## The interposer, on hardware
 
 `a3d_magic` reads `41334421` and `a3d_ran` reads `00000000` after a full battery: the block is

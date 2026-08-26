@@ -99,3 +99,32 @@ bursts. Whether those are the same fault is unknown; nothing was captured then.
 
 ISSUE-51 — a burst read returned wrong bytes silently, same run, file intact afterwards. The two
 may or may not be related; nothing links them yet beyond both appearing under burst load.
+
+## fsck after this wedge — the first one captured
+
+    ** Phase 1 - Check Blocks and Sizes
+    ** Phase 2 - Check Pathnames
+    ** Phase 3 - Check Connectivity
+    ** Phase 4 - Check Reference Counts
+    ** Phase 5 - Check Cyl groups
+    SUMMARY INFORMATION BAD
+    SALVAGE?  yes
+    28845 files, 448513 used, 368100 free (4172 frags, 45491 blocks, 0.5% fragmentation)
+    /dev/rdsk/c6d0s1 FILE SYSTEM STATE SET TO OKAY
+
+    ***** FILE SYSTEM WAS MODIFIED *****
+
+**The filesystem was modified**, which settles the caveat recorded earlier the same day: two
+previous dirty boots ran `fsck` and "asked nothing", and that was noted as *not* meaning nothing
+was repaired. It did repair something, and `SALVAGE? yes` is preen mode answering itself rather
+than a question anyone was asked — so the earlier boots almost certainly did the same silently.
+
+**What was repaired is the benign class.** `SUMMARY INFORMATION BAD` is the cylinder-group free
+block and inode summary being stale, which is the textbook consequence of an unclean shutdown.
+Phases 1 through 5 found nothing else: no unreferenced inodes, no bad blocks, no connectivity
+errors, no reference-count errors. A driver that died mid-operation with the root disk as its
+current unit did not damage the filesystem's structure.
+
+That is worth knowing in both directions. The repair is real and the earlier "clean" readings
+were overstated; and the damage is confined to accounting the kernel rebuilds anyway.
+
