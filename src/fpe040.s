@@ -339,6 +339,62 @@ Lfe_i_off:
 Lfe_i_out:
 	rts
 
+| ============================================================================
+| fpe_sigpend -- u_trap's own signal gate, DECODED rather than copied blind.
+|
+| WHY IT EXISTS.  issig/psig used to be reached only from fpe_signal(), i.e. only when the
+| emulator itself raised a signal.  The successful path returns through ureturn -> s_trap, and
+| s_trap has no issig/psig loop (its whole relocation set was decoded for FPE-GLUE-DESIGN.md
+| 5.3).  So a process whose only traps are SUCCESSFUL FP emulations never looked at its pending
+| signals: round 3 measured alarm(2) never firing into a pure-FP loop and `kill -9` returning
+| success while the process kept running.  Three of them had to be power-cut.
+|
+| WHY IT IS A GATE AND NOT A PLAIN CALL.  The success path is THE HOT PATH -- one entry per
+| emulated FP instruction, 29.5 M of them in one round-3 session -- so an unconditional issig()
+| is not affordable.  u_trap runs a cheap three-condition test first; this is that test.
+|
+| THE DECODE, from build/unix-040 (FPE-R4-DELTA.md 1.1 carries the evidence):
+|
+|     u_trap+0x18   lea <u>,%a2 ; movel %d4,%a2@(0x864)     -- u.u_ar0, this file's own U_AR0,
+|                                                              which is what identifies %a2 = u
+|     u_trap+0x1a   moveal %a2@(0x730),%a3                  -- %a3 = u.u_procp
+|     0x5a89a       tstb  %a3@(134) ; bne  -> issig         -- p_cursig
+|     0x5a8a2       tstl  %a3@(156) ; bne  -> issig         -- p_sig
+|     0x5a8aa       movel %a3@(4),%d0 ; andil #0x100        -- p_flag & SPRSTOP
+|     0x5a8ba       bra  -> skip issig entirely
+|
+| The offsets are sys/proc.h's proc_t walked with USIZE = 4 (sys/param.h:65), and the walk is
+| corroborated three ways inside this repository: p_stkbase/p_stksize at +60/+64 are what
+| src/hatalloc_dbg.s:641 already reads, p_sysid at +140 is what src/assegat_dbg.s:309 already
+| reads off the same pointer, and k_sigset_t is ulong_t (sys/types.h:40) -- four bytes -- so a
+| single tstl covers the whole pending set and there is no second word to miss.
+|
+| u.u_procp is read here rather than the glue's `curproc` because it is the pointer u_trap
+| itself works from: the two are the same pointer, and reading this one removes the question
+| instead of arguing it.
+| ============================================================================
+	U_PROCP	 =	0x730		| u.u_procp
+	P_FLAG	 =	4		| proc_t offsets, sys/proc.h with USIZE = 4
+	P_CURSIG =	134
+	P_SIG	 =	156
+	SPRSTOP	 =	0x100		| p_flag bit: "process is being stopped via /proc"
+
+	.globl	fpe_sigpend
+fpe_sigpend:				| int fpe_sigpend(void) -- 1 = call issig/psig
+	moveal	u+U_PROCP,%a0
+	moveq	&1,%d0
+	tstb	%a0@(P_CURSIG)
+	bnes	Lsp_out
+	tstl	%a0@(P_SIG)
+	bnes	Lsp_out
+	movel	%a0@(P_FLAG),%d1
+	andil	&SPRSTOP,%d1
+	bnes	Lsp_out
+	moveq	&0,%d0
+Lsp_out:
+	moveal	%d0,%a0			| this compiler returns in both %d0 and %a0
+	rts
+
 Lfe_i_msg:
 	.asciz	"fpu emulation enabled\n"
 	.balign	4			| pad .text to a multiple of 4.  The loader copies text
@@ -444,6 +500,18 @@ fpe_last_fpsr:
 fpe_undecoded_n:
 	.long	0			| SIGFPE whose enabled-and-raised set was EMPTY, so no
 					| si_code could be derived -- decision 8 makes it SIGILL
+
+| ---- asynchronous signal delivery from the SUCCESS path (round 4 fix 1) -----------------
+| Round 3: a process in a pure-FP loop could not be signalled at all, SIGKILL included, because
+| issig/psig were reached only when the emulator itself raised a signal.  fpe_sigpend is
+| u_trap's own three-condition gate; these two count what it lets through.
+	.globl	fpe_sigpend_n
+fpe_sigpend_n:
+	.long	0			| successful emulations where the gate said "pending work".
+					| Must be VASTLY smaller than fpe_done_n -- that is the gate
+	.globl	fpe_sigdeliv_n
+fpe_sigdeliv_n:
+	.long	0			| ... and issig(0) agreed, so psig() ran
 
 | ---- the abort paths --------------------------------------------------------------------
 	.globl	fpe_panic_n

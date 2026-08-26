@@ -19,6 +19,10 @@
 #      first bad F-line word in the system.
 #   6. init_tbl still carries exactly one relocation to fpuinit, which is the only thing that
 #      arms the lane.
+#   7. fpe_sigpend reads u + 0x730 and nothing else.  That is u.u_procp, the pointer u_trap
+#      itself works from, and the three proc fields the gate then tests are what decide whether
+#      issig() is called at all.  A wrong base here is a gate that silently never fires, and
+#      round 3 measured what that costs: a pure-FP loop that cannot be killed.
 #
 # Usage: python3 src/check_fpe_relocs.py <kernel>
 
@@ -26,6 +30,7 @@ import struct, sys
 
 R_68K_32 = 1
 U_FPU_INFO = 0x9c
+U_PROCP = 0x730
 ALLOWED_DECLINE = ("fpsp_vec11", "nullvect")
 
 
@@ -70,7 +75,8 @@ def main():
         for i in range(n):
             o = s["offset"] + i * s["entsize"]
             info = u32(b, o + 4)
-            out.setdefault(u32(b, o), []).append((symname(info >> 8), info & 0xff))
+            addend = struct.unpack(">i", b[o + 8:o + 12])[0]
+            out.setdefault(u32(b, o), []).append((symname(info >> 8), info & 0xff, addend))
         return out
 
     rtext = relocs(".rela.text")
@@ -158,6 +164,24 @@ def main():
                          % ["0x%x" % o for o in others])
         else:
             print("      init_tbl+0   -> fpuinit (the only place the lane arms)")
+
+    # 7: the signal gate's base.  fpe_sigpend's ONLY relocation must be u + U_PROCP.
+    if "fpe_sigpend" not in syms:
+        fails.append("fpe_sigpend not found -- the success path has no signal gate")
+    else:
+        base = syms["fpe_sigpend"][0]
+        hit = [(o, rtext[o]) for o in rtext if base <= o < base + 6]
+        if len(hit) != 1:
+            fails.append("fpe_sigpend carries %d relocations, expected exactly 1 "
+                         "(the u.u_procp load)" % len(hit))
+        else:
+            tgt, _typ, addend = hit[0][1][0]
+            if (tgt, addend) != ("u", U_PROCP):
+                fails.append("fpe_sigpend reads %s + 0x%x, expected u + 0x%x (u.u_procp)"
+                             % (tgt, addend, U_PROCP))
+            else:
+                print("      fpe_sigpend  -> u + 0x%03x (u.u_procp, u_trap's own gate base)"
+                      % U_PROCP)
 
     if fails:
         for f in fails:

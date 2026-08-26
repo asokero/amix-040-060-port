@@ -54,8 +54,10 @@ extern long fpe_last_signo, fpe_last_code, fpe_last_fpsr, fpe_undecoded_n;
 extern long fpe_panic_n, fpe_panic_hard_n, fpe_copyfail_n;
 extern long fpe_ufetch_n, fpe_ufetchfail_n, fpe_fault_addr;
 extern long fpe_advmiss_n, fpe_b_pc, fpe_b_stacked, fpe_b_resume;
+extern long fpe_sigpend_n, fpe_sigdeliv_n;
 extern int fpe_setjmp();
 extern void fpe_longjmp();
+extern int fpe_sigpend();	/* u_trap's own three-condition gate -- see src/fpe040.s */
 
 /*
  * PZERO, measured rather than assumed: sleep's own body at 0x4868c reads
@@ -505,6 +507,38 @@ fpe_trap(uspp, regs, xf)
 			}
 		}
 		fpe_done_n++;
+
+		/*
+		 * ASYNCHRONOUS SIGNAL DELIVERY, and it is not optional.  s_trap -- which ureturn
+		 * calls on the way out -- has no issig/psig loop; that loop lives in u_trap,
+		 * which this path deliberately does not run.  Until round 4 the pair was reached
+		 * only from fpe_signal(), i.e. only when the EMULATOR raised a signal, so a
+		 * process whose only traps were successful emulations never looked at its pending
+		 * signals: round 3 measured alarm(2) never firing into a pure-FP loop and `kill
+		 * -9` returning success while the process kept accumulating CPU time.  Three such
+		 * processes could not be removed and the rig had to be power-cut.
+		 *
+		 * THE GATE IS WHAT MAKES IT AFFORDABLE.  This is the hot path -- one entry per
+		 * emulated FP instruction -- so fpe_sigpend() reproduces u_trap's own cheap
+		 * three-condition proc-structure test (p_cursig, p_sig, p_flag & SPRSTOP) and
+		 * issig() runs only when it says there is something to look at.  Sixteen
+		 * instructions and four loads, against the 8.6 user-memory fetches the emulator
+		 * already makes per instruction.  The decode is in src/fpe040.s.
+		 *
+		 * THE INSTANT IS RIGHT, and that is why this sits here and not earlier: the
+		 * registers, the USP and the final PC have already been written back into the
+		 * supervisor-stack block above, and u.u_ar0 was set before the emulator ran.  So
+		 * sendsig, reaching through u_ar0, finds the post-emulation state a handler must
+		 * resume on -- exactly the state u_trap is in when it runs the same two calls.
+		 * psig() may not return (a fatal signal exits); neither may u_trap's.
+		 */
+		if (fpe_sigpend()) {
+			fpe_sigpend_n++;
+			if (issig(0)) {
+				fpe_sigdeliv_n++;
+				psig();
+			}
+		}
 		return 0;
 	}
 
