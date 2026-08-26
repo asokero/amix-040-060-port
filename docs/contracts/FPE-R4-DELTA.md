@@ -560,6 +560,11 @@ document, which stays the round-2 record.
   `0x114c04`; round 3's "wrong" hash was seq 51 versus seq 52 with all other 1,844,626 bytes
   identical. Any future "expect sha X" gate must pin the sequence or compare modulo that field.
   Recorded here; the build-side change belongs to the shared build tooling.
+  *Round 5: **the offset moved to `0x114dd4`** — this round's own new counters grew `.data` ahead
+  of it — so a gate must derive the field's offset from the symbol table and never pin a number.
+  The identity check itself held: the round-5 artifact differs from the round-4 one in exactly 2
+  bytes, both sequence digits inside the field. Standing rule now in
+  `FPE-INTEGRATION-CONTRACT.md` §1.*
 
 **Not in this repository**
 

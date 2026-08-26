@@ -32,6 +32,18 @@ target" — which is the 68LC060 this port now runs on.
 later link of the same stock bodies with this port's overrides on top; every stock address quoted
 below was checked against its own relocation rather than carried over from that plan.
 
+**The kernels this lane links are NOT sha-reproducible, and an expect-sha gate must not pin a file
+offset.** `src/stamp_buildid.py` stamps a 16-byte `buildid` field carrying a per-day, per-machine
+incrementing sequence, so two links of byte-identical *code* differ in those bytes and nowhere
+else — round 5's identity check against the round-4 artifact found the two images the same 1,897,862
+bytes long and differing in exactly **2 bytes**, the sequence digits inside that field. The trap is
+that the field's **file offset moves with `.data`**: it was `0x114c04` in rounds 2–3 and `0x114dd4`
+in round 5, because round 4's new counters grew the section ahead of it, and the next counter will
+move it again. So any gate of the "expect sha X" kind must **derive the field's offset from the
+symbol table, or compare modulo the field — never pin the offset numerically.**
+(`Amix/tmp/2026-08-27-fpe-r5/RESULTS.md`, artifact gate; the build-side change belongs to the
+shared build tooling, not to this lane.)
+
 ---
 
 ## 2. What the package actually is
