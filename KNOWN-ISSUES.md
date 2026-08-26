@@ -5023,12 +5023,10 @@ this.)
 
 `segmap_unlock` (`.text+0xa8fec`) is the **F_SOFTUNLOCK** arm of `segmap_fault` — `type == 3`,
 dispatched at `0xa9170` — i.e. the release half of a softlock/softunlock pair. For each 4 KiB
-page in `[addr, addr+len)` it looks the page up in the page hash by `(vp, off)` and then:
-
-```c
-if (pp == NULL || pp->p_pagein || pp->p_free)
-        cmn_err(CE_PANIC, "segmap_unlock");
-```
+page in `[addr, addr+len)` it looks the page up in the page hash by `(vp, off)` and then panics —
+`cmn_err(CE_PANIC, "segmap_unlock")` — when any one of three conditions holds: the page-hash lookup
+returned no page (`pp` is `NULL`), or the page is still being paged in (`p_pagein` set), or the page
+is on a free list (`p_free` set).
 
 `btst #0` is `p_pagein`, `btst #5` is `p_free` — the byte-0 bitfield layout ISSUE-102 pinned. **All
 three guards branch to the same `cmn_err` at `0xa907e`**, so the panic text cannot name the
