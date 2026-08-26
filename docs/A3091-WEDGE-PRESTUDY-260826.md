@@ -1,5 +1,11 @@
 # `a3091: 0x16 0 0x8112B84` — what the message means, and what would settle its cause
 
+> **Superseded in part, 2026-08-26.** The instrument proposed at the end of this document was
+> built and fired the same day. Three of the hypotheses below — including the one about the
+> prepare hook's `cpusha` — are **ruled out by measurement**. See
+> [`A3091-WEDGE-CAPTURED-260826.md`](A3091-WEDGE-CAPTURED-260826.md). What remains valid here is
+> the decode of the message and the driver's own zero-tolerance behaviour.
+
 Preliminary study, 2026-08-26, from the driver's **source**. No hardware was available; nothing
 here needed any.
 
