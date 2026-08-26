@@ -187,3 +187,50 @@ Phases 1–5 otherwise clean, same benign class as the first capture (`SUMMARY I
 Two captures now agree: a driver that dies holding the root disk leaves free-space accounting
 wrong and the structure intact.
 
+## The A/B, first round
+
+`-04` was booted again and given **the same activity** that `-06` died during, then more:
+
+| step | `-06` | `-04` |
+|---|---|---|
+| `uname`, `uptime` | ok | ok |
+| NFS mount + 13 file copies | **died here** | ok |
+| build of 13 guest programs | — | ok |
+| full battery, 31/31 magics | — | ok, 11/12 (ISSUE-49, as always) |
+| `a3d_ran` | **fired** | `0` |
+
+**One observation each, and that is all it is.** `-04` has itself wedged twice today, both after
+bursts; a run where it survives light load proves only that it is not certain to die.
+
+### The mechanism search points the other way
+
+Going through the merge for anything on the interrupt path found exactly one candidate:
+`src/kvecprobe040.s`, which is in the base link and wraps **every** exception. The change there is
+
+    -	btst	&5,%d1
+    +	btst	&13,%d1
+
+and it selects between `kvp_user_n` and `kvp_super_n` — **two counters**, with both arms joining
+at `Lkvp_bucket`. Dispatch is unchanged. So the merge has no visible mechanism for this. That does
+not clear it — the merge changes layout, timing, and adds code to the base link — but it removes
+the only candidate found by looking.
+
+### And that change is a real finding about our own instrument
+
+The old `btst &5` read a bit that is always 0: `movew` leaves the SR in `%d1`'s low word, and a
+`btst` on a data register takes the bit number mod 32, so the S bit is 13. **`kvp_super_n` has
+been structurally zero for its whole life**, and every exception was counted as user-mode.
+
+Every previous reading where `kvp_super_n = 0` was taken as evidence of *no supervisor
+exceptions* — including in this session's dormancy record — established nothing. That is the
+failure class this project builds magic words and invariants against: an instrument that looks
+right and always reads the same.
+
+Worth keeping the merge for on its own, wherever the wedge turns out to live.
+
+### What would actually settle it
+
+Boot `-06` again. If it dies early a second time, that is a great deal stronger than anything
+above. If it runs the same sequence `-04` just ran, the first occurrence was stochastic and the
+merge is clear. Either outcome is worth one kernel swap.
+
