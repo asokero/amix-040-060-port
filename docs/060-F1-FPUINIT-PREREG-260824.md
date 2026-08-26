@@ -178,8 +178,8 @@ exactly the number of bytes the new objects add ahead of its target (`+0x30` for
 `+0x174` with the probe linked):
 
 ```text
-.text 0x00004a   bral ini_user_rte        the ISSUE-52 user-transition hook
-.text 0x05960e   bsrl bt_frame_ok         the ISSUE-50 backtrace frame test
+.text 0x00004a   bral ini_user_rte        the ISSUE-106 user-transition hook
+.text 0x05960e   bsrl bt_frame_ok         the ISSUE-104 backtrace frame test
 .text 0x0afb08   bsrl cb_pgfree_enter     the B2 page-release barrier
 ```
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # patch_ufault.py -- BLIZZARD F4 round 5: chain the fatal user-fault census in front of the
-# ISSUE-52 latch (2026-08-25).  Companion object: src/ufault_dbg.s.
+# ISSUE-106 latch (2026-08-25).  Companion object: src/ufault_dbg.s.
 #
 # u_trap @0x5a47e reports a fatal user fault with
 #   cmn_err(CE_NOTE, "User BUS ERROR at %x, PC:%x FAULT:%x PID:%d CMD:%s\n",
@@ -11,7 +11,7 @@
 #
 # The ORDER is the whole point of the refusals below.  If this patcher ran on an image where
 # patch_usptrap.py had not run, it would chain in front of cmn_err directly, link cleanly,
-# boot, and SILENTLY DROP the ISSUE-52 latch -- a kernel that looks built and measures less
+# boot, and SILENTLY DROP the ISSUE-106 latch -- a kernel that looks built and measures less
 # than it should.  So the current target is asserted to be exactly unt_latch, and a raw
 # cmn_err target is refused rather than accepted.
 #
@@ -109,7 +109,7 @@ def main():
         if cur != OLD:
             raise SystemExit(
                 "ABORT: reloc @0x%x names %r, expected %r.  Run src/patch_usptrap.py first --"
-                " chaining in front of %r would silently drop the ISSUE-52 latch."
+                " chaining in front of %r would silently drop the ISSUE-106 latch."
                 % (RELOC, cur, OLD, cur))
         struct.pack_into(">I", buf, o + 4, (new_idx << 8) | R_68K_32)
         open(IMG, "wb").write(buf)

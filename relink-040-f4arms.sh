@@ -20,7 +20,7 @@
 #                the knob for zero versus non-zero at every site and no site distinguishes
 #                40 from 60, so the arm is binary and 40 and 60 select the same behaviour.
 #
-#   --ufault     link src/ufault_dbg.s and chain it in front of the ISSUE-52 latch at the
+#   --ufault     link src/ufault_dbg.s and chain it in front of the ISSUE-106 latch at the
 #                fatal user-fault NOTICE.  Census only: it latches the first fault in full
 #                (registers, FSLW, break, u_ar0, rootdir), rewrites a LAST block on every
 #                fault, and keeps the user-stack watermarks that say whether signal frames
@@ -87,12 +87,12 @@ if [ "$DBG" = 1 ]; then
 fi
 
 if [ "$UFAULT" = 1 ]; then
-	# The census chains in FRONT of the ISSUE-52 latch, so that latch has to be there
+	# The census chains in FRONT of the ISSUE-106 latch, so that latch has to be there
 	# already.  Asserting it here as well as in the patcher means the build stops before it
 	# assembles anything, rather than after.
 	m68k-linux-gnu-nm "$IN" | grep -qE " [Tt] unt_latch\$" \
 		|| { echo "[FAIL] $IN has no unt_latch -- run relink-040.sh (patch_usptrap.py) first"; exit 1; }
-	echo "[OK] the ISSUE-52 latch is present; the census will chain in front of it"
+	echo "[OK] the ISSUE-106 latch is present; the census will chain in front of it"
 	m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/ufault_dbg.s" -o "$HERE/build/ufault_dbg.o"
 	OBJS="$OBJS $HERE/build/ufault_dbg.o"
 fi

@@ -3,7 +3,7 @@
 # already-finished round-5 kernel.  None of them touches the base build, so the base stays
 # byte-comparable to the artifacts attempts 3, 4 and 5 booted.
 #
-#   --kvd   link src/kvecdisp040.s and chain it in front of the ISSUE-52 user-trap latch at
+#   --kvd   link src/kvecdisp040.s and chain it in front of the ISSUE-106 user-trap latch at
 #           the utraps -> srg_utraps edge.  Reads M68Kvec and the VBR from the side of the
 #           dispatch chain that RAN, and carries a twin counter deliberately placed in a
 #           different .data page.  Decides attempt 5's kvp_n / srg_ut_n contradiction
@@ -91,7 +91,7 @@ assert_body() {	# assert_body <name> <hex-addr> <24-hex-digit-prefix>
 }
 
 if [ "$KVD" = 1 ]; then
-	# The census chains in FRONT of the ISSUE-52 srg latch, so that latch has to be there
+	# The census chains in FRONT of the ISSUE-106 srg latch, so that latch has to be there
 	# already -- chaining in front of a raw u_trap would drop it silently.  The patcher
 	# refuses that too; asserting here stops the build before it assembles anything.
 	$NM "$IN" | grep -qE " [Tt] srg_utraps\$" \
@@ -100,7 +100,7 @@ if [ "$KVD" = 1 ]; then
 		$NM "$IN" | grep -qE " [TtDdBb] $S\$" \
 			|| { echo "[FAIL] $IN has no $S -- the census has nothing to read"; exit 1; }
 	done
-	echo "[OK] the ISSUE-52 srg latch and all five census inputs are present"
+	echo "[OK] the ISSUE-106 srg latch and all five census inputs are present"
 	m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/kvecdisp040.s" -o "$HERE/build/kvecdisp040.o"
 	OBJS="$OBJS $HERE/build/kvecdisp040.o"
 fi

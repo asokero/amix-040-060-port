@@ -42,9 +42,9 @@
 |             fa, pc, fault, pid, u_comm)
 |
 | from the call at 0x5a63e, relocation at 0x5a640.  src/patch_usptrap.py already retargets
-| that relocation to unt_latch (ISSUE-52); src/patch_ufault.py retargets it one step further
+| that relocation to unt_latch (ISSUE-106); src/patch_ufault.py retargets it one step further
 | to uft_latch, and uft_latch tail-jumps into unt_latch, which tail-jumps into cmn_err.  The
-| ISSUE-52 latch keeps working unchanged and the NOTICE prints unchanged.  The only path
+| ISSUE-106 latch keeps working unchanged and the NOTICE prints unchanged.  The only path
 | that reaches any of this is one already reporting a fatal user fault, so a healthy kernel
 | executes none of it.
 |
@@ -125,7 +125,7 @@
 |                    plus the FSLW settles it without argument.
 |   uft_f_fpc/ffa    self-checks, not data: they must equal uft_f_pc and uft_f_fa.  If they
 |                    do not, u_ar0 was not this fault's frame and every register below it is
-|                    noise -- exactly the trap ISSUE-52 round 2 fell into (right value,
+|                    noise -- exactly the trap ISSUE-106 round 2 fell into (right value,
 |                    wrong moment).  Same for uft_f_a7 against uft_f_usp.
 |   uft_f_rootdir/   the open finding from attempt 4's DBG boot: rootdir->v_type read 0
 |   _rd_vop/_rd_vt   (VNON) where the bench read 2 (VDIR), with v_op 16 bytes away correct.
@@ -273,7 +273,7 @@ Luft_rl:
 Luft_go:
 	moveml	%sp@+,%d0-%d1/%a0-%a1
 | The stack still holds cmn_err's return address and its seven arguments exactly as u_trap
-| pushed them, so the ISSUE-52 latch and then the NOTICE both run unchanged.
+| pushed them, so the ISSUE-106 latch and then the NOTICE both run unchanged.
 	jmp	unt_latch
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 
