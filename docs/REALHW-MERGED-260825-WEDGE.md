@@ -1,5 +1,8 @@
 # `68060-260825-02` wedged after the burst — open, session ended 2026-08-26
 
+Image `build/unix-040`, **sha256 `35203427648337dd55f756d6039c7a209887355e7e58982efbde449f1edc7e3c`** — quote the hash, not the build id: `68040-260825-02`
+names a *different* kernel elsewhere in this tree (see `docs/EMU-DORMANCY-MERGED-260825.md`).
+
 The machine was powered off while wedged. **The power-cut test did not run**: its write phase
 never executed, so this shutdown is not that test and produces no verdict about it.
 

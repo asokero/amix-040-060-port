@@ -3,6 +3,13 @@
 Image: `build/unix-040` from `main` at the z3660 merge, one binary booted on both configs
 (`68040-260825-02` and `68060-260825-02` — the banner reports the CPU, not the image).
 
+**sha256 `35203427648337dd55f756d6039c7a209887355e7e58982efbde449f1edc7e3c`** — added 2026-08-26, and the reason is
+a live collision rather than a precaution. `68040-260825-02` **also** names a different kernel in
+this same tree: `docs/060-F4-M2-PANIC-260825.md` uses it for `unix-060-f1-z3660-CARD1-ced0s1`,
+sha256 `f53bc0eb…`. Two kernels, one string, both load-bearing, both merged. That document
+carried its sha and this one did not, so this was the ambiguous half. Found by the other line,
+not by us.
+
 This is the cheap step between merging and hardware, and its purpose is attribution. A green
 battery would only say *nothing visibly broke*; this says **which of the 16 118 new lines
 actually executed**, which is what narrows the suspect list if hardware does go red.

@@ -110,6 +110,20 @@ in the table above restores the promise.
 
 **The general form, for the next shared counter somebody invents: partition it at birth.**
 
+### The window it was already broken in, found 2026-08-26
+
+The partition fixes this going forward. It does nothing for the ids already minted, and there is
+a live collision in the merged tree: **`68040-260825-02`** names `build/unix-040` in
+`docs/EMU-DORMANCY-MERGED-260825.md` and `unix-060-f1-z3660-CARD1-ced0s1` (sha256 `f53bc0eb…`) in
+`docs/060-F4-M2-PANIC-260825.md`. Two different kernels, one string, both load-bearing.
+
+**Do not trust a bare build id from 2026-08-19 to 2026-08-25** — the window when two build
+directories were counting independently. Quote the sha256 alongside, or the loader's
+`image checksum` line, both of which distinguish images that the id does not.
+
+Found by the `z3660` line, in our documents. Their record carried a sha and ours did not, which is
+the whole difference between an ambiguous id and a resolvable one.
+
 ---
 
 ## 3. Requests between lines
