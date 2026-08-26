@@ -18,7 +18,7 @@ otherwise silent there.
 | 4 CPU-specific | ✅ `fp060probe bad=0`, `isp61ea bad=0`, `fputest060 fork` exact, Motorola `unimp` and `main` 4/4 |
 | 5 device/graphics | n/a — base kernel, no VA2000 driver |
 | 6 burst | ✅ **96/96**, zero anomalies, **no wrong sums** |
-| 7 power cut | not run on this image |
+| 7 **power cut** | ✅ **6/6 byte-exact** |
 
 ### The FPU gates are inert here, measured rather than assumed
 
@@ -72,3 +72,20 @@ of which kernel runs.
 
 It also removes the burst correlation entirely. Wedge 3 came under light load and this burst,
 heavier than the one that preceded wedge 2, produced nothing.
+
+## The power cut
+
+Written at `up 1:13`, verified at `up 1 min`, same kernel both times — the script's own
+precondition, checked before running rather than after. The loader printed `0d8a0168` on the
+boot that verified, so the same image read back what it had written.
+
+    b2rt-f1 … f6   CLASS=V0_COMPLETE_MATCH   size=4194304   crc=50250
+    B2RT-RESULT PASS (6 files, every byte intact)
+
+`b2verify` was rebuilt from source in the booted system: `/tmp` is cleared at boot, which is the
+point of keeping the evidence in `/b2dt`.
+
+**Six of seven steps pass on this artifact.** Step 5 is not applicable — this is the base kernel
+with no VA2000 driver, and the graphics variant is a different artifact that needs its own run
+and its own record.
+
