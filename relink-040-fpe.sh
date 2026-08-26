@@ -136,23 +136,27 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/fpe040.s" -o "$OBJDIR/fpe040.o"
 m68k-linux-gnu-size "$OBJDIR/fpe_glue.o" "$OBJDIR/fpe040.o" | sed 's/^/      /'
 
 # ---------------------------------------------------------------- 5. the override surface
-# Five strong symbols get replaced and one file-local one gets exposed.
+# Seven strong symbols get replaced and one file-local one gets exposed.
 #
 #   prhasfp                    answers for fpu_present OR fpu_emul (frozen decision 9).  No
 #                              *_orig: the body is one instruction and is fully replaced.
 #   fpuinit                    runs the accepted probe first, arms only on its no-FPU answer
 #   fpu_save/restore/setup     present an idle 68881 frame instead of touching hardware
+#   fpu_setup_gated            the sendsig gate, answered for the pair (round 4 fix 2)
+#   setregs                    the exec gate lives INSIDE the stock body, so owning setregs is
+#                              the only way to reach it (round 4 fix 2)
 #   trapsig                    file-local in stock; the glue builds the k_siginfo_t itself and
 #                              needs the entry point u_trap uses
 #
 # Addresses come from nm of THIS base, never from a note: whichever of these bodies is already
-# an override from relink-040.sh (src/fpu060.s, src/fpuinit060.s) is what the *_fpe_orig alias
-# must reach, and those move with every build.
+# an override from relink-040.sh (src/fpu060.s, src/fpuinit060.s, src/srgtrap.s) is what the
+# *_fpe_orig alias must reach, and those move with every build.  So the chains are ours -> this
+# port's own arm -> the stock body, intact in both directions.
 echo "[*] weakening the override surface (addresses read from the base, not assumed)"
 STAGE="$HERE/build/unix-stage-fpe"
 cp "$IN" "$STAGE"
 OCARGS="--globalize-symbol trapsig --weaken-symbol prhasfp"
-for s in fpuinit fpu_save fpu_restore fpu_setup; do
+for s in fpuinit fpu_save fpu_restore fpu_setup fpu_setup_gated setregs; do
 	A=$(m68k-linux-gnu-nm "$IN" | awk -v s="$s" '$3==s && ($2=="T"||$2=="t"){print $1}')
 	[ -n "$A" ] || { echo "[FAIL] $s not found in $IN"; exit 1; }
 	echo "      $s -> ${s}_fpe_orig @ 0x$A"
@@ -173,10 +177,11 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$STAGE" $FPEOBJS "$OBJDIR/fpe_glue.o" "$OBJDIR/f
 
 # ---------------------------------------------------------------- 7. symbol assertions
 echo "[*] symbols that must be defined:"
-for s in fpe_magic fpe_vec11 fpe_decline fpe_trap fpe_setjmp fpe_longjmp fpu_emul \
+for s in fpe_magic fpe_vec11 fpe_decline fpe_trap fpe_setjmp fpe_longjmp fpu_emul fpe_sigpend \
 	 fpe_entry_n fpe_cputype fpu_emulate ufetch_short fpe_panic fpe_copyin fpe_copyout \
-	 prhasfp fpuinit fpu_save fpu_restore fpu_setup \
-	 fpuinit_fpe_orig fpu_save_fpe_orig fpu_restore_fpe_orig fpu_setup_fpe_orig trapsig; do
+	 prhasfp fpuinit fpu_save fpu_restore fpu_setup fpu_setup_gated setregs \
+	 fpuinit_fpe_orig fpu_save_fpe_orig fpu_restore_fpe_orig fpu_setup_fpe_orig \
+	 fpu_setup_gated_fpe_orig setregs_fpe_orig trapsig; do
 	m68k-linux-gnu-nm "$OUT" | grep -E " [TtDdBb] $s\$" | sed "s/^/      /" \
 		|| { echo "[FAIL] $s not defined"; exit 1; }
 done
@@ -186,7 +191,7 @@ done
 # mode this port has paid for.  So ask: is there exactly ONE definition of each, and is it
 # ours?  Ours are the ones at a higher address than the base's text end.
 BASETEXT=$(m68k-linux-gnu-readelf -SW "$STAGE" | awk '{gsub(/[][]/,"")} $2==".text"{print strtonum("0x"$6)}')
-for s in prhasfp fpuinit fpu_save fpu_restore fpu_setup; do
+for s in prhasfp fpuinit fpu_save fpu_restore fpu_setup fpu_setup_gated setregs; do
 	A=$(m68k-linux-gnu-nm "$OUT" | awk -v s="$s" '$3==s && $2=="T"{print strtonum("0x"$1)}')
 	C=$(echo "$A" | wc -w)
 	[ "$C" = 1 ] || { echo "[FAIL] $s has $C strong definitions"; exit 1; }

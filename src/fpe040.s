@@ -298,6 +298,81 @@ Lfe_u_orig:
 	jmp	fpu_setup_fpe_orig
 
 | ============================================================================
+| fpu_setup_gated -- the SENDSIG call site's gate, answered for the pair.
+|
+| THE GAP, and it is measured rather than argued.  Two sites gate fpu_setup on fpu_present and
+| therefore skip it under emulation: this one (src/fpuinit060.s, sendsig) and the one inside the
+| stock setregs body (exec, below).  Round 3's A/B: identical binaries, identical kernel one byte
+| apart, only fpu_model differing -- FPCR 0x1400 (OVFL *and* DZ enabled) and fp0 = 12345.678
+| SURVIVED exec on the LC bed and were RESET on the real-FPU rig.  A program that enables FP
+| traps and then execs leaves the next image taking SIGFPE where it would have had a quiet
+| infinity; a signal handler inherits the interrupted context's model the same way.
+|
+| The machinery that produces the correct reset already exists and is already this lane's own --
+| fpu_setup above installs the idle 68881 frame, copies reset_fregs over the model and clears
+| ustate.  Only the GATES were wrong, so only the gates are fixed.
+|
+| WHY AN OVERRIDE AND NOT AN EDIT TO src/fpuinit060.s.  fpu_emul is defined in THIS file, which
+| is linked only into an FPE kernel; naming it from a file every 040 kernel links would leave the
+| base link with an unresolved symbol.  Overriding is the mechanism this lane already uses five
+| times over, it needs no new spelling of "the pair", and it keeps the base kernel byte-identical
+| -- so FPE=0 still reproduces exactly the image round 3 booted.
+|
+| %d0/%a0 are clobbered on every arm now, including the refusal arm that used to leave them
+| alone.  Safe at the one caller: sendsig+0x1f8 overwrites %d0 with `moveq #1,%d0` four
+| instructions later (0x59228) and %a0 was already dead.
+| ============================================================================
+	.globl	fpu_setup_gated
+fpu_setup_gated:
+	tstl	fpu_present		| real silicon on either CPU: the accepted body, untouched
+	bnew	Lfe_sg_orig
+	tstl	fpu_emul
+	beqw	Lfe_sg_orig		| emulation not armed: also unchanged
+	addql	&1,fpe_ss_setup_n
+	jmp	fpu_setup		| the handler gets a reset programmer's model
+Lfe_sg_orig:
+	jmp	fpu_setup_gated_fpe_orig
+
+| ============================================================================
+| setregs -- the EXEC call site's gate, which lives INSIDE the stock body.
+|
+| setregs_orig+0xc8 is `tstl fpu_present ; beqw ; jsr fpu_setup`, so there is no call site to
+| retarget and no wrapper of ours the stock body will consult: the only way to reach it is to own
+| setregs.  Calling fpu_setup AFTER the body returns is equivalent, because fpu_setup writes only
+| fpu_info.regs, fpu_info.fsave[0] and fpu_info.ustate, and nothing in the rest of setregs reads
+| or writes any of them.
+|
+| THE CALLING CONVENTION IS NOT ASSUMED.  One argument at %fp@(8), an int returned in %d0 and
+| mirrored into %a0 -- the shape TWO independent in-repo wrappers already use, one of which is in
+| the booting base image: src/srgtrap.s:145-186 and src/execmark.s:584-591.  setregs_fpe_orig
+| therefore reaches srgtrap's wrapper, which reaches stock, chain intact.
+|
+| THE RETURN VALUE IS LOAD-BEARING: exece answers a non-zero setregs with a SILENT psignal(p,9)
+| (0x566b6, the "Killed" case src/sigkill_dbg.s was written for), so it is preserved through %d2
+| exactly as both precedents preserve it.
+| ============================================================================
+	.globl	setregs
+setregs:
+	linkw	%fp,&0
+	movel	%d2,%sp@-
+	movel	%fp@(8),%sp@-		| arg1 = struct uarg *
+	jsr	setregs_fpe_orig
+	addqw	&4,%sp
+	movel	%d0,%d2			| preserve it across our own call, see above
+	tstl	fpu_present
+	bnew	Lfe_sr_out		| real silicon: the stock body's gate already ran fpu_setup
+	tstl	fpu_emul
+	beqw	Lfe_sr_out		| emulation not armed: nothing to do, as before
+	addql	&1,fpe_exec_setup_n
+	jsr	fpu_setup		| the reset model the stock gate skipped
+Lfe_sr_out:
+	movel	%d2,%d0
+	movel	%sp@+,%d2
+	moveal	%d0,%a0			| this compiler returns in both %d0 and %a0
+	unlk	%fp
+	rts
+
+| ============================================================================
 | fpuinit -- the one place the lane is armed.
 |
 | The accepted probe runs FIRST and unchanged: it is the authoritative answer to "does this
@@ -588,5 +663,12 @@ fpe_rest_wrt_n:
 	.globl	fpe_setup_n
 fpe_setup_n:
 	.long	0
+	.globl	fpe_ss_setup_n
+fpe_ss_setup_n:
+	.long	0			| sendsig setups the stock gate would have refused.  It
+					| replaces fpi_ss_skip_n, which must now read 0
+	.globl	fpe_exec_setup_n
+fpe_exec_setup_n:
+	.long	0			| ... and exec setups, one per exec under emulation
 	.balign	4			| pad .data to a multiple of 4 -- rel.c puts .bss at
 					| data_end UNALIGNED
