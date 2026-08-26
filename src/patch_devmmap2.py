@@ -24,7 +24,17 @@
 #
 # DELIBERATELY NOT CONVERTED, and asserted UNCHANGED:
 #   The rest of the segdev family (segdev_fault/dup/unmap/free/setprot/checkprot/
-#   getprot, and spec_segmap's 0x6766a loop step) keeps its 2 KiB geometry.  It is
+#   getprot) keeps its 2 KiB geometry.
+#
+#   REVERSED IN PART, 2026-08-26 (ISSUE-49).  spec_segmap's 0x6766a loop step and
+#   segdev_fault's address/vpage steps now advance one 4 KiB page: see
+#   src/patch_segdev_bridge.py.  The paragraph below explains why the 2 KiB family was
+#   judged benign, and the judgement was wrong in one respect it names honestly further
+#   down -- a 2048-aligned offset yields the NEXT page (devmaptest T1), and a mapping whose
+#   logical length is not a 4 KiB multiple loses its tail probe, which is what stops DPaint.
+#   The two seg_page() canaries below STAY, and matter more than before: the bridge keeps
+#   the vpage array paired at 2 KiB deliberately, so a shift converted to 12 underneath it
+#   would silently halve the array.  It is
 #   INTERNALLY CONSISTENT -- the vpage array is sized and indexed with the same
 #   seg_page() shift throughout -- and its two external crossings are benign:
 #     * hat_devload: a 2 KiB fault-loop step calls hat_devload twice per 4 KiB page.
@@ -103,7 +113,11 @@ CANARY_NEW = [
 CANARY_OLD = [
  (0xa7fe4, b"\x7e\x0b", "segdev_fault seg_page() -- family kept at 2 KiB on purpose"),
  (0xa82a6, b"\x76\x0b", "segdev_getprot seg_page() -- family kept at 2 KiB on purpose"),
- (0x6766a, b"\xd4\xfc\x08\x00", "spec_segmap loop step -- family kept at 2 KiB on purpose"),
+# 0x6766a (spec_segmap's loop step) WAS a canary here, asserting the family stayed at
+# 2 KiB.  ISSUE-49's bridge converted it on 2026-08-26 and now owns that site with its own
+# old-byte assertion, so keeping the canary would only mean two patchers disagreeing about
+# whose decision it is.  Removed rather than flipped: an assertion that follows whatever the
+# last patch did is not an assertion.
 ]
 
 def main():
