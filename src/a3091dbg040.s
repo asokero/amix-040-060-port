@@ -26,12 +26,24 @@
 | latch costs nothing and pays off in the case where the dying unit is NOT the root disk
 | and the machine stays up.
 |
-| WHY IT DOES NOT TOUCH THE DEVICE.  reg() would give the phase and status registers, and
-| reading them is deliberately omitted: this code runs at the moment of a hardware
-| anomaly, in an interrupt handler, and reading SS is what acknowledges the interrupt in
-| the first place.  An instrument that perturbs the thing it is measuring is worse than a
-| smaller instrument.  If the fields below turn out not to be enough, adding register
-| reads is a later decision made with evidence rather than a guess made now.
+| WHY IT DOES NOT TOUCH THE DEVICE -- WITH ONE EXCEPTION ADDED 2026-08-27.  reg() would
+| give the phase and status registers, and reading them stays deliberately omitted: this
+| code runs at the moment of a hardware anomaly, in an interrupt handler, and reading SS is
+| what ACKNOWLEDGES the interrupt.  An instrument that perturbs what it measures is worse
+| than a smaller instrument.
+|
+| `istr` is the exception, and it is not a new kind of access: a3091intr's own first line is
+| `unless ((device) and (device->istr & 1<<4)) return`, so the driver reads this register on
+| every interrupt already.  Reading it here adds nothing the hardware does not see anyway.
+|
+| It was added after the FOURTH occurrence, once the safe fields had been read four times and
+| found to say the same thing every time -- three kernels, both directions, both transfer
+| sizes, positions from 7300 to 168807 in the DMA sequence, with and without a preceding
+| burst, and always head=0 dmaon=0 segstate=0 on units[6].  Every variable this port controls
+| had been varied without effect, which is what makes touching the device worth the small
+| risk rather than a guess made early.  The open question is whether istr bit 4 was genuinely
+| set -- a real pending interrupt with a stale SS -- or whether the handler was entered
+| without one.
 |
 | HOW IT IS REACHED.  NOT by weakening a symbol: `badhardware` is a file-LOCAL static and
 | the image holds two of them -- one in a3091.c at 0xd666 and one in `service` at 0xcf46 --
@@ -88,6 +100,17 @@ a3091_badhardware_dbg:
 	movel	dma_cmpl_noprep,a3d_noprep	| must-stay-zero diagnostic
 	movel	dma_range_ovf,a3d_ovf
 	movel	dma_prep_whole,a3d_whole
+| --- the device's own interrupt status.  NULL-guarded even though a3091intr has already
+|     dereferenced `device` to get here: this runs on a machine that has just done something
+|     unexplained, and a diagnostic that can itself fault is not a diagnostic. ---
+	movel	a3091_device,%d3
+	movel	%d3,a3d_devp
+	beqs	Lad_noistr
+	moveal	%d3,%a2
+	clrl	%d3
+	movew	%a2@(30),%d3		| device->istr -- offset 30, the same word the
+	movel	%d3,a3d_istr		| handler's own entry test reads on every interrupt
+Lad_noistr:
 
 | --- print.  Three bounded lines, not a dump: this runs in an interrupt handler on a
 |     machine that is about to stop, and the output has to get out before it does. ---
@@ -108,6 +131,12 @@ a3091_badhardware_dbg:
 	pea	La3d_m2
 	jsr	printf
 	lea	%sp@(24),%sp
+
+	movel	a3d_istr,%sp@-
+	movel	a3d_devp,%sp@-
+	pea	La3d_m4
+	jsr	printf
+	lea	%sp@(12),%sp
 
 	movel	a3d_whole,%sp@-
 	movel	a3d_ovf,%sp@-
@@ -135,6 +164,15 @@ La3d_m2:
 La3d_m3:
 	.asciz	"a3091dbg zarm=%d rarm=%d owned=%d noprep=%d ovf=%d whole=%d\n"
 	.even
+La3d_m4:
+	.asciz	"a3091dbg dev=%x istr=%x\n"
+	.even
+	.balign	4			| the .asciz blocks above are only .even, so without this
+					| the counter block can land 2 mod 4 -- it did, the moment
+					| La3d_m4 was added (2026-08-27).  Longword counters at an
+					| odd-word address still work on an 040/060, but every tool
+					| that computes offsets into this block deserves better than
+					| accidental alignment.
 | --- counters, in reading order.  Magic first, as everywhere in this port. ---
 	.globl	a3d_magic
 a3d_magic:
@@ -193,4 +231,12 @@ a3d_ovf:
 	.globl	a3d_whole
 a3d_whole:
 	.long	0
+| --- appended 2026-08-27, at the END so every address already published for this block
+|     keeps its offset.  Same reasoning as the LC060 merge's fpc_*_nofpu_n. ---
+	.globl	a3d_devp
+a3d_devp:
+	.long	0			| the driver's `device` pointer, 0 if it was NULL
+	.globl	a3d_istr
+a3d_istr:
+	.long	0			| device->istr at death; bit 4 is the handler's own gate
 	.balign	4
