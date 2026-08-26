@@ -9,10 +9,10 @@
 | release half of a softlock/softunlock pair, reached from as_fault during the
 | first root-mount I/O.  For each 4 KiB page in [addr, addr+len) it looks the page
 | up in the page hash by (vp, off) and refuses to proceed unless it is there and
-| usable.  Decompiled from the stock image, its guard at 0xa905e-0xa9074 is:
-|
-|     if (pp == NULL || pp->p_pagein || pp->p_free)
-|             cmn_err(CE_PANIC, "segmap_unlock");
+| usable.  Decompiled from the stock image, its guard at 0xa905e-0xa9074 panics --
+| cmn_err(CE_PANIC, "segmap_unlock") -- when any one of three conditions holds: the
+| page-hash lookup returned no page (pp is NULL), or the page is still being paged
+| in (p_pagein set), or the page is on a free list (p_free set).
 |
 |   `btst #0,%a2@` is p_pagein and `btst #5,%a2@` is p_free -- byte 0 of the page
 |   bitfield unit is p_lock(7) p_want(6) p_free(5) p_intrans(4) p_gone(3) p_mod(2)

@@ -67,6 +67,33 @@
 | fpu_save/fpu_restore already clobber %a0.  swtch (the hot caller) reloads %d0 immediately
 | after the call.  Counter bumps are memory-to-memory so no classification below costs a
 | register.
+|
+| ADDED F1-M2 (2026-08-24): each 060 arm now also gates on `fpu_present`.  When this unit was
+| written the 68060 always had an FPU, so `cputype == 60` was the whole question; on a 68LC060
+| it is not, and every body below issues FSAVE or FRESTORE, which on a part with no FPU is an
+| F-line exception taken in SUPERVISOR mode.  A relocation census of the pinned image says the
+| callers cannot be relied on to ask first: savecontext and restorecontext contain no reference
+| to fpu_present at all, so four of the eleven call sites reach these bodies ungated (the fifth
+| is sendsig, and src/fpuinit060.s puts a counted wrapper there because F1-M2's acceptance gate
+| wants a counter and not the absence of a crash).  The gate therefore belongs HERE, where every
+| caller must pass through it.  The new fpc_*_nofpu_n counters are appended at the END of the
+| block so that every address already published for it keeps its offset.
+|
+| CORRECTION to the paragraph above (2026-08-24, after F1-M3 and the F2-M0 trap census).  The
+| claim "four of the eleven call sites reach these bodies ungated" is WRONG and is left above
+| with this beside it.  Ten of the eleven are gated in stock; savecontext and restorecontext
+| reach fpu_present through `jsr prhasfp`, whose whole body is `movel fpu_present,%d0` -- a
+| CALL, not a relocation, which is exactly what a relocation-predicated census cannot see.
+| sendsig was the one genuinely ungated site, which is the one the landscape names.
+|
+| So these gates are DEFENSE IN DEPTH, not the first line, and on an LC part nothing reaches
+| them: fpc_save_nofpu_n / fpc_rest_nofpu_n / fpc_setup_nofpu_n all read 0 over kvp_n = 703492
+| with kvp_super_n = 0 -- and nullvect, which is what kvp counts, is where both FP call-out arms
+| land, so a supervisor FP trap would have shown.  They stay: a body gate cannot be bypassed by
+| a caller, and sendsig is the standing proof that stock has a caller that forgets.  But their
+| expected value is 0, and a NON-ZERO reading is a finding -- a caller outside the pinned eleven,
+| or fpu_present set on a part that has no FPU.
+| Per-site evidence: docs/060-F1-M2-GATE-CENSUS-260824.md.
 
 	.text
 
@@ -93,6 +120,8 @@
 fpu_save:
 	cmpil	&60,cputype		| CPU gate: CCR only, no register touched
 	bnew	Lfs_stock
+	tstl	fpu_present		| no FPU on this part -> no FSAVE, whoever asked
+	beqs	Lfs_nofpu
 	addql	&1,fpc_save_n
 	moveal	fpu_ptr,%a0
 	btst	&0,%a0@(3)		| UFPRWRT -- low byte of the ustate long (big-endian)
@@ -125,6 +154,9 @@ Lfs_null:
 Lfs_wrt:
 	addql	&1,fpc_save_wrt_n
 	rts
+Lfs_nofpu:
+	addql	&1,fpc_save_nofpu_n	| fpuinit's probe said there is nothing to save
+	rts
 Lfs_stock:
 	jmp	fpu_save_orig		| 68040: the accepted body, byte for byte
 
@@ -141,6 +173,8 @@ Lfs_stock:
 fpu_restore:
 	cmpil	&60,cputype
 	bnew	Lfr_stock
+	tstl	fpu_present		| no FPU on this part -> no FRESTORE, whoever asked
+	beqs	Lfr_nofpu
 	addql	&1,fpc_rest_n
 	moveal	fpu_ptr,%a0
 	tstb	%a0@(FP_FMT60)		| byte TWO again -- same fix, same reason
@@ -166,6 +200,9 @@ Lfr_null:
 	andil	&-2,%a0@
 Lfr_out:
 	rts
+Lfr_nofpu:
+	addql	&1,fpc_rest_nofpu_n	| fpuinit's probe said there is nothing to restore
+	rts
 Lfr_stock:
 	jmp	fpu_restore_orig
 
@@ -187,6 +224,8 @@ Lfr_stock:
 fpu_setup:
 	cmpil	&60,cputype
 	bnew	Lst_stock
+	tstl	fpu_present		| no FPU on this part -> no FRESTORE in supervisor mode
+	beqs	Lst_nofpu
 	addql	&1,fpc_setup_n
 	moveal	fpu_ptr,%a0
 	clrl	%a0@(FP_FSAVE)		| 12 zero bytes = a null 68060 frame; byte 2 = 0x00
@@ -202,6 +241,9 @@ Lst_copy:
 	moveal	fpu_ptr,%a0		| reload: the copy consumed a0
 	clrl	%a0@			| ustate = 0 (FP_USTATE), dropping UFPRWRT -- stock does
 	rts				| exactly this, and exec/signal setup is where it belongs
+Lst_nofpu:
+	addql	&1,fpc_setup_nofpu_n	| exec or signal delivery on a part with no FPU: the
+	rts				| u-area's FP slot is left as it is, and nothing traps
 Lst_stock:
 	jmp	fpu_setup_orig
 
@@ -259,4 +301,17 @@ fpc_rest_wrt_n:
 	.globl	fpc_setup_n
 fpc_setup_n:
 	.long	0			| 060 fpu_setup entries (boot, exec, signal delivery)
+| F1-M2 (2026-08-24) appended at the END so every address already published for this block keeps
+| its offset.  These three count the calls the fpu_present gate REFUSED -- on a 68LC060 they are
+| the ones that would otherwise have executed FSAVE or FRESTORE with no unit to execute them on,
+| and each is attributable to its own routine rather than to one shared "we said no".
+	.globl	fpc_save_nofpu_n
+fpc_save_nofpu_n:
+	.long	0			| fpu_save refused: fpu_present = 0
+	.globl	fpc_rest_nofpu_n
+fpc_rest_nofpu_n:
+	.long	0			| fpu_restore refused
+	.globl	fpc_setup_nofpu_n
+fpc_setup_nofpu_n:
+	.long	0			| fpu_setup refused (this is the sendsig/setregs path)
 	.balign	4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

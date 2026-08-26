@@ -32,6 +32,16 @@
 |
 | Install: --weaken-symbol nullvect + --add-symbol nullvect_orig=.text:0x11b4 (address
 | asserted from build/unix-stage1 and vanilla stand/unix; both read 0x000011b4).
+|
+| KVP_SUPER_N WAS STRUCTURALLY DEAD UNTIL 2026-08-25, and every reading of it before that
+| date is void rather than zero.  The S-bit test below read `btst &5,%d1` -- the REGISTER
+| form, which is a long operand with the bit number taken mod 32, so it tested SR bit 5,
+| a bit the 68040 and 68060 both define as zero.  The branch was never taken and EVERY
+| entry landed in kvp_user_n; "all user" was not a measurement.  Confirmed from the linked
+| image before it was fixed: `0801 0005` at 0xda95a.  nullvect_orig itself gets this right
+| with the memory form, `btst #5,%sp@(60)`, because there bit 5 addresses the S bit inside
+| the SR's high BYTE.  The fix keeps the register form and corrects the bit number, so the
+| encoding stays 4 bytes and only the extension word moves, 0005 -> 000d.
 
 	FRM_SR	=	12		| after the 12-byte save: saved SR (word)
 	FRM_PC	=	14		|                        faulting PC (long)
@@ -54,7 +64,11 @@ nullvect:
 	movel	%sp@(FRM_PC),kvp_last_pc
 
 	movew	%sp@(FRM_SR),%d1	| saved SR: S bit tells where it came from
-	btst	&5,%d1
+	btst	&13,%d1			| S is SR bit 13.  The movew above left the SR in
+					| d1's LOW WORD, and a btst on a data register is a
+					| long operand with the bit number mod 32 -- so the
+					| bit number here must be 13, not the 5 that reads
+					| the S bit out of the SR's HIGH BYTE in memory.
 	bnes	Lkvp_super
 	addql	&1,kvp_user_n
 	bras	Lkvp_bucket

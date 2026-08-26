@@ -381,10 +381,34 @@ Lco_access:
 | is self-healing and is what is implemented, but f60_fpudis_n exists so that "self-healing"
 | never becomes "silent": a nonzero count means something turned the FPU off behind our back and
 | is to be investigated, not tolerated.
+|
+| F1 (2026-08-24): SELF-HEALING IS A LOOP ON A PART THAT HAS NO FPU.  Motorola's policy assumes
+| the unit exists and is merely switched off, so clearing PCR bit 1 makes the retry succeed.  On
+| a 68LC060 or EC there is nothing to enable: the clear does not stick, the rte re-executes the
+| same instruction, and the machine spins here forever with f60_fpudis_n climbing.  That is the
+| measured early-boot hang on amix-060-lc.uae, and it is why fpuinit060.s now probes.
+|
+| With a probe, the right answer is available: fpu_present says whether this part HAS a unit.
+|   present  -> Motorola's policy, unchanged, byte for byte -- this is the path the Mercury
+|               validated and nothing about it moves.
+|   absent   -> route to exactly where a genuine F-line instruction on a machine with no FPU
+|               belongs, which is Lco_fline's destination: nullvect, then the S-bit dispatch --
+|               SIGSYS for a user process, k_trap for a supervisor one.  A supervisor FP
+|               instruction on a part with no FPU is a kernel defect and should say so loudly
+|               rather than hang.  The frame this call-out carries is the eight-word format-4
+|               one, not fline's four-word frame, so the "current PC" copy still happens: it is
+|               what makes the stacked PC name the faulting instruction, which is what the
+|               F-line frame nullvect expects would have carried anyway.  Only the PCR write is
+|               dropped, because on this part it is the thing that lies.
+| Before the probe runs, fpu_present is 0 by construction (.data starts at zero), so an FP
+| instruction executed before fpuinit takes the strict arm.  That is the wanted behaviour: FP in
+| the kernel before the probe is a defect, not something to heal.
 Lco_fpu_disabled:
 	addql	#1,f60_real_n
 	addql	#1,f60_fpudis_n
 	movel	#8,f60_last_co
+	tstl	fpu_present		| CCR only, no register touched
+	beqs	Lco_fpudis_nofpu
 	movel	%d0,%sp@-
 	.word	0x4e7a,0x0808		| movec %pcr,%d0
 	bclr	#0x1,%d0		| clear the FPU-disable bit
@@ -392,6 +416,11 @@ Lco_fpu_disabled:
 	movel	%sp@+,%d0
 	movel	%sp@(0xc),%sp@(0x2)	| stacked PC := "current PC" -> re-execute the instruction
 	rte
+Lco_fpudis_nofpu:
+	addql	#1,f60_fpudis_nofpu_n
+	movel	#8,f60_last_co
+	movel	%sp@(0xc),%sp@(0x2)	| stacked PC := the faulting instruction, as an F-line frame
+	jmp	nullvect		| carries it -- then the ordinary vector-11 outcome
 
 | ---- Motorola-reserved slots -------------------------------------------------------------
 | NetBSD leaves these as 0 in its table; ours point here so that a package which ever calls one
@@ -733,4 +762,10 @@ f60_vec54_n:
 f60_last_fsave:
 	.long	0			| format word of the fsave frame Lco_fparith saw, in the
 					| low half.  Diagnostic for the DZ reset (2026-08-11).
+| F1 (2026-08-24), appended at the end for the same reason as M3's and M4's.
+	.globl	f60_fpudis_nofpu_n
+f60_fpudis_nofpu_n:
+	.long	0			| FPU-disabled call-outs taken on a part with NO FPU, i.e.
+					| the ones Motorola's self-healing policy would have spun
+					| on.  Must equal f60_fpudis_n on an LC part, and 0 elsewhere
 	.balign	4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)

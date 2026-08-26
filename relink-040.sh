@@ -108,6 +108,29 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/isp61_060.s"  -o "$HERE/build/isp61_060
 #                cputype-gated: the 040 tail-jumps to the untouched stock bodies, and every
 #                fpc_* counter below must read 0 on an 040 boot.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/fpu060.s"     -o "$HERE/build/fpu060.o"
+#   fpuinit060 = F1 (2026-08-24): the fourth strong symbol of that override surface, and the
+#                one that decides what the other three may do.  The stock probe asks an 040
+#                question (byte ZERO of the FSAVE frame) and FSAVEs into the inherited 8-byte
+#                COMMON, four bytes short of a 68060 frame.  This one installs a temporary
+#                vector-11 handler, clears PCR bit 1 (DFP -- settled from the manual and from
+#                Motorola's own sample handler, docs/060-PCR-BIT1-VERDICT-260824.md), probes
+#                with FRESTORE/FSAVE, and sets fpu_present only if nothing trapped AND the
+#                frame is a valid 060 one.  It also carries fpu_setup_gated, the counted gate
+#                at sendsig's call site.  Spec: FPU-TIER1-ENABLE-SPEC.md:212-243.
+#                FPUINIT060=0 omits the unit, the weaken, the link and the sendsig retarget --
+#                the spec's own rollback control (:460-462), and it must reproduce the
+#                baseline image byte for byte apart from the build-id stamp.
+FPUINIT060="${FPUINIT060:-1}"
+FPUINIT_OBJ=""; FPUINIT_OC=""; FPUINIT_ASSERT=""; FPUINIT_BIND=""
+if [ "$FPUINIT060" = "1" ]; then
+	m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/fpuinit060.s" -o "$HERE/build/fpuinit060.o"
+	FPUINIT_OBJ="$HERE/build/fpuinit060.o"
+	FPUINIT_OC="--weaken-symbol fpuinit --add-symbol fpuinit_orig=.text:0x19bac,function,global"
+	FPUINIT_ASSERT="fpuinit:0x19bac:4e5600004879000000004879"
+	FPUINIT_BIND="fpuinit:00019bac"
+else
+	echo "[*] FPUINIT060=0 -- building WITHOUT the 060 FPU probe (rollback control)"
+fi
 #   kvecprobe040 = F3 M0 (2026-08-07): wrap nullvect and count the vector of every exception
 #                that reaches it.  The kernel names a vector only for SIGKILL kills, so a
 #                SIGSYS ("bad system call") cannot currently be attributed -- which is what
@@ -270,6 +293,11 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/segmapdbg.s" -o "$HERE/build/segmapdbg.
 # u-block plus the kernel's own data+bss (where pstack lives) and adds the two
 # bounds that make widening safe: strictly increasing frame pointers, and a hard
 # 64-frame cap.
+# Rule 4 (2026-08-25, first silicon): the walk dereferences the RETURN ADDRESS it
+# reads out of each accepted frame, at [ret-6, ret), and nothing bounded that.  The
+# last pid-0 frame is u+0x1FC0 whose slot reads 0, so the panic printer read
+# 0xFFFFFFFA and double-faulted on real silicon.  The island now bounds the return
+# address to [_start, etext) before anything reads through it.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/btwalk.s" -o "$HERE/build/btwalk.o"
 # usptrap (2026-08-21, ISSUE-106): PID 1 dies at exec with a kernel-shaped user
 # stack pointer (fa 0x40001FC0 == u+0x1FC0, the constant _start loads into %sp).
@@ -374,7 +402,8 @@ m68k-linux-gnu-objcopy \
 echo "[*] ISSUE-43: asserting the stock FP-context bodies before weakening them"
 for fpe in fpu_save:0x132:207900000000082800000003 \
            fpu_restore:0x158:2079000000004a2800706718 \
-           fpu_setup:0x19b50:4e56000048e7003048780008; do
+           fpu_setup:0x19b50:4e56000048e7003048780008 \
+           $FPUINIT_ASSERT; do
 	fpn=$(echo "$fpe" | cut -d: -f1)
 	fpa=$(echo "$fpe" | cut -d: -f2)
 	fpw=$(echo "$fpe" | cut -d: -f3)
@@ -475,6 +504,7 @@ m68k-linux-gnu-objcopy \
 	--add-symbol fpu_restore_orig=.text:0x158,function,global \
 	--weaken-symbol fpu_setup \
 	--add-symbol fpu_setup_orig=.text:0x19b50,function,global \
+	$FPUINIT_OC \
 	"$HERE/build/unix-stage1"
 
 OUT="$HERE/build/unix-040"
@@ -488,7 +518,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o" \
 	"$HERE/build/inituname040.o" \
 	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" "$HERE/build/isp61_060.o" \
-	"$HERE/build/fpu060.o" \
+	"$HERE/build/fpu060.o" $FPUINIT_OBJ \
 	"$HERE/build/kvecprobe040.o" \
 	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
 	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/a3091dbg040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
@@ -527,6 +557,7 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          page_init page_init_orig pgz_magic pgz_calls pgz_npages pgz_dirty_n pgz_held_n \
          smu_panic_latch smu_magic smu_n smu_why smu_scan smu_bucket smu_want smu_pp \
          bt_frame_ok bt_magic bt_walks bt_frames bt_stops bt_laststop bt_prev bt_budget \
+         bt_badret bt_lastbadret \
          unt_latch unt_magic unt_n unt_magic2 unt_usp unt_uar0 unt_comm0 unt_comm1 unt_u0 unt_u1 \
          setregs setregs_orig srg_utraps srg_magic srg_match srg_ut_stamp srg_stamp1 srg_stamp2 \
          srg_ut_n srg_n srg_pushslot srg_slot_at srg_uar0_pre srg_uar0_post srg_ar0_0 srg_pcb0_post \
@@ -541,6 +572,10 @@ for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_u
          fpu_save fpu_save_orig fpu_restore fpu_restore_orig fpu_setup fpu_setup_orig \
          fpc_magic fpc_save_n fpc_save_wrt_n fpc_null_n fpc_idle_n fpc_excp_n fpc_odd_n \
          fpc_last_frame fpc_rest_n fpc_rest_live_n fpc_rest_null_n fpc_rest_wrt_n fpc_setup_n \
+         fpc_save_nofpu_n fpc_rest_nofpu_n fpc_setup_nofpu_n \
+         fpuinit fpuinit_orig fpu_setup_gated fpi_magic fpi_n fpi_trap_n fpi_nofpu_n \
+         fpi_idle_n fpi_badfmt_n fpi_pcr_pre fpi_pcr_post fpi_savedvec fpi_ok \
+         fpi_ss_skip_n fpi_ss_pass_n fpi_frame fpi_reset_frame f60_fpudis_nofpu_n \
          wbf_magic wbf_prop_on wbf_fail_n wbf_user_n wbf_sup_n wbf_signal_n wbf_nosig_n \
          wbf_krn_n wbf_swallow_n wbf_afb_n wbf_addr wbf_wbs wbf_fc wbf_sup_fatal \
          wbf_own_cookie wbf_own_sp wbf_alien_n wbf_alien_sp wbf_slot \
@@ -837,7 +872,7 @@ echo "[OK] cb_icode040 copyout wrapper @0x$COADDR is the strong def (stock body 
 # would produce a kernel that looks built and still reads byte zero of a 68060 frame.  So
 # assert BOTH directions: the strong symbol moved off the stock address, and the stock body is
 # still reachable at it as *_orig -- the 040 path is a tail jump to exactly that address.
-for fpe in fpu_save:00000132 fpu_restore:00000158 fpu_setup:00019b50; do
+for fpe in fpu_save:00000132 fpu_restore:00000158 fpu_setup:00019b50 $FPUINIT_BIND; do
 	fpn=$(echo "$fpe" | cut -d: -f1)
 	fpo=$(echo "$fpe" | cut -d: -f2)
 	fpnew=$(m68k-linux-gnu-nm "$OUT" | awk -v n="$fpn" '$3==n && $2=="T" {print $1}')
@@ -855,6 +890,17 @@ done
 FPCMAG=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="fpc_magic" {print $1}')
 [ -n "$FPCMAG" ] || { echo "[FAIL] fpc_magic missing -> fpu060.o is not in the link"; exit 1; }
 echo "[OK] ISSUE-43 FP context override bound on all three routines; stock bodies kept as *_orig."
+
+# HARD CHECK (2026-08-24, F1): the same two directions for the fourth routine.  fpuinit is the
+# one the others depend on -- if it silently stays stock, fpu_present is decided by a probe that
+# FSAVEs a 68060 frame into an 8-byte buffer, and every gate below it is gating on that answer.
+if [ "$FPUINIT060" = "1" ]; then
+	FPIMAG=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="fpi_magic" {print $1}')
+	[ -n "$FPIMAG" ] || { echo "[FAIL] fpi_magic missing -> fpuinit060.o is not in the link"; exit 1; }
+	FPGATE=$(m68k-linux-gnu-nm "$OUT" | awk '$3=="fpu_setup_gated" && $2=="T" {print $1}')
+	[ -n "$FPGATE" ] || { echo "[FAIL] fpu_setup_gated missing -> the sendsig gate has no target"; exit 1; }
+	echo "[OK] F1 060 FPU probe bound; stock fpuinit kept as fpuinit_orig @0x19bac."
+fi
 
 # HARD CHECK (2026-08-01, USER-CODE-PUBLISH): the strong `mprotect` must be the
 # codepub040 wrapper, not the stock body at 0x58550.  A kernel whose mprotect is
@@ -981,6 +1027,17 @@ run_step 1 python3 "$HERE/src/patch_inituser.py" "$OUT"
 
 echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
 python3 "$HERE/src/patch_framesz060.py" "$OUT"
+
+# F1-M2 (2026-08-24): sendsig calls fpu_setup with no fpu_present gate, so on a 68LC060 the
+# first delivered signal executes FRESTORE in supervisor mode.  Relocation retarget, the same
+# mechanism as patch_dbgpublish.py above; the wrapper's 040 arm is a plain tail jump.  Runs
+# with the byte patches rather than after the FPSP link, because the target comes from the core
+# ld -r and the FPSP link only appends -- and the assertion after it re-reads the finished
+# image, so a superseded retarget would not survive to the artifact unnoticed.
+if [ "$FPUINIT060" = "1" ]; then
+	echo "[*] F1-M2: sendsig -> fpu_setup only when fpu_present != 0"
+	run_step 2 python3 "$HERE/src/patch_sendsig_fpu.py" "$OUT"
+fi
 
 echo "[*] ISSUE-15: KMA pool page counts (SMALLCLICKS/BIGCLICKS 2K->4K clicks) + kmem_avail ptob"
 run_step 3 python3 "$HERE/src/patch_kmapools.py" "$OUT"
@@ -1158,6 +1215,14 @@ fi
 echo
 echo "[*] ISP: retarget M68Kvec[61] (unimplemented integer) -> isp61_vec"
 run_step 2 python3 "$HERE/src/patch_isp_vec61.py" "$OUT"
+
+echo
+echo "[*] FPU relink assertions (FPU-TIER1-ENABLE-SPEC.md:205-210), on the finished image:"
+if [ "$FPUINIT060" = "1" ]; then
+	run_step indent python3 "$HERE/src/check_fpu_relocs.py" "$OUT" --gated
+else
+	run_step indent python3 "$HERE/src/check_fpu_relocs.py" "$OUT"
+fi
 
 echo
 echo "[*] reloc validation:"
