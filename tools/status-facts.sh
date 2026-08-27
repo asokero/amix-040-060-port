@@ -140,6 +140,19 @@ def one(name, kinds=None):
             return v, t
     return None, None
 
+# WHICH SECTION A SYMBOL IS IN DECIDES ITS RUNTIME ADDRESS, and the difference is not small.
+# The loader copies .text and .data as one block and puts .bss at data_end, so `.data` is
+# textsize + the symbol's offset while `.bss` is textsize + the WHOLE data size + the offset.
+# Applying the .data rule to a .bss symbol does not fail: it names an address inside .data and
+# reads back perfectly plausible numbers belonging to some other block.  This script printed
+# exactly that for one block for several rounds, and a hardware session then read that block at
+# the printed address and believed four zeros -- which is what a block with no magic word of its
+# own costs.  docs/contracts/FPE-R10-VEC60.md section 10.4 has the incident.
+DATASIZE = data['size'] if data else 0
+
+def runtime(val, typ):
+    return BASE + textsize + (DATASIZE if typ in 'Bb' else 0) + val
+
 # ---- runtime counter blocks, keyed by their magic word -------------------------------------
 print("## Counter blocks (runtime addresses = load base 0x%08X + textsize + nm .data offset)" % BASE)
 print()
@@ -152,8 +165,11 @@ for name in sorted(n for n in syms if n.endswith('_magic')):
     val, typ = one(name, 'DdBb')
     if val is None or data is None:
         continue
-    addr = BASE + textsize + val
-    off = data['off'] + (val - data['addr'])
+    addr = runtime(val, typ)
+    # A magic in .bss would read 0 at runtime -- .bss is zeroed at load and there is no file
+    # content to quote -- so it is not looked up here.  That is a defect in the block, and it
+    # shows up as `00000000 / ....` rather than as a wrong-looking address.
+    off = data['off'] + (val - data['addr']) if typ in 'Dd' else -1
     magic = u32(off) if 0 <= off < len(f) - 4 else 0
     asc = ''.join(chr(b) if 32 <= b < 127 else '.' for b in struct.pack('>I', magic))
     print("| `%s` | `%08X` | `%08x` | `%s` |" % (name, addr, magic, asc))
@@ -167,19 +183,19 @@ for block in sorted(n[:-6] for n in syms if n.endswith('_magic')):
     for n, entries in syms.items():
         for v, t in entries:
             if t in 'DdBb' and n.startswith(block + '_'):
-                members.append((v, n))
+                members.append((runtime(v, t), n))
     if len(members) < 2:
         continue
-    members.sort()
+    members.sort()                       # by runtime address: a block may span two sections
     base = members[0][0]
     contiguous = all(members[i+1][0] - members[i][0] == 4 for i in range(len(members)-1))
     print("**`%s` block** — %s:" % (block,
-          "`kpeek %08X %d` reads it in one call, in this order" % (BASE + textsize + base, len(members))
+          "`kpeek %08X %d` reads it in one call, in this order" % (base, len(members))
           if contiguous else "NOT contiguous, so read the addresses individually"))
     print()
     print('```')
-    for i, (v, n) in enumerate(members):
-        print("  +%-5s %-20s @ %08X" % ("0x%x" % (v - base), n, BASE + textsize + v))
+    for i, (addr, n) in enumerate(members):
+        print("  +%-5s %-20s @ %08X" % ("0x%x" % (addr - base), n, addr))
     print('```')
     print()
 
