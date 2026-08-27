@@ -23,6 +23,14 @@
 #      itself works from, and the three proc fields the gate then tests are what decide whether
 #      issig() is called at all.  A wrong base here is a gate that silently never fires, and
 #      round 3 measured what that costs: a pure-FP loop that cannot be killed.
+#   8. M68Kvec[60] names fpe_vec60 -- the round-10 arm is actually installed.  Without it the
+#      two twelve-byte immediate formats keep taking the 68060 package's FPU-disabled exit and
+#      dying SIGSYS, which is the failure that round measured and no fpe_* counter recorded.
+#   9. fpe_decline60 names the handler THAT arm displaced, and in particular does NOT name
+#      fpe_vec60 or fpe_vec11.  Naming fpe_vec60 is a loop on the first declined frame; naming
+#      fpe_vec11 is the loop docs/contracts/FPE-R10-VEC60.md 4 rejects the obvious fix for --
+#      fpe_vec11's own decline reaches the 68060 package, which calls back out to exactly the
+#      path that would return here.
 #
 # Usage: python3 src/check_fpe_relocs.py <kernel>
 
@@ -32,6 +40,7 @@ R_68K_32 = 1
 U_FPU_INFO = 0x9c
 U_PROCP = 0x730
 ALLOWED_DECLINE = ("fpsp_vec11", "nullvect")
+ALLOWED_DECLINE60 = ("fpsp_vec60", "nullvect")
 
 
 def u16(b, o): return struct.unpack(">H", b[o:o + 2])[0]
@@ -182,6 +191,41 @@ def main():
             else:
                 print("      fpe_sigpend  -> u + 0x%03x (u.u_procp, u_trap's own gate base)"
                       % U_PROCP)
+
+    # 8: the round-10 vector, same two checks the vector-11 pair gets
+    if "M68Kvec" not in syms or "fpe_vec60" not in syms:
+        fails.append("M68Kvec or fpe_vec60 not found")
+    else:
+        off = syms["M68Kvec"][0] + 60 * 4
+        got = rtext.get(off)
+        if not got:
+            fails.append("no .rela.text reloc at M68Kvec[60] 0x%06x" % off)
+        elif got[0][0] != "fpe_vec60":
+            fails.append("M68Kvec[60] names %s, expected fpe_vec60" % got[0][0])
+        elif got[0][1] != R_68K_32:
+            fails.append("M68Kvec[60] reloc type %d != R_68K_32" % got[0][1])
+        else:
+            print("      M68Kvec[60]  -> fpe_vec60 (the unimplemented-<ea> arm is installed)")
+
+    # 9: and its decline, which may not name either arm
+    if "fpe_decline60" not in syms:
+        fails.append("fpe_decline60 not found")
+    else:
+        base = syms["fpe_decline60"][0]
+        hit = [rtext[o] for o in rtext if base <= o < base + 6]
+        if len(hit) != 1:
+            fails.append("fpe_decline60 carries %d relocations, expected exactly 1 "
+                         "(one jmp with a patchable operand)" % len(hit))
+        else:
+            tgt = hit[0][0][0]
+            if tgt in ("fpe_vec60", "fpe_vec11"):
+                fails.append("fpe_decline60 names %s -- the decline path loops back into an "
+                             "arm" % tgt)
+            elif tgt not in ALLOWED_DECLINE60:
+                fails.append("fpe_decline60 names %s, expected one of %s"
+                             % (tgt, "/".join(ALLOWED_DECLINE60)))
+            else:
+                print("      fpe_decline60-> %s (the displaced handler)" % tgt)
 
     if fails:
         for f in fails:

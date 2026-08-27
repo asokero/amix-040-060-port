@@ -64,6 +64,10 @@ extern long fpe_ufetch_n, fpe_ufetchfail_n, fpe_fault_addr;
 extern long fpe_advmiss_n, fpe_b_pc, fpe_b_stacked, fpe_b_resume, fpe_b_opword;
 extern long fpe_advctl_n, fpe_advnofetch_n, fpe_c_pc, fpe_c_opword;
 extern long fpe_sigpend_n, fpe_sigdeliv_n;
+/* the vector-60 arm (round 10) -- src/fpe040.s, and docs/contracts/FPE-R10-VEC60.md 6 */
+extern long fpe_ea_imm_n, fpe_ea_pack_n, fpe_ea_fmovmx_n, fpe_ea_fmovml_n;
+extern long fpe_ea_fetchfail_n, fpe_ea_done_n, fpe_ea_sig_n, fpe_ea_last_op;
+extern long fpe_rewind_n;
 extern int fpe_setjmp();
 extern void fpe_longjmp();
 extern int fpe_sigpend();	/* u_trap's own three-condition gate -- see src/fpe040.s */
@@ -81,6 +85,16 @@ extern int fpe_sigpend();	/* u_trap's own three-condition gate -- see src/fpe040
  * include the shadow header that redirects the name -- it needs AMIX's `cputype`. */
 #define NB_CPU_68040	2
 #define NB_CPU_68060	3
+
+/*
+ * The two vector OFFSETS this file can be entered with, which is what the frame's own
+ * format/vector word carries in its low twelve bits.  Vector 11 is the F-line/FP-disabled arm
+ * this lane has always had; vector 60 is "FP unimplemented effective address", the round-10
+ * addition (src/fpe040.s's fpe_vec60, docs/contracts/FPE-R10-VEC60.md).  The frame itself is
+ * what tells the two apart, so the arms need no argument.
+ */
+#define V11_VOFF	44		/* 11 * 4 */
+#define V60_VOFF	240		/* 60 * 4 */
 
 /* ---------------------------------------------------------------------------- assertions */
 /*
@@ -380,8 +394,11 @@ fpe_signal(signo, code, addr)
  *
  *	uspp	&the USP pseudo-register slot, which is also what u.u_ar0 points at
  *	regs	the 60-byte D0-D7/A0-A6 block, in nullvect's order
- *	xf	the raw eight-word exception frame: SR +0, PC +2, fmt/vec +6, f_fea +8,
- *		f_pcfi +12
+ *	xf	the raw exception frame.  TWO SHAPES since round 10:
+ *		  vector 11, eight words: SR +0, PC +2, fmt/vec +6, f_fea +8, f_pcfi +12
+ *		  vector 60, four words:  SR +0, PC +2, fmt/vec +6, and nothing after
+ *		The second one's PC IS the faulting instruction, where the first one carries
+ *		that separately at +12 and puts an advisory "next PC" at +2.
  *
  * Returns 0 if the instruction was emulated, 1 if a signal was delivered.  Either way the
  * frame and the register block have been updated in place and the caller goes to ureturn.
@@ -396,8 +413,10 @@ fpe_trap(uspp, regs, xf)
 	struct fpframe *fpf;
 	ksiginfo_t ksi;
 	unsigned short fmtvec;
-	unsigned int stacked_pc;
-	int i, r, signo, code;
+	unsigned int stacked_pc, fault_pc;
+	int i, r, signo, code, v60;
+	int refuse_signo, refuse_code;
+	long addr;
 
 	/*
 	 * THE ENTRY LOCK.  fpu_emulate() keeps its per-invocation state in file-static objects
@@ -447,6 +466,14 @@ fpe_trap(uspp, regs, xf)
 	 * fpu_emulate.c:108-125 takes the faulting instruction's address from, and it is the
 	 * whole reason this arm sits at the top of the vector rather than downstream of the
 	 * 060 package (contract 6.3).
+	 *
+	 * ROUND 10: THE TAIL IS READ ONLY FROM A FRAME THAT HAS ONE.  The vector-60 frame is
+	 * four words and ends at +8, so reading +8 and +12 unconditionally would pick up
+	 * whatever the supervisor stack happens to hold above it -- harmless as far as
+	 * fpu_emulate is concerned, which consults f_fmt4 only when f_format is 4, but the
+	 * instruction-length instrument below does a copyin from f_fslw and would have been
+	 * copying from a garbage user address.  fault_pc is the one value both shapes have, and
+	 * everything downstream that wants "the instruction that faulted" uses it.
 	 */
 	for (i = 0; i < 15; i++)
 		f.f_regs[i] = regs[i];
@@ -459,8 +486,16 @@ fpe_trap(uspp, regs, xf)
 	fmtvec = *(unsigned short *)(xf + 6);
 	f.f_format = (fmtvec >> 12) & 0xf;
 	f.f_vector = fmtvec & 0x0fff;
-	f.f_fmt4.f_fa = *(unsigned int *)(xf + 8);
-	f.f_fmt4.f_fslw = *(unsigned int *)(xf + 12);
+	if (f.f_format == 4) {
+		f.f_fmt4.f_fa = *(unsigned int *)(xf + 8);
+		f.f_fmt4.f_fslw = *(unsigned int *)(xf + 12);
+		fault_pc = f.f_fmt4.f_fslw;
+	} else {
+		f.f_fmt4.f_fa = 0;
+		f.f_fmt4.f_fslw = 0;
+		fault_pc = stacked_pc;
+	}
+	v60 = (f.f_vector == V60_VOFF);
 
 	/*
 	 * The FP state, as a fixed bias off fpu_ptr.  No transposition and no copy: the
@@ -480,14 +515,78 @@ fpe_trap(uspp, regs, xf)
 	fpe_abort_code = 0;
 	fpe_abort_addr = 0;
 	fpe_cur = &f;
+	refuse_signo = 0;
+	refuse_code = 0;
+
+	/*
+	 * THE VECTOR-60 FORM GATE (round 10).  Four instruction classes take the unimplemented
+	 * effective-address exception, and the extracted emulator serves three of them.  The
+	 * fourth it serves WRONGLY, and wrongly in the worst available way: for `fmovem.l #imm`
+	 * to two or three control registers it sets is_datasize = 4, decodes ONE effective
+	 * address, loads every selected register from that one longword and advances 8 on a
+	 * 12-byte instruction.  The host harness measured it -- test-tools/fpe-harness/, T6:
+	 * success returned, FPCR taken from the first longword, FPSR never written at all.
+	 * Handing that class through would replace a loud SIGSYS with a silent wrong answer and
+	 * a resume address four bytes inside the operand, so it is refused here instead.
+	 *
+	 * The discriminator is the FP command word's top two bits, and it is not invented: it is
+	 * the same test fpu_emulate.c:162-170 dispatches on (0xc000 = fmovem FPn, 0x8000 =
+	 * fmovem FPcr) and the same one-bit test Motorola's own effective-address handler makes.
+	 *
+	 * DIRECT copyin RATHER THAN ufetch_short, for the reason the instrument below records:
+	 * an instrument that moves the numbers beside it is worse than none, and ufetch_short is
+	 * the emulator's own fetch census.  A failure here is a genuine SIGSEGV -- the CPU
+	 * raised the exception on this address, so it was readable a moment ago -- and is
+	 * counted rather than assumed impossible.
+	 */
+	if (v60) {
+		unsigned short opw, cmdw;
+
+		if (copyin((char *)fault_pc, (char *)&opw, 2) != 0 ||
+		    copyin((char *)(fault_pc + 2), (char *)&cmdw, 2) != 0) {
+			fpe_ea_fetchfail_n++;
+			fpe_fault_addr = (long)fault_pc;
+			refuse_signo = SIGSEGV;
+			refuse_code = SEGV_ACCERR;
+		} else {
+			fpe_ea_last_op = ((long)opw << 16) | (long)cmdw;
+			if ((cmdw & 0x8000) == 0) {
+				/*
+				 * Opclass 0/2/3: arithmetic or fmove with an immediate source.
+				 * This is the round-10 death class -- extended (source specifier
+				 * 2) and packed decimal (3) are the two whose operand is twelve
+				 * bytes and therefore the two the 68060's integer unit refuses.
+				 * Extended is emulated correctly; packed is not implemented by
+				 * the emulator at all and comes back as the undecodable SIGFPE
+				 * the rewind below is written for.  FPE-R10-VEC60.md 5.3.
+				 */
+				fpe_ea_imm_n++;
+				if (((cmdw >> 10) & 7) == 3)
+					fpe_ea_pack_n++;
+			} else if ((cmdw & 0xc000) == 0xc000) {
+				fpe_ea_fmovmx_n++;	/* fmovem.x, static or dynamic list */
+			} else {
+				fpe_ea_fmovml_n++;	/* fmovem.l, 2 or 3 control registers */
+				refuse_signo = SIGILL;
+				refuse_code = ILL_ILLOPC;
+			}
+		}
+	}
 
 	/*
 	 * The abort target.  fpe_setjmp/fpe_longjmp save and restore exactly the callee-saved
 	 * set (d2-d7/a2-a6) plus SP and the return address, so every local that matters here is
 	 * either in one of those or reloaded from a stack slot the way an ordinary call already
-	 * requires.  No local is written between the setjmp and a possible longjmp.
+	 * requires.  No local is written between the setjmp and a possible longjmp, and the
+	 * refusal arm is ahead of the setjmp so that a longjmp lands in the third arm without
+	 * re-reading either refuse_* variable.
 	 */
-	if (fpe_setjmp(fpe_jb) == 0) {
+	if (refuse_signo) {
+		r = -1;
+		ksi.ksi_signo = refuse_signo;
+		ksi.ksi_code = refuse_code;
+		ksi.ksi_addr = (void *)fault_pc;	/* nothing executed: restart semantics */
+	} else if (fpe_setjmp(fpe_jb) == 0) {
 		fpe_jb_active = 1;
 		r = fpu_emulate(&f, fpf, &ksi);
 	} else {
@@ -555,12 +654,19 @@ fpe_trap(uspp, regs, xf)
 		 *
 		 * MEASURED, NOT ACTED ON: the emulator's PC is used either way, so nothing here
 		 * can change what the lane does.
+		 *
+		 * ROUND 10: FORMAT 4 ONLY, WHICH IS WHAT IT ALWAYS MEANT.  The comparison is "the
+		 * CPU's advisory Next PC against the emulator's decode", and only a format-4 frame
+		 * carries a Next PC.  The vector-60 frame's PC field IS the faulting instruction,
+		 * so f_pc would differ from it by the instruction length on every single event and
+		 * the counter would be measuring the length rather than a disagreement about it.
+		 * The gate changes nothing about what the vector-11 path counts.
 		 */
-		if (f.f_pc != stacked_pc) {
+		if (f.f_format == 4 && f.f_pc != stacked_pc) {
 			unsigned short opw;
 			int optype;
 
-			if (copyin((char *)f.f_fmt4.f_fslw, (char *)&opw, 2) != 0) {
+			if (copyin((char *)fault_pc, (char *)&opw, 2) != 0) {
 				/* cannot classify it, so it is neither a miss nor benign */
 				fpe_advnofetch_n++;
 			} else {
@@ -585,7 +691,18 @@ fpe_trap(uspp, regs, xf)
 				}
 			}
 		}
-		fpe_done_n++;
+		/*
+		 * THE TWO ARMS ARE COUNTED APART, and that is the point.  fpe_entry_n,
+		 * fpe_done_n, fpe_sig_n, fpe_user_n and the four fpe_sig*_n classes stay
+		 * VECTOR-11 ONLY, so every registered row and identity of rounds 3-9 -- p7's
+		 * fpe_v11_n == fpe_entry_n and p8's entry - done == sig above all -- means in a
+		 * round-11 dump exactly what it meant in a round-10 one.  The vector-60 arm
+		 * carries its own closing pair.  FPE-R10-VEC60.md 6.
+		 */
+		if (v60)
+			fpe_ea_done_n++;
+		else
+			fpe_done_n++;
 
 		/*
 		 * ASYNCHRONOUS SIGNAL DELIVERY, and it is not optional.  s_trap -- which ureturn
@@ -622,9 +739,13 @@ fpe_trap(uspp, regs, xf)
 	}
 
 	/* ---- a signal was requested ---- */
-	fpe_sig_n++;
+	if (v60)
+		fpe_ea_sig_n++;		/* see the note in the r == 0 arm: the arms are separate */
+	else
+		fpe_sig_n++;
 	signo = ksi.ksi_signo;
 	code = ksi.ksi_code;
+	addr = (long)ksi.ksi_addr;
 
 	/*
 	 * si_addr, AND WHY THE TWO LATCHES ARE BOTH NEEDED.  ksi_addr is frame->f_pc after the
@@ -645,7 +766,7 @@ fpe_trap(uspp, regs, xf)
 	 * for a round that can bench it as its subject; until then the two latches let the next
 	 * A/B state both addresses without a disassembler in the loop.
 	 */
-	fpe_last_fault_pc = (long)f.f_fmt4.f_fslw;
+	fpe_last_fault_pc = (long)fault_pc;
 
 	if (signo == SIGFPE && code == 0) {
 		code = fpe_fltcode(fpf);
@@ -658,24 +779,61 @@ fpe_trap(uspp, regs, xf)
 			fpe_undecoded_n++;
 			signo = SIGILL;
 			code = ILL_ILLOPC;
+
+			/*
+			 * ROUND 10: AND THE INSTRUCTION NEVER RAN, SO REWIND.
+			 * fpu_emulate.c:217-218 advances the PC for SIGFPE as well as for
+			 * success, under a vendor comment that flags the choice as unresolved.
+			 * For a genuine arithmetic exception that is right -- the instruction
+			 * completed and produced an exceptional result.  For the class that
+			 * lands HERE it is not: this is the arm the emulator takes when it
+			 * refuses an operand FORMAT (fpu_emul_arith's else, which packed
+			 * decimal falls into) and it refuses before decoding an effective
+			 * address, so nothing executed and is_advance is still 4.  The host
+			 * harness measured exactly that on a 16-byte instruction
+			 * (test-tools/fpe-harness/, T4).  A handler that returns would resume
+			 * twelve bytes inside a constant.
+			 *
+			 * The frame's PC was written back unconditionally above, so this
+			 * writes it again -- restart semantics, which is what a signal for an
+			 * instruction that did not execute wants, and what the SIGILL and
+			 * SIGSEGV aborts already get for free from the emulator's own guard.
+			 * fpe_undecoded_n has read 0 on every boot of every round, so this
+			 * changes nothing that has ever been measured.
+			 */
+			if (f.f_pc != fault_pc) {
+				fpe_rewind_n++;
+				f.f_pc = fault_pc;
+				*(unsigned int *)(xf + 2) = fault_pc;
+				addr = (long)fault_pc;
+			}
 		}
 	}
 
-	switch (signo) {
-	case SIGFPE:
-		fpe_sigfpe_n++;
-		break;
-	case SIGILL:
-		fpe_sigill_n++;
-		break;
-	case SIGSEGV:
-		fpe_sigsegv_n++;
-		break;
-	default:
-		fpe_sigother_n++;
-		break;
+	/*
+	 * The four classes are the VECTOR-11 arm's, like fpe_sig_n itself; a vector-60 signal is
+	 * named by fpe_ea_sig_n plus whichever of fpe_ea_pack_n / fpe_ea_fmovml_n /
+	 * fpe_ea_fetchfail_n caused it, and by the shared fpe_last_signo / fpe_last_code
+	 * latches.  Keeping the sum fpe_sig_n == the four classes is worth more than a second
+	 * copy of them, because that identity is what rounds 3-10 read.
+	 */
+	if (!v60) {
+		switch (signo) {
+		case SIGFPE:
+			fpe_sigfpe_n++;
+			break;
+		case SIGILL:
+			fpe_sigill_n++;
+			break;
+		case SIGSEGV:
+			fpe_sigsegv_n++;
+			break;
+		default:
+			fpe_sigother_n++;
+			break;
+		}
 	}
 
-	fpe_signal(signo, code, (long)ksi.ksi_addr);
+	fpe_signal(signo, code, addr);
 	return 1;
 }

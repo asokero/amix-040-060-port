@@ -12,7 +12,7 @@
 | Externals: nullvect, ureturn, sup_cacr, u, cputype, fpu_present, fpu_ptr, reset_fregs, printf,
 |            and the six *_fpe_orig aliases relink-040-fpe.sh mints with objcopy.
 |
-| ============================ THE SEVEN THINGS IN HERE ============================
+| ============================ THE EIGHT THINGS IN HERE ============================
 |
 | 1. fpe_vec11 -- the vector-11 arm.  M68Kvec[11] is retargeted to it by
 |    src/patch_fpe_vec11.py, so it runs BEFORE fpsp_vec11's first instruction, which is
@@ -49,6 +49,16 @@
 | 7. fpe_sigpend -- u_trap's own three-condition signal gate, so the SUCCESSFUL-emulation path
 |    can reach issig/psig without paying for a call on every emulated instruction.  Without it
 |    a process in a pure-FP loop could not be signalled at all, SIGKILL included.
+|
+| 8. fpe_vec60 -- the vector-60 arm (round 10, 2026-08-27).  On a 68060 the twelve-byte
+|    immediate operand formats are an addressing mode the INTEGER unit does not implement, so
+|    they raise "FP unimplemented effective address" BEFORE any F-line path runs, and the lane
+|    never saw them: round 10 measured three of them dying SIGSYS on metal with every fpe_*
+|    counter still at zero.  Same mechanism as item 1 one vector over -- M68Kvec[60] retargeted
+|    by src/patch_fpe_vec60.py, fpe_decline60 given back the handler it displaced -- and the
+|    same body, because fpe_trap reads the format and vector out of the frame it is handed.
+|    docs/contracts/FPE-R10-VEC60.md is the whole argument, including why routing the 68060
+|    package's own FPU-disabled call-out here instead would have been a loop.
 |
 | ============================ REGISTER DISCIPLINE ============================
 | fpe_vec11 runs on the RAW exception frame with every user register still live in the CPU, so
@@ -158,7 +168,7 @@ Lfpe_fmt2:
 Lfpe_fmt4:
 	addql	&1,fpe_fmt4_n
 	btst	&5,%sp@			| stacked SR high byte bit 5 = the S bit
-	beqs	Lfpe_user
+	beqs	Lfpe_v11user
 	addql	&1,fpe_super_n		| supervisor-origin FP on a part with no FPU is a kernel
 					| defect.  Frozen decision 8 keeps it LOUD: decline, and
 					| the S-bit dispatch takes it to k_trap as it does today.
@@ -174,7 +184,85 @@ fpe_decline:
 	jmp	nullvect		| RETARGETED -- see src/patch_fpe_vec11.py
 
 | ============================================================================
-| The user-origin format-4 path.
+| fpe_vec60 -- vector 60, "FP unimplemented effective address", ahead of the 68060 package.
+|
+| WHY IT EXISTS.  On a 68060 the effective address of an FP operand is computed by the INTEGER
+| unit, and the two immediate formats whose operand is TWELVE bytes -- extended-precision real
+| and packed decimal -- are the ones it does not implement.  It therefore raises vector 60
+| before any F-line path runs, so the lane's vector-11 arm is never entered and no fpe_* counter
+| moves.  Round 10 measured exactly that on metal: three executions of `fmove.x #<ext>,FPn` and
+| `fmove.p #<packed>,FPn`, three vector-60 entries, three SIGSYS deaths, and the whole fpe_*
+| block still at its initialisers.  docs/contracts/FPE-R10-VEC60.md carries the trace and names
+| the SIGSYS's own instruction: src/fpsp060_glue.s:Lco_fpudis_nofpu's `jmp nullvect`.
+|
+| THE FRAME.  Four words -- SR +0, PC +2, format/vector +6 -- i.e. format 0, vector offset
+| 60 x 4 = 0xF0, so the word at +6 is 0x00F0.  Its PC field is the FAULTING instruction, not the
+| next one, which is the field a format-4 frame has to carry separately as f_pcfi.  That makes
+| this the easier of the two shapes for the emulator: fpu_emulate's format-4 special case exists
+| precisely to reconstruct what this frame already has.  Established from Motorola's own package,
+| which builds the eight-word FPU-disabled frame FROM this one and takes the instruction address
+| straight out of its PC field; the arm declines anything else and latches what it saw, so being
+| wrong about the shape costs today's behaviour and not a wrong resume.
+|
+| THE LENGTH.  16 bytes: opword 2 + command word 2 + operand 12.  It is not in the frame and
+| cannot be -- round 9's finding is that #<data> is the one addressing mode whose length lives in
+| the FP command word rather than the operation word.  Nothing here computes it; the emulator's
+| own decode does, and the host harness measures it coming out as 16 (FPE-R10-VEC60.md 9, T1-T3).
+|
+| WHAT IS NOT HERE.  No form gate.  Deciding which of the four vector-60 instruction classes the
+| emulator may be trusted with needs the FP command word, which is a USER fetch, which needs the
+| fault-protected path -- so it lives in fpe_trap beside the rest of the decode.  This arm's job
+| is the frame and the gates, in the register discipline the raw frame forces.
+| ============================================================================
+	.globl	fpe_vec60
+fpe_vec60:
+| ---- the census, ahead of every gate, exactly as the vector-11 arm's ---------------------
+| These move on ANY 68060, FPU-present ones included -- a real FPU raises vector 60 for these
+| forms too, and the package handles them.  They are observers and are outside the never-engage
+| bar by name, which fpe_ea_n below is not.
+	addql	&1,fpe_v60_n
+	cmpiw	&0x00f0,%sp@(6)		| four-word, format 0, vector offset 60 x 4
+	beqs	Lfpe60_cen0
+	addql	&1,fpe_v60_fmtx_n
+	movew	%sp@(6),fpe_v60_last_fmtvec+2
+	bras	Lfpe60_gate
+Lfpe60_cen0:
+	addql	&1,fpe_v60_fmt0_n
+Lfpe60_gate:
+	tstl	fpu_present		| real silicon: the package's business, byte for byte
+	bnes	Lfpe60_decl
+	tstl	fpu_emul
+	beqs	Lfpe60_decl		| emulation not armed
+	cmpiw	&0x00f0,%sp@(6)		| a shape this arm has not been shown: decline and latch
+	bnes	Lfpe60_decl
+	btst	&5,%sp@			| stacked SR high byte bit 5 = the S bit
+	bnes	Lfpe60_super
+	addql	&1,fpe_ea_n
+	braw	Lfpe_user		| the vector-11 arm's own body: fpe_trap tells the two
+					| apart by the vector in the frame, so there is no second
+					| copy of the register push / u_ar0 / ureturn sequence
+Lfpe60_super:
+	addql	&1,fpe_ea_super_n	| supervisor FP on a part with no FPU is a kernel defect,
+					| and decision 8 keeps it loud on this vector too
+Lfpe60_decl:
+	addql	&1,fpe_v60_decl_n	| THE residual-death counter: on a part with no FPU these
+					| are the events that still reach the package and still end
+					| in SIGSYS.  Round 10's whole finding was that nothing
+					| counted them.
+	.globl	fpe_decline60
+fpe_decline60:
+	jmp	nullvect		| RETARGETED -- see src/patch_fpe_vec60.py.  fpsp_vec60 on
+					| a normal build, nullvect on an FPSP=0 one; same argument
+					| as fpe_decline's, one vector over.
+
+| ============================================================================
+| The user-origin path, shared by both arms.
+|
+| Reached from the vector-11 arm with an eight-word format-4 frame and from the vector-60 arm
+| with a four-word format-0 one.  Nothing below depends on the frame's SIZE: the register block
+| is pushed BELOW it, fpe_trap is handed its address, and the RTE at the end of ureturn pops
+| whatever the frame's own format word says.  fpe_trap reads the format and vector out of the
+| frame, so it needs no argument to tell the two arms apart.
 |
 | Everything below reproduces the state nullvect -> utraps -> u_trap normally establishes, and
 | leaves through ureturn, WITHOUT calling u_trap: by the time this runs the exception has been
@@ -191,8 +279,13 @@ fpe_decline:
 | context-switched: u_ar0 lives in the u-area, is per-process, and anything that looks at this
 | process while it is off the CPU must find it already correct.
 | ============================================================================
+Lfpe_v11user:
+	addql	&1,fpe_user_n		| the VECTOR-11 arm's handoff count, and only that one.
+					| Round 10 kept every registered row of rounds 3-9 meaning
+					| what it meant: fpe_entry_n, fpe_done_n, fpe_sig_n and this
+					| are vector-11 only, and the vector-60 arm has its own
+					| fpe_ea_* set.  FPE-R10-VEC60.md 6.
 Lfpe_user:
-	addql	&1,fpe_user_n
 	moveml	%d0-%d7/%a0-%a6,%sp@-	| the 60-byte block, register for register as nullvect
 	movel	sup_cacr,%d0
 	.word	0x4e7b,0x0002		| movec %d0,%cacr -- kernel cache mode, as nullvect does
@@ -818,5 +911,88 @@ fpe_ss_setup_n:
 	.globl	fpe_exec_setup_n
 fpe_exec_setup_n:
 	.long	0			| ... and exec setups, one per exec under emulation
+
+| ---- the vector-60 arm (round 10, 2026-08-27) -------------------------------------------
+| APPENDED AT THE END, for the same reason src/fpsp060_glue.s's M3 and M4 blocks were: every
+| address already published for this block -- and the round-3..10 counter dumps are full of them
+| -- keeps its offset.  Nothing above this line moved.
+|
+| The accounting closes, and closing it is the deliverable.  Round 10's failure was not that a
+| process died; it was that a process died on an FP instruction and no fpe_* counter said so:
+|
+|	fpe_v60_n == fpe_ea_n + fpe_v60_decl_n		every vector-60 event is accounted
+|	fpe_ea_n  == fpe_ea_done_n + fpe_ea_sig_n	every accepted event has an outcome
+|
+| The first five are PRE-GATE OBSERVERS and move on any 68060 including FPU-present ones, the
+| same standing the fpe_v11_* family has.  Everything from fpe_ea_n down is behind both gates
+| and belongs to the never-engage bar: 0 on every rig that has an FPU.
+	.globl	fpe_v60_n
+fpe_v60_n:
+	.long	0			| every vector-60 event: armed or not, user or supervisor
+	.globl	fpe_v60_fmt0_n
+fpe_v60_fmt0_n:
+	.long	0			| 0x00f0 -- the four-word frame the 68060 stacks for it
+	.globl	fpe_v60_fmtx_n
+fpe_v60_fmtx_n:
+	.long	0			| any other shape.  MUST STAY 0: a non-zero reading
+					| refutes FPE-R10-VEC60.md 2 and the arm declined, which
+					| is why being wrong about it is survivable
+	.globl	fpe_v60_last_fmtvec
+fpe_v60_last_fmtvec:
+	.long	0xffffffff		| ... and its format/vector word, low half.  SENTINEL
+	.globl	fpe_v60_decl_n
+fpe_v60_decl_n:
+	.long	0			| events the arm declined, all reasons.  On a part with no
+					| FPU these still take the package's path and still die
+					| SIGSYS -- THE counter to watch, and the one whose absence
+					| made round 10's death invisible
+
+	.globl	fpe_ea_n
+fpe_ea_n:
+	.long	0			| vector-60 events handed to fpe_trap
+	.globl	fpe_ea_super_n
+fpe_ea_super_n:
+	.long	0			| ... supervisor origin: declined.  Must stay 0
+	.globl	fpe_ea_imm_n
+fpe_ea_imm_n:
+	.long	0			| ... an immediate-source arithmetic/fmove form (command
+					| word bit 15 clear): handed to the emulator
+	.globl	fpe_ea_pack_n
+fpe_ea_pack_n:
+	.long	0			| ... of which the source specifier was PACKED DECIMAL,
+					| which the extracted emulator does not implement at all.
+					| Observer: no behaviour hangs off it.  FPE-R10-VEC60.md 5.3
+	.globl	fpe_ea_fmovmx_n
+fpe_ea_fmovmx_n:
+	.long	0			| ... fmovem.x with a register list, static or dynamic:
+					| handed to the emulator, which implements both
+	.globl	fpe_ea_fmovml_n
+fpe_ea_fmovml_n:
+	.long	0			| ... fmovem.l to 2 or 3 control registers: REFUSED with
+					| SIGILL.  The emulator would report success, load every
+					| selected register from the FIRST longword and advance 8
+					| on a 12-byte instruction -- measured, FPE-R10-VEC60.md 9 T6
+	.globl	fpe_ea_fetchfail_n
+fpe_ea_fetchfail_n:
+	.long	0			| ... the opword/command word could not be fetched:
+					| SIGSEGV, nothing emulated.  Must be 0
+	.globl	fpe_ea_done_n
+fpe_ea_done_n:
+	.long	0			| vector-60 entries the emulator completed and resumed
+	.globl	fpe_ea_sig_n
+fpe_ea_sig_n:
+	.long	0			| vector-60 entries that ended in a signal, all classes.
+					| Watch this beside fpe_sig_n: the two arms are counted apart
+	.globl	fpe_ea_last_op
+fpe_ea_last_op:
+	.long	0xffffffff		| the last vector-60 entry's opword and command word as one
+					| longword, so its class is provable from a counter dump
+					| alone.  SENTINEL
+	.globl	fpe_rewind_n
+fpe_rewind_n:
+	.long	0			| undecodable-SIGFPE aborts whose PC was rewound to the
+					| faulting instruction.  The emulator advances the PC for
+					| SIGFPE, which is right for a real arithmetic exception and
+					| wrong for an operand format it refused without executing
 	.balign	4			| pad .data to a multiple of 4 -- rel.c puts .bss at
 					| data_end UNALIGNED

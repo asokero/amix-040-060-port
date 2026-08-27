@@ -202,6 +202,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$STAGE" $FPEOBJS "$OBJDIR/fpe_glue.o" "$OBJDIR/f
 # ---------------------------------------------------------------- 7. symbol assertions
 echo "[*] symbols that must be defined:"
 for s in fpe_magic fpe_vec11 fpe_decline fpe_trap fpe_setjmp fpe_longjmp fpu_emul fpe_sigpend \
+	 fpe_vec60 fpe_decline60 fpe_v60_n fpe_v60_decl_n fpe_ea_n fpe_ea_done_n fpe_ea_sig_n \
 	 fpe_entry_n fpe_cputype fpe_cputype_amix fpu_emulate ufetch_short \
 	 fpe_panic fpe_copyin fpe_copyout \
 	 prhasfp fpuinit fpu_save fpu_restore fpu_setup fpu_setup_gated setregs \
@@ -247,9 +248,16 @@ m68k-linux-gnu-nm "$OUT" | grep -qE " [Dd] ucp_magic\$" && {
 	exit 1; }
 echo "[OK] no ucontext arm linked (ucp_magic absent)"
 
-# ---------------------------------------------------------------- 8. the vector
+# ---------------------------------------------------------------- 8. the vectors
+# TWO arms, and the second one is round 10's.  On a 68060 the two immediate formats whose
+# operand is twelve bytes -- extended and packed -- are an addressing mode the INTEGER unit does
+# not implement, so they raise vector 60 before any F-line path runs and the vector-11 arm never
+# sees them.  Round 10 measured three of them dying SIGSYS on metal with the whole fpe_* block
+# still at zero.  docs/contracts/FPE-R10-VEC60.md.
 echo "[*] vector-11 arm"
 run_step indent python3 "$HERE/src/patch_fpe_vec11.py" "$OUT"
+echo "[*] vector-60 arm (FP unimplemented effective address)"
+run_step indent python3 "$HERE/src/patch_fpe_vec60.py" "$OUT"
 
 # ---------------------------------------------------------------- 9. packaging guards
 # The standard pair every relink in this tree runs, plus the .text one that this build is the
