@@ -36,6 +36,14 @@
 | `unless ((device) and (device->istr & 1<<4)) return`, so the driver reads this register on
 | every interrupt already.  Reading it here adds nothing the hardware does not see anyway.
 |
+| ENTRY istr ADDED 2026-08-27, and the reason is a mistake worth keeping visible.  The demux
+| wrapper (src/a3091demux040.s) latches the entry snapshot in a3w_dead_istr precisely so the
+| interrupt that kills the driver can be classified.  But this file's own header, above, explains
+| why a latch is nearly useless here: when the dying unit is the root disk the machine wedges and
+| nothing can read kernel memory afterwards.  That is exactly what happened on the first wedge
+| after the wrapper landed -- a3w_dead_istr was written and unreachable.  So the entry snapshot is
+| now printed beside the post-SS one, on the line that does reach the screen.
+|
 | It was added after the FOURTH occurrence, once the safe fields had been read four times and
 | found to say the same thing every time -- three kernels, both directions, both transfer
 | sizes, positions from 7300 to 168807 in the DMA sequence, with and without a preceding
@@ -132,11 +140,16 @@ Lad_noistr:
 	jsr	printf
 	lea	%sp@(24),%sp
 
+	movel	a3w_last_istr,%sp@-	| the ENTRY snapshot, from the demux wrapper: the ISTR
+					| as it was BEFORE a3091intr read SS.  a3d_istr below
+					| is read after that, so it can only show what survived
+					| the acknowledgement -- which is why the two are
+					| printed side by side rather than one of them.
 	movel	a3d_istr,%sp@-
 	movel	a3d_devp,%sp@-
 	pea	La3d_m4
 	jsr	printf
-	lea	%sp@(12),%sp
+	lea	%sp@(16),%sp
 
 	movel	a3d_whole,%sp@-
 	movel	a3d_ovf,%sp@-
@@ -165,7 +178,7 @@ La3d_m3:
 	.asciz	"a3091dbg zarm=%d rarm=%d owned=%d noprep=%d ovf=%d whole=%d\n"
 	.even
 La3d_m4:
-	.asciz	"a3091dbg dev=%x istr=%x\n"
+	.asciz	"a3091dbg dev=%x istr=%x entry=%x\n"
 	.even
 	.balign	4			| the .asciz blocks above are only .even, so without this
 					| the counter block can land 2 mod 4 -- it did, the moment

@@ -6854,3 +6854,95 @@ The wrapper survives this only because its error test masks the three named sour
 rather than whitelisting the documented bits. **Rewriting that mask as a whitelist would classify
 a varying subset of every interrupt on silicon as unclassified, and would look perfect in the
 emulator.**
+
+---
+
+## ⚠ ISSUE-54 (2026-08-27, OPEN): a WD phase mismatch on **any** target kills the A3091 driver permanently — reproducible on demand
+
+> **Ledger: OPEN.** Root-caused from the driver's own tables and a console capture. **This was
+> triggered deliberately-by-accident from this side** — see "How it was found" — which makes it
+> the first A3091 shutdown in this project that is reproducible rather than observed.
+
+Reading `/dev/rdsk/c3d0s0` — a raw device node for a SCSI target that does not hold a normal
+disk — takes the whole machine down. Not intermittently. The root disk shares the controller,
+so the driver's shutdown ends every disk-backed operation on the system.
+
+### The capture, and the decode
+
+    a3091dbg ss=49 istate=1 unit=8113460 head=0 dmaon=1
+    a3091dbg segstate=2 segseq=161454 segpa=96C1800 seglen=200 segdir=1
+    a3091dbg dev=DD0000 istr=1
+    a3091dbg zarm=0 rarm=0 owned=0 noprep=0 ovf=0 whole=161454
+    a3091: 0x49 1 0x8113460
+
+`unit=0x8113460` resolves to **`units[3]`** on this image — `units` is `.bss+0x3ce8`, and the
+loader's own line gives the bases (`tvaddr=08000000 tsize=000f58f8 dvaddr=080f58f8
+dsize=00019e50`), so `.bss` is `0x0810F748` and `units` is `0x08113430`. Remainder 0. SCSI
+target 3 is exactly what was being read.
+
+`0x49` is **`SBIC_CSR_MIS_1 | phase`** — a phase mismatch — by NetBSD's `sbicreg.h`
+(`SBIC_CSR_MIS_1 = 0x48`, low bits carry the phase). A phase mismatch is an ordinary SCSI
+condition; NetBSD's `sbic.c` handles it as routine.
+
+a3091.c does not. `itab[0x49]` is **1**, "status is illegal or unsupported", and
+`atab[STARTING][1]` is **1** — `badhardware()`, `DEAD`, no way back:
+
+| status | at state | input | action | |
+|---|---|---|---|---|
+| `0x49` phase mismatch | `STARTING` | 1 illegal/unsupported | **1 → DEAD** | this issue |
+| `0x42` no such target | `STARTING` | 0 | 5 abort, start next | **the driver handles this** |
+| `0x85` disconnect | `DEAD` | 3 | 1 → DEAD | the second capture: the DEAD row absorbing a normal event |
+| `0x16` completed | `IDLE` | 8 | 1 → DEAD | ISSUE-53's four captures |
+
+**So the driver anticipated an absent target and handles it gracefully, and dies on a phase
+mismatch from a target that answered.** The second capture is a consequence, not a second
+fault — every later input maps back to `DEAD` by construction.
+
+### Why this is a different defect from ISSUE-53
+
+Same family — "any status I do not recognise becomes permanent death" — and a different
+instance. ISSUE-53's signature is `ss=0x16 istate=IDLE head=0 dmaon=0 segstate=0`: a status the
+driver **does** know, arriving in a state where it makes no sense, with nothing in flight. This
+one is `ss=0x49 istate=STARTING dmaon=1 segstate=2`: a status the driver does **not** know,
+arriving mid-transfer, with a transfer genuinely armed. Nothing here is evidence about
+ISSUE-53 and it must not be cited as such.
+
+Our own DMA counters at the capture are consistent and clean: `segstate=2` (prepared) because a
+transfer really was armed, `whole == segseq`, and `owned`/`noprep`/`ovf` all zero.
+
+### One thing the wrapper told us by staying silent
+
+`src/a3091demux040.s` prints `a3091demux: unclassified istr=...` for any `INT_P` it cannot
+classify, capped at four lines. **No such line appeared.** So the entry `ISTR` of the killing
+interrupt was classifiable — `INTS` set, a genuine WD interrupt — and the wrapper delegated it
+correctly. That is read from the *absence* of output, which is only evidence because the print
+exists and is known to reach the console.
+
+### How it was found, which is not to anybody's credit
+
+While checking whether a collaborator's cross-unit `a2091` lead could apply here, this line ran
+`dd` against each SCSI target in turn to see which respond. Targets 0 and 1 answered, target 2
+returned zero records, and target 3 killed the machine. **A probe that was meant to establish
+whether a hypothesis was testable destroyed the running system instead**, costing a power cycle
+and an `fsck`. Probing SCSI targets on this controller is not a read-only operation and should
+be treated as a destructive test.
+
+### And a mistake in this project's own instrument, worth keeping visible
+
+`a3091demux040.s` latches the entry `ISTR` of the killing interrupt in `a3w_dead_istr`,
+specifically so it can be classified. It was written and then **could not be read**, because the
+wedge takes the root disk down and nothing can reach kernel memory afterwards.
+
+`a3091dbg040.s`'s own header says exactly why, in this project's words, and was written before
+the wrapper: *"A latched block would be perfect and unreachable."* The wrapper's most valuable
+datum went into a latch anyway. Fixed by printing the entry snapshot beside the post-`SS` one:
+
+    a3091dbg dev=%x istr=%x entry=%x
+
+### Fix, not yet written
+
+The driver needs a default that is not death. The minimum honest change is to give
+`badhardware` a distinguishable outcome for *unknown status at a live state* — abort the current
+request and return to `IDLE`, as `atab[STARTING][0]` already does for an absent target — rather
+than shutting the controller down for the lifetime of the boot. That is a real DFA change and
+wants the same treatment ISSUE-53's got: a contract first, then a counter with a denominator.
