@@ -343,6 +343,18 @@ dump exactly what they meant in a round-10 one. What is shared between the arms 
 (`fpe_panic_n`, `fpe_copyfail_n`, `fpe_ufetch_n`, `fpe_undecoded_n`) and the entry lock — none of
 which carries an invariant that the split would break.
 
+**Why the fix is not "make `f60_done_n` advance with `f60_entry_n`", which is the obvious reading
+of round 10's `3 / 0`.** Those two counters belong to the 68060 support package's unit, and their
+invariant is `f60_entry_n == f60_done_n + the f60_real_* exits` — which **held** through round 10:
+three entries, zero completions, three `real_*` exits. Making `done` advance with `entry` would
+have broken a correct invariant to make a number look better. What the round actually needed was
+for the event not to reach the package at all, which is what an arm in front of the vector
+achieves — the same way the vector-11 arm keeps `f60_entry_n` at 0 across 1,057,900 emulated
+instructions today. So the registered row is **`f60_entry_n = f60_effadd_n = f60_fpudis_n =
+f60_fpudis_nofpu_n = 0` for a whole session**, and any non-zero reading means an event was
+declined and `fpe_v60_decl_n` says how many. That is a stronger statement than `entry == done`,
+because it is falsifiable by a single number rather than by a pair moving together.
+
 **The monitoring recommendation this amends.** The opportunistic round said to watch `fpe_sig*` and
 `fpe_undecoded_n`; round 10 found a death class that moves none of them. The list is now:
 
@@ -387,6 +399,7 @@ conditional on a probe that does. The probe set is the round-10 `fpimm` family p
 | v10 | `fmovem.l #imm,fpcr/fpsr` is refused loudly | SIGILL, `fpe_ea_fmovml_n` +1, `fpe_ea_sig_n` +1 | a wrong control-register value, i.e. it was emulated |
 | v11 | the never-engage bar holds | on any FPU-present rig: `fpe_ea_n = 0` and every `fpe_ea_*` at its initialiser, with `fpe_v60_*` excepted by name | any `fpe_ea_*` non-zero |
 | v12 | nothing at vector 11 moved | `fpe_advnofetch_n = 0`, `fpe_fmt2_n = fpe_fmt0_n = fpe_fmtx_n = fpe_super_n = 0`, and the p7/p8 identities hold | any of them changed character |
+| v13 | **the arm sits ahead of the package** | `f60_entry_n = f60_effadd_n = f60_fpudis_n = f60_fpudis_nofpu_n = 0` for the whole session, where round 10 read 3 / 3 / 3 / 3 | any non-zero — an event was declined, and `fpe_v60_decl_n` says how many and `fpe_v60_last_fmtvec` why |
 
 ### 8.1 The bench cannot raise vector 60, and the reason is one `&&` term
 
@@ -491,7 +504,145 @@ nothing into any kernel.
 
 ---
 
-## 10. Carried forward, and what this round deliberately did not do
+## 10. The artifact, and the deploy/verify plan for the metal session
+
+Built after §1–§9 were committed, on the **same base as the round-7/8/10 lineage**, so the only
+thing that differs from the kernel that produced the round-10 deaths is this round's change.
+
+```
+sh relink-040-fpe.sh build/unix-040-f7vs build/unix-040-fpe-v60
+python3 tools/stamp-card1.py   build/unix-040-fpe-v60 build/unix-040-fpe-v60-CARD1-ced0s1
+python3 tools/stamp-cputype.py build/unix-040-fpe-v60-CARD1-ced0s1 \
+                               build/unix-060-fpe-v60-CARD1-ced0s1 --set 60
+```
+
+| artifact | size | sha256 |
+|---|---:|---|
+| `build/unix-040-f7vs` *(the base, unchanged since round 7)* | 1,878,585 | `d43a59ccb7df2ebcdf611a7fa322dd84a4c2166fa9d491078025ef4f9e0fa889` |
+| `build/unix-040-fpe-v60` | 1,933,225 | `828f6a125855f29a815596d17363e26978e03d8b4d0e4ecff21fe77c5467e9eb` |
+| `build/unix-040-fpe-v60-CARD1-ced0s1` | 1,933,225 | `42994d84198333bfc30fe4f888a3dd5af8d99b43cbca3efdcc463c4d9a2097be` |
+| **`build/unix-060-fpe-v60-CARD1-ced0s1`** *(stage this)* | 1,933,225 | `17ec956de340b3b9c1bb1b7427f99e2821e537a10dfa15da86edd850b06e6a0d` |
+| `build/unix-060-fpe-metal-CARD1-ced0s1` *(the A/B control: the kernel that DIED)* | 1,931,791 | `b34408152d4f5d405bc6f3d47573e203da4d8626b55e424538592886779251e7` |
+
+`buildid` is `" 68040-260827-64"`, announced as **`68060-260827-64`** at `cputype` 60 — one digit
+from the round-10 kernel's `68060-260827-61`, so the console line alone says which is booted.
+
+**The A/B control is the round-10 kernel itself**, which is the best control this change could
+have: it is the image that produced the three SIGSYS deaths, on the same rig, from the same base.
+Round 7's `unix-060-f7vs-CARD1-ced0s1` (`7202172e…`) remains available as the no-FPE control.
+
+### 10.1 Lineage, checked on the artifacts rather than argued from the recipe
+
+```
+unix-060-f7vs-CARD1 (base)  ->  unix-060-fpe-v60-CARD1        .text prefix 1,014,192   0 diffs
+unix-060-f7vs-CARD1 (base)  ->  unix-060-fpe-metal-CARD1 (r10) .text prefix 1,014,192   0 diffs
+unix-060-fpe-metal-CARD1 (r10) -> unix-060-fpe-v60-CARD1
+        first .text difference at 0xfe5fd, inside fpe_trap+0x3;  .text 1,043,528 -> 1,043,964
+```
+
+Three things follow. The **base kernel is byte-identical** in the deployed round-10 image and in
+this candidate — same root-storage family, same Z3660 driver, same campaign instruments. The
+**twenty extracted emulator objects are byte-identical too**: they are linked between the base and
+the glue, and the first difference of any kind is inside `fpe_trap`. So the entire delta between
+"the kernel that died" and "the kernel to boot" is `src/fpe_glue.c` plus `src/fpe040.s` plus two
+vector-table relocations — 436 bytes of `.text` and 64 bytes of `.data`.
+
+**No published counter address moved.** Every `fpe_*` `.data` symbol that existed in the round-7
+artifact is at the same `.data` offset in this one; the new block is appended after
+`fpe_exec_setup_n`, which is the rule `src/fpsp060_glue.s` established for its own M3 and M4
+additions. A round-11 dump can reuse every address a round-10 dump used.
+
+### 10.2 Build gates that passed on this artifact
+
+Tarball integrity and the tail-only `fpframe` check; 20/20 emulator objects with `.bss` exactly
+396 B; all seven overrides with exactly one strong definition past the base's `.text` end; no
+unresolved symbols; `ucp_magic` absent; **`M68Kvec[11] → fpe_vec11` with `fpe_decline → fpsp_vec11`
+and `M68Kvec[60] → fpe_vec60` with `fpe_decline60 → fpsp_vec60`**; text/data contiguous; both
+section sizes 4-aligned; `check_relink_relocs.py` 0 complaints; `check_fpe_relocs.py` all nine
+assertions; the artifact's root-storage family unchanged by the FPE pass.
+
+`FPE=0 sh relink-040-fpe.sh build/unix-040-f7vs …` reproduces the base **byte for byte** — the
+script's own sha gate and an independent `cmp` both agree — so the second pass still adds only
+what it says it adds.
+
+### 10.3 The probe
+
+`test-tools/fpimm60.c`, the successor to round 10's `fpimm`, which found the defect. Nine forms,
+one per invocation, named by `argv[1]` so a refusal names itself:
+
+```
+m68k-cbm-sysv4-gcc -O0 -o fpimm60 test-tools/fpimm60.c     # -O0 is mandatory: this compiler
+                                                           # constant-folds FP at any -O
+```
+
+It has been compiled with the AMIX cross toolchain and disassembled: `f23c 4800` for `x`/`X`,
+`f23c 4c00` for `p`, `f218 d810` for `m`, `f23c 9800` for `c`, and the round-10 five unchanged.
+
+| arg | instruction | expected under this kernel | round 10 gave |
+|---|---|---|---|
+| `l` `s` `w` `d` `b` | the five computable immediates | values, exit 0 — **the regression set** | values, exit 0 |
+| `x` | `fmove.x #1.0,fp0` | `1` , exit 0 | **SIGSYS** |
+| `X` | `fmove.x #pi,fp0` | `3.1415926535897932`, exit 0 | not run |
+| `p` | `fmove.p #2.5,fp0` | **SIGILL (4)** — honest refusal, §5.3 | **SIGSYS** |
+| `m` | `fmovem.x (a0)+,dyn(d1)` | `1`, exit 0 | not run |
+| `c` | `fmovem.l #imm,fpcr/fpsr` | **SIGILL (4)** — deliberate refusal, §5.2 | not run |
+
+### 10.4 Counters to read, at this artifact's addresses
+
+`load base 0x08000000 + .text size 0xfedfc`, so `.data` begins at `0x080fedfc`. Check
+`fpe_magic` = `"FPE!"` and `f60_magic` = `"FP60"` before trusting anything else.
+
+| symbol | `/kpeek` | symbol | `/kpeek` |
+|---|---|---|---|
+| `fpe_magic` | `0x0811bef4` | `fpe_v60_n` | `0x0811c024` |
+| `f60_magic` | `0x081189b0` | `fpe_v60_fmt0_n` | `0x0811c028` |
+| `fpe_entry_n` | `0x0811bf34` | `fpe_v60_fmtx_n` | `0x0811c02c` |
+| `fpe_done_n` | `0x0811bf54` | `fpe_v60_last_fmtvec` | `0x0811c030` |
+| `fpe_sig_n` | `0x0811bf58` | `fpe_v60_decl_n` | `0x0811c034` |
+| `fpe_undecoded_n` | `0x0811bf80` | `fpe_ea_n` | `0x0811c038` |
+| `fpe_advmiss_n` | `0x0811bfe4` | `fpe_ea_super_n` | `0x0811c03c` |
+| `fpe_advnofetch_n` | `0x0811bfec` | `fpe_ea_imm_n` | `0x0811c040` |
+| `fpe_super_n` | `0x0811bf4c` | `fpe_ea_pack_n` | `0x0811c044` |
+| `fpe_user_n` | `0x0811bf50` | `fpe_ea_fmovmx_n` | `0x0811c048` |
+| `fpe_last_signo` | `0x0811bf6c` | `fpe_ea_fmovml_n` | `0x0811c04c` |
+| `fpe_last_code` | `0x0811bf70` | `fpe_ea_fetchfail_n` | `0x0811c050` |
+| `fpe_last_fault_pc` | `0x0811bf7c` | `fpe_ea_done_n` | `0x0811c054` |
+| `f60_entry_n` | `0x081189b4` | `fpe_ea_sig_n` | `0x0811c058` |
+| `f60_effadd_n` | `0x081189f4` | `fpe_ea_last_op` | `0x0811c05c` |
+| `f60_fpudis_nofpu_n` | `0x08118a2c` | `fpe_rewind_n` | `0x0811c060` |
+
+### 10.5 The run, and the rows it settles
+
+1. Sample every counter above **before** the probe set, at multiuser. Expect the whole
+   `fpe_v60_*`/`fpe_ea_*` block at its initialiser and `f60_entry_n = 0`: nothing in the boot
+   should execute one of these forms.
+2. `fpimm60 d`, `fpimm60 l`, `fpimm60 s`, `fpimm60 w`, `fpimm60 b` — **the regression set, first**.
+   Values correct, exit 0, `fpe_v60_n` **unmoved**, `fpe_entry_n`/`fpe_done_n` moving together.
+   That is v6, v7 and v12.
+3. `fpimm60 x`, `fpimm60 X` — the fix. Values correct, exit 0. `fpe_v60_n` +2, `fpe_v60_fmt0_n`
+   +2, `fpe_ea_n` +2, `fpe_ea_imm_n` +2, `fpe_ea_done_n` +2, `fpe_ea_sig_n` **0**, `f60_entry_n`
+   still **0** — the arm sits ahead of the package, so a handled event never reaches it. v1, v2,
+   v3, v4.
+4. `fpimm60 m` — `fpe_ea_fmovmx_n` +1, `fpe_ea_done_n` +1, value correct. v9.
+5. `fpimm60 p` — **SIGILL, not SIGSYS**. `fpe_ea_pack_n` +1, `fpe_ea_sig_n` +1,
+   `fpe_undecoded_n` +1, `fpe_rewind_n` +1, `fpe_last_signo` = 4, `fpe_last_code` = 1. v8.
+6. `fpimm60 c` — **SIGILL**. `fpe_ea_fmovml_n` +1, `fpe_ea_sig_n` +1, and `fpe_undecoded_n`
+   **unmoved** (this refusal is the glue's, not the emulator's). v10.
+7. Re-read the whole block and check the two closing identities by arithmetic:
+   `fpe_v60_n == fpe_ea_n + fpe_v60_decl_n` and `fpe_ea_n == fpe_ea_done_n + fpe_ea_sig_n`. v3.
+8. Read `f60_entry_n`, `f60_effadd_n`, `f60_done_n`, `f60_fpudis_nofpu_n`. **All four should be
+   0** for the whole session — that is the sharpest single statement this round can make, because
+   round 10 read 3, 3, 0, 3 on exactly these probes.
+
+**Falsification.** If `fpe_v60_fmtx_n` is non-zero, §2's frame claim is wrong and
+`fpe_v60_last_fmtvec` names what the 68060 really stacks — the arm will have declined and the
+box will behave exactly as it did in round 10, which is what makes that a survivable way to be
+wrong. If `fpe_v60_n` stays 0 while the probes still die, the vector-table retarget did not take
+and `check_fpe_relocs.py` assertion 8 was passed on a different image than the one booted.
+
+---
+
+## 11. Carried forward, and what this round deliberately did not do
 
 * **Packed decimal is not implemented.** §5.3 says why, what it would cost, and what the metal
   evidence says about urgency. The gap is now counted rather than silent.

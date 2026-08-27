@@ -842,8 +842,26 @@ round-5 pointer is `Amix/tmp/2026-08-27-fpe-r5/RESULTS.md`.
 
 ## 10. Carried forward, unresolved
 
+* **THE LANE HAS A SECOND ARM SINCE ROUND 10 (2026-08-27), and this document predates it.**
+  Everything above describes the vector-11 attach point as if it were the only one. It is not: on
+  a 68060 the FP immediate formats whose operand is twelve bytes — extended-precision real and
+  packed decimal — are an addressing mode the *integer* unit does not implement, so they raise
+  vector 60 before any F-line path runs and never reached this design at all. Round 10 measured
+  three of them dying SIGSYS on real 68LC060 silicon with every counter in §9's list still at its
+  initialiser. `src/fpe040.s`'s `fpe_vec60` is the second arm, `src/patch_fpe_vec60.py` installs
+  it by the same two-relocation mechanism §4.5 describes for the first, and both arms share
+  `Lfpe_user` and `fpe_trap`. **`docs/contracts/FPE-R10-VEC60.md` is authoritative wherever it and
+  this document disagree**, and in particular for: the two frame shapes `fpe_trap` now accepts,
+  the vector-60 form gate and the one instruction class it refuses, the split counter families,
+  and the correction to §4.4's instruction-length instrument (it is format-4 only, which is what
+  it always meant). §4.4's *"The two must be equal"* was already refuted by round 9.
 * The format-2 arm (68040 unimplemented FP) is documented and not implemented — decision 6's third
   arm, and §9 item 10 is how the evidence for it gets collected.
+* **Packed decimal is not emulated at all**, by either arm: the extracted tree's `fpu_emul_arith`
+  rejects source format 3 before decoding an effective address and `fpu_explode` has no
+  `FTYPE_BCD` case. Round 10 made the refusal visible and correctly classified (SIGILL rather than
+  SIGSYS, with `fpe_ea_pack_n`/`fpe_undecoded_n`/`fpe_rewind_n` counting it) and closed nothing
+  else. `FPE-R10-VEC60.md` §5.3 has what implementing it would cost.
 * The `fpelf-census.py` gap against a complete installed root (contract §8 item 1) is unchanged and
   out of scope.
 * The `bfffo` repair is duplicated in this repository and belongs in `gcc-cross-amix` (§8.2).

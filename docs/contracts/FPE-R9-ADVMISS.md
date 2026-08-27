@@ -288,6 +288,21 @@ counters are non-zero on real silicon, the lane has a silent hole and the fix is
 patch: route `Lco_fpudis_nofpu` into `fpe_vec11` instead of `nullvect`, which would hand the
 emulator a Motorola-built frame whose Next PC is already correct.
 
+> **ANNOTATION (round 10, 2026-08-27).** *They were read, and they were non-zero.*
+> `f60_effadd_n` 0 → 3 on real 68LC060 silicon, one per execution of the extended and packed
+> immediates, each ending in SIGSYS with the whole `fpe_*` block unmoved
+> (`Amix/tmp/2026-08-27-fpe-workload/RESULTS.md`, Finding 1). This section's "silent hole" is
+> therefore measured rather than hypothetical, and round 10 closed it. **The candidate fix
+> sketched above was tried and rejected** for three reasons found while implementing it: it is an
+> unbreakable loop, because `fpe_vec11`'s own decline reaches `fpsp_vec11` → the package →
+> `_real_fpu_disabled` → back here; that call-out is also where the vector-11 declines land,
+> supervisor origin included; and an `FPSP=0` kernel has no such call-out at all. The arm went in
+> front of the vector instead, as `fpe_vec11` does. `docs/contracts/FPE-R10-VEC60.md` is the
+> replacement, and its §4 carries the rejection in full. The prediction in this paragraph that
+> "gcc 2.7.2.3 has little reason to emit" these forms was **confirmed** — round 10 disassembled
+> the box's own `libc.so.1`, its `libm.a` and everything the compiler emitted that session and
+> found zero occurrences of either.
+
 ---
 
 ## 7. Registered proposals — none of them implemented this round
@@ -332,6 +347,10 @@ document proposes to do.
 **P5 — read the vector-60 counters on the next metal session.** `f60_effadd_n`, `f60_fpudis_n`,
 `f60_fpudis_nofpu_n`, `f60_last_co`, alongside the existing `fpe_*` dump. Zero cost: they are
 already in the image. §6 is the decision that depends on them.
+
+> *Round 10: TAKEN, and the reading was 3 / 3 / 3 / 0x08 — see the annotation on §6. This is the
+> one registered proposal of the five that produced a code change, and it produced it in the round
+> after the one that registered it.*
 
 ---
 
