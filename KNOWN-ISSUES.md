@@ -6939,6 +6939,19 @@ datum went into a latch anyway. Fixed by printing the entry snapshot beside the 
 
     a3091dbg dev=%x istr=%x entry=%x
 
+### The fix to the instrument shifted every counter address, and the magic word caught it
+
+Lengthening the format string grew `.data`, so **every block below it moved** — `a3d` `0810E760`
+→ `0810E76C`, `a3w` `0810E7D8` → `0810E7E4`, `scrfix` `0810E850` → `0810E85C`. The first read on
+`-13` used the `-11` addresses and returned `20697374`, `723d2578`, `0a000000`, which is the
+format string itself (`" istr=%x\n"`) read as three longwords. Entirely plausible numbers.
+
+The magic check rejected it in one line, which is the whole argument for magic words made
+concretely for the third time in two days — after `dma_*` (no magic, read out of `.text`, looked
+like counters) and `Lkx_*` (no magic, no baseline). `test-tools/batteryrun-260827-13.sh` was
+regenerated from `tools/status-facts.sh` output and every one of its 35 address lines
+machine-checked against it, rather than edited by hand.
+
 ### Fix, not yet written
 
 The driver needs a default that is not death. The minimum honest change is to give
