@@ -6952,6 +6952,47 @@ like counters) and `Lkx_*` (no magic, no baseline). `test-tools/batteryrun-26082
 regenerated from `tools/status-facts.sh` output and every one of its 35 address lines
 machine-checked against it, rather than edited by hand.
 
+### Provoked on demand with full instrumentation, 2026-08-27, `68060-260827-13`
+
+Eight predictions written before the trigger (`scratchpad/PRED-ISSUE54.md`); **eight held.**
+`dd if=/dev/rdsk/c3d0s0 of=/dev/null bs=512 count=1`, after two `sync`s:
+
+    a3091dbg ss=49 istate=1 unit=811346C head=0 dmaon=1
+    a3091dbg segstate=2 segseq=5924 segpa=973C000 seglen=200 segdir=1
+    a3091dbg dev=DD0000 istr=0 entry=D0
+    a3091dbg zarm=0 rarm=0 owned=0 noprep=0 ovf=0 whole=5924
+    a3091: 0x49 1 0x811346C
+    a3091dbg ss=85 istate=3 unit=811346C head=0 dmaon=1
+    a3091dbg segstate=2 segseq=5924 segpa=973C000 seglen=200 segdir=1
+    a3091dbg dev=DD0000 istr=FE00 entry=FED0
+    a3091dbg zarm=0 rarm=0 owned=0 noprep=0 ovf=0 whole=5924
+    a3091: 0x85 3 0x811346C
+
+`unit=0x811346C` is the address predicted for `units[3]` on **this** image before the run, from
+the loader's own `tsize`/`dsize` (`.bss 0810F754` + `0x3ce8` + 3×16). Exact. And
+`seglen=200 segdir=1` is 512 bytes from the device — the `bs=512 count=1` that was issued. The
+capture matches the command that caused it, field by field.
+
+**`entry=D0` settles what the driver was actually handed.** `0xD0` is `INT_F | INTS | INT_P`:
+a genuine WD interrupt. Not `E_INT`, not an error source, not an unclassifiable aggregate. So
+ISSUE-54 is entirely the DFA's: the controller correctly reported a phase mismatch through a
+legitimate interrupt, and the driver had no table entry for the status it carried.
+
+**And `istr=0` beside it is the audit's "sampled too late" made visible in one line.** The
+post-`SS` read shows *no bits at all* — reading SCSI Status cleared WD `INTRQ`, which cleared
+`INTS`, which cleared the aggregate `INT_P`. Every earlier capture's `a3d_istr` was measuring
+that, which is exactly why it could never classify anything. The second capture shows the same
+transition against the floating upper bits: `entry=FED0` → `istr=FE00`, low byte gone, bits
+15–9 still floating.
+
+**The demux wrapper is exonerated for this class**, and now by direct reading rather than by
+the absence of a console line: it saw `INTS`, delegated, and that was correct.
+
+The discriminator ISSUE-53 needs is therefore **live and proven end to end**. If the
+spontaneous wedge recurs, `entry=` will say whether it carried `INTS` — a genuine WD event, as
+here — or `E_INT`, the audit's candidate. That was the whole purpose of the wrapper and it can
+now be read off the screen of a machine that is otherwise dead.
+
 ### Fix, not yet written
 
 The driver needs a default that is not death. The minimum honest change is to give
