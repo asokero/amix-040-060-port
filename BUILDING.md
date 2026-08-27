@@ -20,7 +20,26 @@ distributed here. See `NOTICE` for how this was made and what it does and does n
 | **Python 3** | the byte-patchers and the relocation validator | any |
 | **`patch`, `sha256sum`, standard coreutils** | | any |
 | **Your AMIX installation**, mounted or unpacked | the kernel this port patches | AMIX SVR4 2.1c; the file needed is `stand/unix` |
-| **NetBSD source tarball** (`syssrc.tgz`) | Motorola's 68040/68060 support packages are extracted from it — they are not vendored here | any recent NetBSD release |
+| **NetBSD 10.1 source set** (`syssrc.tgz`) | Motorola's 68040/68060 support packages are extracted from it — they are not vendored here | **pinned**, see below |
+
+### The NetBSD archive is pinned, and pinned to something you can verify without trusting us
+
+    https://cdn.netbsd.org/pub/NetBSD/NetBSD-10.1/source/sets/syssrc.tgz
+    SHA512 766ac21f33cfe0e701dfedb894fa07f36d811da1a12e979181e8fca7af4e627852680ce42a7b29e97dd3e2e402ddf9ae7bfba60c8d7dc6b8a3354d8ce8c06926
+
+That SHA512 is **NetBSD's own**, published in the `SHA512` file beside the archive in that same
+directory — not a number this project invented. `tools/check-env.sh` verifies it and fails if it
+does not match.
+
+Until 2026-08-27 this row said *"any recent NetBSD release"*, and nothing compared the archive's
+contents anywhere. Motorola's FPSP and ISP are extracted from it, so a different archive is a
+different support package inside the kernel — not a variation. That meant the hardware-accepted
+images were built from whatever tarball happened to be on the build host, two people could build
+from different NetBSD sources with nothing saying so, and a fresh clone following this page would
+get an FPSP that no acceptance run had ever exercised.
+
+Adopting the pin needed no rebuild: the local archive was confirmed byte-identical to the
+official 10.1 set, so the accepted images were already built from exactly this file.
 
 The build scripts are POSIX `sh` and POSIX `awk`, deliberately: **no bash and no gawk**. They used
 to call `strtonum()`, a GNU awk extension, which on a Debian or Ubuntu machine — where `awk` is

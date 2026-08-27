@@ -78,7 +78,42 @@ else
 fi
 
 # 5. NetBSD tarball, for Motorola's FPSP/ISP packages.
-need_file "$NETBSD_SYSSRC" "NetBSD syssrc.tgz" "any recent NetBSD source tarball"
+#
+# PINNED, and pinned to something a third party can obtain and verify without trusting us.
+# Until 2026-08-27 this said "any recent NetBSD source tarball" and checked only that the file
+# existed -- and BUILDING.md said the same.  Nothing anywhere compared its contents.  So the
+# FPSP in every hardware-accepted image came from whatever tarball happened to be on the build
+# host, two people could build from different NetBSD sources with nothing saying so, and a fresh
+# clone would get a DIFFERENT FPSP from the one the acceptance runs proved.  It came to light
+# when a collaborator quoted a pin that did not match ours.
+#
+# The value below is NetBSD's own published SHA512 for the 10.1 source set, from
+#   https://cdn.netbsd.org/pub/NetBSD/NetBSD-10.1/source/sets/SHA512
+# so this check is against upstream rather than against a number this project invented.  The
+# local archive was confirmed byte-identical to it on 2026-08-27, which is why no rebuild was
+# needed to adopt the pin: the accepted images were already built from this exact file.
+#
+# A different tarball is a different FPSP, not a variation.  Do not relax this to make a build
+# pass -- fetch the pinned set.
+NETBSD_SHA512=766ac21f33cfe0e701dfedb894fa07f36d811da1a12e979181e8fca7af4e627852680ce42a7b29e97dd3e2e402ddf9ae7bfba60c8d7dc6b8a3354d8ce8c06926
+NETBSD_URL=https://cdn.netbsd.org/pub/NetBSD/NetBSD-10.1/source/sets/syssrc.tgz
+if [ -e "$NETBSD_SYSSRC" ]; then
+	got=$(sha512sum "$NETBSD_SYSSRC" | cut -d" " -f1)
+	if [ "$got" = "$NETBSD_SHA512" ]; then
+		say_ok "NetBSD syssrc.tgz" "$NETBSD_SYSSRC (NetBSD 10.1, upstream SHA512 verified)"
+	else
+		say_bad "NetBSD syssrc.tgz" "WRONG ARCHIVE -- this is not the pinned NetBSD 10.1 source set"
+		echo "          have     $got"
+		echo "          expected $NETBSD_SHA512"
+		echo "          Motorola's FPSP and ISP are extracted from this archive, so a different"
+		echo "          one yields a different support package than the accepted images contain."
+		echo "          Fetch: $NETBSD_URL"
+		echo "          Verify against NetBSD's own SHA512 file in the same directory."
+		fail=$((fail+1))
+	fi
+else
+	say_bad "NetBSD syssrc.tgz" "NetBSD 10.1 source set; fetch $NETBSD_URL (config.sh says: $NETBSD_SYSSRC)"
+fi
 
 echo
 echo "OPTIONAL: emulator testing"
