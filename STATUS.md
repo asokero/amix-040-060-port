@@ -46,6 +46,7 @@ a named test on a named platform is.
 | Build id | sha256 (prefix) | Platform accepted on | What it established | Evidence |
 |---|---|---|---|---|
 | `68060-260827-06` | `c2fb10fc` | 68060 hardware, 2026-08-27 | **First 12/12 battery in this project** (`devmaptest` passes: ISSUE-49's fault path). Burst 96/96. ISSUE-53 wrapper wired and correct, but its own subject event never occurred | `docs/REALHW-ISSUE53-260827-06.md` |
+| `68060-260827-13` | `aa65776c` | 68060 hardware, 2026-08-27 | **Current working base.** `-11` plus the entry-ISTR print; 35/35 magics, battery 12/12, every must-stay-zero counter 0. The print change is inert to everything else, and it is what makes a wedge classifiable on a machine that is otherwise dead | `KNOWN-ISSUES.md` ISSUE-54 |
 | `68060-260827-11` | `52ec2b02` | 68060 hardware, 2026-08-27 | ISSUE-49 `/dev/screen` planes 4 KiB aligned + page-rounded. Battery 12/12, `scrfix` accounting exact and identical to the emulator's | `docs/REALHW-ISSUE49-260827-11.md` |
 | **`68060-260812-06`** | `955a5be7` | **68060 hardware (Mercury), 2026-08-12** | **Current baseline.** ISSUE-43 re-confirmed 6/6; ISSUE-42 unit proven INERT on 060 silicon; `ftest060` main+unimp, `fp060probe`, `isp61ea` all pass. **Also accepted on a 68040 (A3640) 2026-08-13 — the first dual-silicon image in this project** | `docs/REALHW-260812-06-ACCEPTANCE.md` |
 | `68060-260812-02` | `bb906e2a` | 68060 hardware (Mercury), 2026-08-12 | ISSUE-43 + ISSUE-44 closed; six enabled IEEE classes bit-exact | `docs/REALHW-ISSUE43-ACCEPTANCE-260812.md` |

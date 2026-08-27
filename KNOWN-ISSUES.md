@@ -6993,6 +6993,16 @@ spontaneous wedge recurs, `entry=` will say whether it carried `INTS` — a genu
 here — or `E_INT`, the audit's candidate. That was the whole purpose of the wrapper and it can
 now be read off the screen of a machine that is otherwise dead.
 
+### The print change is regression-clean on silicon
+
+`68060-260827-13`, the image the provoked capture above was taken on, was then given the full
+battery: **35/35 magics, `BATTERY-RESULT PASS` 12/12**, `scrfix` unchanged from `-11` (one console
+plane at `0x00014000`, `misalign_n` 0), and every A3091 must-stay-zero counter at 0 across 232 166
+level-2 interrupts. So the added `printf` argument is inert to everything else, and `-13` is a
+sound base for the FPE merge rather than an untested one carrying a debug edit.
+
+Log archived to NAS `amix/issue49-260827/battery-260827-13.log`.
+
 ### Fix, not yet written
 
 The driver needs a default that is not death. The minimum honest change is to give
