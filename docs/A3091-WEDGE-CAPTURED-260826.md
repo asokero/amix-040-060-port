@@ -32,6 +32,15 @@ the root disk**. Same unit as 2026-08-25, on a different build with a different 
 
 **The driver was completely quiescent and a completion interrupt arrived anyway.**
 
+> **Corrected 2026-08-27 by `amix-kernel-analysis/vm-map/A3091-SPURIOUS-COMPLETION-AUDIT.md`.**
+> That sentence is too strong and the overreach is worth keeping visible. `head` is `starthead`,
+> which tracks units *ready to start* — not every outstanding request. A target that disconnects
+> temporarily leaves its request on the unit's `comhead`, sets `istate = IDLE` and calls
+> `startany()` so another target can run; it then returns through reselection. So `head=0`,
+> `dmaon=0` and `segstate=0` rule out mid-setup and mid-DMA, and do **not** rule out a request
+> disconnected and awaiting reselection. `curunitp` is likewise the last current unit, not an
+> ownership token, so "died holding the root disk" is true but weaker than it reads.
+
 ## What that rules out — including my own hypothesis
 
 `docs/A3091-WEDGE-PRESTUDY-260826.md` listed three ways this port's DMA hook could plausibly
@@ -40,7 +49,7 @@ measurement tests them:
 
 | hypothesis | verdict | on what evidence |
 |---|---|---|
-| a late completion of something still in flight | **out** | `dmaon=0` — nothing was in flight |
+| a late completion of something still in flight | **partly out** | `dmaon=0` rules out a transfer in progress, but not a request disconnected and awaiting reselection — see the correction above |
 | a race with `startany()` mid-setup | **out** | `head=0` — the queue was empty, there was nothing to start |
 | **the prepare hook's `cpusha dc` widening a window** | **out** | `segstate=0` — not between prepare and complete at all |
 | a dropped or mispaired prepare/complete | **out** | `owned=0`, `noprep=0`, `whole == segseq` |
@@ -284,3 +293,45 @@ moment of death — the one safe device register, unlike `SS` whose read acknowl
 interrupt — is the next measurement, and it is now clearly worth the small risk of touching the
 device at all.
 
+---
+
+## What the audit changes (2026-08-27)
+
+`amix-kernel-analysis/vm-map/A3091-SPURIOUS-COMPLETION-AUDIT.md`. Its pinned values were
+re-verified against this tree's own image before anything was written here: `int2_tbl` at
+`.data+0x998c` size 24, the `.rela.data` relocation at `0x9998` of type `R_68K_32` targeting
+`a3091intr` at `.text+0xd0e0`. All five match.
+
+**`ISTR` bit 4 was certainly set** on every occurrence — `a3091intr` returns unless it is, so
+`badhardware` is unreachable otherwise. That was deducible from the handler's first line and this
+document did not say it. The open question was never *whether* the bit was set but *what set it*.
+
+**`INT_P` is an aggregate.** The WD SCSI interrupt (`INTS`), SDMAC end-of-process (`E_INT`), FIFO
+errors and other enabled sources all raise it. `a3091intr` tests bit 4 and then reads WD `SS`
+unconditionally, so an SDMAC-only event is admitted as a WD event and dispatched on stale status.
+The strongest candidate is a FLUSH completion asserting `E_INT` with no DMA owned.
+
+**So `0x16` may not be a new completion at all.** The data sheet guarantees SCSI Status is stable
+until read or reset; it does not define what a read without `ASR.INT` returns. The four captures
+therefore do not prove a Select-And-Transfer completed.
+
+### The instrument added on 2026-08-27 is sampled too late
+
+`a3d_istr` is read in `badhardware`, which is **after** `a3091intr` has read `SS` at `0xd10e` —
+and reading `SS` clears WD `INTRQ`. So the sample is asymmetric: a surviving `E_INT` bit would be
+strong evidence for the candidate, while `INTS=0` says nothing about `INTS` at entry.
+
+That is a real limitation of the addition and not a reason to remove it: the evidence it *can*
+produce is exactly the evidence that would confirm the mechanism. Entry classification needs to
+happen before the `SS` read, which is what the wrapper below is for.
+
+### And the no-op is off the table
+
+An earlier note here asked what breaks if `atab[IDLE][8]` becomes a no-op. The audit answers it:
+a genuine WD `0x16` reaching `IDLE` would have action 0 dereference `curunitp->comhead`, relink
+the queue and call a completion callback — with the wrong current unit that corrupts or completes
+the wrong request. Action 1 is a **fail-stop guard against a state/status mismatch**, not an
+absence of imagination. Ignoring it would trade the wedge for a stranded request and a silent
+loss of controller state.
+
+**Ignore only a source proven not to be WD.** That is the whole of the proposed fix.
