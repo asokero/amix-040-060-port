@@ -487,4 +487,51 @@ the family was necessary but not sufficient and the new stop is a fresh finding.
 
 ## 11. Artifacts
 
-Filled in after the build; the expectations above were registered first.
+Built after §1–§10 were committed; the expectations in §10 were registered first. Logs, counter
+addresses and a `SHA256SUMS` over all of it: `Amix/tmp/2026-08-27-fpe-r7-kernels/`, with the
+deployment note in its `DEPLOY.md`.
+
+| artifact | size | sha256 |
+|---|---|---|
+| `build/unix-040-f7vs` *(the base)* | 1,878,585 | `d43a59ccb7df2ebcdf611a7fa322dd84a4c2166fa9d491078025ef4f9e0fa889` |
+| `build/unix-040-fpe-metal` | 1,931,791 | `4480ad14d81aadb6fd701d9f5bfd79f5a444de5fa8ac5a20925e4bd426f651fc` |
+| `build/unix-040-fpe-metal-CARD1-ced0s1` | 1,931,791 | `247285fe954b645dd7020fe29f05b3dc9dd06fd4b466395ef6e4fecc26d8eaa2` |
+| **`build/unix-060-fpe-metal-CARD1-ced0s1`** *(stage this)* | 1,931,791 | `b34408152d4f5d405bc6f3d47573e203da4d8626b55e424538592886779251e7` |
+| `build/unix-040-f7vs-CARD1-ced0s1` *(control)* | 1,878,585 | `59d45d8dd26da2a67756786e7a8970bbec7b5be60bcdd225f4d46a29ef5070e1` |
+| `build/unix-060-f7vs-CARD1-ced0s1` *(control)* | 1,878,585 | `7202172e5c21640b2ba82c1c09cbc2eaf591b7350e10246f6c94c379b20f0fc3` |
+
+`buildid` is `" 68040-260827-61"`, announced as **`68060-260827-61`** at `cputype` 60 — the same
+substitution the metal known-good's `68040-260825-70` string makes to `68060-260825-70`.
+
+Every FPE assertion passed against `f7vs` (`logs/02-fpe-over-f7vs.log`): tarball
+integrity, 20/20 objects with `.bss` exactly 396 B, all seven overrides with exactly one strong
+definition past the base's `.text` end, no unresolved symbols, `ucp_magic` absent,
+`M68Kvec[11] → fpe_vec11` with `fpe_decline → fpsp_vec11`, text/data contiguous, both section
+sizes 4-aligned, `check_fpe_relocs.py` and the loader simulation clean. `FPE=0` over the same
+base reproduces it byte for byte (`logs/01`, and `cmp` independently).
+
+Three identities worth keeping, because they are what §1's argument rests on and they were
+re-measured on the finished artifacts (`logs/08`):
+
+```
+unix-060-f7vs-CARD1-ced0s1 -> unix-060-fpe-metal-CARD1-ced0s1   .text prefix 1,014,192   0 diffs
+unix-060-f7vs-CARD1-ced0s1 -> unix-060-f8a1-CARD1-ced0s1        .text prefix 1,014,192   0 diffs
+unix-040                   -> unix-060-fpe-metal-CARD1-ced0s1   .text prefix 1,004,392   1 diff @0xd79f
+```
+
+The FPE artifact and the metal known-good therefore share every byte of `f7vs`; they differ only
+in what each appends — the FPE lane in one, the attempt-8 ucontext arm in the other.
+
+The new gate, run against the round-6 artifact that failed on metal, refuses it:
+
+```
+$ python3 src/check_root_family.py …/unix-060-fpe --require-queue z3660queue --require-card 1
+   FAMILY    root=card0(/dev/dsk/c6d0s1) queues=a3091queue+a2090queue+a2091queue
+REFUSED: --require-queue z3660queue: not among the rows this kernel scans
+         (a3091queue+a2090queue+a2091queue). This image cannot serve a rig whose root is on
+         that controller, at any RAM size and any load base -- the capability is absent, not
+         merely unselected.
+REFUSED: --require-card 1: rootdev names card 0 (/dev/dsk/c6d0s1)
+```
+
+and passes the metal known-good and all four artifacts above.
