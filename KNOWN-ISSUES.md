@@ -4582,6 +4582,13 @@ readable in `va2000.v` — not guessable from the Zorro II values that are there
 > **Ledger: OPEN** — found by the first run of the documented acceptance battery, on
 > `68060-260819-13`. Canonical: [`STATUS.md`](STATUS.md) §4.
 >
+> **The fault-path half is hardware-accepted, 2026-08-27.** On `68060-260827-06` the battery
+> ran **12/12** with `devmaptest` passing — the first 12/12 in this project, and the first time
+> `devmaptest` has passed since it was written.
+> [`docs/REALHW-ISSUE53-260827-06.md`](docs/REALHW-ISSUE53-260827-06.md). The **mmap** path
+> (`spec_segmap`) and the `/dev/screen` extent work described below are separate and still open;
+> the 12/12 must not be described as closing this issue.
+>
 > **Two reproducers, two symptoms, two sites (2026-08-26).** The title describes the
 > first only. `devmaptest` T1 is the **fault path** (`segdev_fault`, `0xa7fe4`): a
 > 2048-aligned offset yields the next page. The Deluxe Paint port then hit the **mmap
@@ -4693,14 +4700,9 @@ of 2048, which is its own kernel's page size. Write-up and probe:
 | **T1 / devmaptest** | `segdev_fault` `seg_page()` `0xa7fe4` | fault-time PTE load, twice per 4 KiB page, second wins | 2048-aligned offset yields the NEXT page |
 | **this reproducer** | `spec_segmap` loop step `0x6766a` | **mmap-time validation only** | ENXIO for any length that is not a 4 KiB multiple |
 
-The `spec_segmap` loop, in full (`svr4-src-3b2/.../fs/specfs/specvnops.c:1349`):
-
-```c
-	for (i = 0; i < len; i += PAGESIZE) {
-		if ((*mapfunc)(dev, off + i, maxprot) == -1)
-			return ENXIO;
-	}
-```
+The `spec_segmap` loop (`svr4-src-3b2/.../fs/specfs/specvnops.c:1349`) is three lines: it
+walks an index from zero to `len` in `PAGESIZE` steps, calls the driver's `d_mmap` at
+`off` plus that index with `maxprot`, and returns `ENXIO` the first time one answers `-1`.
 
 `len` arrives already rounded up by the public mmap ABI, which **is** at 4 KiB. With
 `PAGESIZE` still 2048 here, a 10240-byte request becomes len 12288 and the loop's last
@@ -4713,15 +4715,10 @@ inside segdev.**
 this entry claimed `0x6766a` could be converted alone, since `spec_segmap` is pure
 validation and never touches the vpage array. That premise is true; the conclusion was
 wrong, because it stopped reading before the fault path. **`segdev_fault` steps `d_mmap`
-the same way and fails identically** (`seg_dev.c:370`):
-
-```c
-	for (adr = addr; adr < addr + len; adr += PAGESIZE) {
-		...
-		pf = (*sdp->mapfunc)(sdp->vp->v_rdev,
-		    sdp->offset + (adr - seg->s_base), prot);
-		if (pf == -1)
-```
+the same way and fails identically** (`seg_dev.c:370`) — it walks an address cursor
+across the faulting extent in `PAGESIZE` steps and calls the
+segment's map function at `sdp->offset` plus the cursor's distance from `seg->s_base`,
+treating a returned `-1` as the failure.
 
 Converting the validation loop alone would therefore turn the ENXIO back into a SIGBUS,
 not into a working mapping. That the two observed symptoms differ by request length is
@@ -6439,6 +6436,22 @@ a stale PTE.
    battery driver ever dumped it. Giving it one costs nothing and makes it visible to every tool
    automatically.
 
+### Rate, first additional datum: 2026-08-27, `68060-260827-06` — **96/96**
+
+A four-round burst on the ISSUE-53 kernel ran clean: 96 good sums, all ten anomaly patterns zero,
+and the wrong-sums check silent. The `dma_*` block balanced exactly across 162 485 transactions
+with every must-stay-zero counter at zero.
+
+**Two runs, one miss: that is a rate of 1 in 192 and nothing more.** It does not close this, and
+nothing in the ISSUE-53 kernel was aimed at it.
+
+Item 3 above stopped being a tidy-up on the same day. Reading the `dma_*` block for that record
+was first attempted at a runtime address computed against the **`.text`** base instead of
+`.data`, so it returned longwords out of the middle of the kernel's code — `207c00bf`,
+`4e5e4e75` — which look exactly like counters until you disassemble them. Every other block in
+the kernel would have failed its magic check instead. See
+[`docs/REALHW-ISSUE53-260827-06.md`](docs/REALHW-ISSUE53-260827-06.md) §6.
+
 ---
 
 ## ⚠ ISSUE-52 (2026-08-26, OPEN): the load average freezes on garbage after FP-heavy graphics
@@ -6495,3 +6508,169 @@ honest position is that there is no baseline.
    locating it needs the disassembly of whatever `/usr/ucb/uptime` reads through `/dev/kmem`.
 
 Step 2 is the one that matters, because it is the only one that can date the defect.
+
+---
+
+## ⚠ ISSUE-53 (2026-08-27, OPEN — fix built, not yet run): `a3091intr` reads WD status for interrupts the SCSI controller never raised
+
+> **Ledger: OPEN.** The defect is established statically and by four runtime captures; the
+> unit that addresses it is in `68040/68060-260827-05` and **has not been run on either
+> platform.** Nothing below claims a measurement that has not happened.
+
+The A3091 handler's entire admission test is SDMAC `ISTR` bit 4, and it then reads the
+WD33C93A SCSI Status register unconditionally. Bit 4 is `INT_P`, an **aggregate**: the WD's
+own request (`INTS`, bit 6), the SDMAC's end-of-process (`E_INT`, bit 5) and the FIFO
+under/over-run errors all raise it. So an interrupt the SCSI controller never asked for is
+dispatched as a WD event, on a register the data sheet defines only for a read that follows
+an asserted WD interrupt. `atab[IDLE][8]` maps that to action 1, `badhardware()` returns
+`DEAD`, the `DEAD` row absorbs every later input, and `startany()` refuses to run unless the
+state is `IDLE`. There is no path back; the machine needs a power cycle.
+
+Observed **four times on 2026-08-26** across three kernels, always `units[6]` (the root
+disk) with `head=0 dmaon=0 segstate=0`: `docs/A3091-WEDGE-CAPTURED-260826.md`.
+
+### Why this is the stock driver and not this port
+
+Every variable the port controls was varied without changing the outcome — three kernels
+with three different `.bss` layouts, both transfer directions, both transfer sizes, positions
+from 7 300 to 168 807 in the DMA sequence, with and without a preceding burst. The port's own
+DMA-ownership counters were all in their must-stay-zero state at each capture. The audit
+adds the static half: `A2091` carries the same aggregate gate and the same permanent shutdown,
+so the defect predates this work and is shared by a sibling driver.
+
+NetBSD's `sys/arch/amiga/dev/ahsc.c` and Linux's `drivers/scsi/a3000.c` both put a boundary
+between "which source interrupted" and "read WD status", and neither reads the WD unless
+`ISTR.INTS` says the WD asked. Two independent implementations for the same gate array.
+
+### The fix, and the three alternatives that were rejected
+
+`src/a3091demux040.s`, reached by retargeting the one `int2_tbl` relocation
+(`src/patch_a3091_intr.py`). One `ISTR` snapshot at entry, before anything else; a pure
+`E_INT` is acknowledged with `CINT` and returns **without** reading `SS` or touching the DFA;
+everything else, including every error and unclassifiable combination, reaches the stock body
+exactly as before. `a3091intr` stays a strong global and is called by name, so nothing is
+weakened. Contract and measurement contract:
+[`docs/contracts/A3091-SPURIOUS-COMPLETION-AUDIT.md`](docs/contracts/A3091-SPURIOUS-COMPLETION-AUDIT.md).
+
+Rejected, with reasons, so they are not re-proposed:
+
+| Tempting change | Why not |
+|---|---|
+| `atab[IDLE][8]` → no-op | A target that disconnects leaves its request on the unit's `comhead` while `istate` returns to `IDLE`. A **genuine** `0x16` there would have action 0 dereference `curunitp->comhead` and complete the wrong request. Action 1 is a fail-stop guard, and ignoring it trades the wedge for a stranded request |
+| `btst #4` → `btst #6` | Correctly stops the WD misread, and leaves a pure `E_INT` unacknowledged: interrupt storm |
+| treat `srst` as a reset | It is the `SP_DMA` stop strobe, at offset `0x3e`. It cannot recover WD protocol state |
+| a `DEAD` → `IDLE` recovery path | None exists. Building one means resetting and reprogramming the controller and settling every active, queued and disconnected request. Not a byte edit, and not needed if the harmless source is never admitted |
+
+### What would close it
+
+The block is `a3w` (magic `A3W!`). `a3w_calls` counts every level-2 interrupt, so it is the
+denominator that proves the wrapper is in the table at all. Three invariants must reconcile:
+
+    a3w_calls      = a3w_nodev + a3w_notours + a3w_own
+    a3w_own        = a3w_ints_only + a3w_ints_eint + a3w_eint_only + a3w_other
+    a3w_eint_acked = (a3w_eint_only - a3w_eint_deleg) + a3w_resid_eint
+
+and then, over a workload that previously wedged: `a3w_eint_only > 0` (the mechanism exists),
+`a3w_other = 0`, `a3w_nodev = 0`, `a3d_n = 0`, ordinary `a3w_ints_only` traffic nonzero, disk
+truth byte-exact, and no new filesystem damage after a power cut.
+
+**`a3w_eint_only = 0` would not be a pass.** It would mean the workload never produced the
+event, and the reading would say nothing — the `sdc_setprot_bad` lesson from 2026-08-26.
+
+If the machine wedges anyway, `a3w_dead_istr` holds the **entry** snapshot of the interrupt
+that did it. That is the one datum the four captures could not produce, because `a3d_istr` is
+sampled after `a3091intr` has already read `SS` and cleared WD `INTRQ`.
+
+`a3w_consume` is a live A/B: `1` (shipped) consumes a pure `E_INT`; `kpoke`ing it to `0`
+turns the unit into pure instrumentation with stock behaviour, which is the audit's
+"classification build" without a second power cycle.
+
+### Emulator, 2026-08-27 — `68040/68060-260827-06`, and what it did **not** decide
+
+`test-tools/issue53-emu-verify-260827.txt`. The wrapper is in the table and its body runs;
+**131 538** level-2 interrupts, **29 928** of them the A3091's, all classified `ints_only`;
+all three invariants exact on the final read; `a3w_other`, `a3w_nodev`, `a3w_dead_n` and
+`a3d_n` all zero; disk truth byte-exact against the host (`sum -s` 30951 3614 both sides).
+
+**It decides nothing about the defect, and that was predicted before the run.**
+`a3w_or_istr`, the OR of every entry snapshot over all 131 538 interrupts, is `0x00d1`:
+bit 5 (`E_INT`) is **never set, in any combination**. Amiberry does not produce the SDMAC
+event this unit exists to catch, so `a3w_eint_only = 0` here is an unexercised path and
+nothing else. Add it to the list of things the emulator cannot decide.
+
+What it does buy is that the hardware run starts from a wrapper known to be wired, known to
+classify ordinary traffic correctly, and known not to break the disk.
+
+### Silicon, 2026-08-27 — first reading, `68060-260827-06`, 2 minutes idle
+
+Read from the running machine, not staged: `a3w_magic` ✓, `a3w_ran` ✓, 35 310 level-2
+interrupts of which 7 538 the A3091's, **all** `ints_only`, every must-stay-zero counter
+zero, `a3d_n = 0`. Nothing has been provoked yet; this is the idle baseline.
+
+**`a3w_or_istr = 0xfed3` on silicon, against `0x00d1` in the emulator, and the difference is
+not the one that was being looked for.** Decomposed:
+
+| bits | meaning | silicon | emulator |
+|---|---|---|---|
+| 15–9 | not defined by NetBSD or Linux | **all 1** | all 0 |
+| 8 | `INTX` | 0 | 0 |
+| 7, 6, 4 | `INT_F`, `INTS`, `INT_P` | 1 | 1 |
+| **5** | **`E_INT`** | **0** | **0** |
+| 3, 2 | `UE_INT`, `OE_INT` | 0 | 0 |
+| 1, 0 | `FF_FLG`, `FE_FLG` | 1 | bit 0 only |
+
+Two things follow, and they pull in opposite directions.
+
+**The undefined upper bits read as ones on real hardware.** The wrapper is unaffected because
+its error test masks exactly the three named sources (`0x010c`) rather than whitelisting the
+documented bits — `a3w_other` is 0 across 7 538 interrupts, which proves it. Anyone
+"tightening" that mask into a whitelist would classify **every** interrupt on silicon as
+unclassified, print four console lines and change nothing else, and would see none of it in
+the emulator. Recorded so that does not happen.
+
+**`E_INT` was not set at the entry of any of those 35 310 interrupts.** That is not the same
+as "`E_INT` never asserts": `stopdma()` issues `CINT` on every stop, so the ordinary FLUSH
+completion is cleared before it can be delivered. A pure `E_INT` would by construction be the
+*late* one that escaped that `CINT` — rare, which is what the wedge is. So this reading
+neither confirms nor refutes the candidate; it says the mechanism is not routine, which was
+already implied by the wedge happening a few times a day rather than a few times a minute.
+
+### Silicon, 2026-08-27 — battery **12/12** and burst **96/96**, and `E_INT` still not seen
+
+Full record: [`docs/REALHW-ISSUE53-260827-06.md`](docs/REALHW-ISSUE53-260827-06.md).
+
+34/34 magics, `BATTERY-RESULT PASS` 12/12 — the first 12/12 in this project, `devmaptest`
+included — then `burstloop11.sh 4`: **96/96** good sums, all ten anomaly patterns zero, and
+**no wedge**, on the workload after which two of the four wedges happened. The DMA
+prepare/complete block balanced exactly across 162 485 transactions with every must-stay-zero
+counter at zero.
+
+`a3w` after the burst: `calls` 598 868, `notours` 436 659, `own` 162 217, `ints_only` 162 217
+(= `own` exactly), and **every other counter zero**, `a3d_n` included.
+
+**`a3w_eint_only = 0`, and that governs how this may be reported.** `a3w_or_istr` is `0xfed3`
+over all 598 868 entries: bit 5 was never set at any of them. The wrapper only changes behaviour
+for an event it counts, so a zero count means **it changed nothing** — surviving the burst is
+therefore not evidence that the fix works, and cannot be cited as such. Closing ISSUE-53 requires
+`a3w_eint_only > 0`.
+
+What is established: the wrapper is wired, its buckets are mutually exclusive and reconcile, it
+never takes its loud path, and it does not break the disk under the heaviest workload here. And
+the bound: whatever raises `INT_P` without `INTS` does not happen once in 162 217 A3091
+interrupts — consistent with a wedge rate of a few per day, and with the audit's candidate being
+a FLUSH completion that escapes `stopdma`'s own `CINT`.
+
+**The next wedge is now worth having.** `a3w_dead_istr` will hold the entry `ISTR` of the
+interrupt that kills the driver, which is what the four August captures could not produce.
+
+### The undefined `ISTR` bits float on silicon
+
+`a3w_last_istr` read `0x00d0`, `0xfed2`, `0xfed0`, `0x00d0` on successive samples: **bits 15–9,
+which neither NetBSD's `ahscreg.h` nor Linux's `a3000.h` defines, read back sometimes zero and
+sometimes one.** Bit 8 (`INTX`) is always zero, so it is implemented and they are not. In
+Amiberry the upper byte is always zero.
+
+The wrapper survives this only because its error test masks the three named sources (`0x010c`)
+rather than whitelisting the documented bits. **Rewriting that mask as a whitelist would classify
+a varying subset of every interrupt on silicon as unclassified, and would look perfect in the
+emulator.**

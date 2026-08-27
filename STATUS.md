@@ -45,6 +45,7 @@ a named test on a named platform is.
 
 | Build id | sha256 (prefix) | Platform accepted on | What it established | Evidence |
 |---|---|---|---|---|
+| `68060-260827-06` | `c2fb10fc` | 68060 hardware, 2026-08-27 | **First 12/12 battery in this project** (`devmaptest` passes: ISSUE-49's fault path). Burst 96/96. ISSUE-53 wrapper wired and correct, but its own subject event never occurred | `docs/REALHW-ISSUE53-260827-06.md` |
 | **`68060-260812-06`** | `955a5be7` | **68060 hardware (Mercury), 2026-08-12** | **Current baseline.** ISSUE-43 re-confirmed 6/6; ISSUE-42 unit proven INERT on 060 silicon; `ftest060` main+unimp, `fp060probe`, `isp61ea` all pass. **Also accepted on a 68040 (A3640) 2026-08-13 — the first dual-silicon image in this project** | `docs/REALHW-260812-06-ACCEPTANCE.md` |
 | `68060-260812-02` | `bb906e2a` | 68060 hardware (Mercury), 2026-08-12 | ISSUE-43 + ISSUE-44 closed; six enabled IEEE classes bit-exact | `docs/REALHW-ISSUE43-ACCEPTANCE-260812.md` |
 | `68060-260807-11` | `4962361b` | 68060 hardware (Mercury), 2026-08-09 | 68060 FPSP (F3 M5) on silicon; `ftest060 unimp` passes; xv/wolf3d SIGSYS attributed | `docs/REALHW-260807-11-ACCEPTANCE.md` |
@@ -258,6 +259,8 @@ survives as history but its conclusion has been replaced.
 | 43 | 68060 zero-source-operand FP exception lost fp0-7 | FIXED | **060 HW 6/6** | frame discriminator is at `frame+2` |
 | 44 | FPSP arithmetic exit fell through into the BSUN body | FIXED | **060 HW** | one day old; found by an invariant counter, not by a failing test |
 | 45 | every byte-patch assertion was disarmed by `\| tail` | FIXED | build host | build tooling, not the kernel. A deliberately broken patch site: old script exit 0, `[OK] built`, 25 further patch steps; fixed script stops. `check_relink_relocs.py` also ignored `argv`, so four variant scripts validated a different kernel |
+| 49 | 2 KiB `segdev` stepping under a 4 KiB MMU, and `/dev/screen` planes neither 4 KiB aligned nor page-rounded | **OPEN** | 060 HW (fault path) + 060 emu (driver half) | Fault path accepted on silicon 2026-08-27: battery **12/12**, `devmaptest` passes for the first time. Driver half written the same day — plane base was measured at `0x13800` on silicon and now allocates at `0x14000`; accounting closes to the byte in the emulator. Driver half not yet written |
+| 53 | `a3091intr` reads WD status for interrupts the SCSI controller never raised | **OPEN** | 060 HW captured ×4+ | stock-driver defect, shared with `a2091intr`: `ISTR` bit 4 is an aggregate, so a pure SDMAC event is dispatched on WD `SS` and the DFA goes `DEAD` with no way back. Source-demux wrapper accepted on 060 silicon 2026-08-27 (battery 12/12, burst 96/96, all invariants) — but **`a3w_eint_only = 0`**: `E_INT` was not set at the entry of any of 598 868 interrupts, so the wrapper changed nothing and the run is **not** evidence the fix works. Closing needs `a3w_eint_only > 0` |
 
 ---
 

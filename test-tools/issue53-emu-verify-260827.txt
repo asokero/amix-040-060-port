@@ -1,0 +1,111 @@
+ISSUE-53 -- A3091 interrupt-source demultiplex, emulator verification, 2026-08-27
+=================================================================================
+
+Kernel: 68040/68060-260827-06, one image, sha256
+c2fb10fcf7fc64a4dfdc8d2ab7203d5049592dd7af2a50857c47fa8085fae582.
+Loader identity on this boot: image checksum = dcd006c4 (277859 longs).
+Emulator: Amiberry local build, a3000ux060.uae (68060), golden disk restored by
+emu-reset-boot.sh, guest state wiped, kpeek fetched by tftp and compiled on the guest.
+
+Unit: src/a3091demux040.s, reached by src/patch_a3091_intr.py retargeting the single
+int2_tbl relocation at .data+0x9998.  Specification:
+docs/contracts/A3091-SPURIOUS-COMPLETION-AUDIT.md, section "Atomic source-demultiplex
+wrapper" and "Measurement contract".
+
+Counters: 21 contiguous longs at 0x0810E658, magic first.  Read before anything was believed.
+
+PREDICTIONS, WRITTEN BEFORE THE RUN
+------------------------------------
+  1 boots, root mounts, login works                                  -> HELD
+  2 a3w_magic = 41335721 and a3w_ran = 41335752                      -> HELD
+  3 a3w_calls large (it counts EVERY level-2 interrupt)              -> HELD, 131538
+  4 a3w_notours >> a3w_own                                           -> HELD, 101610 vs 29928
+  5 a3w_ints_only > 0, else nothing was measured                     -> HELD, 29928
+  6 a3w_eint_only = 0: Amiberry will not produce a standalone E_INT  -> HELD, and see below
+  7 a3w_other = a3w_nodev = a3w_dead_n = a3d_n = 0                   -> HELD
+  8 the three invariants reconcile                                   -> HELD, exactly
+  9 no measurable I/O cost                                           -> not measured, no control
+
+Prediction 6 is why this run is WEAK evidence, and that was registered in advance.
+
+WHAT THIS RUN CAN AND CANNOT DECIDE
+------------------------------------
+It CANNOT decide ISSUE-53.  The defect needs an SDMAC interrupt that is not a WD interrupt,
+and this emulator never produced one: a3w_or_istr, the OR of every entry snapshot across
+131538 level-2 interrupts, is 0x00d1 -- bit 5 (E_INT) is NEVER set, not once, in any
+combination.  The mechanism the wrapper exists to catch does not occur here at all.
+
+It CAN decide four things hardware should not be spent on:
+  1. the wrapper is actually in int2_tbl and its body runs (a3w_ran, and a nonzero denominator);
+  2. it classifies real traffic correctly and the buckets are mutually exclusive;
+  3. it does not break the disk -- 29928 A3091 interrupts served, byte-exact file truth;
+  4. it never takes the loud path: a3w_other = 0, and nothing was printed to console or serial.
+
+FINAL READING (68060, after boot + a 4 MiB write + a 21270-file walk + a 2 MB tar + a
+1.85 MB tftp write and two copies)
+--------------------------------------------------------------------------------------
+```
+  a3w_magic          41335721  "A3W!"   <- read first; without this the rest is noise
+  a3w_ran            41335752  "A3WR"   the wrapper body executed
+  a3w_consume               1           shipped configuration: a pure E_INT would be consumed
+  a3w_calls            131538           every level-2 interrupt on the machine
+  a3w_nodev                 0           MUST STAY 0
+  a3w_notours          101610           INT_P clear: keyboard, serial, ethernet
+  a3w_own               29928           INT_P set at entry
+  a3w_ints_only         29928           the WD asked, and only the WD
+  a3w_ints_eint             0           never seen here
+  a3w_eint_only             0           never seen here -- UNEXERCISED, not "absent"
+  a3w_other                 0           MUST STAY 0
+  a3w_eint_acked            0           no CINT strobe was ever needed
+  a3w_eint_deleg            0
+  a3w_resid_eint            0
+  a3w_eint_then_ints        0
+  a3w_last_istr          00d0           INT_F | INTS | INT_P -- a textbook WD interrupt
+  a3w_or_istr            00d1           every bit ever seen: the above, plus FE_FLG
+  a3w_other_istr            0
+  a3w_other_pr              0           no console line was spent
+  a3w_dead_n                0           MUST STAY 0
+  a3w_dead_istr             0
+  a3d_ran                   0           the stock DEAD path was never reached
+  a3d_n                     0
+```
+Invariants, all three exact on the final read:
+  calls      131538 = nodev 0 + notours 101610 + own 29928
+  own         29928 = ints_only 29928 + ints_eint 0 + eint_only 0 + other 0
+  eint_acked      0 = (eint_only 0 - eint_deleg 0) + resid_eint 0
+
+READ SKEW, MEASURED RATHER THAN ASSUMED
+----------------------------------------
+Earlier reads of the same three counters gave sums exceeding a3w_calls by 2, 18, 4 and 34.
+The gap VARIES, which is what distinguishes read skew from an off-by-N defect: kpeek does
+one lseek+read per longword, a3w_calls is read first and is therefore the stalest, and the
+machine keeps taking level-2 interrupts between the reads.  The final read caught a quiet
+moment and reconciled exactly.  Same effect recorded for the fpc block on 2026-08-12.
+
+Consequence for the hardware run: do not treat a small positive gap on invariant 1 as a
+failure.  Only a NEGATIVE gap (sum < calls) would be a defect, and no read produced one.
+
+DISK TRUTH
+-----------
+build/unix-040 itself, 1 850 091 bytes, written to the guest by tftp, synced, copied:
+
+  host   sum -s truth.bin   30951 3614
+  guest  sum    truth.bin   30951 3614
+  guest  sum    t2          30951 3614
+
+Byte-exact through the A3091 path with the wrapper in place.
+
+INCIDENTAL, NOT PART OF THIS UNIT
+----------------------------------
+The load average was garbage from the first reading, two minutes after boot, with no
+graphics and no FP-heavy process anywhere in the run:
+
+    up 2 mins  load average: 524357.00, 10317.27, 64.02
+    up 7 mins  load average: 524357.00, 10332.46, 64.02
+
+Two of the three figures did not move; the 5-minute one did.  ISSUE-52 was recorded on
+HARDWARE as frozen garbage after FP-heavy graphics, against a session of clean 0.00 readings.
+This is a different platform, so it neither confirms nor refutes that -- but it does mean
+ISSUE-52's step 2, "date the defect", has a version that costs no hardware time: boot an
+older kernel in this emulator and read uptime.  Filed here rather than in ISSUE-52 because
+it was observed while measuring something else.

@@ -1,7 +1,7 @@
 # Implementation contracts
 
 This directory closes the static evidence chain used by `src/`. It contains
-the 34 analysis records that the implementation names as specifications,
+the 35 analysis records that the implementation names as specifications,
 contracts, or authoritative censuses. The larger private analysis repository
 remains a research diary and is not required to build or review this port.
 
@@ -13,7 +13,7 @@ unit.
 
 ## Import and merge policy
 
-All 34 records were imported one-to-one. **No records were merged.** The
+All 35 records were imported one-to-one. **No records were merged.** The
 apparently paired documents have different normative jobs:
 
 - the ISSUE-42 protection contract defines the architecture/VM rule, while
@@ -61,6 +61,7 @@ criteria needed by its listed consumer.
 | `vm-map/CB-PAGE-LIFECYCLE-CLOSURE.md` | [CB-PAGE-LIFECYCLE-CLOSURE.md](CB-PAGE-LIFECYCLE-CLOSURE.md) | `cb_release040.s`, `hat040.s`, `patch_b2_flip.py` |
 | `vm-map/DMA-INITIATOR-CENSUS.md` | [DMA-INITIATOR-CENSUS.md](DMA-INITIATOR-CENSUS.md) | `patch_a3091_dma.py` |
 | `vm-map/A3091-B2-PREPARE-PATCH-SPEC.md` | [A3091-B2-PREPARE-PATCH-SPEC.md](A3091-B2-PREPARE-PATCH-SPEC.md) | `dma_cache040.s`, `patch_a3091_dma.py` |
+| `vm-map/A3091-SPURIOUS-COMPLETION-AUDIT.md` | [A3091-SPURIOUS-COMPLETION-AUDIT.md](A3091-SPURIOUS-COMPLETION-AUDIT.md) | `a3091demux040.s`, `patch_a3091_intr.py` |
 
 ### Model-B and filesystem boundaries
 

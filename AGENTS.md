@@ -163,7 +163,10 @@ from where it was written.
     passes in the emulator has not been tested at all. ISSUE-38 could only be found on silicon
     for exactly this reason;
   * it is not proof for FSLW.MA behaviour, or for which instructions the CPU traps as
-    unimplemented — a UAE core may execute what real silicon refuses.
+    unimplemented — a UAE core may execute what real silicon refuses;
+  * **it never sets the A3000 SDMAC's `E_INT`** (`ISTR` bit 5). Measured 2026-08-27: over
+    131 538 level-2 interrupts the OR of every `ISTR` snapshot was `0x00d1`, so the SDMAC's
+    own end-of-process event — the whole subject of ISSUE-53 — does not occur there at all.
 
   Before accepting an emulator result, ask whether the thing you changed is on that list.
 * **A branch that never ran is not a branch that works.** Where coverage is missing, say so; do

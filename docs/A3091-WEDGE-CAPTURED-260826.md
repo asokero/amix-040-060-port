@@ -335,3 +335,65 @@ absence of imagination. Ignoring it would trade the wedge for a stranded request
 loss of controller state.
 
 **Ignore only a source proven not to be WD.** That is the whole of the proposed fix.
+
+---
+
+## fsck, 2026-08-27 — and it is **not** the benign class
+
+A further wedge on 2026-08-27 was followed by the `fsck` below, photographed from the
+console. It is recorded here because it contradicts what the two earlier captures had
+established, and the contradiction is the point.
+
+    ** Phase 1 - Check Blocks and Sizes
+    INCORRECT BLOCK COUNT I=65580 (14 should be 0)
+    CORRECT?  yes
+    INCORRECT BLOCK COUNT I=65581 (6 should be 0)
+    CORRECT?  yes
+    INCORRECT BLOCK COUNT I=65582 (10 should be 0)
+    CORRECT?  yes
+    INCORRECT BLOCK COUNT I=65584 (18 should be 0)
+    CORRECT?  yes
+    ** Phase 2 - Check Pathnames
+    ** Phase 3 - Check Connectivity
+    ** Phase 4 - Check Reference Counts
+    UNREF FILE  I=65603 .. I=65612   (ten inodes)
+    SIZE=0 MTIME=May 22 09:44 1996  OWNER=root MODE=100755
+       -- except I=65612, OWNER=uucp MODE=100600, MTIME=May 22 09:45 1996
+    RECONNECT?  yes            (each)
+    ** Phase 5 - Check Cyl groups
+    SUMMARY INFORMATION BAD
+    SALVAGE?  yes
+    28868 files, 448780 used, 367833 free (4193 frags, 45455 blocks, 0.5% fragmentation)
+    /dev/rdsk/c6d0s1 FILE SYSTEM STATE SET TO OKAY
+
+### What changes
+
+Both earlier captures reported only the summary/free-count class, and this document said,
+twice, that phases 1 through 5 found nothing else and that "a driver that died mid-operation
+with the root disk as its current unit did not damage the filesystem's structure."
+
+**That is now refuted.** Four inodes were charged with blocks they should not have had (14, 6,
+10 and 18 fragments against a zero-length file), and ten inodes existed with no directory entry
+pointing at them. Neither is accounting the kernel rebuilds; both are structure, and both
+needed `fsck` to write to the disk to fix.
+
+The shape is consistent with files that were being created when the driver stopped serving the
+disk: mode `0755`, zero length, minutes apart in mtime, consecutive inode numbers. The count
+also moved — 28 845 files at the first capture, 28 868 here — so these are new since then, not
+a backlog.
+
+### The honest reading
+
+Two captures of the benign class were **two samples, not a property**. The correct statement is
+that this wedge can leave the filesystem structurally damaged, that `fsck` has so far repaired
+everything it found, and that nobody has yet seen it lose a file that was already on the disk.
+The earlier text overreached in exactly the direction that is comfortable, and the second
+occurrence of that overreach in one document is worth naming: `head=0` was read as "completely
+quiescent", and two clean `fsck` phases were read as "does not damage the structure".
+
+### What is not recorded here
+
+The image that was running, the workload, and whether the three `a3091dbg` lines appeared on
+the console are **not** in this record, because the photograph is of the `fsck` and nothing
+else was captured. Without them this occurrence cannot be added to the four-sample table above,
+and it is deliberately not added.

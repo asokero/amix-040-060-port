@@ -64,7 +64,8 @@ if [ -n "$IMG" ]; then
 	fi
 	cp "$IMG" "$SLOT"
 	sha256sum "$SLOT" | sed "s|$| $IMG|" > "$MARK"
-	BID=$(strings -a "$IMG" 2>/dev/null | grep -m1 "68040-2607" || echo "?")
+	# The month was hardcoded as 2607 and every August build therefore staged as "?".
+	BID=$(strings -a "$IMG" 2>/dev/null | grep -m1 "680[46]0-[0-9][0-9][0-9][0-9][0-9][0-9]-" || echo "?")
 	echo "[*] staged $(basename "$IMG") -> $(basename "$SLOT")   build id: $BID"
 fi
 HD="$AMIBERRY_HDF"

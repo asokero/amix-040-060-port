@@ -125,7 +125,10 @@ silent there. A bare build id from 2026-08-19 to 08-25 is **ambiguous** (two bui
 
 **The wedge, so you recognise it:** ping works, telnet accepts but never gives a shell (login
 needs the disk). The console shows three `a3091dbg` lines. It needs a power cycle, and `fsck`
-afterwards reports the benign class only.
+afterwards reports ~~the benign class only~~ — **refuted later on 2026-08-27 by a further
+capture**: that run's `fsck` corrected four block counts and reconnected ten unreferenced
+inodes. Two benign readings were two samples, not a property. Last section of
+`docs/A3091-WEDGE-CAPTURED-260826.md`.
 
 ## Traps that bit today, all five the same shape
 

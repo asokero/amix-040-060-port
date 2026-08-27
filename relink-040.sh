@@ -174,6 +174,15 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/dma_cache040.s" -o "$HERE/build/dma_cac
 # file-LOCAL static and the image holds two, so a global override would capture `service`'s
 # call site too.  See docs/A3091-WEDGE-PRESTUDY-260826.md.
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/a3091dbg040.s" -o "$HERE/build/a3091dbg040.o"
+# a3091demux040 (2026-08-27, ISSUE-53): separate the A3091 interrupt SOURCES before the WD's
+# status register is read.  a3091intr admits on SDMAC ISTR bit 4 (INT_P), which is an aggregate
+# of the WD's own request (INTS), the SDMAC end-of-process (E_INT) and the FIFO errors, and then
+# reads WD SS unconditionally -- so a pure SDMAC event is dispatched as a WD completion and
+# atab[IDLE][8] returns DEAD.  Four wedges on 2026-08-26 across three kernels.  NetBSD's ahsc.c
+# and Linux's a3000.c both place this boundary.  Reached by retargeting the ONE int2_tbl
+# relocation (patch_a3091_intr.py); a3091intr stays a strong global and stays callable by name,
+# so nothing is weakened.  Audit: A3091-SPURIOUS-COMPLETION-AUDIT.md.
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/a3091demux040.s" -o "$HERE/build/a3091demux040.o"
 # segdevchk040 (2026-08-26, ISSUE-49): measure the assumption patch_segdev_bridge.py rests
 # on.  The bridge steps segdev one 4 KiB page while the vpage array keeps two entries per
 # page, which is correct only while both members of every pair are equal -- and they are
@@ -531,7 +540,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 	"$HERE/build/fpu060.o" $FPUINIT_OBJ \
 	"$HERE/build/kvecprobe040.o" \
 	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
-	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/a3091dbg040.o" "$HERE/build/segdevchk040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
+	"$HERE/build/segkmem040.o" "$HERE/build/dma_cache040.o" "$HERE/build/a3091dbg040.o" "$HERE/build/a3091demux040.o" "$HERE/build/segdevchk040.o" "$HERE/build/cb_release040.o" "$HERE/build/btrace.o" \
 	"$HERE/build/config040.o" "$HERE/build/cb_icode040.o" "$HERE/build/kdbg040.o" \
 	"$HERE/build/dbgpublish040.o" "$HERE/build/codepub040.o" "$HERE/build/issue39_040.o" \
 	"$HERE/build/legacysdt040.o" "$HERE/build/ptdatfree040.o" \
@@ -542,7 +551,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
 
 echo
 echo "[*] overridden symbols (each must be a single strong def):"
-for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig usrxmemflt_stock hg_magic hg_on hg_seen_n hg_cand_n hg_win_n hg_cover_n hg_lim_n hg_grow_n hg_landed_n hg_mapfail_n hg_unres_n hg_far_n segvn_faultpage segvn_faultpage_orig segvn_prot_magic segvn_prot_pp_n segvn_prot_n x60_far_addr x60_siginfo_n krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on a3091_badhardware_dbg a3091_badhardware_orig a3091_istate a3091_curunitp a3091_starthead segdev_setprot_chk segdev_unmap_chk segdev_setprot_orig segdev_unmap_orig sdc_magic sdc_setprot_n sdc_setprot_bad sdc_unmap_n sdc_unmap_bad a3d_magic a3d_ran a3d_n a3d_devp a3d_istr a3d_ss a3d_istate a3d_unit a3d_head a3d_segstate a3d_owned a3d_noprep dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem \
+for s in pstart sysseginit vatosde vatopte uvatosde hat_pteload hat_unlock hat_unload hat_pageunload hat_pagesync hat_exec hat_alloc hat_free hat_ptfree hat_chgprot hat_dup get_fault userspace vtop usrxmemflt usrxmemflt_orig usrxmemflt_stock hg_magic hg_on hg_seen_n hg_cand_n hg_win_n hg_cover_n hg_lim_n hg_grow_n hg_landed_n hg_mapfail_n hg_unres_n hg_far_n segvn_faultpage segvn_faultpage_orig segvn_prot_magic segvn_prot_pp_n segvn_prot_n x60_far_addr x60_siginfo_n krnxmemflt krnxmemflt_orig krnxmemflt_stock vtop_orig ptest prumap prfastmapin uvatopte040 haltsys rtnfirm segu_get segu_get_lockfix segu_get_orig swapinub swapinub_stock lmul cputype bp_map bp_mapout sched idle resume hardbus hardbus_orig flushmmu segkmem_setprot sptfree hat_cm_ram dma_a3091_stopdma dma_a3091_startdma dma_a3091_startdma_reconn a3091_stopdma_orig a3091_startdma_orig a3091_dma_on a3091_badhardware_dbg a3091_badhardware_orig a3091_istate a3091_curunitp a3091_starthead segdev_setprot_chk segdev_unmap_chk segdev_setprot_orig segdev_unmap_orig sdc_magic sdc_setprot_n sdc_setprot_bad sdc_unmap_n sdc_unmap_bad a3d_magic a3d_ran a3d_n a3d_devp a3d_istr a3d_ss a3d_istate a3d_unit a3d_head a3d_segstate a3d_owned a3d_noprep a3091intr_demux a3w_magic a3w_ran a3w_consume a3w_calls a3w_nodev a3w_notours a3w_own a3w_ints_only a3w_ints_eint a3w_eint_only a3w_other a3w_eint_acked a3w_eint_deleg a3w_resid_eint a3w_eint_then_ints a3w_last_istr a3w_or_istr a3w_other_istr a3w_dead_n a3w_dead_istr dma_cmpl_count dma_seg_state cb_page_release cb_pgfree_enter cb_vpfree_enter cb_rel_count btrace_mark btrace_on config_cachefix config_orig copyout copyout_orig cb_icode_calls cb_icode_push kdbg_on hat_pfnmiss_n hat_badaslot_n hat_sdtfail_n dbg_publish_on dbg_ptrace_publish dbg_procfs_publish mprotect mprotect_orig codepub_on codepub_calls codepub_exec codepub_push hat_sdtfail_count i39_magic i39_freemem_p i39_availrmem_p i39_fail_n i39_fail_freemem \
          hat_growsdt hat_legacy_sdt_free i40_magic i40_on i40_calls i40_sec2_n i40_sec3_n i40_empty_n i40_bad_n i40_err_n i40_pgfreed_n i40_held_n i40_last_n i40_last_base i40_last_bits \
          i10_magic i10_rpfail_n i10_hlfail_n i10_hffail_n i10_dupreg_n i10_deep_n \
          i10p_probe i10p_magic i10p_gmask i10p_gwant i10p_vmask i10p_n i10p_done i10p_have \
@@ -994,6 +1003,9 @@ run_step 3 python3 "$HERE/src/patch_segkmem.py" "$OUT"
 echo "[*] B1 DMA hook: retarget A3091/SDMAC stopdma calls -> dma_a3091_stopdma (DMA-INITIATOR-CENSUS.md)"
 run_step 6 python3 "$HERE/src/patch_a3091_dma.py" "$OUT"
 run_step 6 python3 "$HERE/src/patch_a3091_badhardware.py" "$OUT"
+
+echo "[*] ISSUE-53: int2_tbl A3091 slot -> a3091intr_demux (classify the interrupt SOURCE first)"
+run_step 6 python3 "$HERE/src/patch_a3091_intr.py" "$OUT"
 run_step 3 python3 "$HERE/src/patch_segdev_bridge.py" "$OUT"
 run_step 2 python3 "$HERE/src/patch_segdev_ops.py" "$OUT"
 
