@@ -293,6 +293,22 @@ and `fpe_rewind_n` counts it. `fpe_undecoded_n` has read **0** on every boot of 
 this changes nothing that has ever been measured; it changes what happens the first time it is not
 0.
 
+> **ANNOTATION (round 11, 2026-08-27).** *That first time has now happened, on silicon.* The
+> packed-decimal probe drove `fpe_undecoded_n` **0 → 1** and `fpe_rewind_n` **0 → 1** in the same
+> event on the real 68LC060, and the process took `SIGILL` with `fpe_last_signo` = 4 and
+> `fpe_last_code` = 1. So this correction is no longer "a change to something that has never been
+> measured": without the rewind the returning handler would have resumed **twelve bytes inside a
+> sixteen-byte constant**, which is exactly the state §9's case T4 measured the emulator leaving
+> behind. The rewind is the only reason that did not happen, and it is the first round in which
+> anything at all depended on it.
+>
+> The other side of the split held in the same session, which is what makes the attribution sharp
+> rather than merely favourable: the `fmovem.l #imm,fpcr/fpsr` probe took its `SIGILL` with
+> `fpe_undecoded_n` **and** `fpe_rewind_n` both unmoved, because that refusal is issued by the glue
+> (§5.2) before the emulator is called at all. One event moved the pair, the other moved neither,
+> and the two ran three minutes apart on the same boot.
+> Evidence: `Amix/tmp/2026-08-27-fpe-r11-metal/RESULTS.md` §7 and its counter table.
+
 ---
 
 ## 6. Counters — the whole point of the round
@@ -333,6 +349,36 @@ never-engage bar.
 | `fpe_ea_sig_n` | vector-60 entries that ended in a signal, all classes |
 | `fpe_ea_last_op` | the last vector-60 entry's opword and command word, as one longword. Sentinel |
 | `fpe_rewind_n` | undecodable-`SIGFPE` aborts whose PC was rewound to the faulting instruction (§5.4) |
+
+> **ANNOTATION (round 12, 2026-08-27) — the lane's third gated block, and the discipline it
+> restores.** Everything above is gated by `fpe_magic`. The abort latches in `src/fpe_glue.c` were
+> the one part of this lane's instrumentation with **no magic word of its own**, and §10.4's
+> annotation records exactly what that cost. They now have one:
+>
+> | symbol | meaning |
+> |---|---|
+> | `fpe_abort_magic` | **`"FPA!"` = `0x46504121`. The block's FIRST word — read it, and believe none of the three below unless it matches** |
+> | `fpe_abort_signo` | the signal an abort inside the emulator asked for. Sentinel `0xFFFFFFFF` |
+> | `fpe_abort_code` | ... and the `si_code` that went with it. Sentinel `0xFFFFFFFF` |
+> | `fpe_abort_addr` | ... and the `si_addr`. Sentinel `0xFFFFFFFF` |
+>
+> **These are latches, not counters, and the distinction matters when reading a dump.** `fpe_trap`
+> zeroes all three on entry, so they describe *the last abort of the last entry* and nothing
+> cumulative; `fpe_panic_n`, `fpe_copyfail_n` and `fpe_undecoded_n` are the counts. Zeros therefore
+> mean "an entry has happened since the last abort", and the sentinel means "no abort has ever
+> happened" — which is a distinction the block could not previously make at all.
+>
+> **The sentinels are load-bearing placement, not decoration.** An all-zero initialiser would leave
+> the three in `.bss`: a different section, reached by a different rule, tens of kilobytes away from
+> the magic that is supposed to be gating them — and a magic that does not share its block's address
+> derivation gates nothing. Initialised, they sit in `.data` immediately behind it, so one
+> derivation covers the block and its gate together and `kpeek <fpe_abort_magic> 4` reads the whole
+> thing in one call.
+>
+> **`fpe_cur` is deliberately outside the block** and stays in `.bss`. It is a live pointer into the
+> caller's own stack frame, valid only while a process is inside `fpu_emulate()`, hence 0 in every
+> dump anyone is able to take — there is nothing in it to read. A sentinel there would also turn
+> `fpe_panic`'s NULL check into a wild dereference, in exchange for nothing.
 
 **Every registered row and identity of rounds 3–9 survives verbatim, and that is deliberate.**
 `fpe_entry_n`, `fpe_done_n`, `fpe_sig_n`, `fpe_user_n`, the four `fpe_sig*_n` classes and the three
@@ -401,6 +447,21 @@ conditional on a probe that does. The probe set is the round-10 `fpimm` family p
 | v12 | nothing at vector 11 moved | `fpe_advnofetch_n = 0`, `fpe_fmt2_n = fpe_fmt0_n = fpe_fmtx_n = fpe_super_n = 0`, and the p7/p8 identities hold | any of them changed character |
 | v13 | **the arm sits ahead of the package** | `f60_entry_n = f60_effadd_n = f60_fpudis_n = f60_fpudis_nofpu_n = 0` for the whole session, where round 10 read 3 / 3 / 3 / 3 | any non-zero — an event was declined, and `fpe_v60_decl_n` says how many and `fpe_v60_last_fmtvec` why |
 
+> **ANNOTATION (round 11, 2026-08-27) — thirteen of these fourteen rows are now metal
+> measurements, and the fourteenth cannot be taken on any rig this lane has.** Every row except v11
+> was scored on real 68LC060 silicon under the `-64` artifact, with the deployed `-61` booted first
+> on the same session as an A/B control that reproduced the SIGSYS deaths to order before the
+> candidate cured them.
+>
+> **v11 was NOT TAKEN and stays registered as open.** The never-engage bar asks what the arm does on
+> a part that HAS an FPU, and the only 68060 rig this lane can boot is a socketed 68LC060 with no
+> FPU at all. It is not a row that failed, and it is emphatically not a row that passes by
+> inference from `fpu_present` being the arm's first gate — that is the argument v11 exists to
+> check, so using it as the answer would make the row circular. **It needs an FPU-present rig, and
+> until one exists the vector-60 arm's never-engage property is argued and not measured.** The
+> vector-11 arm's equivalent bar was measured, in round 5, on three FPU-present rigs; this one has
+> no such measurement behind it.
+
 ### 8.1 The bench cannot raise vector 60, and the reason is one `&&` term
 
 Round 9 §5 established that Amiberry stacks a fully-decoded Next PC and so cannot exercise the
@@ -434,6 +495,39 @@ closing it is a trigger-condition change, not new frame code — but `fault_if_6
 two `fmovem` call sites, so it wants a narrowed check rather than a loosened shared one. That is a
 change to another repository and a decision for whoever owns that lane; it is recorded here, not
 proposed.
+
+> **ANNOTATION (round 12, 2026-08-27) — THIS GAP IS CLOSED, and it was closed the narrow way.**
+> The Amiberry bed this lane benches on took the change (commit `4b754a5`, 2026-08-27): the guard on
+> `fault_if_60()` no longer requires `currprefs.fpu_model` to be non-zero, so a 68060 configuration
+> **without** an FPU raises vector 60 as well. It is a narrowing and not a loosening — an
+> FPU-present 68060 keeps its previous `fpu_no_unimplemented` behaviour, and every 68040
+> configuration is unaffected, both verified byte for byte against the pre-change build. It is
+> deliberately **not** keyed on the PCR FPU-disable bit even though silicon is, because that bit is
+> set at reset on 68060 configurations without an accelerator ROM and keying on it would send a
+> full 68060 to vector 60 for everything executed before its `68060.library` enables the FPU.
+>
+> **All four forms of the class are now raised, not two.** Immediate source of size X or P (the
+> round-10 measured case), `fmovem.l #imm` to more than one control register, and `fmovem.x` with a
+> dynamic register list — the last needing its test repeated *ahead* of `fault_if_no_fpu()`, because
+> on a no-FPU configuration that call consumed the instruction as an F-line before the existing test
+> was ever reached. The frame is the one §2 describes and this section already identified the bed as
+> able to build: format `$0`, frame word `0x00F0`, faulting instruction as the stacked PC.
+>
+> **What makes this more than a code change is that round 11 checked it from the other end.** The
+> bed had implemented two of the four forms from the manual alone; metal then executed all four
+> through the arm, and the two that had never run anywhere — `m` (`fmovem.x` dynamic) and `c`
+> (`fmovem.l #imm` to two control registers) — came back on silicon exactly as the narrowed guard
+> predicts. §10.3's annotation has the numbers. The fidelity claim is therefore checked in both
+> directions rather than asserted in one.
+>
+> **What follows for future rounds.** The routing half of a vector-60 change — v1, v3, v4, v5, v9,
+> v10 above — is bench-exercisable again, so the next such change need not spend a hardware boot to
+> find out whether it routes. This section's *"structurally unable"* describes the bed as it was on
+> 2026-08-27 before that commit, and the sentence is left standing because it was true and because
+> §11's list of what silicon alone can settle depends on knowing when it stopped being true. **What
+> the bed still cannot do is unchanged**: AGENTS.md's standing list — no enabled IEEE exceptions, no
+> copyback data cache, a fully-decoded Next PC (round 9 §5) — applies exactly as before, and a
+> vector-60 *emulation* result from the bed is still not evidence about the length law.
 
 **What follows for this round's verification.** The bed delivers the two 12-byte forms as ordinary
 format-4 vector-11 frames, so it exercises the *emulation* half of the fix — v2, v6, v7, v8 and
@@ -587,6 +681,31 @@ It has been compiled with the AMIX cross toolchain and disassembled: `f23c 4800`
 | `m` | `fmovem.x (a0)+,dyn(d1)` | `1`, exit 0 | not run |
 | `c` | `fmovem.l #imm,fpcr/fpsr` | **SIGILL (4)** — deliberate refusal, §5.2 | not run |
 
+> **ANNOTATION (round 11, 2026-08-27) — the two "not run" cases have been run, on metal, and both
+> matched.** Each was executed singly on the real 68LC060 under the `-64` artifact with a
+> magic-gated counter sample either side, so the classification of each is individually
+> attributable rather than inferred from a batch:
+>
+> | arg | measured | counters moved |
+> |---|---|---|
+> | `m` | **`1`, exit 0** — completed correctly through the vector-60 arm | `fpe_ea_fmovmx_n` 0 → 1, `fpe_ea_done_n` 2 → 3, and `fpe_ea_imm_n` correctly **unmoved** |
+> | `c` | **SIGILL (4), exit 24**, and no `fpcr=…fpsr=…` line printed at all | `fpe_ea_fmovml_n` 0 → 1, `fpe_ea_sig_n` 1 → 2, **`fpe_undecoded_n` unmoved**, `fpe_rewind_n` unmoved |
+>
+> `c` is §5.2's designed refusal taking effect exactly where the design says it lives. The counters
+> that moved are on the glue's side of the seam and the ones that did not are on the emulator's, so
+> the class was refused **before** being handed through rather than emulated and then rejected — and
+> the absence of the print confirms it from the process's side. This is the counted, honest form of
+> the failure; it is not an improvement in what `fmovem.l` to two or three control registers does,
+> which is still nothing (§11).
+>
+> One correction to this table's own registration, from the same run: `X` printed
+> **`3.1415926535897931`**, not the `…32` above. That is a defect in this row, not in the result.
+> `3.1415926535897932…` is the 17-digit decimal of the *extended* constant; the probe stores `fp0`
+> to a **double** and prints that, and the correctly-rounded double is `0x400921FB54442D18`, whose
+> `%.17g` form ends in 31. The box's bits were checked against `(double)π` host-side and are
+> bit-identical — which is the stronger evidence anyway, since a mis-offset read of the 12-byte
+> operand would corrupt the high mantissa bits and the value would not be π at all.
+
 ### 10.4 Counters to read, at this artifact's addresses
 
 `load base 0x08000000 + .text size 0xfedfc`, so `.data` begins at `0x080fedfc`. Check
@@ -610,6 +729,57 @@ It has been compiled with the AMIX cross toolchain and disassembled: `f23c 4800`
 | `f60_entry_n` | `0x081189b4` | `fpe_ea_sig_n` | `0x0811c058` |
 | `f60_effadd_n` | `0x081189f4` | `fpe_ea_last_op` | `0x0811c05c` |
 | `f60_fpudis_nofpu_n` | `0x08118a2c` | `fpe_rewind_n` | `0x0811c060` |
+
+> **ANNOTATION (rounds 11 and 12, 2026-08-27) — one address in round 10's tooling was WRONG, and
+> the two reasons it could be wrong are both now closed.** No number in the table above is affected;
+> the bad address was for a block this table does not list.
+>
+> Round 10's counter script read the `fpe_abort_*` block at **`0x08110394`**. Nothing of the block
+> is there. That address lands in the middle of unrelated `.data` and returned four entirely
+> plausible zeros. Round 11 found it while re-deriving every address from the artifacts' own symbol
+> tables, did **not** read the block at all (recorded in its pre-registration before first box
+> contact), and no round-10 `fpe_abort_*` value is quoted in any document, so nothing rests on the
+> bad read. What the block actually is, per artifact:
+>
+> ```
+> -61  the round-10 kernel        fpe_abort_signo  0x0812D5BC   (code/addr at +4 / +8)
+> -64  the round-11 candidate     fpe_abort_signo  0x0812D7B0   (code/addr at +4 / +8)
+> ```
+>
+> **Cause 1: the arithmetic was the wrong section's.** The rule this project carries — *load base +
+> `.text` size + nm offset* — is the `.data` rule. `fpe_abort_signo` was a `.bss` symbol, and the
+> loader copies `.text` and `.data` as one block and places `.bss` at **data_end**, so a `.bss`
+> symbol needs the `.data` size too:
+>
+> ```
+> .data symbol    load_base + textsize             + nm offset
+> .bss  symbol    load_base + textsize + datasize  + nm offset
+> ```
+>
+> On the `-61` that is `0x08000000 + 0xFEC48 + 0x1D228 + 0x1174C = 0x0812D5BC`. Applying the `.data`
+> rule instead gives `0x08000000 + 0xFEC48 + 0x1174C = 0x08110394` — round 10's number, reproduced
+> exactly. That reproduction is what identifies the mistake as *this* one rather than some other
+> transcription error, and it also names the source: `tools/status-facts.sh` computed every symbol,
+> `.bss` included, with the `.data` rule, so it printed `0x08110394` for the `-61` and would have
+> gone on printing a wrong address for that block in every future round.
+>
+> **Cause 2: this block alone had no magic, so nothing could catch cause 1.** Every other block in
+> the image opens with one, and a magic is worth exactly this much: it converts a wrong address from
+> four believable numbers into an obvious failure. The general form, and the reason it is written
+> here rather than left as a lesson learned: **a block without a magic is not made trustworthy by
+> its neighbours' magics passing.** The neighbours are in a different section.
+>
+> **Both are closed as of round 12 (§12).** `src/fpe_glue.c` gives the block `fpe_abort_magic` =
+> `"FPA!"` as its first word and puts the three latches in `.data` behind it, so one derivation
+> covers the block and its gate (§6's annotation). `tools/status-facts.sh` now derives `.bss`
+> symbols with the `.bss` rule and orders a block by runtime address rather than by raw symbol
+> value. Run against the **unmodified** `-64` artifact the repaired script prints
+> `fpe_abort_signo @ 0x0812D7B0` — matching round 11's independent re-derivation to the byte — while
+> every `.data` address in its output is unchanged from before the repair, which is what says the
+> repair touched only the case that was wrong.
+>
+> **This table stays correct for the `-64` artifact and for nothing else.** §12 carries the
+> round-12 artifact, in which every `fpe_*` address above moves.
 
 ### 10.5 The run, and the rows it settles
 
@@ -660,3 +830,184 @@ and `check_fpe_relocs.py` assertion 8 was passed on a different image than the o
   silicon. If the manual is ever consulted, the sentence to look for is what it promises about the
   vector-60 frame's format nibble; `fpe_v60_fmtx_n` is the counter that would catch it being
   something else, and the arm declines rather than guesses in that case.
+
+---
+
+## 12. The round-12 artifact — the abort block gets a magic, and every `fpe_*` address moves
+
+**Staged, NOT deployed.** The metal baseline is unchanged: `68060-260827-64`
+(`17ec956de340b3b9c1bb1b7427f99e2821e537a10dfa15da86edd850b06e6a0d`) is what is on the card and
+what a rollback returns to, exactly as round 11 left it. The artifact below has never been booted
+anywhere, and nothing in this section claims otherwise. Deploying it is a separate, scheduled
+session.
+
+**What changed, and how little of it there is.** Four files, and no behaviour in any of them:
+
+* `src/fpe_glue.c` — `fpe_abort_magic` = `"FPA!"` as the abort block's first word, and the three
+  latches given the `0xFFFFFFFF` sentinel that puts them in `.data` behind it (§6, §10.4).
+* `src/fpe040.s` — comment only: the counter header now states that its address rule is the `.data`
+  rule *and only* the `.data` rule, and names the second gated block.
+* `relink-040-fpe.sh` — `fpe_abort_magic` added to the must-be-defined symbol list, so a build that
+  loses the magic fails instead of shipping an ungated block again.
+* `tools/status-facts.sh` — the generator repair of §10.4: `.bss` symbols derived with the `.bss`
+  rule, blocks ordered by runtime address. This changes no `.data` address it has ever printed.
+
+**The change adds no code at all, and that is measurable rather than asserted:** the `-64`
+artifact's `.text` and this one's are **byte-identical over all 1,043,964 bytes**. The entire delta
+is data placement, relocations and the symbol table.
+
+```
+                            .text          .data           .bss
+  -64 (deployed)            0x0FEDFC       0x01D268        0x01175C
+  -r12 (this artifact)      0x0FEDFC       0x01D278 (+16)  0x011750 (-12)
+```
+
+### 12.1 The artifact
+
+```
+sh relink-040-fpe.sh build/unix-040-f7vs build/unix-040-fpe-r12
+python3 tools/stamp-card1.py   build/unix-040-fpe-r12 build/unix-040-fpe-r12-CARD1-ced0s1
+python3 tools/stamp-cputype.py build/unix-040-fpe-r12-CARD1-ced0s1 \
+                               build/unix-060-fpe-r12-CARD1-ced0s1 --set 60
+```
+
+| artifact | size | sha256 |
+|---|---:|---|
+| `build/unix-040-f7vs` *(the base, unchanged since round 7)* | 1,878,585 | `d43a59ccb7df2ebcdf611a7fa322dd84a4c2166fa9d491078025ef4f9e0fa889` |
+| `build/unix-040-fpe-r12` | 1,933,273 | `e349d337260361886e2d7f3aff2f33e9d6a11125bf01930f15a57757bbdb1a5f` |
+| `build/unix-040-fpe-r12-CARD1-ced0s1` | 1,933,273 | `120eaf990b55dfb843adbd8b072b9182c51493b536b9dbf1e888f9a2d513e99b` |
+| **`build/unix-060-fpe-r12-CARD1-ced0s1`** *(stage this)* | 1,933,273 | `5f80a8f0740c207d5764a2886c20fa1d18402533ebdf200b1fca856d5291763d` |
+| `build/unix-060-fpe-v60-CARD1-ced0s1` *(the DEPLOYED `-64`, the A/B control)* | 1,933,225 | `17ec956de340b3b9c1bb1b7427f99e2821e537a10dfa15da86edd850b06e6a0d` |
+
+`buildid` is `" 68040-260827-65"`, announced as **`68060-260827-65`** at `cputype` 60 — one digit
+from the deployed `68060-260827-64`, so the console line alone says which is booted. That one digit
+is also the only thing distinguishing them on a boot, which makes reading it a gate and not a
+formality.
+
+### 12.2 Build gates that passed on this artifact
+
+The round-10 set (§10.2), re-run in full rather than assumed to still hold: tarball integrity and
+the tail-only `fpframe` check; 20/20 emulator objects with `.bss` exactly 396 B; all seven
+overrides with exactly one strong definition past the base's `.text` end; no unresolved symbols;
+`ucp_magic` absent; `M68Kvec[11] → fpe_vec11` with `fpe_decline → fpsp_vec11` and
+`M68Kvec[60] → fpe_vec60` with `fpe_decline60 → fpsp_vec60`; text/data contiguous; both section
+sizes 4-aligned; `patch_b2_flip.py --check`; `check_relink_relocs.py` **TOTAL complaints: 0**;
+`check_fpe_relocs.py` all nine assertions; the artifact's root-storage family unchanged by the FPE
+pass (`root=card0(/dev/dsk/c6d0s1)`, four queue rows including `z3660queue`). Plus one gate this
+artifact is the first to carry: **`fpe_abort_magic` in the must-be-defined list.**
+
+`FPE=0 sh relink-040-fpe.sh build/unix-040-f7vs …` reproduces the base **byte for byte** — the
+script's own sha gate and an independent `cmp` both agree.
+
+**Two builds of the same tree differ in exactly ONE byte**, the build-id sequence digit
+(`@0x1175DF`, `5` → `6`). That is `AGENTS.md`'s regression test for the build system itself, and it
+is the one worth running here because this round moved objects between sections. The second build
+consumed sequence `-66`; it was compared and deleted, and `-65` is the staged artifact.
+
+### 12.3 Lineage, checked on the artifacts rather than argued from the recipe
+
+```
+unix-040-f7vs (base)  ->  unix-040-fpe-r12          .text prefix 1,014,192   0 diffs
+                                                     .data prefix            2 diffs, both in buildid
+unix-040-fpe-v60 (-64) -> unix-040-fpe-r12          .text 1,043,964 -> 1,043,964   0 diffs, ENTIRE section
+                                                     .data first diff at fpe_abort_magic
+```
+
+The base kernel is byte-identical over its whole `.text`, as it has been since round 7. Against the
+kernel that is actually deployed the statement is stronger than §10.1 could make: **the entire
+`.text` matches — base, the twenty extracted emulator objects, the glue and both arms alike — so
+there is no code difference whatsoever.** The first `.data` difference is the sixteen new bytes
+themselves, and everything after it is the same content shifted by sixteen.
+
+### 12.4 Counter addresses — every `fpe_*` one moves, and they must be re-derived
+
+**READ THIS BEFORE REUSING ANY ADDRESS.** Sixteen bytes were added to `.data` ahead of
+`src/fpe040.s`'s block, so **every `fpe_*` counter and latch in §10.4 is at a different address in
+this artifact**, and the abort block has moved sections entirely. A round-11 command file pointed at
+this kernel would read every `fpe_*` value four longwords early. The magic is what catches that, and
+it was checked rather than assumed: read at the `-64` address `0x0811BEF4` this artifact returns
+`0x2D3E2053` — four bytes of the `fpe_panic` message string, `"-> S"` — instead of `"FPE!"`. That is
+§10.4's annotation restated as a live hazard rather than a lesson: the gate fires, the operator
+stops, and nobody records a counter table taken sixteen bytes out of place.
+
+Derive from the artifact's own symbol table, never from this page. `sh tools/status-facts.sh
+build/unix-060-fpe-r12-CARD1-ced0s1 0x08000000` prints every block of this artifact and reads each
+magic out of its `.data`; the right-hand column below is that output, and the left-hand column is
+the same derivation applied to the deployed `-64`.
+
+| symbol | `-64` (deployed) | **`-r12`** | Δ |
+|---|---|---|---|
+| `fpe_abort_magic` | — (absent) | **`0x0811BEC8`** | new, `.data` |
+| `fpe_abort_signo` | `0x0812D7B0` *(`.bss`)* | `0x0811BECC` | moved to `.data` |
+| `fpe_abort_code` | `0x0812D7B4` *(`.bss`)* | `0x0811BED0` | moved to `.data` |
+| `fpe_abort_addr` | `0x0812D7B8` *(`.bss`)* | `0x0811BED4` | moved to `.data` |
+| `fpe_cur` *(not in the block, `.bss`)* | `0x0812D7BC` | `0x0812D7C0` | +4 |
+| `fpe_magic` | `0x0811BEF4` | `0x0811BF04` | +0x10 |
+| `fpe_entry_n` | `0x0811BF34` | `0x0811BF44` | +0x10 |
+| `fpe_super_n` | `0x0811BF4C` | `0x0811BF5C` | +0x10 |
+| `fpe_user_n` | `0x0811BF50` | `0x0811BF60` | +0x10 |
+| `fpe_done_n` | `0x0811BF54` | `0x0811BF64` | +0x10 |
+| `fpe_sig_n` | `0x0811BF58` | `0x0811BF68` | +0x10 |
+| `fpe_last_signo` | `0x0811BF6C` | `0x0811BF7C` | +0x10 |
+| `fpe_last_code` | `0x0811BF70` | `0x0811BF80` | +0x10 |
+| `fpe_last_fault_pc` | `0x0811BF7C` | `0x0811BF8C` | +0x10 |
+| `fpe_undecoded_n` | `0x0811BF80` | `0x0811BF90` | +0x10 |
+| `fpe_advmiss_n` | `0x0811BFE4` | `0x0811BFF4` | +0x10 |
+| `fpe_advnofetch_n` | `0x0811BFEC` | `0x0811BFFC` | +0x10 |
+| `fpe_v60_n` | `0x0811C024` | `0x0811C034` | +0x10 |
+| `fpe_v60_fmt0_n` | `0x0811C028` | `0x0811C038` | +0x10 |
+| `fpe_v60_fmtx_n` | `0x0811C02C` | `0x0811C03C` | +0x10 |
+| `fpe_v60_last_fmtvec` | `0x0811C030` | `0x0811C040` | +0x10 |
+| `fpe_v60_decl_n` | `0x0811C034` | `0x0811C044` | +0x10 |
+| `fpe_ea_n` | `0x0811C038` | `0x0811C048` | +0x10 |
+| `fpe_ea_super_n` | `0x0811C03C` | `0x0811C04C` | +0x10 |
+| `fpe_ea_imm_n` | `0x0811C040` | `0x0811C050` | +0x10 |
+| `fpe_ea_pack_n` | `0x0811C044` | `0x0811C054` | +0x10 |
+| `fpe_ea_fmovmx_n` | `0x0811C048` | `0x0811C058` | +0x10 |
+| `fpe_ea_fmovml_n` | `0x0811C04C` | `0x0811C05C` | +0x10 |
+| `fpe_ea_fetchfail_n` | `0x0811C050` | `0x0811C060` | +0x10 |
+| `fpe_ea_done_n` | `0x0811C054` | `0x0811C064` | +0x10 |
+| `fpe_ea_sig_n` | `0x0811C058` | `0x0811C068` | +0x10 |
+| `fpe_ea_last_op` | `0x0811C05C` | `0x0811C06C` | +0x10 |
+| `fpe_rewind_n` | `0x0811C060` | `0x0811C070` | +0x10 |
+| `f60_magic` | `0x081189B0` | `0x081189B0` | **unchanged** |
+| `f60_entry_n` | `0x081189B4` | `0x081189B4` | **unchanged** |
+| `f60_effadd_n` | `0x081189F4` | `0x081189F4` | **unchanged** |
+| `f60_fpudis_nofpu_n` | `0x08118A2C` | `0x08118A2C` | **unchanged** |
+
+**Why the `f60_*` block does not move while every `fpe_*` one does**, since a reader who does not
+know will assume one of the two columns is wrong: the `f60_*` counters live in the base kernel's
+own `.data`, which the FPE pass links *ahead* of everything it adds; the `fpe_*` counters live in
+`src/fpe040.s`, which is linked **last**. The sixteen new bytes come from `src/fpe_glue.c`, which
+sits between them. Same reasoning applies to `fpc_*` and `fpi_*` — base block, unchanged.
+
+The magics to check before believing anything — four carried forward, one new:
+
+```
+fpe_abort_magic  0x0811BEC8  ->  46504121  "FPA!"      <- new this round
+fpe_magic        0x0811BF04  ->  46504521  "FPE!"
+f60_magic        0x081189B0  ->  46503630  "FP60"
+fpc_magic        0x081175F4  ->  46504321  "FPC!"
+fpi_magic        0x08117634  ->  46504921  "FPI!"
+
+kpeek 0811BEC8 4    reads magic / signo / code / addr in one call
+```
+
+### 12.5 What this round does and does not claim
+
+* **No new registered rows.** Nothing about the vector-60 arm's behaviour changed, so §8's table
+  stands as round 11 scored it and this artifact is expected to reproduce it exactly. If a metal
+  session boots this kernel, the rows to re-take are the ones that cost nothing — the identities,
+  the never-move counters — plus the one genuinely new observable: **`fpe_abort_magic` reads
+  `"FPA!"` at its derived address**, which is the only thing this round added that a running kernel
+  can be asked about.
+* **The dhrystone rate row is not this round's to close.** Round 11 lost it to a thermal gate that
+  had already been exceeded before its load began; it is a hardware measurement and nothing in an
+  artifact substitutes for one.
+* **v11 is still open** and this artifact does not help: the never-engage bar needs an FPU-present
+  rig, which the lane does not have. See §8's annotation.
+* **Packed decimal is still not implemented** and `fmovem.l` to two or three control registers is
+  still refused rather than emulated. §11 is unchanged in every particular.
+* **The abort latches have still never been read on hardware.** They now *can* be, safely, which is
+  the entire content of the change — but "readable" is not "read", and no value of
+  `fpe_abort_signo`, `_code` or `_addr` from any rig appears anywhere in this document.
