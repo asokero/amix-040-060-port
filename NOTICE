@@ -44,10 +44,15 @@ the companion repository `amix-unix-boot` as **patches only**: you supply `unix_
 (Until 2026-08-15 this notice said the loader was "likewise Commodore's".  That was wrong, and the
 correction came from the person who knows the Amiga history rather than from the files.)
 
-Third-party material used at build time
----------------------------------------
+Third-party material
+--------------------
+One kind only: material **extracted at build time** from a tarball you supply.  No third-party
+source file is checked into this repository.  What is checked in is the licence texts the
+attribution requires, in `THIRD_PARTY_NOTICES/` — those are a condition of the licences rather
+than an exception to the rule, and they are reproduced in full.
+
 **Motorola 68040/68060 Support Packages** (FPSP, ISP).  Extracted at build time from a NetBSD
-source tarball you supply; not vendored here.
+source tarball you supply.
 
 Motorola's licence grants use, modification and distribution on two conditions: that the entire
 notice is retained without alteration in any modified or redistributed version, and that modified
@@ -71,7 +76,43 @@ is derived from the same skeleton and is identical in these places, which is why
 comments name both; the attribution that matters here is Motorola's, and it travels with the
 package as described above.
 
-**NetBSD** was used as a reference for architectural *behaviour*, not as a source of code:
+**NetBSD/m68k FPE** — extracted at build time, exactly as the Motorola packages are, and it is
+not in this repository.  The soft-FPU lane compiles 25 files from `usr/src/sys/arch/m68k/fpe/`
+of the same NetBSD tarball, plus four machine-ABI headers from it (`m68k/cpuframe.h`,
+`m68k/fpreg.h`, `m68k/ieee.h`, `sys/ieee754.h`) that the emulator's own `#include`s reach for and
+AMIX has no equivalent of.  `src/extract_fpe.sh` takes all twenty-nine out of the pinned tarball
+into `build/fpe-src/` on every build: it verifies the tarball's sha256 first, then diffs the
+extracted tree against a second fresh extraction, so an edit or an addition anywhere in that tree
+stops the build instead of reaching a kernel.  `build/` is not tracked, so no file of theirs
+appears in this repository or in its history.  Nothing in the tree is a modified version.  The
+first-party compatibility headers the port had to write live in `src/fpe-compat/`, outside the
+extracted space, and none of them is a copy of a NetBSD header.
+
+That surface is **not one licence**.  It is five families with materially different conditions,
+mapped file by file in `THIRD_PARTY_NOTICES/NETBSD-M68K-FPE.txt`, where all five are reproduced in
+full:
+
+* the **UC Regents / Lawrence Berkeley Laboratory** notice, three numbered conditions plus an
+  unnumbered LBL advertising acknowledgement (UC rescinded the advertising clause for its own BSD
+  files in 1999; stated there as a reference, not as a conclusion) — 10 files;
+* **Ken Nakata**, three-clause — 6 files and part of 2 more; and a two-clause variant on 2 files;
+* **Tetsuya Isaki**, two-clause — 1 file and part of 2 more;
+* **Gordon W. Ross**, genuine four-clause with a **live advertising clause** — 5 files, including
+  the emulator's top-level dispatcher `fpu_emulate.c` and the FP register bit names in
+  `m68k/fpreg.h`, so no build of this emulation avoids it by any route.  Clause 4 binds whoever
+  builds or distributes such a kernel rather than this repository's file list: **all advertising
+  material mentioning features or use of the floating-point emulation must display the
+  acknowledgement "This product includes software developed by Gordon Ross".**
+  `fpu_fscale.c` is the trap worth naming: its copyright line says Ken Nakata and its clause 4
+  says Gordon Ross, so classifying it by copyright holder would lose the obligation;
+* the **University of Utah / UC Regents** notice on `m68k/cpuframe.h` — plain three-clause, no
+  advertising acknowledgement, and the only new copyright holder the header set brought in.
+
+Extracting rather than checking in reduces none of that.  It changes what this repository
+distributes, not what the kernel you build with it carries, and that kernel carries all five.
+
+**NetBSD** was also used as a reference for architectural *behaviour* rather than as a source of
+code, in places unrelated to the above:
 
 * `wb040.s` -- the 68040 write-back realignment, where NetBSD's `m68040_writeback` documents how
   WB1D/WB2D are justified against WB3D;
