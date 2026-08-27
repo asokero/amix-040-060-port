@@ -144,10 +144,40 @@ char fpe_as_ksi[(sizeof(k_siginfo_t) == 28) ? 1 : -1];
  * fpu_emulate(), and exactly one process is ever inside it.  That is the whole justification
  * for their being static, and it is the same justification the serialization decision rests
  * on -- see FPE-GLUE-DESIGN.md section 4.1.
+ *
+ * THE MAGIC, AND WHY THIS BLOCK HAS ONE NOW (2026-08-27).  Every counter block in this port
+ * opens with a magic word -- fpe_magic "FPE!", f60_magic "FP60", fpc_magic "FPC!", fpi_magic
+ * "FPI!" -- so that a reader who computed the block's address wrongly finds out instead of
+ * believing whatever now lives there.  This block was the one exception, and it cost exactly
+ * what the rule exists to prevent: a metal session read it at `load base + .text size + nm
+ * offset`, which is the rule for a `.data` symbol and NOT the rule for a `.bss` one, landed in
+ * the middle of an unrelated part of .data and got four entirely plausible zeros with nothing
+ * anywhere to say the address was wrong.  docs/contracts/FPE-R10-VEC60.md section 10.4.
+ *
+ * TWO THINGS TOGETHER MAKE THAT UNREPEATABLE, AND NEITHER IS ENOUGH ALONE:
+ *
+ *   1. the magic is the block's FIRST word, so a wrong address reads as noise, not as zeros;
+ *   2. the three latches carry an INITIALISER, which is what puts them in `.data` immediately
+ *      behind it.  Left uninitialised they would sit in `.bss` -- a different section, reached
+ *      by a different rule, tens of kilobytes from the magic that is supposed to be gating
+ *      them -- and the gate would be gating nothing at all.  So the initialiser is load-bearing
+ *      placement, not decoration.
+ *
+ * The value is this port's usual 0xFFFFFFFF sentinel, "nothing latched", so it reads correctly
+ * as well as placing correctly: a dump taken before the first abort says so rather than
+ * claiming signal 0 at address 0.  fpe_trap zeroes all three on entry before anything can read
+ * them, so no code path ever consumes the initialiser.
+ *
+ * fpe_cur is deliberately NOT in the gated block.  It is a live pointer into the caller's own
+ * stack frame, valid only while a process is inside fpu_emulate(), hence 0 in every dump anyone
+ * is able to take -- there is nothing in it to read.  It stays in `.bss`, and it stays a
+ * NULL-checked pointer: a 0xFFFFFFFF sentinel here would turn fpe_panic's guard below into a
+ * wild dereference in exchange for nothing.
  */
-static int fpe_abort_signo;
-static int fpe_abort_code;
-static long fpe_abort_addr;
+long fpe_abort_magic = 0x46504121;	/* "FPA!" -- first word of the block, read it first */
+static int fpe_abort_signo = -1;
+static int fpe_abort_code = -1;
+static long fpe_abort_addr = -1;
 static struct frame *fpe_cur;
 
 /*

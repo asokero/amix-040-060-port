@@ -643,6 +643,17 @@ Lfe_i_msg:
 | a plausible lie.  Addresses are load_base + textsize + nm(.data offset), recomputed per
 | image and never carried over.
 |
+| THAT ARITHMETIC IS THE `.data` RULE AND ONLY THE `.data` RULE.  The loader places .bss at
+| data_end, so a `.bss` symbol is at load_base + textsize + DATASIZE + nm(.bss offset), and
+| applying the line above to one lands inside somebody else's .data and returns numbers that
+| look perfectly reasonable.  That is not hypothetical: it happened to the one block in this
+| lane that had no magic to catch it.  See docs/contracts/FPE-R10-VEC60.md section 10.4.
+|
+| THIS IS NOT THE LANE'S ONLY GATED BLOCK.  src/fpe_glue.c's abort latches carry their own
+| magic, fpe_abort_magic = "FPA!", for the same reason and with the same discipline: magic
+| first, then fpe_abort_signo / _code / _addr.  They are in `.data` beside their magic
+| precisely so that one rule covers a block and its gate together.
+|
 | SENTINELS ARE 0xFFFFFFFF and mean NOT APPLICABLE, not zero.  Counters start at 0; latches
 | start at the sentinel, so "nothing was latched" cannot be read as "zero was latched".
 | ============================================================================
