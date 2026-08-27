@@ -13,6 +13,10 @@
 #   sh relink-040-fpe.sh [base-kernel] [output]
 #   FPE=0 sh relink-040-fpe.sh ...        rollback: reproduce the base image byte for byte
 #
+#   FPE_REQUIRE_QUEUE=z3660queue FPE_REQUIRE_CARD=1 sh relink-040-fpe.sh ...
+#                                         refuse a base whose root-storage family is not the
+#                                         target rig's (see step 0.5)
+#
 # WHAT GOES IN
 #   build/fpe-src/      20 NetBSD C files + 4 machine-ABI headers, EXTRACTED at build time
 #                       from the pinned tarball by src/extract_fpe.sh -- never checked in
@@ -44,6 +48,23 @@ OUT="${2:-$HERE/build/unix-040-fpe}"
 
 [ -f "$IN" ] || { echo "ERROR: base kernel missing: $IN"; exit 1; }
 echo "[*] base: $(basename "$IN")  ($(sha256sum "$IN" | cut -c1-16)...)"
+
+# ---------------------------------------------------------------- 0.5 the base's family
+# This pass takes its base as an argument and inherits everything about it, so the base's
+# root-storage family is inherited too -- silently, until round 6 staged an FPE kernel built
+# over build/unix-040 (no Z3660 driver, rootdev card 0) to the A4000 + Z3660 rig and it
+# bus-errored in a3091's initialize() during the root probe, before one FP instruction was
+# emulated.  docs/contracts/FPE-R7-METAL.md is the decode.  The family is not something this
+# script can choose -- but it is something it must NAME, and the incoherent combinations it
+# can refuse outright.  A build that knows its target rig says so through the two variables.
+RFARGS=
+[ -n "$FPE_REQUIRE_QUEUE" ] && RFARGS="$RFARGS --require-queue $FPE_REQUIRE_QUEUE"
+[ -n "$FPE_REQUIRE_CARD" ]  && RFARGS="$RFARGS --require-card $FPE_REQUIRE_CARD"
+echo "[*] the base's root-storage family"
+run_step indent python3 "$HERE/src/check_root_family.py" "$IN" $RFARGS
+# A second, silent run to capture the one-line summary: run_step deliberately owns its output
+# (no build step goes through a pipe -- tools/build-step.sh), so there is nothing to read back.
+FAMILY=$(python3 "$HERE/src/check_root_family.py" "$IN" | sed -n 's/^ *FAMILY *//p')
 
 # ---------------------------------------------------------------- the rollback switch
 # Not "skip some steps": produce the base image and PROVE it is the base image.  A rollback
@@ -215,11 +236,16 @@ echo "[OK] no unresolved symbols"
 # genuinely fills mc_state[23..76] with the FP state -- 216 real bytes the arm would destroy.
 # Its own uc_flags gate happens to decline for that reason, but "declines by luck" is not the
 # property to ship: the gate is here, at the link.  FPE-GLUE-DESIGN.md 7.
+# ucp_magic is defined by src/ucp_dbg.s, src/ucp2_dbg.s AND src/ucz_dbg.s alike, so the
+# symbol -- not the filename -- is what the gate can honestly name.
 m68k-linux-gnu-nm "$OUT" | grep -qE " [Dd] ucp_magic\$" && {
-	echo "[FAIL] src/ucz_dbg.s is linked into this kernel and must not be -- see"
-	echo "       FPE-GLUE-DESIGN.md section 7."
+	echo "[FAIL] a ucontext arm (src/ucp_dbg.s, src/ucp2_dbg.s or src/ucz_dbg.s -- they share"
+	echo "       the ucp_magic symbol) is linked into this kernel and must not be."
+	echo "       See FPE-GLUE-DESIGN.md section 7: the gate is on the symbol, so the units"
+	echo "       cannot coexist regardless of what either file's internal gates do."
+	echo "       Build the FPE pass over the arm's own INPUT kernel instead."
 	exit 1; }
-echo "[OK] ucz_dbg not linked"
+echo "[OK] no ucontext arm linked (ucp_magic absent)"
 
 # ---------------------------------------------------------------- 8. the vector
 echo "[*] vector-11 arm"
@@ -249,8 +275,22 @@ run_step 1 python3 "$HERE/src/check_relink_relocs.py" "$OUT"
 run_step indent python3 "$HERE/src/check_fpe_relocs.py" "$OUT"
 python3 "$HERE/src/stamp_buildid.py" "$OUT"
 
+# The artifact's own family, not the base's -- the second pass must not have moved it, and the
+# one fact a deployment decision needs belongs in this log rather than in someone's memory.
+echo "[*] the artifact's root-storage family"
+run_step indent python3 "$HERE/src/check_root_family.py" "$OUT" $RFARGS
+OUTFAMILY=$(python3 "$HERE/src/check_root_family.py" "$OUT" | sed -n 's/^ *FAMILY *//p')
+[ "$OUTFAMILY" = "$FAMILY" ] || {
+	echo "[FAIL] the FPE pass CHANGED the root-storage family:"
+	echo "       base     $FAMILY"
+	echo "       artifact $OUTFAMILY"
+	exit 1; }
+echo "[OK] family unchanged by the FPE pass: $FAMILY"
+
 echo "[OK] built $OUT"
 echo "     boot: unix_boot040 $(basename "$OUT")   <- unix_boot040 is MANDATORY"
+echo "     root-storage family: $FAMILY"
+echo "                                    -- restamp with tools/stamp-card1.py for a card-1 rig"
 echo "     expect on a part WITH an FPU:  fpe_entry_n == 0 and fpu_emul == 0, all boot"
 echo "                                    -- but the pre-gate fpe_v11_* census DOES move there"
 echo "     expect on a 68LC060:           'fpu emulation enabled' after 'no fpu detected'"
