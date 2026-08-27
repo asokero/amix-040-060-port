@@ -4764,6 +4764,186 @@ This does **not** address T1, whose aliasing is a separate live defect on the fa
 and still wants the family conversion. That one reaches every device that maps memory,
 VA2000 and ZZ9000 included.
 
+### 2026-08-27: question 3 answered from the source, and a second driver-side defect
+
+**Q3 — is the cheap fix available?** Yes. Every consumer of a *mappable* plane's size was
+read out of `sys/amiga/console/` in `amix-sources.tar`:
+
+| site | what it does | affected by rounding the allocation up? |
+|---|---|---|
+| `allocbmap` `scrdev.c:74` | `size = width*height/8`, one `AllocMem(MEMF_CHIP\|MEMF_PAGEB)` **per plane**, already `bzero`ed | must round |
+| `freebmap` `scrdev.c:109` | frees the same `size` | must round, or the chip map corrupts |
+| `scrmmap` `scrdev.c:788` | bound `offset < width*height/8` | must round to match |
+| `c0.c:38` `PLANESIZE`, `c1.c:528/646-675/728-736`, `c3.c` `bmpos` | `width/8` as a **row stride**, `height*width/8` as a logical extent, for rendering and scrolling | no — they never index past the logical extent, so padding is simply untouched |
+| `c0.c:281/286/347` | allocates the **console's own** bitmaps, plain `MEMF_CHIP`, no `PAGEB` | no — not `/dev/screen` planes and never mapped |
+
+**No code assumes inter-plane contiguity.** Each plane is its own `AllocMem`, and `bmpos`
+indexes `bpl[z]` individually; `c3.c:172`'s `+ width/8` is a second bitplane pointer *within*
+plane 0, not a step across planes. So the three-site fix is available, which is what question 3
+gated.
+
+**And a second defect the brief did not name: the plane base is only 2 KiB aligned.**
+`AllocMem`'s `MEMF_PAGEB` path (`memory.c:75`) aligns to `PAGESIZE`/`PAGEMASK` from `param.h`,
+which is still `0x800`. `scrmmap` returns `phystopfn(bp->bpl[bpnum] + offset)`, and
+`patch_devmmap_pfn.py` converted that `phystopfn` to `>>12` (site `0x8384`). So when a plane
+base is not 4 KiB aligned, **the frame that comes back starts up to 2048 bytes before the
+plane** and the whole mapping is displaced. That is independent of `segdev`'s stride and the
+ISSUE-49 bridge does not touch it.
+
+With `320x256x5` the per-plane size is 10240 = five 2 KiB units, so consecutive planes cannot
+all land on 4 KiB boundaries.
+
+The same `MEMF_PAGEB` path also does `mfree(chipmap, btoC(PAGESIZE-(p1-p0)), btoC(p1+nbytes))`
+— it hands the slack **after** the plane back to the chip pool. So the tail of a 4 KiB mapping
+of a 10240-byte plane is memory the plane genuinely does not own and the allocator may have
+given to somebody else.
+
+**Consequence for how the bridge is described.** The bridge makes the `mmap` *succeed*. On its
+own it can therefore turn a loud `ENXIO` into a silent displaced or half-owned mapping. The
+driver-side work is **correctness, not hardening**, and "`devmaptest` passes / battery 12/12"
+must not be read as "DPaint works now".
+
+### Prediction, written before the measurement
+
+Run `dpaint-amix/probe/scrprobe pokeall` on a bridge kernel (`68060-260827-06` or later):
+
+1. the `mmap` **succeeds** for the geometries that previously returned `ENXIO` — the bridge's
+   `spec_segmap` stride fixes exactly that;
+2. the writability matrix is **not** clean: at least one plane of `320x256x5` reads or writes
+   displaced by 2048 bytes, because its base is not 4 KiB aligned;
+3. `sdc_setprot_bad` and `sdc_unmap_bad` stay 0 — the pair-equality premise is unrelated to this.
+
+If 2 is wrong and every plane is clean, the alignment argument above is wrong and must be
+re-derived before any patch is written.
+
+### Measured 2026-08-27 on `68060-260827-06` — prediction 1 ✅, prediction 2 ✅
+
+**1. The mapping now succeeds, and is writable, for every geometry.** `scrprobe pokeall`:
+
+```
+mode                     geometry         plane  pages  writable?
+lores  non-lace          320x256 x5       10240   2.50  YES
+lores  interlaced        320x512 x5       20480   5.0   YES
+hires  non-lace          640x256 x4       20480   5.0   YES
+hires  interlaced        640x512 x4       40960  10.0   YES
+lores  HAM               320x256 x6       10240   2.50  YES
+lores  HalfBrite         320x256 x6       10240   2.50  YES
+no constraints at all    320x256 x5       10240   2.50  YES
+overscan lores           320x256 x5       10240   2.50  YES
+overscan hires lace      640x512 x4       40960  10.0   YES
+```
+
+**Nine of nine, including all four 2.50-page geometries.** The three `NO`s the 2026-08-26
+stock-030 reference recorded for exactly the fractional-page modes are gone, which is the
+change the reproducer was written to detect. The `ENXIO`/`SIGBUS` blocker is genuinely closed
+by the bridge.
+
+**2. And the plane base really is 2 KiB aligned, so the mapping is displaced.** Both halves
+were read out of the artifact and the running machine rather than inferred:
+
+* **`AllocMem`'s `MEMF_PAGEB` path aligns to 2048 in this binary.** At `0x73d8`
+  `addil #2079,%d0` (`nbytes + PAGESIZE` folded with the `btoC` rounding, 2048 + 31), at
+  `0x73f2` `addil #2047,%d4` and at `0x73fc` `andiw #-2048,%fp@(-2)`. `PAGESIZE` is still
+  `0x800` and this is where it reaches the allocation.
+* **`scrmmap` really returns 4 KiB page frames.** Disassembled at `0x82f8`, which also
+  confirms every struct offset used below: `mulsl #460` (`sizeof(struct scrdev)`),
+  bitmap array at struct `+12` with `44`-byte entries, `flags` at `+0`, `width` `+2`,
+  `height` `+4`, `depth` `+6`, `bpl[]` at `+12`, `oriw #2` setting `Bf_MAPPED`, and the
+  final `lsrl #12`.
+* **A plane that `scrmmap` actually mapped this boot sits at `0x00013800`.** Read from
+  `scrdev[0].bitmap[0]` at runtime `0x08110A38` (`.bss` base `0x0810F58C`, validated first
+  against `a3091_device`, which read `0x00dd0000` — the SDMAC). `flags = 0x0003`
+  (`Bf_ACTIVE|Bf_MAPPED`), `640x512x1`, `bpl[0] = 0x00013800`.
+
+`0x13800 mod 4096 = 2048`, so `phystopfn(0x13800) = 0x13` and that frame **starts at
+`0x13000`, 2048 bytes before the plane**. Every byte the user sees through that mapping is
+2048 bytes early.
+
+**3. The pair-equality premise held, on the half that ran.** `sdc_unmap_n = 92` with
+`sdc_unmap_bad = 0` — ninety-two segdev unmaps, none on a sub-page boundary. But
+`sdc_setprot_n = 0`, so `sdc_setprot_bad = 0` says **nothing at all** on this run: it is the
+denominator-of-zero case that `segdevprot` exists to drive. Prediction 3 is therefore half
+measured and half unexercised, and the unexercised half must not be reported as clean.
+
+**What is not established:** which client that `640x512x1` bitmap belongs to. It did not
+change across two `pokeall` runs, so it is not the probe's, and `scrdev[1]`/`scrdev[2]` are
+empty. It is mapped and it is misaligned, which is what the finding needs; whose it is, is
+not known and is not claimed.
+
+### The remaining unit, in this project's idiom
+
+Four byte patches, all in the kernel this port already patches:
+
+| site | change |
+|---|---|
+| `AllocMem` `0x73d8` | `#2079` → `#4127` (`nbytes + 4096`, same `+31` rounding) |
+| `AllocMem` `0x73f2` | `#2047` → `#4095` |
+| `AllocMem` `0x73fc` | `andiw #-2048` → `#-4096` (still a low-word mask; `0xf000` clears bits 11..0) |
+| `allocbmap` / `freebmap` / `scrmmap` | round `width*height/8` up to a **literal 4096** — all three or none, or the chip map corrupts |
+
+`allocbmap` already `bzero`s what it allocates, so the "zeroed" half of the requirement is
+free. `MEMF_PAGEB` has exactly one caller, `allocbmap`, so widening the alignment reaches
+nothing else.
+
+### Written and emulator-verified 2026-08-27 — `68040/68060-260827-11`
+
+`src/scrdevfix040.s` + `src/patch_scrdev_pageb.py`. Record:
+[`test-tools/issue49-scrdev-emu-verify-260827.txt`](test-tools/issue49-scrdev-emu-verify-260827.txt).
+
+**The table above was wrong in one place, and reading the whole path caught it.** There are
+**four** `PAGESIZE` literals in the `MEMF_PAGEB` path, not three. The fourth is not in the
+alignment arithmetic but in the **tail-slack free**, `btoC(PAGESIZE - (p1-p0))`, compiled at
+`0x7438` as `movel #2079,%d0; subl %d2,%d0; lsrl #5`. Widening the first three and leaving that
+one would have freed 2048 bytes that were never allocated — a silent chip-map corruption, and
+the byte patch would have reported four green `[ok]` lines while doing it.
+
+The rounding could **not** be done in place: the compiler left eight bytes where twelve are
+needed, and the size is computed inside `allocbmap`, so a wrapper has nothing to intercept.
+Both bodies are therefore reproduced in assembly with the rounding added and nothing else
+changed, reached by retargeting their single call-site relocation each (`allocbmap` `0x7e74`
+in `srvioc`, `freebmap` `0x7956` in `scrclose`) — the `patch_a3091_badhardware.py` mechanism,
+no weakening.
+
+`scrmmap`'s bound is deliberately untouched: segdev probes `d_mmap` on page-aligned offsets
+only, and the last such offset for a mapping of `len` bytes is `roundup(len,4096)-4096`, which
+is always below the unrounded size.
+
+**The before/after is on one object.** The console's own 640x512x1 bitmap — the same one
+measured at `0x00013800` on hardware under `-06` — now allocates at `0x00014000`. That also
+settles whose bitmap it was: the console's, through the scrdev ioctl at boot, not the probe's.
+
+**And the accounting closes.** After `pokeall` allocated and freed nine screens:
+`scrfix_bytes_free` = **843 776**, which is the sum of `roundup(w*h/8,4096) * depth` over the
+nine modes. Without the rounding it would be 788 480. So the measured total can only be
+produced by the rounding running *and* by `allocbmap` and `freebmap` rounding identically —
+`bytes_alloc - bytes_free` is exactly 40 960, the one console plane that is never freed.
+`scrfix_misalign_n` and `scrfix_allocfail_n` are both 0.
+
+### Silicon, 2026-08-27 — `68060-260827-11`
+
+[`docs/REALHW-ISSUE49-260827-11.md`](docs/REALHW-ISSUE49-260827-11.md). 35/35 magics, battery
+**12/12 `BATTERY-RESULT PASS`**, `pokeall` 9/9 unchanged, `scrfix_misalign_n = 0`, and the byte
+accounting closes to exactly the one console plane — **the same figures the emulator produced**,
+which is worth saying because so little here survives that comparison. The unit touches no
+cache, no DMA and no FP, so for once the emulator was a fair test.
+
+**The same object moved:** the console's own 640x512x1 bitmap was at `0x00013800` under `-06`
+and allocates at `0x00014000` under `-11`, both read from `scrdev[0].bitmap[0]` on this machine.
+
+**Still open:** whether Deluxe Paint draws where it means to. That needs the application driven
+against a display; this shows the plane is aligned, page-rounded, zeroed and accounted, not that
+the picture is right.
+
+**Two things that looked like failures and were not**, both recorded in the acceptance document:
+the battery's first run reported `FAIL (12 missing)` because its verdict greps a hardcoded
+`/tmp/battery.log` while the run had been redirected elsewhere and the reboot had wiped `/tmp`
+— every test had actually passed. The driver now takes the path as `$1` and **aborts if the file
+does not exist**. And one `krnxflt FAILEXIT w=2 va=434D4642` console line, whose own counters
+(`Lkx_fn = 1`, every must-stay-zero at 0) are clean; `434D4642` is ASCII `CMFB`, a magic word
+used as an address. Which test produced it, and whether `-06` did too, is **not known** — the
+`Lkx_*` counters are file-local with no magic word, so no battery dump has ever shown them.
+Second block found invisible for that reason today, after `dma_*`.
+
 ### Handoff
 
 Owned by this project, not by the Deluxe Paint port: the analysis below is read from

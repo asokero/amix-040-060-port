@@ -1,0 +1,107 @@
+ISSUE-49 -- /dev/screen bitplane alignment and extent, emulator verification, 2026-08-27
+=========================================================================================
+
+Kernel: 68040/68060-260827-11, sha256
+db056b0b0c920c8964e2236d4540fd8e2d53feba3c3359309e149be284661c7c (that is -10; -11 differs
+from it in the build-id stamp only).  Loader identity this boot: image checksum = f9f3d1c3
+(277970 longs).  Emulator: Amiberry local build, a3000ux060.uae.
+
+Units: src/scrdevfix040.s (allocbmap / freebmap reimplemented with the plane size rounded up
+to a literal 4096) and src/patch_scrdev_pageb.py (four AllocMem MEMF_PAGEB immediates widened
+2 KiB -> 4 KiB, plus the two call-site relocation retargets).
+
+Counters: 15 contiguous longs at 0x0810E850, magic first.
+
+PREDICTIONS, WRITTEN BEFORE THE MEASUREMENT
+--------------------------------------------
+  1 pokeall still 9/9 YES                                              -> HELD
+  2 scrfix_misalign_n stays 0                                          -> HELD
+  3 scrfix_last_raw 10240 / scrfix_last_size 12288 for a lores mode    -> NOT READABLE, see below
+  4 bytes_alloc == bytes_free once every screen is closed              -> HELD, exactly
+  5 scrfix_allocfail_n = 0                                             -> HELD
+
+BOOT, BEFORE ANYTHING ELSE RAN
+-------------------------------
+```
+  scrfix_magic       53434621  "SCF!"
+  scrfix_ran         53434652  "SCFR"   the body ran, at boot
+  scrfix_alloc_n            1
+  scrfix_planes_alloc       1
+  scrfix_bytes_alloc    40960
+  scrfix_misalign_n         0           MUST STAY 0
+  scrfix_last_raw       40960
+  scrfix_last_size      40960           already a 4 KiB multiple: rounding unexercised here
+  scrfix_last_ptr    00014000           <- 4 KiB ALIGNED
+```
+That single plane is the console's own 640x512x1 bitmap, allocated through the scrdev ioctl
+at boot.  **It is the same object that was measured at 0x00013800 on hardware under
+68060-260827-06** -- 2048 mod 4096, and therefore displaced.  Before 0x13800, after 0x14000:
+a direct before/after on one object, which is stronger than either reading alone.
+
+It also answers a question left open in the hardware record: that mapped 640x512x1 bitmap did
+belong to the console, not to the probe.
+
+AFTER scrprobe pokeall (nine modes allocated and freed)
+--------------------------------------------------------
+Writability matrix unchanged, 9/9:
+```
+lores  non-lace       320x256 x5   10240   2.50  YES
+lores  interlaced     320x512 x5   20480   5.0   YES
+hires  non-lace       640x256 x4   20480   5.0   YES
+hires  interlaced     640x512 x4   40960  10.0   YES
+lores  HAM            320x256 x6   10240   2.50  YES
+lores  HalfBrite      320x256 x6   10240   2.50  YES
+no constraints at all 320x256 x5   10240   2.50  YES
+overscan lores        320x256 x5   10240   2.50  YES
+overscan hires lace   640x512 x4   40960  10.0   YES
+```
+```
+  scrfix_alloc_n           10        1 console + 9 probe screens
+  scrfix_free_n             9        the console's is never freed
+  scrfix_planes_alloc      45
+  scrfix_planes_free       44
+  scrfix_bytes_alloc   884736
+  scrfix_bytes_free    843776
+  scrfix_misalign_n         0        MUST STAY 0
+  scrfix_allocfail_n        0        MUST STAY 0
+  scrfix_badtype_n          0
+```
+
+THE ARITHMETIC, WHICH IS THE ACTUAL EVIDENCE
+---------------------------------------------
+Summing the nine modes from the matrix above, with the rounding applied:
+
+    planes  5+5+4+4+6+6+5+5+4                     = 44   == scrfix_planes_free
+    bytes   sum of roundup(w*h/8,4096) * depth    = 843776 == scrfix_bytes_free
+
+and without the rounding it would have been **788 480**.  So the measured total can only be
+produced by the rounding actually running, and by allocbmap and freebmap rounding to the same
+value -- if the two had drifted apart the difference would not be a clean 40960.
+
+    bytes_alloc - bytes_free  = 40960 = exactly the one console plane, never freed
+    planes_alloc - planes_free = 1    = the same plane
+
+That is the invariant this unit exists for: a silent divergence between the two roundings
+frees a different number of bytes than were allocated and corrupts the chip map, and nothing
+else in the system would say so.
+
+WHY PREDICTION 3 WAS NOT READABLE, AND THE INSTRUMENT LESSON
+-------------------------------------------------------------
+`scrfix_last_raw` and `scrfix_last_size` latch the LAST call.  pokeall's last mode is
+640x512x4, whose 40960-byte plane is already a 4 KiB multiple, so the latch shows 40960 ->
+40960 and cannot demonstrate the rounding at all.  **A "last value" latch cannot show a
+transformation that the last sample does not undergo.**  The totals answered it instead,
+which is why the accumulating counters were worth having next to the latches.
+
+WHAT THIS RUN DOES NOT DECIDE
+------------------------------
+It does not show a user-visible correct picture.  It shows that the plane is aligned and
+page-rounded and that the accounting closes; whether Deluxe Paint now draws where it means to
+is a hardware question with a display attached.
+
+COST, AND THE COUNTER THAT WATCHES IT
+--------------------------------------
+Rounding costs at most 4095 bytes per plane: 320x256x6 now needs 73 728 chip bytes instead of
+61 440.  Chip RAM is 2 MiB.  A client holding several screens at once could reach exhaustion
+sooner than before, and `scrfix_allocfail_n` is the counter that would say so rather than the
+failure appearing as an unexplained refused ioctl.
