@@ -1,0 +1,298 @@
+NetBSD/m68k FPE (floating-point emulation) — copyright notices
+==============================================================
+
+Like the two Motorola packages beside this file, the FPE is **extracted at build time**: the 25
+files of `usr/src/sys/arch/m68k/fpe/` come out of the pinned NetBSD 10.1 `syssrc.tgz`
+(sha256 `76a600e703d2e964753323e264d3ec07d0c6cbe134648fc8f0f13ed9faaa1be4`) into
+`build/fpe-src/`, which is not tracked. The pin is `tools/netbsd-pin.sh`: that file holds the
+sha256 and the gate that checks it, it is in this repository, and every script here that
+extracts vendor source out of the tarball refuses a file that is not it. No file of theirs is in
+this repository or in its history. Nothing in them is edited — not the code, not the licence
+headers, not the `$NetBSD$` RCS ids.
+
+Rounds ≤12 of this lane extracted the same 25 files from NetBSD 9.4 `syssrc.tgz`
+(sha256 `5e1f101748d8ff04a37aba845133e0f5804d1ca9b995c99f05cc39874ab3120b`); the pin moved to
+10.1 on 2026-08-28, and the two releases were measured against each other rather than assumed
+equivalent (`docs/contracts/FPE-R10-VEC60.md` §13). **No licence text moved with it**: every
+notice reproduced below was re-checked line for line against the 10.1 extraction, and the
+per-file map below with it.
+
+**Four machine-ABI headers come out of the same tarball** (2026-08-26), under
+`build/fpe-src/include/`, on the same terms:
+
+| Extracted as | From |
+|---|---|
+| `build/fpe-src/include/m68k/cpuframe.h` | `usr/src/sys/arch/m68k/include/cpuframe.h` |
+| `build/fpe-src/include/m68k/fpreg.h` | `usr/src/sys/arch/m68k/include/fpreg.h` |
+| `build/fpe-src/include/m68k/ieee.h` | `usr/src/sys/arch/m68k/include/ieee.h` |
+| `build/fpe-src/include/sys/ieee754.h` | `usr/src/sys/sys/ieee754.h` |
+
+They are what the emulator's own `#include`s reach for and AMIX has no equivalent of: the trap
+and FP frame layouts, the FPCR/FPSR bit names, and the IEEE field widths. Everything else the
+package includes is AMIX's own header, which is not a preference but a fact of the toolchain —
+the cross-gcc wrapper prepends the sysroot include path ahead of every command-line `-I`, so a
+shim cannot shadow an AMIX header even if one wanted it to. `src/extract_fpe.sh` diffs all
+twenty-nine files against a fresh extraction on every build, and refuses any file under
+`build/fpe-src/` that did not come out of the tarball.
+
+The first-party compatibility headers this port had to write — for the types AMIX spells
+differently, and for the two places NetBSD's headers collide with AMIX's — live in
+`src/fpe-compat/` and are **not** in the extracted space. None of them is a copy of a NetBSD
+header.
+
+This file is here even though the code it describes never is. The obligations below attach to
+what a build of this repository **produces**: a kernel with the soft-FPU lane linked in carries
+all five families, so the licence surface is real whether or not the sources were ever checked
+in — and one of the five has a condition that binds anyone who then advertises the result.
+
+FIVE LICENCE FAMILIES, and they are not interchangeable
+-------------------------------------------------------
+The directory is not "BSD-licensed" as one thing. It is five notices with materially different
+conditions, and one of them still has a live advertising clause. Per-file map, read off the
+headers of the files as extracted:
+
+| Family | Clauses | Files |
+|---|---|---|
+| A. UC Regents / LBL | 3 numbered + an unnumbered acknowledgement paragraph | `fpu_add.c`, `fpu_arith.h`, `fpu_div.c`, `fpu_explode.c`, `fpu_implode.c`, `fpu_mul.c`, `fpu_sqrt.c`, `fpu_subr.c`, `include/m68k/ieee.h`, `include/sys/ieee754.h` |
+| B. Ken Nakata, 3-clause | 3 | `fpu_arith_proto.h`, `fpu_exp.c`, `fpu_fmovecr.c`, `fpu_getexp.c`, `fpu_log.c`, `fpu_rem.c`, and the first notice of `fpu_hyperb.c` and `fpu_trig.c` |
+| B'. Ken Nakata, 2-clause | 2 | `fpu_fstore.c`, `fpu_int.c` |
+| C. Tetsuya Isaki, 2-clause | 2 | `fpu_cordic.c`, and the second notice of `fpu_hyperb.c` and `fpu_trig.c` |
+| D. Gordon W. Ross, 4-clause **with a live advertising clause** | 4 | `fpu_calcea.c`, `fpu_emulate.c`, `fpu_emulate.h`, `fpu_fscale.c`, `include/m68k/fpreg.h` |
+| E. University of Utah / UC Regents | 3, no advertising clause | `include/m68k/cpuframe.h` |
+
+`README` and `files.fpe` carry a `$NetBSD$` RCS id and no copyright notice of their own.
+
+The two IEEE headers' notices are byte-identical to family A's as reproduced below, differing
+only in the trailing `@(#)` line — the same relation the other seven family-A files have to it.
+`include/m68k/fpreg.h`'s notice is byte-identical to `fpu_emulate.h`'s, which is family D: it
+carries Gordon Ross's live advertising clause, so **the FP register bit names are under it too**
+and no build of this emulation avoids that condition by any route.
+
+Family E is new with the 2026-08-26 header import and is the only notice here that is not a
+variant of one already present. It adds **the University of Utah** as a copyright holder and is
+a plain three-clause BSD: no advertising acknowledgement at all, and a "neither the name of the
+University nor the names of its contributors" no-endorsement clause. It is reproduced in full
+below like the rest.
+
+Two of these deserve to be called out rather than filed:
+
+* **Family D's clause 4 is not rescinded and is not dead text.** It reads *"All advertising
+  materials mentioning features or use of this software must display the following
+  acknowledgement: This product includes software developed by Gordon Ross"*. It is a genuine
+  BSD-4-clause condition on four files, and one of the four — `fpu_emulate.c` — is the
+  emulator's top-level dispatcher, so no build of this emulation can avoid it.
+  `fpu_fscale.c` is the case to notice specifically: its copyright line names **Ken Nakata**,
+  not Ross, and it still carries the Ross acknowledgement as clause 4. Classifying that file by
+  its copyright holder would put it in family B and lose the obligation.
+* **Family A's advertising acknowledgement sits outside the numbered conditions.** The numbered
+  conditions in these ten files are three, the third being the no-endorsement clause; the LBL
+  acknowledgement appears above them as an unnumbered paragraph. The University of California
+  rescinded the advertising clause for its BSD-copyright files on 22 July 1999
+  (the "License Change" letter, Office of Technology Licensing, UC Berkeley). Whether that
+  rescission reaches the LBL wording as it survives here is stated as a reference and not as a
+  conclusion; the notice is reproduced below either way, which is what the remaining conditions
+  require.
+
+No file in `build/fpe-src/` is a modified version. If one ever becomes one, say so in its own
+header and add it to a list here, the way `src/fpsp_glue040.s` does for Motorola's package.
+
+------------------------------------------------------------------------------------------------
+FAMILY A — The Regents of the University of California / Lawrence Berkeley Laboratory
+(verbatim from `build/fpe-src/fpu_add.c`; the other seven differ only in the trailing `@(#)`)
+------------------------------------------------------------------------------------------------
+Copyright (c) 1992, 1993
+	The Regents of the University of California.  All rights reserved.
+
+This software was developed by the Computer Systems Engineering group
+at Lawrence Berkeley Laboratory under DARPA contract BG 91-66 and
+contributed to Berkeley.
+
+All advertising materials mentioning features or use of this software
+must display the following acknowledgement:
+	This product includes software developed by the University of
+	California, Lawrence Berkeley Laboratory.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. Neither the name of the University nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+------------------------------------------------------------------------------------------------
+FAMILY B — Ken Nakata, three-clause
+(verbatim from `build/fpe-src/fpu_exp.c`)
+------------------------------------------------------------------------------------------------
+Copyright (c) 1995  Ken Nakata
+	All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. Neither the name of the author nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+------------------------------------------------------------------------------------------------
+FAMILY B' — Ken Nakata, two-clause
+(verbatim from `build/fpe-src/fpu_fstore.c`; `fpu_int.c` is identical)
+------------------------------------------------------------------------------------------------
+Copyright (c) 1995 Ken Nakata
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------------------------------
+FAMILY C — Tetsuya Isaki, two-clause
+(verbatim from `build/fpe-src/fpu_cordic.c`; the notices embedded in `fpu_hyperb.c` and
+`fpu_trig.c` are the same text dated 2011)
+------------------------------------------------------------------------------------------------
+Copyright (c) 2013 Tetsuya Isaki. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+------------------------------------------------------------------------------------------------
+FAMILY D — Gordon W. Ross, four-clause, ADVERTISING CLAUSE LIVE
+(verbatim from `build/fpe-src/fpu_calcea.c`.  `fpu_emulate.c` reads "some portion Copyright
+(c) 1995 Ken Nakata"; `fpu_emulate.h` carries "Copyright (c) 1995 Gordon Ross" and
+"Copyright (c) 1995 Ken Nakata" as two lines; `fpu_fscale.c` carries only "Copyright (c) 1995
+Ken Nakata" above the same four conditions.  The four conditions are identical in all four
+files.)
+------------------------------------------------------------------------------------------------
+Copyright (c) 1995 Gordon W. Ross
+portion Copyright (c) 1995 Ken Nakata
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. The name of the author may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+4. All advertising materials mentioning features or use of this software
+   must display the following acknowledgement:
+     This product includes software developed by Gordon Ross
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+------------------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------------------------
+FAMILY E — University of Utah / The Regents of the University of California, three-clause
+(verbatim from `build/fpe-src/include/m68k/cpuframe.h`, the only file under it)
+------------------------------------------------------------------------------------------------
+Copyright (c) 1988 University of Utah.
+Copyright (c) 1982, 1990, 1993
+	The Regents of the University of California.  All rights reserved.
+
+This code is derived from software contributed to Berkeley by
+the Systems Programming Group of the University of Utah Computer
+Science Department.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. Neither the name of the University nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+------------------------------------------------------------------------------------------------

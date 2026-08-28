@@ -148,8 +148,21 @@ set up, so it is worth reading this list before starting.
 | **AMIX cross compiler** | `m68k-cbm-sysv4-gcc` and `m68k-cbm-sysv4-ld`; build this first | [gcc-cross-amix](https://github.com/isoriano1968/gcc-cross-amix) |
 | **GNU m68k tools** | for symbol surgery and the ELF checks | on Debian `apt install binutils-m68k-linux-gnu gcc-m68k-linux-gnu` |
 | **Your AMIX 2.1c full installation** | mounted or unpacked somewhere readable — the build needs the vanilla kernel file `stand/unix` from it | your own disk or disk image |
-| **A NetBSD source tarball** | Motorola's floating-point packages are taken out of it at build time; they are not shipped here | any recent `syssrc.tgz` |
+| **A NetBSD source tarball** | Motorola's floating-point packages and the FPE are taken out of it at build time; they are not shipped here | **NetBSD 10.1 `syssrc.tgz`, exactly** — see below |
 | Python 3, `patch`, coreutils | | your distribution |
+
+The NetBSD tarball is **pinned to one release**, and that is a real constraint rather than a
+suggestion. Because the FPSP, the 060SP and the emulator are extracted during the build instead of
+being vendored, the tarball is a build input like any file in `src/`, and it has to be reproducible
+byte for byte or the kernel is not the one this port measured. `src/extract_fpe.sh` checks the
+tarball's hash before unpacking and stops if it does not match:
+
+```
+https://cdn.netbsd.org/pub/NetBSD/NetBSD-10.1/source/sets/syssrc.tgz
+79497697 bytes
+sha256  76a600e703d2e964753323e264d3ec07d0c6cbe134648fc8f0f13ed9faaa1be4
+sha512  766ac21f33cfe0e701dfedb894fa07f36d811da1a12e979181e8fca7af4e627852680ce42a7b29e97dd3e2e402ddf9ae7bfba60c8d7dc6b8a3354d8ce8c06926
+```
 
 Two things that trip people up when building the cross compiler: set `AMIX_ROOT` explicitly
 because its own default is unhelpful, and skip the AMIX `usr/lib` directory, which is usually

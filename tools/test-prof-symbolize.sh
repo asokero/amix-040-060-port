@@ -948,10 +948,45 @@ echo "-- the real artifact, when this machine has one --------------------------
 # build/unix-040 is gitignored, so a fresh clone has nothing to point at.  This is a SKIP
 # and not a pass: it is the only case that exercises the ELF parser against a genuine
 # ET_REL kernel of the size and symbol-table shape the tool exists for.
+#
+# THE .text EXTENT IS DERIVED FROM THE ARTIFACT, NEVER PINNED TO A LITERAL.  It was pinned
+# once, and the pin rotted in two days: `080F5190` was calibrated against the build/unix-040
+# of 2026-08-22 (that image is preserved as build/REF-unix-040-f1-baseline, .text 0x0F5190,
+# and prof-symbolize still reports exactly 08000000..080F5190 for it).  build/unix-040 is
+# gitignored and rebuilt from whatever the tree currently says; 30 commits touched src/ over
+# the following six days, and by 2026-08-28 .text read 0x0F5584.  The tool was right about
+# both images.  Only the expectation was a photograph of one of them, and no wording of the
+# comment above a literal would have changed that -- the next kernel commit falsifies it
+# again.  So the expectation is computed here, from the same artifact, by a reader that is
+# NOT the tool under test:
+#
+#     expected text_hi = load base + size of the .text section header
+#
+# which is precisely the ET_REL arithmetic prof-symbolize claims to do, so an independent
+# reader disagreeing is a real finding.  0x08000000 is prof-symbolize's default --load-base
+# and the run below passes no --load-base, so the check pins that default too.  It compares
+# the range as a STRING rather than counting grep hits: a mismatch then prints both extents
+# and is diagnosable on sight, which "expected 1, got 0" was not.
 if [ -f "$HERE/build/unix-040" ]; then
 	run capture-valid.txt --kernel "$HERE/build/unix-040"
 	check "a real kernel image symbolizes"          "0" "$st"
-	has   "  ...with its true .text extent"         "1" "\.text runtime range 08000000\.\.080F5190"
+	# check-env.sh already requires the cross binutils to build a kernel at all, so a tree
+	# holding build/unix-040 has m68k-linux-gnu-readelf; host readelf reads this file just
+	# as well.  Neither present is a SKIP and not a pass, as above.
+	tsz=
+	RE=$(command -v m68k-linux-gnu-readelf 2>/dev/null || command -v readelf 2>/dev/null)
+	# Drop readelf's "[ N]" index column before awk sees it: the space inside the brackets
+	# disappears at index >= 10 and every field after it would shift by one.
+	[ -n "$RE" ] && tsz=$("$RE" -S -W "$HERE/build/unix-040" 2>/dev/null |
+	                      sed 's/^ *\[[ 0-9]*\] //' | awk '$1 == ".text" { print $5; exit }')
+	if [ -n "$tsz" ]; then
+		check "  ...with its true .text extent" \
+		      "$(printf '08000000..%08X' $((0x08000000 + 0x$tsz)))" \
+		      "$(sed -n 's/^ *\.text runtime range \([0-9A-F.]*\).*/\1/p' "$TMP/o")"
+	else
+		printf '  SKIP  %s\n' \
+		       "no readelf, or no .text section header -- the extent cross-check did NOT run"
+	fi
 	has   "  ...and assembler labels filtered out"  "1" "assembler-local label(s) filtered out"
 	has   "  ...so a function name wins, not a marker" "0" "gcc_compiled%"
 	run capture-valid.txt --kernel "$HERE/build/unix-040" --all-symbols

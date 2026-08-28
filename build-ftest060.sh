@@ -25,12 +25,19 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+# The pinned tarball's sha256, and the gate that checks it, are tools/netbsd-pin.sh -- one
+# expected value shared with build-fpsp040.sh, build-fpsp060.sh and src/extract_fpe.sh.
+. "$HERE/tools/netbsd-pin.sh"
 TGZ="${1:-$NETBSD_SYSSRC}"
 WORK="$HERE/build/ftest060-work"
 SUB="usr/src/sys/arch/m68k/060sp"
 
-[ -f "$TGZ" ] || { echo "ERROR: netbsd source tarball missing: $TGZ"; exit 1; }
 command -v m68k-linux-gnu-gcc >/dev/null || { echo "ERROR: m68k-linux-gnu-gcc not on PATH"; exit 1; }
+
+# This is the yardstick the kernel package is judged against, so it has to come off the same
+# pinned tarball the package does -- a test suite from another release grades a different thing.
+echo "[*] checking $(basename "$TGZ") against the pin"
+netbsd_syssrc_verify "$TGZ"
 
 echo "[*] extracting $SUB/dist/ftest.sa"
 rm -rf "$WORK"; mkdir -p "$WORK"

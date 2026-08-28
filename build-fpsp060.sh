@@ -32,12 +32,19 @@
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
+# The pinned tarball's sha256, and the gate that checks it, are tools/netbsd-pin.sh -- one
+# expected value shared with build-fpsp040.sh, build-ftest060.sh and src/extract_fpe.sh.
+. "$HERE/tools/netbsd-pin.sh"
 TGZ="${1:-$NETBSD_SYSSRC}"
 WORK="$HERE/build/fpsp060-work"
 SUB="usr/src/sys/arch/m68k/060sp"
 
-[ -f "$TGZ" ] || { echo "ERROR: netbsd source tarball missing: $TGZ"; exit 1; }
 command -v m68k-linux-gnu-gcc >/dev/null || { echo "ERROR: m68k-linux-gnu-gcc not on PATH"; exit 1; }
+
+# The image IS this tarball's bytes, and the entry-point offsets asserted below are only
+# meaningful for the package this port measured.  Which tarball it is has to be checked.
+echo "[*] checking $(basename "$TGZ") against the pin"
+netbsd_syssrc_verify "$TGZ"
 
 echo "[*] extracting $SUB from $(basename "$TGZ")"
 rm -rf "$WORK"; mkdir -p "$WORK"
