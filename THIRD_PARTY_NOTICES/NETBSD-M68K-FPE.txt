@@ -2,11 +2,20 @@ NetBSD/m68k FPE (floating-point emulation) — copyright notices
 ==============================================================
 
 Like the two Motorola packages beside this file, the FPE is **extracted at build time**: the 25
-files of `usr/src/sys/arch/m68k/fpe/` come out of the pinned NetBSD 9.4 `syssrc.tgz`
-(sha256 `5e1f101748d8ff04a37aba845133e0f5804d1ca9b995c99f05cc39874ab3120b`, `config.sh:26-30`)
-into `build/fpe-src/`, which is not tracked. No file of theirs is in this repository or in its
-history. Nothing in them is edited — not the code, not the licence headers, not the `$NetBSD$`
-RCS ids.
+files of `usr/src/sys/arch/m68k/fpe/` come out of the pinned NetBSD 10.1 `syssrc.tgz`
+(sha256 `76a600e703d2e964753323e264d3ec07d0c6cbe134648fc8f0f13ed9faaa1be4`) into
+`build/fpe-src/`, which is not tracked. The pin is `tools/netbsd-pin.sh`: that file holds the
+sha256 and the gate that checks it, it is in this repository, and every script here that
+extracts vendor source out of the tarball refuses a file that is not it. No file of theirs is in
+this repository or in its history. Nothing in them is edited — not the code, not the licence
+headers, not the `$NetBSD$` RCS ids.
+
+Rounds ≤12 of this lane extracted the same 25 files from NetBSD 9.4 `syssrc.tgz`
+(sha256 `5e1f101748d8ff04a37aba845133e0f5804d1ca9b995c99f05cc39874ab3120b`); the pin moved to
+10.1 on 2026-08-28, and the two releases were measured against each other rather than assumed
+equivalent (`docs/contracts/FPE-R10-VEC60.md` §13). **No licence text moved with it**: every
+notice reproduced below was re-checked line for line against the 10.1 extraction, and the
+per-file map below with it.
 
 **Four machine-ABI headers come out of the same tarball** (2026-08-26), under
 `build/fpe-src/include/`, on the same terms:
