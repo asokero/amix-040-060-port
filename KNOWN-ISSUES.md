@@ -7094,3 +7094,43 @@ without looking.
 
 The upstream PR merging, this project updating its clone to that commit, and one rebuild
 confirming the artifact is unchanged. Until then `BUILDING.md` carries the warning.
+
+## ✅ ISSUE-56 (2026-08-29, FIXED same day): `relink-040-dbg.sh` could not build at all — two symbols the base image had started defining
+
+> **Ledger: FIXED.** `relink-040-dbg.sh` now builds; `68040-260829-06`, `check_relink_relocs.py`
+> reports `TOTAL complaints: 0`. Not hardware-run, because the fix removes two duplicate symbol
+> definitions and changes no code.
+
+The debug overlay had been unbuildable. Every run ended:
+
+```
+build/unix-040-dbg-stage1: In function `setregs_orig':
+build/unix-040-dbg-stage1(.text+0x58b62): multiple definition of `setregs_orig'
+build/unix-040-dbg-stage1(.text+0xae108): multiple definition of `as_fault_orig'
+```
+
+`relink-040-dbg.sh` added `setregs_orig=.text:0x58b62` and `as_fault_orig=.text:0xae108` with
+`--add-symbol`, and the base image had begun defining both — at exactly those addresses —
+in `a2aef0a` (the ISSUE-52 USP-handoff instrumentation). Nobody updated the overlay.
+
+The script already knew this failure mode and had a comment about it for a different symbol:
+*"hardbus_orig is INHERITED from the base image (no `--add-symbol` here — a second copy would
+duplicate the symbol)."* The same thing happened twice more and the comment did not generalise
+into a check.
+
+**Fix:** drop the two `--add-symbol` clauses, keeping their `--weaken-symbol` partners. The
+addresses were identical, so nothing is lost — the overlay now inherits both the way it already
+inherited `hardbus_orig`.
+
+### How long it had been broken, and why nothing said so
+
+Unknown, and that is the finding worth keeping. `relink-040-dbg.sh` is not run by any gate:
+`tools/check-env.sh` does not build anything, and `src/check_relink_relocs.py` is invoked by
+`relink-040.sh` only. The base kernel builds clean, so every green run this session was green
+while the debug lane was dead. It surfaced only because a session needed a `-dbg` image to boot
+and found it could not make one.
+
+**A related gap, left open deliberately:** `relink-040-dbg.sh` still never runs
+`check_relink_relocs.py`. Adding it would not have caught this — a duplicate symbol is a link
+error, not a relocation defect — so it is recorded here rather than fixed as if it were the
+remedy.
