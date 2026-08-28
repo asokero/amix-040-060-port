@@ -145,3 +145,22 @@ this import and worth reporting.
 | `SEGMAP-WRITEBACK-CONTRACT.md` | `PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md` |
 | `SPEC-PUTPAGE-WRITEBACK-CONTRACT.md` | `PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md` |
 | `VOP-PUTPAGE-WRITEBACK-CONTRACT.md` | `PUTPAGE-WRITEBACK-CONVERSION-MATRIX.md` |
+
+## Contracts written in this repository
+
+The count above is about the **import** from the analysis repository and does not change. These
+were written here, are not in that repository, and have no `vm-map/...` origin line:
+
+| document | subject | status |
+|---|---|---|
+| [A3091-PHASE-MISMATCH-DFA-CONTRACT.md](A3091-PHASE-MISMATCH-DFA-CONTRACT.md) | ISSUE-54: an unrecognised WD status must not be permanent death | measurement done, **fix blocked on four stated unknowns** |
+| [FPE-INTEGRATION-CONTRACT.md](FPE-INTEGRATION-CONTRACT.md) | NetBSD m68k FP emulator: what the lane owes the kernel | implemented, `relink-040-fpe.sh` |
+| [FPE-GLUE-DESIGN.md](FPE-GLUE-DESIGN.md) | the `src/fpe040.s` trap glue | implemented |
+| [FPE-R4-DELTA.md](FPE-R4-DELTA.md) | what differs between NetBSD releases in the extracted set | measured |
+| [FPE-R7-METAL.md](FPE-R7-METAL.md) | bare-metal assumptions the emulator makes | measured |
+| [FPE-R9-ADVMISS.md](FPE-R9-ADVMISS.md) | advance/miss accounting | measured |
+| [FPE-R10-VEC60.md](FPE-R10-VEC60.md) | vector 60 and the counter-block address incident in §10.4 | measured |
+| [FPE-R16-REDACTION.md](FPE-R16-REDACTION.md) | redaction method for vendor-derived prose | applied |
+
+The FPE documents arrived with the `fpe` branch and are a collaborator's work; the A3091 one is
+this line's.
