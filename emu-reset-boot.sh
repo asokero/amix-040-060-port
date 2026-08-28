@@ -12,7 +12,7 @@
 #      pause after 10 s (pass -w in the startup-sequence for the old
 #      wait-forever behaviour on real-HW photo sessions)
 #
-# usage: sh emu-reset-boot.sh [040|060|a3640] [serial-logfile] [kernel-image]
+# usage: sh emu-reset-boot.sh [040|060|lc060|040unimp|a3640] [serial-logfile] [kernel-image]
 #
 # THE THIRD ARGUMENT (2026-07-31).  The guest's startup-sequence loads DH2:
 # unix-040-dbg, i.e. build/unix-040-dbg by name, so every test used to be staged
@@ -76,6 +76,25 @@ AMIBERRY=$AMIBERRY_BIN
 case "$CPU" in
   040) CONF=$AMIBERRY_CONF/a3000ux.uae ;;
   060) CONF=$AMIBERRY_CONF/a3000ux060.uae ;;
+  # lc060 (2026-08-28): a 68060 with NO FPU -- cpu_model=68060, fpu_model=0.  The FPU is a
+  # separate UAE setting from the CPU, so the 68LC060 the collaborating line runs in silicon is
+  # a config option here.  That matters twice over: it is the only bed on this side that can
+  # exercise an FPU-ABSENT path at all, and this project has three counter families
+  # (fpc_*_nofpu_n and the soft-FPU lane's engage arm) that have only ever been measured
+  # DORMANT because fpu_present reads 1 on every machine here.  A dormant counter is not a
+  # passing one.
+  # Both new configs are made from the stock ones with a single sed, the way every config in
+  # $AMIBERRY_CONF is the reader's own rather than the repository's:
+  #     sed 's/^fpu_model=68060/fpu_model=0/'            a3000ux060.uae > a3000ux060lc.uae
+  #     sed 's/^fpu_no_unimplemented=true/...=false/'     a3000ux.uae    > a3000ux-unimp.uae
+  lc060) CONF=$AMIBERRY_CONF/a3000ux060lc.uae ;;
+  # 040unimp (2026-08-28): a 68040 WITH an FPU that actually traps unimplemented FP
+  # instructions -- fpu_no_unimplemented=false.  The stock 040 and 060 configs both set it
+  # TRUE, i.e. the emulated FPU implements everything and vector 11 never fires, which is the
+  # concrete form of the AGENTS warning that this emulator "is not proof for which instructions
+  # the CPU traps as unimplemented".  Every FPSP unimplemented-path counter this project has
+  # ever read as zero in the emulator was read on a bed configured never to reach it.
+  040unimp) CONF=$AMIBERRY_CONF/a3000ux-unimp.uae ;;
   # a3640 (2026-07-31): an 040 CPU card with NO RAM of its own.  Same machine as
   # 040 except mbresmem_size=0, so there is no fast RAM at 0x08000000 and the
   # kernel must load into A3000 motherboard fast RAM at 0x07000000 instead.  The
@@ -84,7 +103,7 @@ case "$CPU" in
   # FSLW MA bit mask and a diagnostic print gate), so this config exists to test
   # that claim rather than to fix anything.
   a3640) CONF=$AMIBERRY_CONF/a3000ux-a3640.uae ;;
-  *) echo "usage: $0 [040|060|a3640] [serial-logfile]"; exit 1 ;;
+  *) echo "usage: $0 [040|060|lc060|040unimp|a3640] [serial-logfile]"; exit 1 ;;
 esac
 
 [ -f "$GOLDEN" ] || { echo "ERROR: golden image missing: $GOLDEN"; exit 1; }
