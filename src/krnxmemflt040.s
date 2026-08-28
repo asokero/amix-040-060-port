@@ -346,6 +346,15 @@ Lkx_dec4:
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.data
 	.even
+| --- magic first, as everywhere in this port ------------------------------------------------
+| Lkx_* is split across two .data directives and the counters are not contiguous (Lkx_proc_depth
+| is an 800-byte table between them), so the addresses have to be read individually and there is
+| no natural "does this look right" check on any single one.  The magic is that check.  It is
+| deliberately at the lowest address of the two sections so it is the block's base.
+| Local, not .globl, to match the rest of the block -- nm reports it as `d` and
+| tools/status-facts.sh accepts local data symbols.
+Lkx_magic:
+	.long	0x4C4B5821		| "LKX!" -- STATIC: proves the address, never written
 Lkx_fmsg:
 	.asciz	"DBG krnxflt FAILEXIT w=%d va=%x rw=%d depth=%d"
 	.even

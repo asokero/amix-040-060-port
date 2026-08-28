@@ -187,6 +187,21 @@ Lds_out:
 
 	.data
 	.balign 4
+| --- magic first, as everywhere in this port ------------------------------------------------
+| This block went without one until 2026-08-29, and it cost a hardware session.  Reading it at
+| `nm value + 0x08000000` instead of `0x08000000 + textsize + nm value` lands in the middle of
+| .text, and .text does not fail to be read: it returned 207c00bf and 4e5e4e75 -- two perfectly
+| plausible counter values that are actually instruction words.  Nothing caught it because there
+| was no magic to check.
+|
+| It is NOT the last block without one -- that was measured after the fact and the belief was
+| wrong.  Eighteen prefixes in this port's own sources have three or more .data symbols and no
+| magic (x60, wb, segvn, srt, page, hat, dbg, codepub, cb, us, fpsp and the local-label groups).
+| Not all of those are counter blocks -- several are format strings and jump tables that nobody
+| reads as numbers -- but nobody has been through them to say which.
+	.globl	dma_magic
+dma_magic:
+	.long	0x444D4121		| "DMA!" -- STATIC: proves the address, never written
 | --- single-segment ownership record (dma_on serializes: max one armed) ---
 	.globl	dma_seg_pa
 dma_seg_pa:
