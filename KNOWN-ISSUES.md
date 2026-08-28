@@ -6884,6 +6884,23 @@ target 3 is exactly what was being read.
 (`SBIC_CSR_MIS_1 = 0x48`, low bits carry the phase). A phase mismatch is an ordinary SCSI
 condition; NetBSD's `sbic.c` handles it as routine.
 
+> **Decoded fully 2026-08-29** — see
+> [`docs/contracts/A3091-PHASE-MISMATCH-DFA-CONTRACT.md`](docs/contracts/A3091-PHASE-MISMATCH-DFA-CONTRACT.md).
+> The phase is **`DATA_IN`** (`DATA_IN_PHASE = 1` in `sbicvar.h`), which the capture's
+> `segdir=1` agrees with independently. And the defect has a precise shape: `a3091.c` handles
+> `MIS_1 | STATUS_PHASE` (`0x4B`, action 9) and `MIS_1 | MESG_IN_PHASE` (`0x4F`, action 8), and
+> is fatal for `0x48` `DATA_OUT`, `0x49` `DATA_IN` and `0x4A` `CMD`. **It has handling for
+> exactly the mismatches that need none** — the ones where the command is already over — and
+> dies on the three that mean there is more transfer to do. Two of the three fatal cells have
+> never been observed and must be fixed in the same change.
+>
+> NetBSD treats `MIS_1|DATA_IN_PHASE` in the same case arm as a *successful* transfer and
+> continues the data phase, so no reset is needed: the target is still connected. And action 9
+> is not a reset either — it is NetBSD's *"have the sbic complete on its own"* sequence
+> register for register (`TC = 0`, `CMD_PHASE = 0x46`, `SEL_ATN_XFER`), which is why routing the
+> fatal phases there, rather than to the `0x42` abort, is the candidate fix. It reaches action 0
+> and a genuine status byte; the abort path writes no status at all.
+
 a3091.c does not. `itab[0x49]` is **1**, "status is illegal or unsupported", and
 `atab[STARTING][1]` is **1** — `badhardware()`, `DEAD`, no way back:
 
