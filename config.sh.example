@@ -47,7 +47,10 @@ AMIX_ROOT="$AMIX_BUILD/amix-2.1c"
 #
 #    PIN THIS EXACTLY.  It is not "any recent release": the extraction is part of the build, so
 #    the tarball is a build input like any source file, and two releases do not produce the same
-#    kernel.  src/extract_fpe.sh refuses to extract from anything else.
+#    kernel.  All four scripts that extract from it -- build-fpsp040.sh, build-fpsp060.sh,
+#    build-ftest060.sh and src/extract_fpe.sh -- refuse anything else.  The sha256 they check
+#    against lives in tools/netbsd-pin.sh, which is where the pin moves when it moves; the copy
+#    below is documentation, so that this file can say which release to fetch.
 #
 #    NetBSD 10.1 syssrc.tgz, 79497697 bytes,
 #    from https://cdn.netbsd.org/pub/NetBSD/NetBSD-10.1/source/sets/syssrc.tgz

@@ -40,11 +40,10 @@
 set -e
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 . "$HERE/tools/config-load.sh"
-
-# The pinned tarball -- NetBSD 10.1 syssrc.tgz -- as config.sh records it.  Repeated here
-# because config.sh is local-only and this check must not depend on a file the repository does
-# not carry.  Rounds <=12 of this lane pinned NetBSD 9.4 instead, sha256 5e1f1017...3120b.
-WANT=76a600e703d2e964753323e264d3ec07d0c6cbe134648fc8f0f13ed9faaa1be4
+# The pinned tarball's sha256, and the gate that checks it, are tools/netbsd-pin.sh -- shared
+# with the three other scripts that extract vendor source from the same tarball, so that the
+# expected value exists once and cannot drift between them.
+. "$HERE/tools/netbsd-pin.sh"
 
 DEST="$HERE/build/fpe-src"
 TMP="$HERE/build/fpe-extract-check"
@@ -52,15 +51,7 @@ SUB=usr/src/sys/arch/m68k/fpe
 MD=usr/src/sys/arch/m68k/include
 MI=usr/src/sys
 
-[ -f "$NETBSD_SYSSRC" ] || { echo "[FAIL] NETBSD_SYSSRC not found: $NETBSD_SYSSRC"; exit 1; }
-GOT=$(sha256sum "$NETBSD_SYSSRC" | cut -d' ' -f1)
-[ "$GOT" = "$WANT" ] || {
-	echo "[FAIL] $NETBSD_SYSSRC sha256 $GOT, expected $WANT"
-	echo "       A different tarball is a different emulator; everything this lane measured"
-	echo "       was measured on the pinned one."
-	exit 1
-}
-echo "      tarball sha256 $WANT"
+netbsd_syssrc_verify "$NETBSD_SYSSRC"
 
 # unpack <root> -- lay the four extraction roots out the way the -I lines want them.
 unpack() {
