@@ -58,10 +58,27 @@ uncommitted working-tree change in one clone plus the installed copy beside it �
 
 They are committed now and offered upstream
 (`isoriano1968/gcc-cross-amix`, from `asokero:fixes-2026-08-asokero`). Until that lands, a clone
-built from upstream will fail to assemble anything this port compiles at `-m68040`: gcc emits
-`FSxxx`/`FDxxx`, `fdmov`, `fmovm.l` and `mov &N,%dN`, and the assembler drops each one with
-*statement ignored* rather than stopping — so the failure is an object with instructions missing,
-not a build error.
+built from upstream cannot compile **any** C this port compiles at `-m68040`. Measured on a
+six-function probe, with each half of the repair present and absent:
+
+| wrapper | assembler errors | object produced |
+|---|---|---|
+| upstream, neither half | 23 | no |
+| spelling rules only | 11 | no |
+| `-march` only | 15 | no |
+| both | **0** | **yes** |
+
+Both halves are required and neither alone is enough. Note 8 → 11 in the third row: repairing
+the spellings *uncovers* architecture errors, because a corrected `fmovem.l` is itself a 68040
+opcode that an assembler pinned at `-m68020` then refuses. The two repairs are not independent.
+
+The failure is loud, not silent. `gas` words each one *statement ignored*, which reads like it
+carries on, but it exits 1 and writes no object — so this shows up as a build that stops, not as
+an object with instructions missing.
+
+`tools/check-env.sh` now runs that probe (`tools/cross-cc-verify.sh`) rather than only checking
+that a compiler exists. Presence was checked here for the whole life of the port; fitness never
+was, which is how ISSUE-55 survived as long as it did.
 
 ### Optional
 

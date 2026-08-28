@@ -7030,15 +7030,29 @@ have said what was lost.
 
 ### What they repair, and why nobody else hit them
 
-The SGS assembly gcc 2.7.2.3 emits is not what this GNU `as` accepts. Ten ordinary C functions —
-arithmetic, a `%`, a `switch`, a comparison, two float-to-int casts, a constant return — compiled
-at `-m68040` and fed straight to `as -m68040` lose **17 instructions**, each reported as
-*statement ignored*: `fmovm.l %d1,%fpcr` and relatives ×7, `fdmov.d` ×3, `mov &16,%d1` ×3,
-`fcmp.d` ×2.
+The SGS assembly gcc 2.7.2.3 emits is not what this GNU `as` accepts. Compiling a six-function
+probe at `-m68040` through the upstream wrapper, with each half of the repair present and absent:
 
-*Statement ignored* is the part that matters. The assembler does not stop. It drops the
-instruction and continues, so the failure mode is **an object with instructions missing**, not a
-build error.
+| wrapper | assembler errors | object produced |
+|---|---|---|
+| upstream, neither half | 23 | no |
+| spelling rules only | 11 | no |
+| `-march` only | 15 | no |
+| both | **0** | **yes** |
+
+**Both halves are required and neither alone is enough.** The 8 → 11 in the third row is the
+interesting number: repairing the spellings *uncovers* architecture errors, because a corrected
+`fmovem.l` is itself a 68040 opcode that an assembler pinned at `-m68020` then refuses. The two
+repairs are not independent, which is why the gate below tests the outcome rather than grepping
+for either rule.
+
+> **Correction, 2026-08-28.** This entry previously said the assembler "does not stop... so the
+> failure mode is an object with instructions missing, not a build error", and quoted 17 dropped
+> instructions from a ten-function sample. Both are wrong. `gas` words each rejection *statement
+> ignored*, which reads like it carries on, but it exits 1 and writes no object — the failure is
+> a build that stops. The earlier count came from running `as` directly rather than through the
+> wrapper, which skips the `-m68020` pinning and so cannot see the architecture half at all. The
+> table above replaces it: same tool, same path a build actually takes.
 
 **All four repairs target constructs gcc emits only at `-m68040`.** At `-m68020` every one has a
 count of zero. The stock wrapper hardcoded the assembler to `-m68020`, so 040 code could not be
@@ -7068,6 +7082,13 @@ the `.swbeg` filler — bytes between an unconditional `jmp` and the table that 
 68020 and 68030 code generation is untouched. The kernel also builds byte-identical, but that is
 the weaker result and worth saying: `relink-040.sh` assembles hand-written `.s` files and compiles
 no C, so it never emits a `.swbeg` at all.
+
+**The recurrence is gated now.** `tools/cross-cc-verify.sh` compiles the probe above and requires
+an object; `tools/check-env.sh` runs it beside the presence checks. Presence was checked here for
+the whole life of the port and fitness never was, which is exactly how this survived. The gate is
+a behaviour test rather than a checksum of the wrapper on purpose: a pinned hash fails on harmless
+reformatting and has to be re-pinned whenever upstream moves, which teaches people to re-pin
+without looking.
 
 ### What closes it
 

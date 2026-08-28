@@ -51,6 +51,23 @@ need_file "$GCC_CROSS_ENV" "cross env.sh" "the AMIX cross toolchain's environmen
 need_tool m68k-cbm-sysv4-gcc "build the AMIX cross toolchain -- see BUILDING.md"
 need_tool m68k-cbm-sysv4-ld  "same toolchain"
 
+# ...and having it is not the same as it being the right one.  ISSUE-55: the wrapper that built
+# every kernel and every hardware acceptance in this project existed only as an uncommitted
+# working-tree change, so building the toolchain the way BUILDING.md described produced a
+# compiler that cannot assemble what this port compiles at -m68040 -- and nothing noticed,
+# because presence was checked and fitness never was.  The gate is asked rather than
+# re-implemented, and its own headline is dropped: the WRONG line beside it already says that.
+. "$HERE/tools/cross-cc-verify.sh"
+if command -v m68k-cbm-sysv4-gcc >/dev/null 2>&1; then
+	if why=$(cross_cc_verify m68k-cbm-sysv4-gcc); then
+		say_ok "cross cc builds 040" "$(command -v m68k-cbm-sysv4-gcc)"
+	else
+		printf "  ${RED}WRONG${OFF}   %-22s %s\n" "cross cc builds 040" "$(command -v m68k-cbm-sysv4-gcc)"
+		printf '%s\n' "$why" | sed -e '1d' -e 's/^  /        /'
+		fail=$((fail+1))
+	fi
+fi
+
 # 2. GNU m68k binutils.
 for t in m68k-linux-gnu-nm m68k-linux-gnu-objcopy m68k-linux-gnu-objdump \
          m68k-linux-gnu-readelf m68k-linux-gnu-size m68k-linux-gnu-gcc; do
