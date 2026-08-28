@@ -15,12 +15,26 @@ distributed here. See `NOTICE` for how this was made and what it does and does n
 
 | What | Why | Where |
 |---|---|---|
-| **AMIX cross toolchain** (`m68k-cbm-sysv4-gcc`, `-ld`) | produces the SVR4 m68k objects the AMIX linker accepts | <https://github.com/isoriano1968/gcc-cross-amix> — build it, then use its `build/env.sh` |
+| **AMIX cross toolchain** (`m68k-cbm-sysv4-gcc`, `-ld`) | produces the SVR4 m68k objects the AMIX linker accepts | <https://github.com/isoriano1968/gcc-cross-amix> — build it, then use its `build/env.sh`. **See ISSUE-55 first**: this line was not sufficient until 2026-08-28 |
 | **GNU m68k binutils + gcc** (`m68k-linux-gnu-*`) | symbol surgery, relocation inspection, ELF checks, and assembling the GNU-syntax units | Debian/Ubuntu: `apt install binutils-m68k-linux-gnu gcc-m68k-linux-gnu` |
 | **Python 3** | the byte-patchers and the relocation validator | any |
 | **`patch`, `sha256sum`, standard coreutils** | | any |
 | **Your AMIX installation**, mounted or unpacked | the kernel this port patches | AMIX SVR4 2.1c; the file needed is `stand/unix` |
 | **NetBSD 10.1 source set** (`syssrc.tgz`) | Motorola's 68040/68060 support packages are extracted from it — they are not vendored here | **pinned**, see below |
+
+### The cross compiler needs repairs that were not in its repository until 2026-08-28
+
+Building `gcc-cross-amix` as the row above says produced, until that date, a **different
+compiler** from the one every kernel and every hardware acceptance in this project was made
+with. The difference was sixty-six lines of assembler-syntax repairs that lived only as an
+uncommitted working-tree change in one clone plus the installed copy beside it — see ISSUE-55.
+
+They are committed now and offered upstream
+(`isoriano1968/gcc-cross-amix`, from `asokero:fixes-2026-08-asokero`). Until that lands, a clone
+built from upstream will fail to assemble anything this port compiles at `-m68040`: gcc emits
+`FSxxx`/`FDxxx`, `fdmov`, `fmovm.l` and `mov &N,%dN`, and the assembler drops each one with
+*statement ignored* rather than stopping — so the failure is an object with instructions missing,
+not a build error.
 
 ### The NetBSD archive is pinned, and pinned to something you can verify without trusting us
 

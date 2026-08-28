@@ -7010,3 +7010,66 @@ The driver needs a default that is not death. The minimum honest change is to gi
 request and return to `IDLE`, as `atab[STARTING][0]` already does for an absent target — rather
 than shutting the controller down for the lifetime of the boot. That is a real DFA change and
 wants the same treatment ISSUE-53's got: a contract first, then a counter with a denominator.
+
+---
+
+## ⚠ ISSUE-55 (2026-08-28, OPEN upstream): the cross compiler this port ships with existed only as an uncommitted working-tree change
+
+> **Ledger: OPEN** until the upstream PR lands. Nothing in this repository is wrong any more —
+> `BUILDING.md` now says what is needed — but a clone still cannot reproduce the compiler until
+> `gcc-cross-amix` carries the repairs.
+
+`BUILDING.md` told a reader to build the toolchain from `isoriano1968/gcc-cross-amix`. Doing so
+produced a **different compiler** from the one every kernel in this project was built with, and
+therefore from the one behind every hardware acceptance recorded here.
+
+The difference was **sixty-six lines** of assembler-syntax repairs in `amix-gcc-wrapper.sh`,
+present only as an uncommitted working-tree change in one clone plus the installed copy under
+`~/opt`. One `git checkout` in that clone would have destroyed them, and nothing anywhere would
+have said what was lost.
+
+### What they repair, and why nobody else hit them
+
+The SGS assembly gcc 2.7.2.3 emits is not what this GNU `as` accepts. Ten ordinary C functions —
+arithmetic, a `%`, a `switch`, a comparison, two float-to-int casts, a constant return — compiled
+at `-m68040` and fed straight to `as -m68040` lose **17 instructions**, each reported as
+*statement ignored*: `fmovm.l %d1,%fpcr` and relatives ×7, `fdmov.d` ×3, `mov &16,%d1` ×3,
+`fcmp.d` ×2.
+
+*Statement ignored* is the part that matters. The assembler does not stop. It drops the
+instruction and continues, so the failure mode is **an object with instructions missing**, not a
+build error.
+
+**All four repairs target constructs gcc emits only at `-m68040`.** At `-m68020` every one has a
+count of zero. The stock wrapper hardcoded the assembler to `-m68020`, so 040 code could not be
+assembled at all and the four defects stayed invisible — which is why the collaborating line
+never met them either, despite compiling its own lane at `-m68040`: its twenty-two emulator
+objects contain **no FPU instruction at all**, a software float emulator being the last code that
+would emit `fsmul.s`. Letting the assembler follow `-march` is what exposes the other four; they
+are one change and its consequences rather than five independent repairs.
+
+Two further repairs of the same family were already upstream, and both are the quiet kind:
+`tdivs.l` assembles to the 64-bit-dividend `divsl` (`4c42 1c00`) where gcc means the 32-bit
+`divsll` (`4c42 1800`) — one bit of the extension word, and every `%` on 32-bit ints is wrong
+whenever the stale high-half register is non-zero — and `.swbeg &N` emits **zero** bytes where
+gcc laid the jump table out assuming four.
+
+### Status
+
+Committed in the clone and offered upstream: `isoriano1968/gcc-cross-amix`, from
+`asokero:fixes-2026-08-asokero`, rebased onto current `main` and reconciled so each defect has
+exactly one rule. Where both sides had one, **upstream's was kept** — its `tdivs` lookahead
+matches every size where ours matched only `.l`, its `.swbeg` preserves the case count where ours
+wrote zero, and its `cmp.[bwl]` is more correct than our `f?cmp.[bwlsdxp]`.
+
+**The reconciliation is measured, not assumed.** Compiling the same C at `-m68020`, `-m68030` and
+`-m68040` before and after, the objects differ by four bytes at every architecture, all of them
+the `.swbeg` filler — bytes between an unconditional `jmp` and the table that are never executed.
+68020 and 68030 code generation is untouched. The kernel also builds byte-identical, but that is
+the weaker result and worth saying: `relink-040.sh` assembles hand-written `.s` files and compiles
+no C, so it never emits a `.swbeg` at all.
+
+### What closes it
+
+The upstream PR merging, this project updating its clone to that commit, and one rebuild
+confirming the artifact is unchanged. Until then `BUILDING.md` carries the warning.
