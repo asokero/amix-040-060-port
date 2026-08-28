@@ -41,9 +41,10 @@ set -e
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 . "$HERE/tools/config-load.sh"
 
-# The pinned tarball, as config.sh:26-30 records it.  Repeated here because config.sh is
-# local-only and this check must not depend on a file the repository does not carry.
-WANT=5e1f101748d8ff04a37aba845133e0f5804d1ca9b995c99f05cc39874ab3120b
+# The pinned tarball -- NetBSD 10.1 syssrc.tgz -- as config.sh records it.  Repeated here
+# because config.sh is local-only and this check must not depend on a file the repository does
+# not carry.  Rounds <=12 of this lane pinned NetBSD 9.4 instead, sha256 5e1f1017...3120b.
+WANT=76a600e703d2e964753323e264d3ec07d0c6cbe134648fc8f0f13ed9faaa1be4
 
 DEST="$HERE/build/fpe-src"
 TMP="$HERE/build/fpe-extract-check"

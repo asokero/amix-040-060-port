@@ -78,7 +78,7 @@ else
 fi
 
 # 5. NetBSD tarball, for Motorola's FPSP/ISP packages.
-need_file "$NETBSD_SYSSRC" "NetBSD syssrc.tgz" "any recent NetBSD source tarball"
+need_file "$NETBSD_SYSSRC" "NetBSD syssrc.tgz" "NetBSD 10.1 syssrc.tgz, pinned -- see BUILDING.md"
 
 echo
 echo "OPTIONAL: emulator testing"

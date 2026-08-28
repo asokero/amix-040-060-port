@@ -22,7 +22,7 @@ target" — which is the 68LC060 this port now runs on.
 
 | Artifact | Identity |
 |---|---|
-| Vendor source | `usr/src/sys/arch/m68k/fpe/` from NetBSD 9.4 `syssrc.tgz`, sha256 `5e1f101748d8ff04a37aba845133e0f5804d1ca9b995c99f05cc39874ab3120b` (`config.sh:26-30`), verified before extraction |
+| Vendor source | `usr/src/sys/arch/m68k/fpe/` from NetBSD **10.1** `syssrc.tgz`, sha256 `76a600e703d2e964753323e264d3ec07d0c6cbe134648fc8f0f13ed9faaa1be4`, verified before extraction (`src/extract_fpe.sh`). Rounds ≤12 used NetBSD 9.4, sha256 `5e1f101748d8ff04a37aba845133e0f5804d1ca9b995c99f05cc39874ab3120b`; the move and its equivalence proof are `FPE-R10-VEC60.md` §13 |
 | Extracted copy | `build/fpe-src/`, 25 files, byte-identical to a fresh extraction; gitignored, never checked in |
 | Kernel image read | `build/unix-040`, sha256 `b1351544c151dc0d33715fe0bb42c86f119dc60e48b0c0d4d2be108826fc9fe4`, ELF 32-bit MSB relocatable m68k |
 | Headers read | `build/sysroot-modelb/usr/include/` (the Model-B mirror sysroot, `src/mk_modelb_sysroot.sh`) |

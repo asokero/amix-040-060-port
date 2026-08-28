@@ -33,6 +33,14 @@
 #define __predict_false(x)	(x)
 #define __CTASSERT(x)
 #define __arraycount(a)		(sizeof(a) / sizeof((a)[0]))
+/*
+ * __packed is load-bearing HERE and nowhere else in the package.  NetBSD 10.1's
+ * m68k/cpuframe.h (1.8) marks `tf_pc` with it, where 9.4 (1.6) packed the whole struct with a
+ * spelled-out __attribute__; the two must produce the SAME struct trapframe or src/fpe_glue.c's
+ * six layout assertions fail at compile time, which is the point of their being assertions.
+ * Defining it to nothing would silently move tf_pc and every field behind it.
+ */
+#define __packed		__attribute__((packed))
 #ifndef __inline
 #define __inline		__inline__
 #endif

@@ -23,9 +23,16 @@
  *             packed decimal is refused, and how;
  *             fmovem.l to 2 or 3 control registers is MIS-emulated, which is why the arm
  *             refuses that class rather than passing it through;
- *             the vector-11 double-immediate case is unchanged.
+ *             the vector-11 double-immediate case is unchanged;
+ *             byte and word immediates convert with their sign intact (T10-T12, round 13).
  *   does NOT  say anything about src/fpe040.s, the vector table, the frame the 68060 actually
  *             stacks, or AMIX's signal path.  Those are static analysis plus metal.
+ *
+ * SECOND USE, from round 13: this is also the instrument that compares two TARBALLS.  Run it
+ * against the emulator extracted from each and diff the output; because the case set is fixed
+ * and every expectation is registered, an identical table is evidence that a vendor source
+ * change did not change behaviour.  That is how the NetBSD 9.4 -> 10.1 pin move was settled
+ * (docs/contracts/FPE-R10-VEC60.md 13).
  *
  * Build and run:  sh test-tools/fpe-harness/run.sh
  * Host:           m68k-linux-gnu-gcc (big-endian, ILP32) under qemu-m68k user mode.
@@ -255,6 +262,46 @@ static struct testcase tests[] = {
   { 0xf2,0x3c, 0x40,0x00,  0x00,0x12,0xd6,0x87 },
   8, 0, 0, 0, 0,
   0, 0, 8, { 0x40130000, 0x96b43800, 0x00000000 }, 0x00000000, 0x00000000 },
+
+/*
+ * ---- T10-T12: THE BYTE/WORD OPERAND CLASS.  Added in round 13, for the tarball pin move from
+ *      NetBSD 9.4 to 10.1.  fpu_explode.c 1.15 -> 1.16 deleted the FTYPE_BYT/FTYPE_WRD arms of
+ *      its conversion switch; static reading says those arms were unreachable, because both
+ *      call sites that pass a variable format sign-extend byte and word operands to a long and
+ *      rewrite the format first (fpu_emulate.c's memory-operand arm) or test for the three
+ *      floating formats before calling at all (fpu_fscale.c).  These rows are that reading
+ *      turned into a measurement: byte and word immediates run through the emulator, and the
+ *      two tarballs must produce identical output on them or the deletion was not dead code.
+ *
+ *      Every value is NEGATIVE on purpose.  Sign is the whole content of the deleted arms; a
+ *      positive operand would survive a lost sign-extension unchanged and prove nothing.
+ *
+ *      The frame is format 4 / vector 11, which is the frame the hardware really delivers here:
+ *      a byte or word immediate is one extension word, so the instruction is six bytes and the
+ *      68060 has no reason to take the unimplemented-effective-address vector for it.  These
+ *      are two of the five forms 8's `l s w d b` set already scored as working.
+ */
+
+/* ---- T10: fmove.b #-2,fp0 -- byte immediate, the class fpu_explode's FTYPE_BYT arm named. */
+{ "T10 v11 fmove.b #-2,fp0 (fmt4)", 4, V11_VOFF, 6,
+  { 0xf2,0x3c, 0x58,0x00,  0x00,0xfe },
+  6, 0, 0, 0, 0,
+  0, 0, 6, { 0xc0000000, 0x80000000, 0x00000000 }, 0x00000000, 0x08000000 },
+
+/* ---- T11: fmove.w #-1234,fp0 -- word immediate, the FTYPE_WRD half.  A value with bits in
+ *      both halves of the word, so a shift of the wrong width cannot land on the right answer. */
+{ "T11 v11 fmove.w #-1234,fp0 (fmt4)", 4, V11_VOFF, 6,
+  { 0xf2,0x3c, 0x50,0x00,  0xfb,0x2e },
+  6, 0, 0, 0, 0,
+  0, 0, 6, { 0xc0090000, 0x9a400000, 0x00000000 }, 0x00000000, 0x08000000 },
+
+/* ---- T12: fadd.b #-2,fp0 with fp0 = 1.0 -- the byte operand ARITHMETICALLY, which is what
+ *      T2 is for the extended one.  T10 only proves the conversion was stored; this proves the
+ *      converted value is the number the emulator then computes with.  1.0 + -2.0 = -1.0. */
+{ "T12 v11 fadd.b #-2,fp0 (fp0=1.0)", 4, V11_VOFF, 6,
+  { 0xf2,0x3c, 0x58,0x22,  0x00,0xfe },
+  6, 1, 0, 0, 0,
+  0, 0, 6, { 0xbfff0000, 0x80000000, 0x00000000 }, 0x00000000, 0x08000000 },
 };
 
 #define NTESTS	((int)(sizeof(tests) / sizeof(tests[0])))

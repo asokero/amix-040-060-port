@@ -41,10 +41,19 @@ M68K_GNU_BIN="/usr/bin"
 #    patched, because the patch offsets would land on the wrong bytes -- see BUILDING.md.)
 AMIX_ROOT="$AMIX_BUILD/amix-2.1c"
 
-# 4. NetBSD source tarball, for Motorola's 68040/68060 support packages.
-#    The FPSP and ISP are extracted from sys/arch/m68k/{fpsp,060sp} inside it; they are NOT
-#    vendored in this repository.  Any recent NetBSD syssrc.tgz works.
-NETBSD_SYSSRC="$AMIX_BUILD/syssrc.tgz"
+# 4. NetBSD source tarball, for Motorola's 68040/68060 support packages and the FPE.
+#    The FPSP, the ISP and the floating-point emulator are extracted from
+#    sys/arch/m68k/{fpsp,060sp,fpe} inside it; they are NOT vendored in this repository.
+#
+#    PIN THIS EXACTLY.  It is not "any recent release": the extraction is part of the build, so
+#    the tarball is a build input like any source file, and two releases do not produce the same
+#    kernel.  src/extract_fpe.sh refuses to extract from anything else.
+#
+#    NetBSD 10.1 syssrc.tgz, 79497697 bytes,
+#    from https://cdn.netbsd.org/pub/NetBSD/NetBSD-10.1/source/sets/syssrc.tgz
+#    sha256 76a600e703d2e964753323e264d3ec07d0c6cbe134648fc8f0f13ed9faaa1be4
+#    sha512 766ac21f33cfe0e701dfedb894fa07f36d811da1a12e979181e8fca7af4e627852680ce42a7b29e97dd3e2e402ddf9ae7bfba60c8d7dc6b8a3354d8ce8c06926
+NETBSD_SYSSRC="$AMIX_BUILD/syssrc-10.1.tgz"
 
 # ---------------------------------------------------------------- OPTIONAL: emulator testing
 #

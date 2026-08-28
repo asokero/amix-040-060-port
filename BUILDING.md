@@ -20,7 +20,28 @@ distributed here. See `NOTICE` for how this was made and what it does and does n
 | **Python 3** | the byte-patchers and the relocation validator | any |
 | **`patch`, `sha256sum`, standard coreutils** | | any |
 | **Your AMIX installation**, mounted or unpacked | the kernel this port patches | AMIX SVR4 2.1c; the file needed is `stand/unix` |
-| **NetBSD source tarball** (`syssrc.tgz`) | Motorola's 68040/68060 support packages are extracted from it — they are not vendored here | any recent NetBSD release |
+| **NetBSD source tarball** (`syssrc.tgz`) | Motorola's 68040/68060 support packages and the FPE are extracted from it — they are not vendored here | **NetBSD 10.1 exactly**, pinned; see below |
+
+**The tarball is pinned, not "any recent release".** Motorola's FPSP, the 060SP and NetBSD's
+floating-point emulator are extracted *at build time* rather than vendored, so the tarball is a
+build input exactly like a source file in this tree, and a different release is a different
+kernel. `src/extract_fpe.sh` verifies the checksum before it unpacks anything and refuses to
+extract from a tarball it does not recognise, so the requirement is enforced rather than
+documented — but it can only enforce the one release it knows:
+
+```
+https://cdn.netbsd.org/pub/NetBSD/NetBSD-10.1/source/sets/syssrc.tgz
+79497697 bytes
+sha256  76a600e703d2e964753323e264d3ec07d0c6cbe134648fc8f0f13ed9faaa1be4
+sha512  766ac21f33cfe0e701dfedb894fa07f36d811da1a12e979181e8fca7af4e627852680ce42a7b29e97dd3e2e402ddf9ae7bfba60c8d7dc6b8a3354d8ce8c06926
+```
+
+That this matters is a measurement, not a precaution. Between NetBSD 9.4 and 10.1 seventeen of
+the extracted files changed; sixteen of those changes are RCS version lines and comment spelling,
+but `fpe/fpu_explode.c` 1.15 → 1.16 deletes two arms of the operand-conversion switch. That
+particular change turns out to be unreachable code — `docs/contracts/FPE-R10-VEC60.md` §13 proves
+it and measures both tarballs' emulators against each other — but "unreachable" is a conclusion
+someone had to reach. The next difference between two releases will not announce which kind it is.
 
 The build scripts are POSIX `sh` and POSIX `awk`, deliberately: **no bash and no gawk**. They used
 to call `strtonum()`, a GNU awk extension, which on a Debian or Ubuntu machine — where `awk` is

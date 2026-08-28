@@ -1011,3 +1011,338 @@ kpeek 0811BEC8 4    reads magic / signo / code / addr in one call
 * **The abort latches have still never been read on hardware.** They now *can* be, safely, which is
   the entire content of the change — but "readable" is not "read", and no value of
   `fpe_abort_signo`, `_code` or `_addr` from any rig appears anywhere in this document.
+
+---
+
+## 13. The round-13 artifact — the vendor tarball moves from NetBSD 9.4 to 10.1
+
+**Staged, NOT deployed.** The metal baseline is unchanged and is still `68060-260827-64`
+(`17ec956de340b3b9c1bb1b7427f99e2821e537a10dfa15da86edd850b06e6a0d`) — the round-11 kernel is what
+is on the card and what a rollback returns to. Round 12's `-65` was staged and never booted;
+this round's artifact has never been booted either. Nothing below is a hardware result.
+
+**Why the round exists.** The collaborator preparing to merge this branch builds from NetBSD
+**10.1** `syssrc.tgz`; every round of this lane through 12 built from **9.4**. Two people
+extracting "the FPE" from two different tarballs are not building the same kernel, and until this
+round nothing in the repository said which one was meant — `BUILDING.md` and `README.md` both said
+"any recent NetBSD release". This round moves the pin to 10.1, so that the instructions match the
+tarball the merge will actually use, and proves that the move changes no behaviour.
+
+### 13.1 What actually differs between the two tarballs
+
+Both were unpacked in full and the extracted space compared file by file, CVS metadata excluded.
+**Seventeen files differ**, across all four areas this project takes source from:
+
+| area | files differing | nature |
+|---|---:|---|
+| `m68k/fpsp/` (68040 FPSP) | 8 | RCS version line + comment spelling, e.g. `propogate`→`propagate` |
+| `m68k/060sp/` (68060 SP) | 5 | RCS version line + comment spelling; `ReadMe.NetBSD` prose |
+| `m68k/fpe/` (the emulator) | 3 + README | `fpu_emulate.c`, `fpu_sqrt.c`: RCS line + one comment typo each |
+| `m68k/include/`, `sys/` (the four extracted ABI headers) | 2 | `cpuframe.h` **1.6 → 1.8**; `ieee754.h` comment typo |
+
+Sixteen of the seventeen carry no code change at all. The comment fixes are inside `*`- or
+`#`-led comment lines and trailing `;`/`#` comment fields, so no instruction text moves, and
+`__KERNEL_RCSID` expands to nothing in `src/fpe-compat/sys/cdefs.h` — the RCS strings never reach
+an object. **Two files are substantive**, and they are of completely different kinds:
+
+* `fpe/fpu_explode.c` **1.15 → 1.16** — deletes two arms of the operand-conversion switch. §13.2.
+* `m68k/include/cpuframe.h` **1.6 → 1.8** — changes how `struct trapframe` is packed. §13.3.
+
+> The second was not anticipated when this round was scoped, and it is the more dangerous of the
+> two: it is a **struct layout** change on the exact struct the glue's shim is built around. It
+> was found because the build stopped, not because anyone looked for it. A tarball diff that
+> covers only the directories you think you consume is not a tarball diff.
+
+### 13.2 The `fpu_explode.c` change, and why it is dead code
+
+Described rather than reproduced. In 1.15 the operand-conversion `switch` carried `FTYPE_BYT`
+and `FTYPE_WRD` as live arms *above* `FTYPE_LNG`: each shifted the operand down — by 8 and by 16
+respectively — and then fell through into the `FTYPE_LNG` arm, which calls `fpu_itof`. 1.16
+deletes both shifts, moves the two labels *below* the `FTYPE_LNG` arm, and leaves them with no
+body of their own, so they now fall through into `default:`, which panics. A comment on the moved
+labels states the new caller contract: a byte or word operand is to be sign-extended to a signed
+long by the caller, which then calls with `FTYPE_LNG`. What was a supported conversion becomes a
+panic, and the burden moves to the call site.
+
+Upstream's commit message is an assertion about callers, so the callers were enumerated rather
+than trusted. **`fpu_explode` has twenty call sites in the extracted tree. Eighteen pass a
+literal** — `FTYPE_EXT`, `FTYPE_LNG` or `FTYPE_DBL` — and cannot reach the deleted arms by
+construction. **Two pass a variable `format`,** and both convert first:
+
+| call site | why `format` can never be `FTYPE_BYT` or `FTYPE_WRD` there |
+|---|---|
+| `fpu_emulate.c:675` | the memory-operand arm sign-extends the operand and **rewrites the format** at 660-672: it masks the loaded longword to sixteen bits, propagates bit 15 into the upper half when that bit is set, and then sets `format` to `FTYPE_LNG` — with the byte case handled the same way one width down. Straight-line code, no `goto` and no other entry, between the load and the call. |
+| `fpu_fscale.c:175` | the call sits inside a branch taken only for the double, single and extended formats. Byte and word are handled by their own earlier branches, which sign-extend into `scale` and never call `fpu_explode` at all. |
+
+Both of those files are unchanged between 9.4 and 10.1 apart from an RCS line and one comment
+typo, and `fpu_calcea.c` — which holds `fetch_immed`, a **third** independent sign-extension of
+byte and word immediates before the operand ever reaches this path — is byte-identical.
+
+So the deleted arms were unreachable. Two things are worth adding, because "unreachable" invites
+the question of why anyone bothered:
+
+1. **The deleted code was also wrong.** `case FTYPE_BYT: s >>= 8;` falls through into
+   `case FTYPE_WRD: s >>= 16;`, so a byte operand would have been shifted 24 bits, not 24-bit
+   sign-extended — and `s` is `uint32_t`, so both shifts are logical. A negative byte reaching
+   that arm would have come out as a large positive number. The deletion removes a trap, not a
+   feature.
+2. **The reasoning above is static.** §13.5 is the measurement.
+
+### 13.3 The `cpuframe.h` change — the one that had to be handled, not just checked
+
+```
+-		u_int	tf_pc;
++		u_int	tf_pc __packed;
+ 		u_short	tf_format:4, tf_vector:12;
+-	} __attribute__((packed)) F_t;
++	} F_t;
+```
+
+NetBSD moved from packing the whole `struct trapframe` to marking the single member that needs
+it. `__packed` is a NetBSD `<sys/cdefs.h>` macro, and this project supplies its own `<sys/cdefs.h>`
+(`src/fpe-compat/`) because AMIX has none — so the first 10.1 build did not produce a wrong kernel,
+it **failed to compile**, which is the good outcome. The macro is now defined there:
+
+```c
+#define __packed		__attribute__((packed))
+```
+
+Defining it to nothing would have compiled. That is the whole hazard, so it was tested rather than
+reasoned about — `__packed` was deliberately neutered and `relink-040-fpe.sh` re-run:
+
+```
+src/fpe_glue.c:113: size of array `fpe_as_tfpc' is negative
+src/fpe_glue.c:114: size of array `fpe_as_tail' is negative
+src/fpe_glue.c:116: size of array `fpe_as_fmt4a' is negative
+src/fpe_glue.c:117: size of array `fpe_as_fmt4b' is negative
+```
+
+**Four of the six frame-layout assertions fire and no artifact is produced.** That is exactly the
+failure `src/fpe_glue.c:105-108` was written to catch — "if this gcc silently ignored that, `tf_pc`
+would land at 72 instead of 70 and every field the shim writes after it would be two bytes out —
+with no diagnostic anywhere". The comment was written about a hypothetical; this is the hypothetical
+happening, caught, and refused.
+
+With the macro correct, all six pass, which is the positive half of the same statement:
+**gcc 2.7.2.3 honours a field-level `__attribute__((packed))` identically to a struct-level one**,
+and `struct frame` is laid out the same from both tarballs. The harness prints the same six offsets
+at run time on both — `tf_sr@68 tf_pc@70 F_u@76 regs[15]@60 fmt4.f_fa@76 fmt4.f_fslw@80`.
+
+### 13.4 Which extracted members produced identical objects
+
+Compiled with the AMIX cross toolchain (`m68k-cbm-sysv4-gcc` 2.7.2.3, no debug info), from the two
+extractions, with an **identical first-party tree** on both sides:
+
+```
+20 of the 22 objects in build/fpe-obj/ are byte-identical
+   19 of the 20 extracted emulator objects, plus first-party fpe040.o
+ 2 differ:  fpu_explode.o   the change itself
+            fpe_glue.o      first-party, 14 bytes, addressing modes only -- see below
+```
+
+`fpe_glue.o` differing was unexpected and was chased down rather than waved through. Its `.text` is
+the same 1892 bytes on both sides and its `.data` is identical; the fourteen bytes are two
+instances of one loop being addressed differently:
+
+```
+9.4     lea %fp@(-160),%a0      movel %a5@(0,%d0:l:4),%a0@(0,%d0:l:4)
+10.1    lea %fp@(0,%d0:l:4),%a0 movel %a5@(0,%d0:l:4),%a0@(-160)
+```
+
+Same semantics, same instruction count, same size, same frame offsets — gcc 2.7.2.3 splitting one
+address computation the other way because the `__packed` attribute changed how it models the
+struct's alignment. It is compiler noise, not a behaviour change, and the layout assertions are
+what license saying so.
+
+`fpu_explode.o` is the real difference. It is **smaller under the AMIX compiler and larger under
+the host one**, which is worth recording because "code was deleted, so the object shrinks" is the
+intuition and it is not reliable — the `BYT:`/`WRD:`/`FALLTHROUGH` chain still occupies jump-table
+entries:
+
+| | emulator `.text`, all 20 objects | `fpu_explode.o` `.text` alone |
+|---|---:|---:|
+| `m68k-cbm-sysv4-gcc` 2.7.2.3, from 9.4 | 26,986 | — |
+| `m68k-cbm-sysv4-gcc` 2.7.2.3, from 10.1 | 26,980 (**−6**) | — |
+| `m68k-linux-gnu-gcc` (harness), from 9.4 | — | 686 |
+| `m68k-linux-gnu-gcc` (harness), from 10.1 | — | 720 (**+34**) |
+
+**The control that isolates the tarball.** The first-party tree of this round was also built
+against 9.4, and compared with the reviewed round-12 artifact:
+
+```
+unix-040-fpe-r12 (reviewed, 9.4)  ->  unix-040-fpe-r13on94 (this round's tree, 9.4)
+        .text   1,043,964 / 1,043,964   0 diffs over the ENTIRE section
+        .data     119,416 /   119,416   3 diffs, all inside the build-id string
+```
+
+So this round's first-party edits — the `__packed` macro, the harness cases, the header hygiene —
+change **nothing** in the kernel, and every difference reported below is attributable to the
+tarball alone.
+
+### 13.5 The behavioural proof — the same twelve cases on both emulators
+
+`test-tools/fpe-harness/` compiles the **extracted emulator, unmodified**, for big-endian m68k and
+runs it under `qemu-m68k` over synthesized frames (§9). Round 13 adds three cases to it, and they
+are the point of the round: **byte and word immediates, the operand class the deleted code named.**
+Every value is negative on purpose — sign is the entire content of the deleted arms, and a positive
+operand would survive a lost sign-extension unchanged and prove nothing.
+
+The harness was then run twice, once against each extraction, with the same binary tree otherwise.
+To take the 9.4 side the pin was set **back** to 9.4; `src/extract_fpe.sh`'s checksum gate was
+satisfied on both runs and bypassed on neither.
+
+| case | instruction | 9.4 emulator | 10.1 emulator |
+|---|---|---|---|
+| T1 | `fmove.x #1.0,fp0` (v60 fmt0) | ret 0, adv 16, `3fff0000 80000000 00000000` | **identical** |
+| T2 | `fadd.x #2.0,fp0`, fp0=1.0 | ret 0, adv 16, `40000000 c0000000 00000000` | **identical** |
+| T3 | `fmove.x #pi,fp0` | ret 0, adv 16, `40000000 c90fdaa2 2168c235` | **identical** |
+| T4 | `fmove.p #<packed>,fp0` | ret −1, adv 4, SIGFPE, enabled&raised 0 | **identical** |
+| T5 | `fmovem.x (a0)+,dyn(d1)` | ret 0, adv 4, a0 +12 | **identical** |
+| T6 | `fmovem.l #imm,fpcr/fpsr` | ret 0, adv 8, FPCR `0x1000`, FPSR 0 | **identical** |
+| T7 | `fmove.d #3.5,fp0` (v11 fmt4) | ret 0, adv 12, `40000000 e0000000 00000000` | **identical** |
+| T8 | `fmove.x #pi,fp0` (v11 fmt4) | ret 0, adv 16, exact | **identical** |
+| T9 | `fmove.l #1234567,fp0` | ret 0, adv 8, `40130000 96b43800 00000000` | **identical** |
+| **T10** | **`fmove.b #-2,fp0`** | ret 0, adv 6, `c0000000 80000000 00000000` = −2.0, FPSR `08000000` | **identical** |
+| **T11** | **`fmove.w #-1234,fp0`** | ret 0, adv 6, `c0090000 9a400000 00000000` = −1234.0, FPSR `08000000` | **identical** |
+| **T12** | **`fadd.b #-2,fp0`, fp0=1.0** | ret 0, adv 6, `bfff0000 80000000 00000000` = −1.0, FPSR `08000000` | **identical** |
+
+```
+diff <(9.4 run) <(10.1 run)      from the layout line to the last counter:  no output
+12 of 12 cases matched their registered expectation        -- on both runs
+ufetch 59 (0 failed)  copyin 1  copyout 0 (0 failed)       -- on both runs
+```
+
+T10 and T11 show the conversion is stored with its sign; **T12 shows the converted value is the
+number the emulator then computes with**, which `fmove` alone would not establish — it is to the
+byte operand what T2 is to the extended one. All three were registered before either run: the
+encodings (`F23C 5800`, `F23C 5000`, `F23C 5822`), the six-byte length, the extended-format bit
+patterns and the FPSR N bit were derived by hand and then matched.
+
+The frame is format 4 / vector 11 for all three, which is the frame the hardware really delivers
+here: a byte or word immediate is one extension word, so the instruction is six bytes and the 68060
+has no reason to take the unimplemented-effective-address vector for it. These are two of the five
+forms §10.3's `l s w d b` set already scores as working on metal.
+
+### 13.6 The artifact
+
+```
+sh relink-040-fpe.sh build/unix-040-f7vs build/unix-040-fpe-r13
+python3 tools/stamp-card1.py   build/unix-040-fpe-r13 build/unix-040-fpe-r13-CARD1-ced0s1
+python3 tools/stamp-cputype.py build/unix-040-fpe-r13-CARD1-ced0s1 \
+                               build/unix-060-fpe-r13-CARD1-ced0s1 --set 60
+```
+
+| artifact | size | sha256 |
+|---|---:|---|
+| `build/unix-040-f7vs` *(the base, unchanged since round 7)* | 1,878,585 | `d43a59ccb7df2ebcdf611a7fa322dd84a4c2166fa9d491078025ef4f9e0fa889` |
+| `build/unix-040-fpe-r13` | 1,933,273 | `0a6240f696667a89851d222dbf28f709ddc47d0ca24060f1fe819348c78a1b29` |
+| `build/unix-040-fpe-r13-CARD1-ced0s1` | 1,933,273 | `a2eb8cde1d9897a1ea28d730ff0e7c71a569bcdcc1d3b9e9fa20b16f956c0826` |
+| **`build/unix-060-fpe-r13-CARD1-ced0s1`** *(stage this)* | 1,933,273 | `49a2c78f22dcc47baa065d03ec7f4ec616347d28eb2b901d17c5da347a8bc641` |
+| `build/unix-040-fpe-r13on94` *(the isolation control, §13.4)* | 1,933,273 | `4a099ef07ce5bba24ea10330e9f8e344db076e78487fe9225cef39ea99eeecf9` |
+| `build/unix-060-fpe-r12-CARD1-ced0s1` *(round 12, staged, never booted)* | 1,933,273 | `5f80a8f0740c207d5764a2886c20fa1d18402533ebdf200b1fca856d5291763d` |
+| `build/unix-060-fpe-v60-CARD1-ced0s1` *(the DEPLOYED `-64`)* | 1,933,225 | `17ec956de340b3b9c1bb1b7427f99e2821e537a10dfa15da86edd850b06e6a0d` |
+
+`buildid` is `" 68040-260828-50"`, announced as **`68060-260828-50`** at `cputype` 60. Note the
+**date** differs from the deployed `68060-260827-64` as well as the sequence, so the console line
+distinguishes them by more than one digit for the first time since round 10.
+
+```
+                            .text          .data           .bss
+  -64  (deployed)          0x0FEDFC       0x01D268        0x01175C
+  -r12 (staged)            0x0FEDFC       0x01D278        0x011750
+  -r13 (this artifact)     0x0FEDF8 (−4)  0x01D278        0x011750
+```
+
+The file is the same 1,933,273 bytes as `-r12` even though `.text` is four bytes shorter: the four
+bytes are absorbed as inter-section padding, and `.rela.text`, `.rela.data`, `.symtab` and
+`.strtab` are all byte-for-byte the same size. **The relocation and symbol structure of the kernel
+is unchanged; only four bytes of instruction encoding are gone.**
+
+### 13.7 Build gates that passed on this artifact
+
+The round-10/12 set (§10.2, §12.2), re-run in full: tarball integrity — now at the 10.1 sha — and
+the tail-only `fpframe` check; 20/20 emulator objects with `.bss` exactly 396 B; all seven
+overrides with exactly one strong definition past the base's `.text` end; no unresolved symbols;
+`ucp_magic` absent; `fpe_abort_magic` present in the must-be-defined list; `M68Kvec[11] →
+fpe_vec11` with `fpe_decline → fpsp_vec11` and `M68Kvec[60] → fpe_vec60` with `fpe_decline60 →
+fpsp_vec60`; text/data contiguous; both section sizes 4-aligned; `check_relink_relocs.py` **TOTAL
+complaints: 0**; `check_fpe_relocs.py` all nine assertions; the artifact's root-storage family
+unchanged by the FPE pass (`root=card0(/dev/dsk/c6d0s1)`, four queue rows including `z3660queue`).
+
+`FPE=0 sh relink-040-fpe.sh build/unix-040-f7vs …` reproduces the base **byte for byte** — the
+script's own sha gate and an independent `cmp` both agree.
+
+**Two builds of the same tree differ in exactly ONE byte**, the build-id sequence digit
+(`@0x1175DC`, `0` → `2`). `AGENTS.md`'s regression test for the build system itself, run because
+this round changed the vendor source under the whole emulator. The second build consumed sequence
+`-52`; it was compared and deleted, and `-50` is the staged artifact.
+
+The lineage, checked on the artifacts:
+
+```
+unix-040-f7vs (base)  ->  unix-040-fpe-r13   .text prefix 1,014,192   0 diffs
+                                              .data prefix   115,928   3 diffs, all build-id
+unix-040-fpe-r12 (9.4) -> unix-040-fpe-r13   .text 1,043,964 -> 1,043,960
+                                              first .text difference at 0xFA407
+```
+
+`0xFA407` is past the base's `.text` end (`0xF79B0` = 1,014,192), i.e. inside the FPE pass's own
+code. **The base kernel is byte-identical over its whole `.text`, as it has been since round 7.**
+
+### 13.8 Counter addresses — every counter in the kernel moves by −4, including blocks that never moved before
+
+**READ THIS BEFORE REUSING ANY ADDRESS.** Round 12's hazard was that sixteen bytes were added to
+`.data`, so every `fpe_*` symbol moved while the base kernel's `f60_*`, `fpc_*` and `fpi_*` blocks
+stood still. **This round is the other case and it is broader:** four bytes came out of `.text`,
+and `.data` is loaded immediately behind `.text`, so the entire data image shifts.
+
+```
+  every fpe_*, f60_*, fpc_* and fpi_* symbol:   146 of 146 at exactly −4
+  symbols NOT shifted by −4:                    0
+```
+
+There is no "unchanged" column this time. A round-11 or round-12 command file pointed at this
+kernel reads **every** counter one longword late — including the `f60_*` block, which has been at
+the same address for every artifact of this lane so far and is therefore the one an operator is
+most likely to reuse from memory.
+
+The magics are what catch it, and they were checked rather than assumed. Read at round 12's
+addresses, this artifact returns:
+
+```
+  0x0811BF04  (r12 fpe_magic)        ->  00000001    not "FPE!"  -- this is fpe_enable
+  0x0811BEC8  (r12 fpe_abort_magic)  ->  FFFFFFFF    not "FPA!"  -- this is a latch sentinel
+```
+
+The gate fires, the operator stops, and nobody records a table taken four bytes out of place.
+
+Derive from the artifact's own symbol table, never from this page:
+`sh tools/status-facts.sh build/unix-060-fpe-r13-CARD1-ced0s1 0x08000000`. The five magics, at
+this artifact's addresses:
+
+```
+fpe_abort_magic  0x0811BEC4  ->  46504121  "FPA!"
+fpe_magic        0x0811BF00  ->  46504521  "FPE!"
+f60_magic        0x081189AC  ->  46503630  "FP60"
+fpc_magic        0x081175F0  ->  46504321  "FPC!"
+fpi_magic        0x08117630  ->  46504921  "FPI!"
+```
+
+### 13.9 What this round does and does not claim
+
+* **No new registered rows for metal.** Nothing about either arm's behaviour changed, so §8's
+  table stands as round 11 scored it. If a metal session boots this kernel, the rows to re-take
+  are the cheap ones — the identities, the never-move counters — at **this artifact's** addresses.
+* **The claim is equivalence, and it is bounded by the case set.** Twelve cases and 20 of 22
+  objects byte-identical is strong evidence that the tarball move is behaviour-neutral; it is not
+  a proof that the two emulators agree on every input. The emulator has paths — the transcendental
+  family, the rounding modes, the denormal handling — that no case here touches, and those files
+  are byte-identical between the tarballs, which is the actual reason to believe they agree.
+* **The `-64` kernel remains the deployed baseline.** This artifact and round 12's have both been
+  staged and neither has been booted anywhere. Deploying either is a separate, scheduled session,
+  and the metal confirmation for this round rides the pre-push verification session rather than
+  being claimed here.
+* **Packed decimal is still not implemented**, `fmovem.l` to two or three control registers is
+  still refused rather than emulated, and v11's never-engage bar still needs an FPU-present rig.
+  §11 and §12.5 are unchanged in every particular.
+* **The abort latches have still never been read on hardware.**
