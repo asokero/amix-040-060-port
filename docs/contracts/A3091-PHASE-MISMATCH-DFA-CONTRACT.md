@@ -162,7 +162,7 @@ interrupts a data phase — which is what target 3 does and what `dd` on `c3d0s0
 The ledger's decode of `0x49` as "a phase mismatch" was right but incomplete: the phase is
 `DATA_IN`, and the capture's `segdir=1` (from device) agrees with it independently.
 
-## 6. Two unknowns are now answered, and they change the fix
+## 6. Two unknowns are answered, and the first candidate falls
 
 **Is a reset or message-out needed first? No.** NetBSD's `sbicnextstate` puts
 `SBIC_CSR_MIS_1|DATA_IN_PHASE` in the *same case arm* as `SBIC_CSR_XFERRED|DATA_IN_PHASE`, a
@@ -184,37 +184,76 @@ Its merit over action 5 is that it reaches a *real completion*. Action 9 leaves 
 takes **action 0** — the normal completion, the one that writes `request+5` and `request+6`
 with a genuine SCSI status byte. Action 5 could never do that.
 
-## 6a. What is still unknown, and blocks implementation
+## 7. …and then that candidate died too. The driver already has resume machinery.
 
-1. **Zeroing the transfer count discards the residual.** The chip completes the *command*, not
-   the data. Whether the caller then sees a short read or an error depends on the status byte
-   the target returns and on how `request+5`/`+6` are consumed. If a target can return GOOD
-   here, this trades a wedge for a silent short read — the ISSUE-51 class this project treats
-   as worse than a crash. **This must be settled before the change is made.**
-2. **Action 9 never stops DMA.** It contains no `dma_a3091_stopdma` call, so on this path a
-   transfer armed by our own hook (`segstate=2`, `dmaon=1` in the capture) stays armed while the
-   chip completes on its own. For `0x4B` the data phase is already over, so nothing is in
-   flight; for `0x49` it is not. Whether the SDMAC engine must be stopped first is unknown and
-   is the difference between the case action 9 was written for and the case we would give it.
-3. **Which `request+N` fields signal failure.** `+5` and `+6` are written by action 0; that they
+**Action 9 is wrong for `0x49`, on the authority of the code it was copied from.** NetBSD's
+`sbicxfdone()` — the function containing that exact register sequence — carries this in its
+header: *"After the completion interrupt from a read/write operation, sequence through the final
+phases in programmed i/o … we skip (and don't allow) the select, cmd out and data in/out
+phases."* It is a **post-transfer** routine that excludes data phases by design. `0x4B`
+(mismatch into `STATUS`) is precisely the case it was written for. `0x49` is mid-data-phase,
+which is the case it excludes.
+
+Reading the remaining actions shows the driver is not missing the capability — only the trigger:
+
+| action | what it does | reached by |
+|---|---|---|
+| 6 | reads WD transfer count `0x12/0x13/0x14` and stores it at `curunitp+12..14` | `0x21` `SDP` — **saves the residual** |
+| 8 | issues cmd `0xa0`, polls `ASR(0x1f)` bit 0, reads `DATA(0x19)`; message `0x03` → `istate = 4`, anything else → `DEAD` | `0x4F` `MIS_1\|MESG_IN` — **RESTORE POINTERS** |
+| 4 | `CMD_PHASE = 0x45`, writes `curunitp+12..14` back into `0x12/0x13/0x14`, `istate = 2` | **restores the residual and resumes** |
+| 7 | stop DMA, `istate = IDLE`, `startany` — request left on `comhead` for reselection | `0x85` `DISC_1` |
+
+So `a3091.c` implements the full save-disconnect-reselect-restore-resume cycle, keeps the
+residual in three bytes at `curunitp+12..14`, and knows `CMD_PHASE = 0x45` as the resume-into-
+data-phase value against `0x46` for resume-after. **What it lacks is any path from a data-phase
+mismatch into that machinery**, which is also what NetBSD does at its `MIS_1|DATA_IN` arm:
+continue the data transfer for the residual.
+
+That makes the fix an interposer in the shape of `src/a3091demux040.s`, not a table byte, and it
+makes action 4 the model to follow rather than action 5 or action 9.
+
+## 8. What is still unknown, and blocks implementation
+
+1. **Where the residual comes from on this path.** Action 4 restores a count that action 6
+   saved at `curunitp+12..14` during an `SDP`. A data-phase mismatch is not preceded by an
+   `SDP`, so those three bytes are stale or unset. After a mismatch the WD's own count registers
+   hold the remaining count, so reading `0x12/0x13/0x14` at interrupt time is the obvious
+   source — **but that is inferred from the chip's operation, not measured**, and it is the
+   single fact the whole fix rests on.
+2. **Whether DMA must be re-armed, and by whom.** `dma_a3091_startdma` is called once, from
+   `.text+0xd0b0`, and `dma_a3091_startdma_reconn` from `.text+0xd218` (the reselection path).
+   Resuming a partial transfer needs the SDMAC pointed at `buffer + transferred` for the
+   remaining length. Our own `dma_seg_*` record holds `pa`, `len` and `seq` for the armed
+   segment, so the information exists on our side; whether the stock path can be re-entered
+   safely mid-command is unknown.
+3. **Whether resume is even right here.** `istate = STARTING` means the command was just issued
+   and the chip was expected to run it to completion. A mismatch into `DATA_IN` at that point
+   may mean the target is doing something this driver does not model at all, in which case
+   failing the request cleanly beats resuming it. Nothing measured so far distinguishes these.
+4. **Which `request+N` fields signal failure.** `+5` and `+6` are written by action 0; that they
    are "status valid" and "SCSI status" is inferred from position and from `reg(0x0f)` being
    `TLUN`. The struct is not in the tree.
-4. **`0x48` and `0x4A` are the same defect** and should be fixed in the same change, but neither
+5. **`0x48` and `0x4A` are the same defect** and should be fixed in the same change, but neither
    has been observed. Fixing only the status we have seen leaves two known-fatal cells.
 
-## 6b. Shape of the fix
+## 9. Shape of the fix
 
-If 6a.1 and 6a.2 come out clean, this may genuinely be a table change: `itab[0x48]`, `itab[0x49]`
-and `itab[0x4A]` from 1 to 7. That is narrower than touching `atab`, because it moves three
-named statuses rather than the default class shared by 136.
+Not a table change. Two candidates were considered and both are refuted above by measurement
+rather than by taste — action 5 writes no status (§4), action 9 is a post-transfer routine that
+excludes data phases (§7). What is left is an interposer in the shape of
+`src/a3091demux040.s`: retarget a relocation, leave the stock C body alone, and either
 
-If either comes out dirty it needs an interposer in the shape of `src/a3091demux040.s`: retarget
-a relocation, leave the stock C body alone, stop DMA if 6a.2 requires it, mark the request short
-or failed per 6a.3, and reach the existing `istate = IDLE; startany()` exit rather than inventing
-one. Anything that cannot mark the request correctly should do nothing and let the driver die
-visibly.
+- **resume**, following action 4 — take the residual from the WD's count registers, re-arm the
+  SDMAC for the remainder, `CMD_PHASE = 0x45`, `istate = 2`, and let the existing state-2 row
+  carry the transfer to completion; or
+- **fail cleanly**, if 8.3 says resume is wrong here — stop DMA, mark the request failed per
+  8.4, and reach the existing `istate = IDLE; startany()` exit.
 
-## 7. Instrument, written before the fix
+The second is worth less but is worth more than the wedge, and it is the fallback if the first
+cannot be made safe. Anything that can do neither correctly should do nothing and let the driver
+die visibly, because a driver that dies loudly is better than one that returns wrong bytes.
+
+## 10. Instrument, written before the fix
 
 A counter block `a3p` with magic `"A3P!"`, in `.data`, magic first:
 
@@ -234,7 +273,7 @@ of the ISSUE-53 wrapper cost a capture, because the wedge removes the root disk 
 memory cannot be read afterwards — `a3091dbg040.s`'s own header had said so before the wrapper
 was written.
 
-## 8. Acceptance
+## 11. Acceptance
 
 Unlike ISSUE-53, this one is **orderable**, which is the whole reason to prefer it:
 `dd if=/dev/rdsk/c3d0s0 of=/dev/null bs=512 count=1` reproduces it every time. So the fix can
@@ -247,18 +286,20 @@ be *proved*, not merely shipped.
 3. `a3p_nounit == a3p_badstate == 0`.
 4. **`dd` must not report success it did not have.** Either an error, or a byte count the caller
    can see is short. A completion reporting GOOD for data that was never transferred fails this
-   acceptance outright — that is 6a.1, and it is the one outcome worse than the present wedge.
+   acceptance outright — §4 measures why that risk is real, and it is the one outcome worse
+   than the present wedge.
 5. `a3091: 0x49 ...` no longer appears and `istate` never reaches 3. The absence of
    `badhardware()` output is the direct evidence the fatal cell was not taken.
 6. The machine survives, and a second `dd` against a *good* target succeeds afterwards — this
-   is what proves the bus was left usable, and it is the criterion 6.1 exists for.
+   is what proves the bus was left usable. §6 argues from NetBSD that no reset is needed;
+   this is the run that would show that argument wrong.
 7. Battery 12/12 and burst 96/96 on the same boot, so the fix is not paid for elsewhere.
 8. `a3w_*` from the ISSUE-53 wrapper unchanged in character: this must not disturb it.
 9. `dma_*` self-consistent after the run — `prep_to + prep_from == cmpl_to + cmpl_from`, and
-   `owned`/`noprep`/`ovf` still zero. This is the check that would catch 6a.2 going wrong,
+   `owned`/`noprep`/`ovf` still zero. This is the check that would catch 8.2 going wrong,
    since a transfer left armed across the chip's own completion shows up there.
 
-## 9. Explicitly out of scope
+## 12. Explicitly out of scope
 
 Full controller recovery from `DEAD`. The ISSUE-53 audit §Q4 lists the six things a real reset
 path owes and concludes that calling `initialize()` again or writing `istate = IDLE` performs a
