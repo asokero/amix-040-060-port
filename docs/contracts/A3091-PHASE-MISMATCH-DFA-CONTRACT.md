@@ -9,6 +9,12 @@ family, and both failed for the same reason: *the meaning was inferred from the 
 code.* So the deliverable here is the measurement plus the questions that must be answered
 before a byte moves.
 
+> **Read `sys/amiga/alien/a3091.c` first — it is in `vanilla/amix-sources.tar`.** This document
+> was drafted from disassembly and then rewritten against the source, which changed three of its
+> conclusions and killed one of its own arguments outright (§4). The private Codex task for
+> ISSUE-53 already said the source was there. Sections 1–2 are kept because a byte patch needs
+> pinned-image addresses that the source cannot give; everything after them is from the C.
+
 ## 1. The dispatch, read out of the image
 
 `a3091intr` at `.text+0xd0e0`. Relocations name the tables; symbol indices resolve them (there
@@ -71,187 +77,148 @@ are recognised:
 `0x49` — the phase mismatch of ISSUE-54 — is not among them, so `itab[0x49] = 1`, and
 `atab[STARTING][1] = 1` → `badhardware()` → `DEAD`.
 
-## 3. The driver already owns a graceful path, and it is one cell away
+## 3. The states and actions, described
 
-`atab[STARTING][0] = 5`, taken for `0x42` (absent target). Action 5 at `.text+0xd2cc`:
+The source names six states — `IDLE` 0, `STARTING` 1, `RESUMING` 2, `DEAD` 3, `MESSAGING` 4,
+`ENDING` 5 — and ten actions. Described rather than quoted (the comment block is AMIX source
+text and this document is published):
 
-```
-jsr dma_a3091_stopdma          ; stop DMA
-moveal curunitp,%a3
-moveal %a3@(4),%a2             ; a2 = curunitp->comhead
-movel  %a2@,%d0
-movel  %d0,%a3@(4)             ; dequeue the head request
-beq    +                       ; if more remain,
-  jsr  uqueue                  ;   requeue the unit
-+ movel %a2,%sp@-
-moveal %a2@(36),%a0
-jsr    %a0@                    ; call the request's completion callback
-braw   d34e
-```
+| action | leaves the DFA in | what it is for |
+|---|---|---|
+| 0 | IDLE, then possibly STARTING | finish the request and pick up the next |
+| 1 | DEAD | announce that the driver has given up |
+| 2 | RESUMING, or DEAD | put the request back on the queue and carry on with another |
+| 3 | RESUMING, or DEAD | pick a request back up after the target reconnects |
+| 4 | RESUMING | carry on after a `0x20` |
+| 5 | IDLE, then possibly STARTING | give up on this request and pick up the next |
+| 6 | RESUMING | stash the pointers, then carry on |
+| 7 | IDLE, then possibly STARTING | let the target drop the connection, pick up the next |
+| 8 | MESSAGING, or DEAD | read what may be a Restore Pointers message |
+| 9 | ENDING | carry on and expect the request to finish |
 
-and the common exit `d34e` is `istate = 0 (IDLE); startany()`.
+`itab`'s own documentation describes input 1 as covering statuses that are not legal or not
+supported. `0x49` appears nowhere in the file: a data-phase mismatch was never considered,
+rather than considered and rejected.
 
-So the sequence DMA-stop → dequeue → complete → IDLE → start-next exists, is reached today for
-an absent target, and is one table byte away from the phase-mismatch path. That is why this
-issue looks trivially fixable, and section 4 is why it is not.
+## 4. The argument this document made against action 5 was wrong
 
-## 4. Why the obvious change is wrong, measured rather than argued
+The disassembly showed action 0 writing `request+5` and `request+6` where action 5 writes
+neither, and this document concluded that action 5 completes a request "with no error
+indication" — silent data loss. **That is wrong, and the source settles it in one line.**
 
-**Action 5 completes the request without reporting anything.** Compare action 0, the normal
-completion at `.text+0xd16e`:
+The two fields are `cp->okay` and `cp->status`. Action 0 sets `okay` true and copies the target
+status **only when the command-phase register reads `0x60`**; action 5 sets neither. But
+`a3091queue()` clears `okay` on every request as it is enqueued, so the field is false until a
+completion earns it. Action 5 leaving it alone therefore *is* the failure report.
 
-```
-jsr reg(0x10)                  ; CMD_PHASE
-cmpl #0x60,%d0
-bne  +
-  moveb #1,%a2@(5)             ; request+5  = 1
-  jsr  reg(0x0f)               ; TLUN
-  moveb %d0,%a2@(6)            ; request+6  = SCSI status byte
-+ ...dequeue, complete, IDLE, startany
-```
+Action 5 is a clean abort that reports failure, not a silent success.
 
-Action 0 writes `request+5` and `request+6`. **Action 5 writes neither.** The caller therefore
-sees a completion carrying no status and no error. This is consistent with the field
-observation that reading an absent target "returned zero records" rather than an error.
+The reasoning failed in a way worth naming: it read *"writes fewer fields"* as *"reports less"*,
+without checking what the unwritten field's default was. The default was the whole answer, and
+it was one grep away in a file this project already knew it had.
 
-For an absent target, a short read is defensible. For a phase mismatch **mid-transfer, with
-`segstate=2` and 512 bytes genuinely armed**, completing the request with no error is silent
-data loss dressed as success — the exact failure class as ISSUE-51, which this project already
-treats as more serious than a crash. Trading a visible wedge for a silent wrong answer is not
-an improvement, and this contract does not propose it.
+## 5. What the statuses actually are
 
-**And the change would not be narrow.** Input class 1 is the default for 136 statuses, so
-editing `atab[STARTING][1]` changes behaviour for **every** unrecognised status at `STARTING`,
-including ones where stopping really is right. Editing `itab[0x49]` instead is narrower —
-one status — but it changes that status's class in all six states, not only `STARTING`.
+Decoded against NetBSD's Amiga WD33C93 driver (`sbicreg.h`, `sbicvar.h`) from the pinned
+tarball — `SBIC_CSR_MIS_1 = 0x48`, `DATA_OUT=0 DATA_IN=1 CMD=2 STATUS=3 MESG_IN=7`:
 
-**The do-nothing path is worse.** Setting an action ≥ 10 makes `bhiw` return with DMA still
-running, the request still on `comhead`, and `istate` still `STARTING`, so the transfer never
-completes and never fails. A hang instead of a wedge.
-
-## 5. What the statuses actually are — decoded against NetBSD's own Amiga driver
-
-`usr/src/sys/arch/amiga/dev/sbicreg.h` and `sbicvar.h` from the pinned NetBSD 10.1 tarball
-(`DATA_OUT=0`, `DATA_IN=1`, `CMD=2`, `STATUS=3`, `MESG_IN=7`; `SBIC_CSR_MIS_1 = 0x48`). All
-eight statuses `a3091.c` recognises, and the neighbours it does not:
-
-| status | input | decode | |
+| status | input | decode | a3091's response |
 |---|---|---|---|
-| `0x16` | 8 | `S_XFERRED` | select-and-transfer complete |
-| `0x20` | 6 | `CMD_STOPPED` | |
-| `0x21` | 2 | `SDP` | save data pointers |
-| `0x42` | 0 | `SEL_TIMEO` | selection timeout — the graceful abort |
+| `0x16` | 8 | `S_XFERRED` | complete |
+| `0x20` | 6 | `CMD_STOPPED` | resume (action 4, via MESSAGING) |
+| `0x21` | 2 | `SDP` | save pointers and resume (action 6) |
+| `0x42` | 0 | `SEL_TIMEO` | abort (action 5) |
 | `0x48` | **1** | `MIS_1 \| DATA_OUT_PHASE` | **DEAD** |
 | `0x49` | **1** | `MIS_1 \| DATA_IN_PHASE` | **DEAD — this issue** |
 | `0x4A` | **1** | `MIS_1 \| CMD_PHASE` | **DEAD** |
-| `0x4B` | 7 | `MIS_1 \| STATUS_PHASE` | handled, action 9 |
-| `0x4F` | 5 | `MIS_1 \| MESG_IN_PHASE` | handled, action 8 |
-| `0x81` | 4 | `RSLT_IFY` | |
-| `0x85` | 3 | `DISC_1` | disconnect |
+| `0x4B` | 7 | `MIS_1 \| STATUS_PHASE` | finish (action 9) |
+| `0x4F` | 5 | `MIS_1 \| MESG_IN_PHASE` | message in (action 8) |
+| `0x81` | 4 | `RSLT_IFY` | reconnect (action 3) |
+| `0x85` | 3 | `DISC_1` | disconnect (action 7) |
 
-**The shape of the defect is now exact.** `a3091.c` handles a phase mismatch when the new phase
-is `STATUS` or `MESG_IN` — that is, when the command is effectively over — and kills the driver
-when the new phase is `DATA_OUT`, `DATA_IN` or `CMD`, which are the phases that mean *there is
-more transfer to do*. It is not that the driver has no phase-mismatch handling. It has handling
-for exactly the mismatches that need none.
+**The driver handles a phase mismatch when the new phase is `STATUS` or `MESG_IN` — when the
+command is effectively over — and dies when it is `DATA_OUT`, `DATA_IN` or `CMD`, the phases
+that mean there is more transfer to do.** That is why ordinary disk I/O never trips it: a
+transfer that completes reports `S_XFERRED` and moves to `STATUS`. The capture's `segdir=1`
+agrees with `DATA_IN` independently.
 
-This also explains why ordinary disk I/O never trips it: a transfer that completes normally
-reports `S_XFERRED` and moves to `STATUS`, so the fatal statuses only appear when a target
-interrupts a data phase — which is what target 3 does and what `dd` on `c3d0s0` provokes.
+## 6. The driver already resumes partial transfers, on two paths
 
-The ledger's decode of `0x49` as "a phase mismatch" was right but incomplete: the phase is
-`DATA_IN`, and the capture's `segdir=1` (from device) agrees with it independently.
+Described, not quoted:
 
-## 6. Two unknowns are answered, and the first candidate falls
+- **Action 6**, taken on `0x21` (Save Data Pointers), copies the WD's **current** transfer-count
+  registers into the unit's three saved count bytes, rewrites the control register with the
+  usual DMA-plus-disconnect-interrupt configuration, moves to `RESUMING`, and re-issues
+  `startcom`. It writes **no** command-phase value.
+- **Action 4**, taken on `0x20` by way of `MESSAGING`, writes command phase `0x45`, loads the
+  **saved** count bytes back into the WD's count registers, moves to `RESUMING`, and re-issues
+  `startcom`.
 
-**Is a reset or message-out needed first? No.** NetBSD's `sbicnextstate` puts
-`SBIC_CSR_MIS_1|DATA_IN_PHASE` in the *same case arm* as `SBIC_CSR_XFERRED|DATA_IN_PHASE`, a
-successful transfer, and its response is to continue the data transfer for the residual count.
-The bus is not in trouble; the target is still connected and expects the transfer to go on.
-`0x49` is not an error status.
+The command-phase register is a progress ladder: `0x44` on reconnection (action 3, before the
+data phase), `0x45` to resume into a data phase (action 4), `0x46` to resume past it (action 9 —
+and NetBSD's `sbicxfdone` writes the same value under its comment about having the chip complete
+the command on its own). `startcom` is `0x09`, the same command `startany()` uses to begin a
+request; re-issuing it mid-connection resumes instead of re-selecting **because the command-phase
+register tells the chip where in the sequence it already is.**
 
-**What is action 9?** NetBSD writes the identical register sequence under the comment *"have
-the sbic complete on its own"*: transfer count zero, `CMD_PHASE = 0x46`, then
-`SBIC_CMD_SEL_ATN_XFER`. Action 9 does exactly that — `setreg(0x12/0x13/0x14, 0)`,
-`setreg(0x10, 0x46)`, `setreg(0x01, 0x8c)` (`CTL_DMA|CTL_EDI|CTL_IDI`, an ordinary operating
-configuration, not a reset), `setreg(0x18, cmd)` — and then sets `istate = 5`. It is a
-**hand-the-rest-to-the-chip** sequence, which is why `0x4B` (mismatch into `STATUS`) uses it.
+**And the saved count bytes are not a residual by default.** `startany()` initialises them from
+the request's byte count — the whole transfer length. They hold a residual only after an action 6
+has run. So action 4 at `STARTING` would restore the original length and re-run the entire
+transfer.
 
-So the fix candidate is no longer action 5. **Route the fatal MIS_1 phases to action 9.**
+## 7. Two candidates refuted, one standing
 
-Its merit over action 5 is that it reaches a *real completion*. Action 9 leaves `istate = 5`;
-`atab[5][8] = 0`, and input 8 is `S_XFERRED`, so when the chip finishes the command the driver
-takes **action 0** — the normal completion, the one that writes `request+5` and `request+6`
-with a genuine SCSI status byte. Action 5 could never do that.
+- **Action 9** — refuted. NetBSD's `sbicxfdone()`, the function this sequence is copied from,
+  says in its own header that it runs *"after the completion interrupt from a read/write
+  operation"* and *"skip[s] (and don't allow) the select, cmd out and data in/out phases."*
+  `0x4B` is the case it was written for; `0x49` is the case it excludes.
+- **Action 4** — refuted by §6: it restores `curunitp->tc*`, which at `STARTING` is the full
+  length, not what is left.
+- **Action 6 — standing.** It reads the residual out of the WD's own count registers, which is
+  where a mismatch leaves it, re-issues `startcom`, and goes to `RESUMING`. It writes no `CP`,
+  relying on the chip's own progress value.
 
-## 7. …and then that candidate died too. The driver already has resume machinery.
+`itab` is the narrow place to make the change, because the coverage falls out of the row:
 
-**Action 9 is wrong for `0x49`, on the authority of the code it was copied from.** NetBSD's
-`sbicxfdone()` — the function containing that exact register sequence — carries this in its
-header: *"After the completion interrupt from a read/write operation, sequence through the final
-phases in programmed i/o … we skip (and don't allow) the select, cmd out and data in/out
-phases."* It is a **post-transfer** routine that excludes data phases by design. `0x4B`
-(mismatch into `STATUS`) is precisely the case it was written for. `0x49` is mid-data-phase,
-which is the case it excludes.
+```
+            in0  in1  in2  in3  in4  in5  in6  in7  in8
+  STARTING    5    1    6    7    2    8    1    9    0
+  RESUMING    1    1    6    7    1    8    1    9    0
+```
 
-Reading the remaining actions shows the driver is not missing the capability — only the trigger:
+Input 2 is action 6 in **both** live states; input 0 is action 5 at `STARTING` and action 1 —
+death — at `RESUMING`. So `itab[0x48] = itab[0x49] = itab[0x4A] = 2` covers both states with the
+resume path, and moves three named statuses rather than the default class shared by 136.
 
-| action | what it does | reached by |
-|---|---|---|
-| 6 | reads WD transfer count `0x12/0x13/0x14` and stores it at `curunitp+12..14` | `0x21` `SDP` — **saves the residual** |
-| 8 | issues cmd `0xa0`, polls `ASR(0x1f)` bit 0, reads `DATA(0x19)`; message `0x03` → `istate = 4`, anything else → `DEAD` | `0x4F` `MIS_1\|MESG_IN` — **RESTORE POINTERS** |
-| 4 | `CMD_PHASE = 0x45`, writes `curunitp+12..14` back into `0x12/0x13/0x14`, `istate = 2` | **restores the residual and resumes** |
-| 7 | stop DMA, `istate = IDLE`, `startany` — request left on `comhead` for reselection | `0x85` `DISC_1` |
+The fallback, if resume cannot be made safe, is input 0: a clean abort at `STARTING` with
+`okay = FALSE`, which §4 establishes is a real failure report. It leaves `RESUMING` fatal.
 
-So `a3091.c` implements the full save-disconnect-reselect-restore-resume cycle, keeps the
-residual in three bytes at `curunitp+12..14`, and knows `CMD_PHASE = 0x45` as the resume-into-
-data-phase value against `0x46` for resume-after. **What it lacks is any path from a data-phase
-mismatch into that machinery**, which is also what NetBSD does at its `MIS_1|DATA_IN` arm:
-continue the data transfer for the residual.
+## 8. What still blocks it
 
-That makes the fix an interposer in the shape of `src/a3091demux040.s`, not a table byte, and it
-makes action 4 the model to follow rather than action 5 or action 9.
-
-## 8. What is still unknown, and blocks implementation
-
-1. **Where the residual comes from on this path.** Action 4 restores a count that action 6
-   saved at `curunitp+12..14` during an `SDP`. A data-phase mismatch is not preceded by an
-   `SDP`, so those three bytes are stale or unset. After a mismatch the WD's own count registers
-   hold the remaining count, so reading `0x12/0x13/0x14` at interrupt time is the obvious
-   source — **but that is inferred from the chip's operation, not measured**, and it is the
-   single fact the whole fix rests on.
-2. **Whether DMA must be re-armed, and by whom.** `dma_a3091_startdma` is called once, from
-   `.text+0xd0b0`, and `dma_a3091_startdma_reconn` from `.text+0xd218` (the reselection path).
-   Resuming a partial transfer needs the SDMAC pointed at `buffer + transferred` for the
-   remaining length. Our own `dma_seg_*` record holds `pa`, `len` and `seq` for the armed
-   segment, so the information exists on our side; whether the stock path can be re-entered
-   safely mid-command is unknown.
-3. **Whether resume is even right here.** `istate = STARTING` means the command was just issued
-   and the chip was expected to run it to completion. A mismatch into `DATA_IN` at that point
-   may mean the target is doing something this driver does not model at all, in which case
-   failing the request cleanly beats resuming it. Nothing measured so far distinguishes these.
-4. **Which `request+N` fields signal failure.** `+5` and `+6` are written by action 0; that they
-   are "status valid" and "SCSI status" is inferred from position and from `reg(0x0f)` being
-   `TLUN`. The struct is not in the tree.
-5. **`0x48` and `0x4A` are the same defect** and should be fixed in the same change, but neither
-   has been observed. Fixing only the status we have seen leaves two known-fatal cells.
+1. **What is `CP` after a `MIS_1|DATA_IN`, and does resuming need `0x45` written?** Action 6
+   writes no `CP` because after an `SDP` the chip's own value is right. Whether that holds after
+   a phase mismatch is **the load-bearing unknown**. If it does not, the fix is action 6's body
+   plus `setreg(CP, 0x45)` — which is no existing action, so an interposer rather than a table
+   byte.
+2. **Bound the retry.** If the target mismatches repeatedly, action 6 resumes forever and the
+   wedge becomes a livelock. Any resume needs a counter and a fall-through to the abort path.
+   The stock driver has no such bound because no stock path can loop this way.
+3. **`0x48` and `0x4A` have never been observed.** They are the same defect and belong in the
+   same change, but nothing here proves the resume is right for `DATA_OUT` or `CMD`.
+4. **DMA.** Actions 4 and 6 never touch it, because on their paths it was never stopped. The
+   capture shows `dmaon=1` and `segstate=2` at the mismatch, so the same holds here — but our
+   own `dma_seg_*` record then describes a segment whose length no longer matches what the WD
+   will ask for. Whether that matters is unknown; acceptance §11.9 is the check for it.
 
 ## 9. Shape of the fix
 
-Not a table change. Two candidates were considered and both are refuted above by measurement
-rather than by taste — action 5 writes no status (§4), action 9 is a post-transfer routine that
-excludes data phases (§7). What is left is an interposer in the shape of
-`src/a3091demux040.s`: retarget a relocation, leave the stock C body alone, and either
+If 8.1 says the chip's `CP` survives a mismatch, this is three bytes in `itab` plus an
+instrument. If it does not, it is an interposer in the shape of `src/a3091demux040.s` —
+retarget a relocation, leave the stock C body alone, and do action 6's work with `CP` set and
+the §8.2 bound applied.
 
-- **resume**, following action 4 — take the residual from the WD's count registers, re-arm the
-  SDMAC for the remainder, `CMD_PHASE = 0x45`, `istate = 2`, and let the existing state-2 row
-  carry the transfer to completion; or
-- **fail cleanly**, if 8.3 says resume is wrong here — stop DMA, mark the request failed per
-  8.4, and reach the existing `istate = IDLE; startany()` exit.
-
-The second is worth less but is worth more than the wedge, and it is the fallback if the first
-cannot be made safe. Anything that can do neither correctly should do nothing and let the driver
-die visibly, because a driver that dies loudly is better than one that returns wrong bytes.
+Either way the instrument is built and read, because a table change nobody can attribute is not
+evidence.
 
 ## 10. Instrument, written before the fix
 
