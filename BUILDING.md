@@ -25,9 +25,10 @@ distributed here. See `NOTICE` for how this was made and what it does and does n
 **The tarball is pinned, not "any recent release".** Motorola's FPSP, the 060SP and NetBSD's
 floating-point emulator are extracted *at build time* rather than vendored, so the tarball is a
 build input exactly like a source file in this tree, and a different release is a different
-kernel. `src/extract_fpe.sh` verifies the checksum before it unpacks anything and refuses to
-extract from a tarball it does not recognise, so the requirement is enforced rather than
-documented — but it can only enforce the one release it knows:
+kernel. Every script that extracts vendor source from the tarball verifies its checksum first,
+against the single pin in `tools/netbsd-pin.sh`, and refuses a tarball it does not recognise —
+and `tools/check-env.sh` checks the same pin at pre-flight — so the requirement is enforced
+rather than documented. The one release the pin knows:
 
 ```
 https://cdn.netbsd.org/pub/NetBSD/NetBSD-10.1/source/sets/syssrc.tgz
