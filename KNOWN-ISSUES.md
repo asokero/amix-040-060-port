@@ -6871,6 +6871,24 @@ emulator.**
 > command phase already held the value action 9 writes to resume *past* the data. The cursor
 > agrees: 496 of 512 bytes, one SDMAC FIFO short of the end.
 >
+> **ATN MEASURED 2026-08-29, `68060-260829-15`: the target answers `DATA_IN`, not `MESSAGE OUT`** —
+> [`docs/REALHW-ISSUE54-ATN-260829-15.md`](docs/REALHW-ISSUE54-ATN-260829-15.md).
+> `a3p ATN-FAILED stage=5 as=80 ss=89 polls=1`. `SET_ATN` was asserted and accepted — no `LCI`,
+> `CLR_ACK` issued — and the target's immediate reply was `0x89`, `MIS_2 | DATA_IN_PHASE`. It
+> still has 1536 bytes of its 2048-byte block to send and ATN did not make it stop and listen.
+>
+> **The bound was not the problem** (`polls = 1`), which is only sayable because that build
+> changed instrumentation and nothing else.
+>
+> Next is a design step, not an edit: the WD's `XFER_PAD` (`0x19`) consumes a data phase with no
+> buffer, so draining the target's remainder would let it reach a boundary where ATN can be
+> honoured. NetBSD loops until message-out appears and handles the phases in between, but says
+> that code does not work. **Third time on this issue that the obvious next move was wrong when
+> measured — it belongs in a contract first.**
+>
+> Meanwhile the `0x49` handling that worked in `-09`/`-11` is traded away, because the ATN path
+> fails closed.
+
 > **DISCRIMINATED 2026-08-29, `68060-260829-11`: verdict 7** —
 > [`docs/REALHW-ISSUE54-DISCRIMINATOR-260829-11.md`](docs/REALHW-ISSUE54-DISCRIMINATOR-260829-11.md).
 > Six of six predictions held. `a3p ss=41 cp=3A tc=800 di=46 as=0`, `sac == segpa`.
