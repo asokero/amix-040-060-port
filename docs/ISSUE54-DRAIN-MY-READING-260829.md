@@ -56,3 +56,14 @@ mark it and fail subsequent requests immediately, without touching the bus. That
 the first one, and it is not a fix for the protocol problem — but it would contain a CD-ROM or a
 tape to exactly one wedge per boot instead of one per access, which is a different and cheaper
 kind of safety than anything tried so far.
+
+## Where the comparison is not blind, stated rather than hidden
+
+Q3 of the task asks how the path must guarantee the request still fails *"if the command is
+allowed to finish"*. That phrasing presupposes the route I have chosen, so it steers. It stays
+in because the hazard it names — a completion reported as good carrying the wrong 512 bytes — is
+the worst outcome available here and would be negligent to leave out of a task about ending this
+command. But the overlap is real, and this comparison is weaker for it than the first was.
+
+Q2 hands over the fact that `XFER_PAD` is used nowhere in any NetBSD driver. That is source
+material rather than a conclusion; withholding it would only cost time.
