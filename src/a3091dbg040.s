@@ -477,6 +477,8 @@ Lad_rel_int:
 |    that branch wedged one command later anyway -- and pretending is the more expensive habit.
 Lad_rel_cmd:
 	addql	&1,a3p_atn_try
+	moveq	&2,%d0
+	movel	%d0,a3p_atn_stage	| 2 = about to SET_ATN
 	moveb	&0x18,%a2@(65)		| COM
 	moveb	&0x02,%a2@(67)		| SET_ATN, Level I, valid while connected
 	pea	8
@@ -491,6 +493,8 @@ Lad_rel_cmd:
 	addql	&1,a3p_atn_lci
 	braw	Lad_relfail
 Lad_atn_ack:
+	moveq	&4,%d0
+	movel	%d0,a3p_atn_stage	| 4 = ATN taken, about to CLR_ACK
 	moveb	&0x18,%a2@(65)
 	moveb	&0x03,%a2@(67)		| CLR_ACK -- release ACK so the target may change phase
 
@@ -513,6 +517,8 @@ Lad_atn_wait:
 	clrl	%d3
 	moveb	%a2@(67),%d3
 	movel	%d3,a3p_atn_ss
+	moveq	&5,%d0
+	movel	%d0,a3p_atn_stage	| 5 = classifying a status in the wait
 	cmpil	&0x41,%d3
 	beqw	Lad_atn_free		| target already went bus free
 	cmpil	&0x85,%d3
@@ -542,6 +548,8 @@ Lad_atn_next:
 |     way, one at a time, because sending them in one go locks the chip against some targets.
 Lad_atn_mout:
 	addql	&1,a3p_atn_mout
+	moveq	&6,%d0
+	movel	%d0,a3p_atn_stage	| 6 = target asked for MESSAGE OUT
 	moveb	&0x15,%a2@(65)		| DI
 	clrl	%d3
 	moveb	%a2@(67),%d3
@@ -557,6 +565,8 @@ Lad_atn_mout:
 	moveb	&0x18,%a2@(65)
 	moveb	&0x20,%a2@(67)		| XFER_INFO
 	moveq	&16,%d2
+	moveq	&7,%d0
+	movel	%d0,a3p_atn_stage	| 7 = XFER_INFO issued, waiting for DBR
 Lad_atn_dbr:
 	pea	8
 	jsr	delayus
@@ -574,12 +584,16 @@ Lad_atn_dbr:
 	bnew	Lad_atn_dbr
 	braw	Lad_relexp
 Lad_atn_put:
+	moveq	&8,%d0
+	movel	%d0,a3p_atn_stage	| 8 = data buffer ready, byte going out
 	moveb	&0x19,%a2@(65)		| DR
 	moveb	&0x06,%a2@(67)		| SCSI ABORT
 	addql	&1,a3p_atn_sent
 
 | 6c. The target must go BUS FREE after recognising ABORT.  That is the only proof accepted here,
 |     and it is a SCSI-level fact rather than the chip-level acceptance that -09 mistook for one.
+	moveq	&9,%d0
+	movel	%d0,a3p_atn_stage	| 9 = ABORT sent, waiting for bus free
 	moveq	&16,%d2
 
 Lad_rel_poll:
@@ -676,11 +690,31 @@ Lad_rel_noq:
 | Fail-closed and expiry both end at the stock body, which prints its own line and returns DEAD.
 | The request is left marked failed and its callback is NOT invoked, IDLE is not published, and
 | startany() is not called -- an obvious wedge beats silent I/O misassociation.
+| The failure print used to carry only the a3p_rel_* fields, because it was written before the
+| ATN path existed and was not extended with it.  68060-260829-13 paid for that: the run failed,
+| printed `RELEASE-FAILED try=1 as=0 ss=0 polls=0`, and nothing in that line could say whether
+| SET_ATN was ignored, a wrong phase arrived, or the bounded wait ran out.  The counters would
+| have said, and the wedge takes them with it -- which is the exact reason this file prints.
+| a3p_atn_stage records how far the path got, so one line answers it.
 Lad_relexp:
 	addql	&1,a3p_rel_exp
+	movel	a3p_atn_polls,%sp@-
+	movel	a3p_atn_ss,%sp@-
+	movel	a3p_atn_as,%sp@-
+	movel	a3p_atn_stage,%sp@-
+	pea	La3p_r3
+	jsr	printf
+	lea	%sp@(20),%sp
 	bras	Lad_relprt
 Lad_relfail:
 	addql	&1,a3p_rel_fail
+	movel	a3p_atn_polls,%sp@-
+	movel	a3p_atn_ss,%sp@-
+	movel	a3p_atn_as,%sp@-
+	movel	a3p_atn_stage,%sp@-
+	pea	La3p_r4
+	jsr	printf
+	lea	%sp@(20),%sp
 Lad_relprt:
 	movel	a3p_rel_polls,%sp@-
 	movel	a3p_rel_ss,%sp@-
@@ -724,6 +758,12 @@ La3p_r1:
 	.even
 La3p_r2:
 	.asciz	"a3p RELEASE-FAILED try=%d as=%x ss=%x polls=%d\n"
+	.even
+La3p_r3:
+	.asciz	"a3p ATN-EXPIRED stage=%d as=%x ss=%x polls=%d\n"
+	.even
+La3p_r4:
+	.asciz	"a3p ATN-FAILED stage=%d as=%x ss=%x polls=%d\n"
 	.even
 	.balign	4			| the .asciz blocks above are only .even, so without this
 					| the counter block can land 2 mod 4 -- it did, the moment
@@ -927,6 +967,9 @@ a3p_atn_polls:
 	.globl	a3p_atn_as
 a3p_atn_as:
 	.long	0		| last Auxiliary Status seen on the ATN path
+	.globl	a3p_atn_stage
+a3p_atn_stage:
+	.long	0		| 2 SET_ATN 4 CLR_ACK 5 classify 6 MESG_OUT 7 DBR 8 sent 9 busfree
 	.globl	a3p_atn_ss
 a3p_atn_ss:
 	.long	0		| last SCSI Status, read only when AS.INT allowed it
