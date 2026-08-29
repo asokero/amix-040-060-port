@@ -340,6 +340,211 @@ Lad_nopm:
 	jsr	printf
 	lea	%sp@(28),%sp
 
+| ============================================================================================
+| ISSUE-54 FIX: release the bus and fail the request, for ONE measured tuple only.
+|
+| Specified by docs/contracts/A3091-BUS-RELEASE-CONTRACT.md.  Root cause: SCSI target 3 is a
+| CD-ROM (2048-byte blocks) against a driver whose LBA arithmetic is in 512-byte units.  There
+| is no correct data to deliver -- the driver addresses the wrong place, not merely the wrong
+| length -- so the request must FAIL, and the bus, which the WD still holds as an initiator,
+| must be released.  This does not add block-size support: the CD and the tape stay unusable.
+| They stop taking the root disk down with them.
+|
+| WHY THE TUPLE IS SO NARROW.  Everything below is valid only for the state that was actually
+| measured on 68060-260829-07: ss=0x49, cp=0x46, tc=0, a data-in request, and an Auxiliary
+| Status with INT/LCI/BSY/CIP/DBR all clear.  Any other combination -- including 0x48 DATA_OUT
+| and 0x4A CMD, which have never been observed -- falls through to the stock fail-stop.  Those
+| need their own FIFO and DMA contracts and do not share this one.
+|
+| WHY NOT ABORT.  This line's first reading of NetBSD's sbicabort() said Abort then Disconnect.
+| That is a driver-wide unknown-state recovery entry and it is wrong here twice over: with AS=0
+| nothing is jammed and the Level II command has already ended, so Abort has nothing to do; and
+| Abort carries a direction-sensitive FIFO contract that requires servicing WD data requests
+| until its interrupt -- on an initiator receive, which is exactly this path.  Disconnect alone
+| is the release, and it raises no completion interrupt.  See
+| docs/ISSUE54-BUS-RELEASE-MY-READING-260829.md for that mistake scored in full.
+|
+| WHY IDLE IS PUBLISHED LAST.  itab[0x85] is input 3, atab[IDLE][3] is action 1 -- badhardware.
+| Ending at `istate = IDLE; startany()` before the bus event is consumed is fatal on an empty
+| queue and, worse, on a non-empty one attributes the old target's disconnect to a newly started
+| request and stops ITS dma.  So the release completes first, then ownership changes.
+| ============================================================================================
+	cmpil	&0x49,%d2
+	bnew	Lad_stock
+	cmpil	&0x46,a3p_cp
+	bnew	Lad_stock
+	tstl	a3p_tc
+	bnew	Lad_stock
+	tstl	a3p_rd			| DATA_IN only
+	beqw	Lad_stock
+	tstl	a3p_req
+	beqw	Lad_stock
+	movel	a3p_as,%d3
+	andil	&0xf1,%d3		| INT|LCI|BSY|CIP|DBR must all be clear
+	bnew	Lad_stock
+	addql	&1,a3p_rel_try
+	moveq	&16,%d2			| the post-command budget; ss is no longer needed
+					| (the stock body reads its own argument off the
+					| stack, so the fail-closed path stays correct)
+
+| 2. Quiesce the SDMAC through OUR cache-aware wrapper.  The captured cursor was 16 bytes short
+|    of the segment end because that much was still in the SDMAC FIFO; this flushes it and
+|    completes the FROM_DEVICE ownership contract before any callback can look at the buffer.
+|    Its inherited stock body still contains an unbounded SDMAC wait -- recorded as a separate
+|    residual risk, not closed here.
+	jsr	dma_a3091_stopdma
+
+| 3. The manufacturer's command guard: at least 7 us between the acknowledged SS read and the
+|    COM write.  delayus() waits on raster transitions, so its floor does not shrink when the
+|    CPU changes from 040 to 060 -- which drv_usecwait's instruction loop would.
+	pea	8
+	jsr	delayus
+	addql	&4,%sp
+
+	movel	a3091_device,%d3
+	beqw	Lad_relfail
+	moveal	%d3,%a2
+
+| 4. Re-read AS.  The target can disconnect during the delay above, so the classified state has
+|    to be re-established rather than assumed.
+	moveb	&0x1f,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_rel_as
+	btst	&7,%d3			| INT pending?
+	bnes	Lad_rel_int
+	movel	%d3,%d0
+	andil	&0x71,%d0		| LCI|BSY|CIP|DBR without a bus-free status
+	bnew	Lad_relfail
+	braw	Lad_rel_cmd
+Lad_rel_int:
+| SS is read ONLY because AS.INT says a new interrupt is pending.  Read at any other time it is
+| stale status from a previous event.
+	moveb	&0x17,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_rel_ss
+	cmpil	&0x41,%d3		| unexpected bus free ended the command
+	beqw	Lad_rel_raced
+	cmpil	&0x85,%d3		| disconnect service event
+	beqw	Lad_rel_raced
+	braw	Lad_relfail		| any other status is outside this path
+
+| 5. Disconnect.  0x04, a Level I command, valid while connected as an initiator.
+Lad_rel_cmd:
+	moveb	&0x18,%a2@(65)
+	moveb	&0x04,%a2@(67)
+
+| 6. Bounded post-command check.  There is no completion interrupt to wait for: acceptance plus
+|    the immediate-disconnect postcondition is the proof.  16 iterations of delayus(8) is about
+|    32 scan lines, ~2 ms -- orders of magnitude more than the WD needs, and finite, which the
+|    old cipwait() was not.
+Lad_rel_poll:
+	pea	8
+	jsr	delayus
+	addql	&4,%sp
+	addql	&1,a3p_rel_polls
+	moveb	&0x1f,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_rel_as
+	btst	&7,%d3			| INT -- a status is pending, classify it
+	bnes	Lad_rel_pint
+	btst	&6,%d3			| LCI: the Disconnect was ignored
+	bnew	Lad_relfail
+	btst	&4,%d3			| CIP still set -- command not yet taken
+	bnes	Lad_rel_next
+	movel	%d3,%d0
+	andil	&0x21,%d0		| BSY|DBR must be clear for acceptance
+	bnew	Lad_relfail
+	braw	Lad_rel_ok
+Lad_rel_pint:
+	moveb	&0x17,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_rel_ss
+	cmpil	&0x41,%d3
+	beqw	Lad_rel_ok
+	cmpil	&0x85,%d3
+	beqw	Lad_rel_ok
+	braw	Lad_relfail		| 0x40 invalid-command included: not success
+Lad_rel_next:
+	subql	&1,%d2
+	bnew	Lad_rel_poll
+	braw	Lad_relexp
+
+Lad_rel_raced:
+	addql	&1,a3p_rel_raced	| the target freed the bus before we asked
+	bras	Lad_rel_hwm
+Lad_rel_ok:
+	addql	&1,a3p_rel_ok
+Lad_rel_hwm:
+	moveq	&16,%d0
+	subl	%d2,%d0			| polls actually used
+	cmpl	a3p_rel_maxpoll,%d0
+	bles	Lad_rel_comp
+	movel	%d0,a3p_rel_maxpoll
+
+| 7. Hardware release is established.  Only now does request ownership change.  cp->okay is
+|    already FALSE -- a3091queue() clears it on every request and nothing here sets it -- so
+|    completing without touching it IS the failure report.
+Lad_rel_comp:
+	movel	a3091_curunitp,%d3
+	beqw	Lad_relfail
+	moveal	%d3,%a2
+	movel	%a2@(4),%d3		| unit->comhead
+	beqw	Lad_relfail
+	movel	%d3,a3p_rel_req
+	moveal	%d3,%a0
+	movel	%a0@,%d0		| cp->next
+	movel	%d0,%a2@(4)
+	beqs	Lad_rel_noq
+	movel	%a2,%sp@-
+	jsr	a3091_uqueue
+	addql	&4,%sp
+Lad_rel_noq:
+	movel	a3p_rel_req,%d3
+	moveal	%d3,%a0
+	moveal	%a0@(36),%a1		| cp->intr
+	movel	%d3,%sp@-
+	jsr	%a1@
+	addql	&4,%sp
+	clrl	a3091_istate		| IDLE published only here
+	jsr	a3091_startany
+
+	movel	a3p_rel_polls,%sp@-
+	movel	a3p_rel_ss,%sp@-
+	movel	a3p_rel_as,%sp@-
+	movel	a3p_rel_req,%sp@-
+	pea	La3p_r1
+	jsr	printf
+	lea	%sp@(20),%sp
+
+	movel	a3091_istate,%d0	| return whatever startany() left, so the caller's
+					| `istate = badhardware(ss)` writes it back unchanged
+					| instead of stamping IDLE over a fresh STARTING
+	moveml	%sp@+,%d2-%d3/%a2
+	unlk	%fp
+	rts
+
+| Fail-closed and expiry both end at the stock body, which prints its own line and returns DEAD.
+| The request is left marked failed and its callback is NOT invoked, IDLE is not published, and
+| startany() is not called -- an obvious wedge beats silent I/O misassociation.
+Lad_relexp:
+	addql	&1,a3p_rel_exp
+	bras	Lad_relprt
+Lad_relfail:
+	addql	&1,a3p_rel_fail
+Lad_relprt:
+	movel	a3p_rel_polls,%sp@-
+	movel	a3p_rel_ss,%sp@-
+	movel	a3p_rel_as,%sp@-
+	movel	a3p_rel_try,%sp@-
+	pea	La3p_r2
+	jsr	printf
+	lea	%sp@(20),%sp
+
+Lad_stock:
 	moveml	%sp@+,%d2-%d3/%a2
 	unlk	%fp
 	jmp	a3091_badhardware_orig	| stock body: prints its own line, returns DEAD
@@ -367,6 +572,12 @@ La3p_m2:
 	.even
 La3p_m3:
 	.asciz	"a3p sac=%x cntr=%x verdict=%d retry=%d\n"
+	.even
+La3p_r1:
+	.asciz	"a3p RELEASED req=%x as=%x ss=%x polls=%d\n"
+	.even
+La3p_r2:
+	.asciz	"a3p RELEASE-FAILED try=%d as=%x ss=%x polls=%d\n"
 	.even
 	.balign	4			| the .asciz blocks above are only .even, so without this
 					| the counter block can land 2 mod 4 -- it did, the moment
@@ -510,4 +721,37 @@ a3p_retry:
 	.globl	a3p_verdict
 a3p_verdict:
 	.long	0		| 1 resume 2 no-data 3 cmd-seq 4 direction 5 other
+	.balign	4
+| --- ISSUE-54 release path.  a3p_rel_try = ok + raced + fail + exp, and that identity is
+|     what makes these readable: a try that matched no outcome means the block moved.
+	.globl	a3p_rel_try
+a3p_rel_try:
+	.long	0		| times the release path was entered: the denominator
+	.globl	a3p_rel_ok
+a3p_rel_ok:
+	.long	0		| Disconnect issued and accepted
+	.globl	a3p_rel_raced
+a3p_rel_raced:
+	.long	0		| target had already freed the bus; no command issued
+	.globl	a3p_rel_fail
+a3p_rel_fail:
+	.long	0		| fail-closed: preconditions gone, stock body took over
+	.globl	a3p_rel_exp
+a3p_rel_exp:
+	.long	0		| bounded wait expired -- MUST STAY 0 on healthy hardware
+	.globl	a3p_rel_polls
+a3p_rel_polls:
+	.long	0		| total post-command polls across all releases
+	.globl	a3p_rel_maxpoll
+a3p_rel_maxpoll:
+	.long	0		| high-water polls for one release
+	.globl	a3p_rel_as
+a3p_rel_as:
+	.long	0		| last Auxiliary Status read on the release path
+	.globl	a3p_rel_ss
+a3p_rel_ss:
+	.long	0		| last SCSI Status read, and only when AS.INT said one was pending
+	.globl	a3p_rel_req
+a3p_rel_req:
+	.long	0		| the request that was failed
 	.balign	4
