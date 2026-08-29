@@ -1,0 +1,41 @@
+ISSUE-54 fix -- emulator verification, 2026-08-29
+kernel 68040-260829-09, Amiberry 040 bed
+
+All four predictions from test-tools/issue54-fix-predictions-260829.md hold.
+
+  a3p_magic       41335021  A3P!     (E1)
+  a3p_seen        0                  (E3)
+  a3p_rel_try     0                  (E2)  the release path was never entered
+  a3p_rel_ok      0
+  a3p_rel_raced   0
+  a3p_rel_fail    0
+  a3p_rel_exp     0
+  a3d_n           0                  (E3)  badhardware never ran
+  a3d_ran         0
+
+with a denominator (E4):
+
+  dma_cmpl_count  3545
+  dma_prep_to     1124
+  dma_cmpl_to     1124   == prep_to
+
+WHAT THIS SHOWS
+
+The fix is inert.  It does not fire on any status Amiberry produces, the kernel boots and does
+normal disk I/O, and the release path -- which touches the WD command register -- was never
+entered.  Every branch of it is behind the tuple test, so this also means the test rejects
+everything the emulator can present.
+
+WHAT IT DOES NOT SHOW
+
+Anything about whether the release works.  Amiberry's SCSI produces no phase mismatch, so
+a3p_rel_try can only become non-zero on the hardware, against the CD-ROM at target 3.
+
+A MISTAKE WORTH KEEPING
+
+The first reading of a3d_n used a remembered address and returned 1093878817, which is
+0x41334421 -- the ASCII "A3D!".  It was the magic word, read as if it were a counter.  Nothing
+was harmed because the number is unmistakable, but it is the same class of error as the .data
+file-offset mistake earlier today and the three counter-block address mistakes before it.  The
+addresses come from tools/status-facts.sh; they are not to be carried in a person's head or in
+a previous command's history.
