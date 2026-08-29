@@ -6859,6 +6859,22 @@ emulator.**
 
 ## ⚠ ISSUE-54 (2026-08-27, OPEN): a WD phase mismatch on **any** target kills the A3091 driver permanently — reproducible on demand
 
+> **CLASSIFIED ON SILICON 2026-08-29, `68060-260829-07`** —
+> [`docs/REALHW-ISSUE54-CLASSIFY-260829-07.md`](docs/REALHW-ISSUE54-CLASSIFY-260829-07.md).
+> Ten predictions written before the run, ten held. The tuple the external audit asked for:
+> **`cp=46 tc=0 di=43 con=8C as=0`, `op=28 rd=1 len=200`, `sac=971C1F0` inside the 512-byte
+> envelope at `971C000`, `verdict=2`, `retry=0`.**
+>
+> `cp=0x46` with `tc=0` means **the data phase had finished**, not that it was interrupted
+> mid-way. That overturns the premise of this ledger's earlier reasoning — `0x49` was read as
+> "mid-data-phase, more to transfer", and the measurement says the count was exhausted and the
+> command phase already held the value action 9 writes to resume *past* the data. The cursor
+> agrees: 496 of 512 bytes, one SDMAC FIFO short of the end.
+>
+> Hypothesis, not established: a target returning more data than was asked for. `dd bs=512`
+> issues READ(10) for one 512-byte block and target 3 is not a normal disk. Nothing in the
+> capture reads its block size.
+
 > **Ledger: OPEN.** Root-caused from the driver's own tables and a console capture. **This was
 > triggered deliberately-by-accident from this side** — see "How it was found" — which makes it
 > the first A3091 shutdown in this project that is reproducible rather than observed.
