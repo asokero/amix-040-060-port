@@ -67,3 +67,52 @@ The task also gives them two facts I found: that `sbicreg.h` puts `0x41` and `0x
 interrupt categories, and that `sbicnextstate()` handles both in one case arm. Those are source
 material rather than conclusions, and withholding them to keep the experiment tidy would only
 cost time. What is withheld is what I make of them.
+
+---
+
+# Scored against the independent answer, 2026-08-29
+
+`docs/contracts/A3091-BUS-FREE-FOLLOWUP-AUDIT.md`. **Three of four right, and the miss is a
+class of error this project had already named — one I had even quoted.**
+
+## Right
+
+- **`AS.BSY = 0` proves only that the WD's internal command ended, not that the physical bus was
+  released.** Same conclusion, same reasoning.
+- **Neither a longer poll nor `0x41 → action 7` is safe.** Both rejected there too, and the
+  stranding argument is the one I gave.
+- **The protocol-correct fix needs ATN and a Message Out `ABORT` (0x06).** I identified that the
+  driver cannot do this today, and why: `startcom` is `0x09`, `SEL_XFER`, select without ATN.
+
+## Wrong, and it matters
+
+I read `unit=8113A44` as identifying whose event the `0x41` was, and concluded the root disk's
+command had terminated. **The capture does not prove that.**
+
+`startany()` programs `DI`, copies the CDB, arms the DMA, writes `curunitp` and sets `STARTING`
+**before** it writes the combination command. So every field I used as identity describes target
+6 while its selection is still *pending*. `head=0` only says the unit was taken off the start
+queue. The `0x41` may well have been the CD letting go late, arriving while the root disk's
+command had not yet begun.
+
+That is exactly the event-ownership error the previous audit described for action 7 — attributing
+one target's event to another target's request — and I had quoted that passage into this
+project's own ledger two days ago. I then made the same mistake in my own reading of a capture.
+
+## Also better than my framing
+
+I called the missing ATN a structural blocker: machinery the driver does not have. The audit
+scopes it correctly — ATN is needed on the *cleanup* path only, and the ordinary
+`startcom = 0x09` selection does not change. That turns a "much larger change than ISSUE-54 has
+earned" into a bounded addition.
+
+## And my recommendation was the right shape but the wrong experiment
+
+I proposed triggering and then waiting, to see whether the bus recovers on its own. The audit's
+next build is sharper and cheaper: **capture `CP`, `TC` and `DI` at the `0x41` itself.** `CP=0`
+would mean no new selection completed, which is the strong result for a late CD event; `CP>=0x10`
+would mean target 6 really had been selected. It answers the ownership question directly instead
+of inferring it from timing, and the classifier already has the register-access pattern.
+
+Note the audit's own caution, which is the same trap again: capture `DI` but **do not use it as
+event identity** — it is a host-programmed destination register.

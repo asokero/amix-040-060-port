@@ -1,5 +1,13 @@
 # A3091 WD33C93A Bus-Release Contract
 
+> **PARTIALLY SUPERSEDED 2026-08-29.** This contract's acceptance test — `CIP`, `BSY`, `LCI`
+> and `INT` clear after `COM=0x04` — was implemented exactly and **passed on silicon while
+> leaving the SCSI bus unusable**, so the next command died. `AS.BSY` proves the WD's internal
+> command ended, not that the bus was released. See
+> [`A3091-BUS-FREE-FOLLOWUP-AUDIT.md`](A3091-BUS-FREE-FOLLOWUP-AUDIT.md) and
+> `docs/REALHW-ISSUE54-FIX-260829-09.md`. The `0x49` handling in this document stands; its
+> proof-of-release does not.
+
 > **Imported normative contract.** Original analysis record:
 > `amix-kernel-analysis/vm-map/A3091-BUS-RELEASE-CONTRACT.md` (private workspace, imported
 > 2026-08-29). This copy is the implementation-facing reference used by `src/`.
