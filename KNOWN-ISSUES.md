@@ -6871,6 +6871,19 @@ emulator.**
 > command phase already held the value action 9 writes to resume *past* the data. The cursor
 > agrees: 496 of 512 bytes, one SDMAC FIFO short of the end.
 >
+> **DISCRIMINATED 2026-08-29, `68060-260829-11`: verdict 7** —
+> [`docs/REALHW-ISSUE54-DISCRIMINATOR-260829-11.md`](docs/REALHW-ISSUE54-DISCRIMINATOR-260829-11.md).
+> Six of six predictions held. `a3p ss=41 cp=3A tc=800 di=46 as=0`, `sac == segpa`.
+> **`CP=0x3A` means a new selection completed and target 6 accepted CDB bytes before the bus went
+> free** — so the `0x41` belonged to the root disk's command, not to a late event from the CD.
+> `tc` full and the DMA cursor unmoved: nothing transferred.
+>
+> That makes the ATN + Message Out `ABORT` path **necessary**, not merely protocol-correct: the
+> target must be told to release, since a WD `Disconnect` only drops the initiator's own signals.
+> It also disposes of the cheaper options — not a late CD event (`CP` says otherwise), not a case
+> for waiting longer (`rel_exp = 0`, `polls = 1`), and not a case for reclassifying `0x41`, which
+> is telling the truth about a command that really died.
+
 > **FIX LANDED AND HALF-PROVEN 2026-08-29, `68060-260829-09`** —
 > [`docs/REALHW-ISSUE54-FIX-260829-09.md`](docs/REALHW-ISSUE54-FIX-260829-09.md). Seven of ten
 > predictions held. `dd` on the CD now returns `RC=2` and an I/O error instead of killing the
