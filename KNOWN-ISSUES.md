@@ -6871,6 +6871,13 @@ emulator.**
 > command phase already held the value action 9 writes to resume *past* the data. The cursor
 > agrees: 496 of 512 bytes, one SDMAC FIFO short of the end.
 >
+> **STAGE P ACCEPTED 2026-08-30, `68060-260830-04`: 8/8** —
+> [`docs/REALHW-ISSUE54-STAGEP-ACCEPTED-260830-04.md`](docs/REALHW-ISSUE54-STAGEP-ACCEPTED-260830-04.md).
+> `got=1 tc=0`, `sac0 == sac`, `cp=46 di=43 con=0C`, `as2=80` proving `BSY` was clear for the
+> gated reads. `COM=0x20` with `TC=1` in PIO transfers exactly one byte, decrements the count,
+> touches neither phase nor direction, moves nothing through the SDMAC, and reports
+> `XFERRED | DATA_IN`. **Stage D can be written on it.**
+
 > **STAGE P 2026-08-30, `68060-260830-02`: the PIO discard primitive works** —
 > [`docs/REALHW-ISSUE54-STAGEP-260830-02.md`](docs/REALHW-ISSUE54-STAGEP-260830-02.md).
 > `a3p P got=1 ... byte=50`, `sac0 == sac`, `dmaon=0`, and on the next interrupt **`ss=0x19` =
