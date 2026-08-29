@@ -1,16 +1,8 @@
 # A3091 post-Disconnect bus-free and event-ownership audit
 
 > **Imported normative contract.** Original analysis record:
-> `amix-kernel-analysis/vm-map/A3091-BUS-FREE-FOLLOWUP-AUDIT.md` (private workspace, imported
-> 2026-08-29). This copy is the implementation-facing reference used by `src/`.
-
-> **Current implementation status.** Answers `private/A3091-BUS-FREE-CODEX-TASK.md`. It
-> **partially supersedes** [`A3091-BUS-RELEASE-CONTRACT.md`](A3091-BUS-RELEASE-CONTRACT.md),
-> whose acceptance test this line implemented and which passed while leaving the bus unusable.
-> Scored against this line's independent reading in
-> `docs/ISSUE54-NEXT-COMMAND-MY-READING-260829.md`. Nothing further is implemented yet; the next
-> build is the cheap discriminator in Q1 — extend the existing `0x48..0x4a` register capture to
-> `0x41`.
+> `amix-kernel-analysis/vm-map/A3091-BUS-FREE-FOLLOWUP-AUDIT.md` (private workspace, imported 2026-08-30).
+> This copy is the implementation-facing reference used by `src/`.
 
 This document answers `private/A3091-BUS-FREE-CODEX-TASK.md` from the port
 repository. It reviews the hardware result from build `68060-260829-09`,
@@ -20,6 +12,21 @@ A3091 controller to another request.
 
 The result is a static contract and a measurement plan. It is not a kernel
 change or a hardware acceptance result.
+
+> **Hardware follow-up correction (builds `68060-260829-11` and
+> `68060-260829-15`).** The discriminator later captured
+> `SS=0x41, CP=0x3a, TC=0x800`: target 6 had been selected and had accepted
+> CDB bytes, so the event did terminate the newly started root-disk command.
+> The attribution uncertainty in Executive verdict item 3 and Q1 is closed.
+> The ATN experiment then reached `SS=0x89` (`DATA IN`) immediately rather
+> than Message Out. Finally, Western Digital application notes E062-B and
+> E025-A explicitly delete both Transfer Pad and initiator-mode WD Abort from
+> the WD33C93A. Consequently the direct Message Out sequence below is not a
+> complete implementation plan, and `XFER_PAD` must not be substituted for
+> its missing intermediate data service. Preserve this document's ownership,
+> physical-bus-free, and publish-`IDLE`-last rules, but use
+> `A3091-DATA-IN-DRAIN-DESIGN.md` for the current recovery design and its
+> falsification gates.
 
 > **Correction to the earlier contract.** `COM=0x04` acceptance plus clear
 > WD33C93A `AS.CIP/BSY/LCI/INT/DBR` does **not** prove that the physical SCSI

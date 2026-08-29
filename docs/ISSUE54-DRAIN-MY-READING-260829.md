@@ -67,3 +67,54 @@ command. But the overlap is real, and this comparison is weaker for it than the 
 
 Q2 hands over the fact that `XFER_PAD` is used nowhere in any NetBSD driver. That is source
 material rather than a conclusion; withholding it would only cost time.
+
+---
+
+# Scored against the independent answer, 2026-08-30
+
+`docs/contracts/A3091-DATA-IN-DRAIN-DESIGN.md`. **The closest agreement of the three rounds —
+four of five substantive points match — and the one place they are stronger is a fact I could
+not have had.**
+
+## Agreed
+
+- **The command cannot succeed.** Their §1 states it from `dd.c`'s 512-byte `BSIZE` arithmetic:
+  the 512 bytes received are not a partial version of the requested block, they addressed the
+  wrong block. Same conclusion, better argued.
+- **Ordinary PIO Transfer Information, `COM=0x20`, is the discard primitive.** That is what I
+  proposed, and for the reason I gave — it is the primitive action 8 already exercises.
+- **The natural completion must never change the verdict.** Their §5 and my "trap I would fall
+  into" paragraph are the same paragraph: `0x4B` → action 9 → `S_XFERRED` → action 0 sets
+  `okay = TRUE`, and the caller would get the wrong 512 bytes reported as success.
+- **Recovery owns the controller until bus free is consumed** — no callback, no `IDLE`, no
+  `startany()` while the old target can still speak.
+
+## Where they are stronger, and I could not have got there
+
+I rejected `XFER_PAD` because it is **used nowhere** in any NetBSD driver — an absence-of-evidence
+argument, and I said so. Western Digital's own compatibility notes say it was **removed from the
+A revision**, along with the initiator-mode Abort command. That is evidence of absence, from the
+part's own documentation, and it is a different quality of fact.
+
+Their §2 draws the right general lesson from it: *a header constant without a call site is not a
+hardware contract.* `sbicreg.h` still defines `0x19` because it describes the family, not this
+part. I was right for a weaker reason, and would have been right by luck if the byte loop had not
+also been the safer option on its own merits.
+
+## Where they went further than I did
+
+The **two-stage plan**. I proposed the drain; they propose proving *one discarded byte* first,
+and then deliberately quarantining the kernel — no callback, no `IDLE`, no root command started —
+so a failed primitive costs one controlled boot instead of another damaged command. Given that
+three designs have now been implemented to specification and failed on hardware, that is plainly
+right and I did not think of it.
+
+And **caller-buffer canaries** around the original 512-byte transfer, to prove PIO moves no
+memory. I would not have checked that.
+
+## My one contribution they generalised
+
+I raised refusing the request before issuing it, once a unit has failed. Their §6 puts it in its
+proper place: without a proven SCSI bus-reset primitive, **controller quarantine is the only
+bounded fallback**, and a target that stops producing DBR, phase, or bus-free events cannot be
+made safe by any finite PIO loop. That is the same idea with its limits stated.

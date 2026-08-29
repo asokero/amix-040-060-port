@@ -1,7 +1,7 @@
 # Implementation contracts
 
 This directory closes the static evidence chain used by `src/`. It contains
-the 38 analysis records that the implementation names as specifications,
+the 39 analysis records that the implementation names as specifications,
 contracts, or authoritative censuses. The larger private analysis repository
 remains a research diary and is not required to build or review this port.
 
@@ -13,7 +13,7 @@ unit.
 
 ## Import and merge policy
 
-All 38 records were imported one-to-one. **No records were merged.** The
+All 39 records were imported one-to-one. **No records were merged.** The
 apparently paired documents have different normative jobs:
 
 - the ISSUE-42 protection contract defines the architecture/VM rule, while
@@ -64,7 +64,8 @@ criteria needed by its listed consumer.
 | `vm-map/A3091-SPURIOUS-COMPLETION-AUDIT.md` | [A3091-SPURIOUS-COMPLETION-AUDIT.md](A3091-SPURIOUS-COMPLETION-AUDIT.md) | `a3091demux040.s`, `patch_a3091_intr.py` |
 | `vm-map/A3091-PHASE-MISMATCH-RESUME-AUDIT.md` | [A3091-PHASE-MISMATCH-RESUME-AUDIT.md](A3091-PHASE-MISMATCH-RESUME-AUDIT.md) | `a3091dbg040.s` (classification build, ISSUE-54) |
 | `vm-map/A3091-BUS-RELEASE-CONTRACT.md` | [A3091-BUS-RELEASE-CONTRACT.md](A3091-BUS-RELEASE-CONTRACT.md) | `a3091dbg040.s` release path (partially superseded) |
-| `vm-map/A3091-BUS-FREE-FOLLOWUP-AUDIT.md` | [A3091-BUS-FREE-FOLLOWUP-AUDIT.md](A3091-BUS-FREE-FOLLOWUP-AUDIT.md) | ISSUE-54 next build: the `0x41` discriminator |
+| `vm-map/A3091-BUS-FREE-FOLLOWUP-AUDIT.md` | [A3091-BUS-FREE-FOLLOWUP-AUDIT.md](A3091-BUS-FREE-FOLLOWUP-AUDIT.md) | ISSUE-54, the `0x41` discriminator (answered) |
+| `vm-map/A3091-DATA-IN-DRAIN-DESIGN.md` | [A3091-DATA-IN-DRAIN-DESIGN.md](A3091-DATA-IN-DRAIN-DESIGN.md) | ISSUE-54 Stage P, the PIO discard primitive |
 
 ### Model-B and filesystem boundaries
 
