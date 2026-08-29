@@ -52,3 +52,18 @@ change than ISSUE-54 has earned so far.
 
 I am not confident enough to pick between those from one capture, and the last time I was this
 confident about a WD sequence I was wrong twice.
+
+## Where the comparison is not blind, stated rather than hidden
+
+The task carries one constraint that overlaps my conclusion: *"do not propose anything that can
+strand a request silently."* My first conclusion is that reclassifying `0x41` would do exactly
+that, so the constraint may steer the answer away from an option I have already rejected.
+
+It stays in, because it is this project's standing standard and belongs in any task about this
+driver whether or not I had reached that conclusion — but the overlap is real and the comparison
+is weaker for it than the last one was.
+
+The task also gives them two facts I found: that `sbicreg.h` puts `0x41` and `0x85` in different
+interrupt categories, and that `sbicnextstate()` handles both in one case arm. Those are source
+material rather than conclusions, and withholding them to keep the experiment tidy would only
+cost time. What is withheld is what I make of them.
