@@ -6871,6 +6871,23 @@ emulator.**
 > command phase already held the value action 9 writes to resume *past* the data. The cursor
 > agrees: 496 of 512 bytes, one SDMAC FIFO short of the end.
 >
+> **FIX LANDED AND HALF-PROVEN 2026-08-29, `68060-260829-09`** —
+> [`docs/REALHW-ISSUE54-FIX-260829-09.md`](docs/REALHW-ISSUE54-FIX-260829-09.md). Seven of ten
+> predictions held. `dd` on the CD now returns `RC=2` and an I/O error instead of killing the
+> controller, **and no `a3091: 0x49` line appears** — the fatal cell was not taken.
+> `rel_try 1, rel_ok 1, fail 0, exp 0, polls 1`.
+>
+> **But the next command dies.** A root-disk read afterwards wedged the machine, and not the way
+> this line predicted: the second event is `0x41` — *unexpected target bus free* — at `STARTING`,
+> on the **root disk's** unit, not `0x85` at `IDLE`. `startany()` correctly began the next
+> queued request and that command terminated with an unexpected bus free.
+>
+> **Chip-level acceptance is not proof the SCSI bus is free.** `ASR.BSY` is the WD's own state,
+> not whether the CD is still asserting BSY with 1536 bytes it never got to send. And `0x41` is
+> one of the two statuses the bus-release contract accepts as proof of a free bus while the
+> driver's own `itab` calls it illegal — that contradiction is the next thing to resolve, in a
+> contract before code.
+
 > **CONFIRMED the same day.** Target 3 is a ZuluSCSI-emulated **CD-ROM** — a Civilization II
 > disc — and a CD-ROM data block is **2048 bytes**. The driver assumes 512. Every number in the
 > capture follows: it asked for 512, `tc` reached 0 with the target still in `DATA_IN` holding
