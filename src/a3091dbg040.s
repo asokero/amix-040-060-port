@@ -526,7 +526,11 @@ Lad_atn_wait:
 	movel	%d3,%d0
 	andil	&0x07,%d0
 	cmpil	&0x06,%d0		| MESSAGE OUT phase?
-	bnew	Lad_relfail
+	beqs	Lad_atn_ph_ok
+	cmpil	&0x89,%d3		| the measured DATA IN answer -> Stage P probe
+	beqw	Lad_p_probe
+	braw	Lad_relfail
+Lad_atn_ph_ok:
 	movel	%d3,%d0
 	andil	&0xf8,%d0		| and one of XFERRED/MIS/MIS_1/MIS_2
 	cmpil	&0x18,%d0
@@ -629,6 +633,137 @@ Lad_rel_next:
 	subql	&1,%d2
 	bnew	Lad_rel_poll
 	braw	Lad_relexp
+
+| ============================================================================================
+| STAGE P -- prove ONE discarded PIO byte, then quarantine.  No recovery is attempted here.
+|
+| docs/contracts/A3091-DATA-IN-DRAIN-DESIGN.md.  Three designs have now been implemented to
+| specification and failed on hardware for reasons the specification did not anticipate, so the
+| fourth proves its primitive before it is built on.  A failed experiment costs one controlled
+| boot instead of another damaged command.
+|
+| WHY NOT XFER_PAD.  `sbicreg.h` defines 0x19 and no NetBSD driver calls it, which is how this
+| line first argued against it.  Western Digital's own compatibility notes are stronger: Transfer
+| Pad was REMOVED from the A revision, along with the initiator-mode Abort command.  A header
+| constant without a call site is not a hardware contract -- sbicreg.h describes the family, not
+| this part.
+|
+| Entered only for SS=0x89 (MIS_2|DATA_IN) after ATN was asserted and accepted, with CP=0x46, the
+| request already failed and the SDMAC already stopped.  Everything after the capture falls into
+| the same fail-closed path as before, which IS the quarantine: badhardware returns DEAD, DEAD's
+| row is all action 1, and no further command can start.
+| ============================================================================================
+Lad_p_probe:
+	addql	&1,a3p_p_try
+	movel	%a2@(12),a3p_p_sac0	| SDMAC cursor BEFORE: PIO must not move it
+	moveb	&0x01,%a2@(65)		| CON -> PIO: EDI|IDI, DMA-mode bit cleared
+	moveb	&0x0c,%a2@(67)
+| Direction stays SCSI-to-host for DATA IN, so DI is deliberately not touched.
+| Transfer Count is loaded explicitly, which is mandatory on the A revision: unlike the original
+| part it does not preserve the previous count across a single-byte transfer.
+	moveb	&0x12,%a2@(65)
+	clrb	%a2@(67)
+	moveb	&0x13,%a2@(65)
+	clrb	%a2@(67)
+	moveb	&0x14,%a2@(65)
+	moveb	&1,%a2@(67)
+	pea	8			| the 7 us guard, after the SS read above
+	jsr	delayus
+	addql	&4,%sp
+	moveb	&0x18,%a2@(65)
+	moveb	&0x20,%a2@(67)		| TRANSFER INFO, plain PIO, not the SBT variant
+	moveq	&16,%d2
+Lad_p_wait:
+	pea	8
+	jsr	delayus
+	addql	&4,%sp
+	addql	&1,a3p_p_polls
+	moveb	&0x1f,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_p_as
+	btst	&0,%d3			| DBR -- a byte is waiting for us
+	bnes	Lad_p_byte
+	btst	&7,%d3			| INT instead -- a phase change ended it
+	bnes	Lad_p_int
+	subql	&1,%d2
+	bnew	Lad_p_wait
+	bras	Lad_p_capture		| neither: capture what we have and quarantine
+Lad_p_byte:
+	moveb	&0x19,%a2@(65)		| DR
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_p_byte		| the discarded byte, kept only as evidence
+	addql	&1,a3p_p_got
+	bras	Lad_p_capture
+Lad_p_int:
+	moveb	&0x17,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_p_ss
+Lad_p_capture:
+	clrl	%d0			| TC after: must read exactly one less
+	moveb	&0x12,%a2@(65)
+	moveb	%a2@(67),%d0
+	andil	&0xff,%d0
+	lsll	&8,%d0
+	moveb	&0x13,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	orl	%d3,%d0
+	lsll	&8,%d0
+	moveb	&0x14,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	orl	%d3,%d0
+	movel	%d0,a3p_p_tc
+	moveb	&0x10,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_p_cp
+	moveb	&0x15,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_p_di
+	moveb	&0x01,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_p_con
+	movel	%a2@(12),a3p_p_sac	| SDMAC cursor AFTER
+	clrl	%d3
+	movew	%a2@(10),%d3
+	movel	%d3,a3p_p_cntr
+	clrl	%d3
+	movew	%a2@(30),%d3
+	movel	%d3,a3p_p_istr
+	clrl	%d3
+	moveb	a3091_dma_on,%d3
+	movel	%d3,a3p_p_dmaon
+
+	movel	a3p_p_polls,%sp@-
+	movel	a3p_p_byte,%sp@-
+	movel	a3p_p_ss,%sp@-
+	movel	a3p_p_as,%sp@-
+	movel	a3p_p_tc,%sp@-
+	movel	a3p_p_got,%sp@-
+	pea	La3p_p1
+	jsr	printf
+	lea	%sp@(28),%sp
+	movel	a3p_p_dmaon,%sp@-
+	movel	a3p_p_istr,%sp@-
+	movel	a3p_p_cntr,%sp@-
+	movel	a3p_p_sac,%sp@-
+	movel	a3p_p_sac0,%sp@-
+	pea	La3p_p2
+	jsr	printf
+	lea	%sp@(24),%sp
+	movel	a3p_p_con,%sp@-
+	movel	a3p_p_di,%sp@-
+	movel	a3p_p_cp,%sp@-
+	pea	La3p_p3
+	jsr	printf
+	lea	%sp@(16),%sp
+	braw	Lad_relfail		| quarantine: DEAD, and DEAD starts nothing
 
 Lad_atn_free:
 	addql	&1,a3p_atn_free	| the target let go before we could speak: the
@@ -764,6 +899,15 @@ La3p_r3:
 	.even
 La3p_r4:
 	.asciz	"a3p ATN-FAILED stage=%d as=%x ss=%x polls=%d\n"
+	.even
+La3p_p1:
+	.asciz	"a3p P got=%d tc=%x as=%x ss=%x byte=%x polls=%d\n"
+	.even
+La3p_p2:
+	.asciz	"a3p P sac0=%x sac=%x cntr=%x istr=%x dmaon=%d\n"
+	.even
+La3p_p3:
+	.asciz	"a3p P cp=%x di=%x con=%x\n"
 	.even
 	.balign	4			| the .asciz blocks above are only .even, so without this
 					| the counter block can land 2 mod 4 -- it did, the moment
@@ -973,4 +1117,51 @@ a3p_atn_stage:
 	.globl	a3p_atn_ss
 a3p_atn_ss:
 	.long	0		| last SCSI Status, read only when AS.INT allowed it
+	.balign	4
+| --- Stage P.  a3p_p_got == 1 and a3p_p_sac == a3p_p_sac0 are the two that decide it.
+	.globl	a3p_p_try
+a3p_p_try:
+	.long	0		| Stage P entered: SS=0x89 after an accepted ATN
+	.globl	a3p_p_got
+a3p_p_got:
+	.long	0		| bytes actually taken from DR -- must be exactly 1
+	.globl	a3p_p_polls
+a3p_p_polls:
+	.long	0		| poll iterations inside Stage P
+	.globl	a3p_p_byte
+a3p_p_byte:
+	.long	0		| the discarded byte, evidence only
+	.globl	a3p_p_as
+a3p_p_as:
+	.long	0		| Auxiliary Status at the decisive poll
+	.globl	a3p_p_ss
+a3p_p_ss:
+	.long	0		| SCSI Status, only if INT ended the transfer instead of DBR
+	.globl	a3p_p_tc
+a3p_p_tc:
+	.long	0		| Transfer Count after -- must have gone 1 -> 0
+	.globl	a3p_p_cp
+a3p_p_cp:
+	.long	0		| command phase after
+	.globl	a3p_p_di
+a3p_p_di:
+	.long	0		| destination ID after; direction must be unchanged
+	.globl	a3p_p_con
+a3p_p_con:
+	.long	0		| control after; should still read the PIO value
+	.globl	a3p_p_sac0
+a3p_p_sac0:
+	.long	0		| SDMAC cursor BEFORE the PIO byte
+	.globl	a3p_p_sac
+a3p_p_sac:
+	.long	0		| SDMAC cursor AFTER -- must equal sac0
+	.globl	a3p_p_cntr
+a3p_p_cntr:
+	.long	0		| SDMAC control after
+	.globl	a3p_p_istr
+a3p_p_istr:
+	.long	0		| SDMAC interrupt status after
+	.globl	a3p_p_dmaon
+a3p_p_dmaon:
+	.long	0		| the driver's own DMA flag; must still be 0
 	.balign	4
