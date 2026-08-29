@@ -654,6 +654,12 @@ Lad_rel_next:
 | row is all action 1, and no further command can start.
 | ============================================================================================
 Lad_p_probe:
+	braw	Lad_d_entry		| Stage P is accepted (8/8, 68060-260830-04); Stage D
+					| now owns this entry.  The probe body below is kept
+					| because its register sequences are the proven ones
+					| Stage D is built from, and because a primitive that
+					| has been measured is worth more than one described.
+Lad_p_unused:
 	addql	&1,a3p_p_try
 	movel	%a2@(12),a3p_p_sac0	| SDMAC cursor BEFORE: PIO must not move it
 	moveb	&0x01,%a2@(65)		| CON -> PIO: EDI|IDI, DMA-mode bit cleared
@@ -786,6 +792,294 @@ Lad_p_rdy:
 	jsr	printf
 	lea	%sp@(24),%sp
 	braw	Lad_relfail		| quarantine: DEAD, and DEAD starts nothing
+
+| ============================================================================================
+| STAGE D -- bounded phase drain, then retire the failed request.
+|
+| docs/contracts/A3091-DATA-IN-DRAIN-DESIGN.md.  Stage P proved the primitive on silicon: COM=0x20
+| with a loaded TC, CON=0x0C, transfers exactly the bytes asked for, decrements TC, touches
+| neither phase nor direction, moves nothing through the SDMAC, and reports XFERRED on completion.
+| Stage D is that primitive plus a phase loop and an ownership rule.
+|
+| THE OWNERSHIP RULE IS THE POINT.  The failed CD request stays the controller's sole cleanup
+| owner until a bus-free status has been CONSUMED.  No callback, no IDLE, no startany() before
+| that -- -09 published IDLE on chip-level acceptance and the next root command died on the bus
+| the CD had not released.
+|
+| AND THE VERDICT NEVER CHANGES.  cp->okay was cleared by a3091queue() and nothing here sets it.
+| Stock action 9 and action 0 are never re-entered: action 0 would set okay TRUE and hand the
+| caller 512 bytes that are the wrong 512, because the driver's LBA arithmetic is in 512-byte
+| units and this is a 2048-byte-block device.
+|
+| Every bound is separate and counted.  A single aggregate timeout would make a fourth failure no
+| more informative than the first three.
+| ============================================================================================
+Lad_d_entry:
+	addql	&1,a3p_d_try
+	moveq	&4,%d0
+	movel	%d0,a3p_d_phases	| phase-transition budget
+	clrl	a3p_d_bytes
+| %d3 holds the status that brought us here (0x89 measured).  Fall into the dispatcher.
+Lad_d_phase:
+	movel	%d3,a3p_d_ss
+	movel	%d3,%d0
+	andil	&0x07,%d0
+	movel	%d0,a3p_d_phase
+	cmpil	&0x41,%d3
+	beqw	Lad_d_busfree
+	cmpil	&0x85,%d3
+	beqw	Lad_d_busfree
+	cmpil	&0x01,%d0
+	beqw	Lad_d_datain
+	cmpil	&0x06,%d0
+	beqw	Lad_d_msgout
+	cmpil	&0x03,%d0
+	beqw	Lad_d_status
+	cmpil	&0x07,%d0
+	beqw	Lad_d_msgin
+	addql	&1,a3p_d_badphase
+	braw	Lad_d_quar
+
+| --- DATA IN: discard up to the 0x800 ceiling.  That ceiling is the largest transfer this
+|     trigger can implicate, not a residual the driver derived from geometry -- it has no way to
+|     know the target's block size, which is the whole of ISSUE-54.
+Lad_d_datain:
+	moveb	&0x01,%a2@(65)		| CON -> PIO
+	moveb	&0x0c,%a2@(67)
+	moveb	&0x12,%a2@(65)		| TC = 0x000800
+	clrb	%a2@(67)
+	moveb	&0x13,%a2@(65)
+	moveb	&8,%a2@(67)
+	moveb	&0x14,%a2@(65)
+	clrb	%a2@(67)
+	bsrw	Lad_d_guard
+	moveb	&0x18,%a2@(65)
+	moveb	&0x20,%a2@(67)		| TRANSFER INFO
+	moveq	&64,%d2			| no-progress bound for this phase
+Lad_d_din_poll:
+	moveb	&0x1f,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	btst	&0,%d3			| DBR -- another byte to throw away
+	bnes	Lad_d_din_byte
+	btst	&7,%d3			| INT -- the phase changed under us
+	bnes	Lad_d_din_int
+	bsrw	Lad_d_guard
+	subql	&1,%d2
+	bnew	Lad_d_din_poll
+	addql	&1,a3p_d_exp_poll
+	braw	Lad_d_quar
+Lad_d_din_byte:
+	moveb	&0x19,%a2@(65)
+	moveb	%a2@(67),%d0		| read and discard
+	addql	&1,a3p_d_bytes
+	movel	a3p_d_bytes,%d0
+	cmpil	&0x800,%d0
+	bccs	Lad_d_din_ceil
+	moveq	&64,%d2			| progress: reset the no-progress bound
+	braw	Lad_d_din_poll
+Lad_d_din_ceil:
+	addql	&1,a3p_d_exp_bytes	| the target is still talking past the ceiling
+	braw	Lad_d_quar
+Lad_d_din_int:
+	bsrw	Lad_d_readss
+	braw	Lad_d_next
+
+| --- MESSAGE OUT: the one byte this whole path exists to deliver.
+Lad_d_msgout:
+	moveb	&0x15,%a2@(65)		| DI: clear DPD, transfer runs to the bus
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	andil	&0xbf,%d3
+	moveb	&0x15,%a2@(65)
+	moveb	%d3,%a2@(67)
+	bsrw	Lad_d_tc1
+	bsrw	Lad_d_guard
+	moveb	&0x18,%a2@(65)
+	moveb	&0xa0,%a2@(67)		| single-byte TRANSFER INFO
+	bsrw	Lad_d_dbr
+	tstl	%d0
+	bnew	Lad_d_quar
+	moveb	&0x19,%a2@(65)
+	moveb	&0x06,%a2@(67)		| SCSI ABORT
+	addql	&1,a3p_d_sent
+	bsrw	Lad_d_waitss
+	braw	Lad_d_next
+
+| --- STATUS: exactly one byte, and only Command Complete is accepted.
+Lad_d_status:
+	bsrw	Lad_d_tc1
+	bsrw	Lad_d_guard
+	moveb	&0x18,%a2@(65)
+	moveb	&0x20,%a2@(67)
+	bsrw	Lad_d_dbr
+	tstl	%d0
+	bnew	Lad_d_quar
+	moveb	&0x19,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_d_stat
+	tstl	%d3			| only 0x00, Command Complete
+	bnes	Lad_d_statbad
+	moveb	&0x18,%a2@(65)
+	moveb	&0x03,%a2@(67)		| CLR_ACK
+	bsrw	Lad_d_waitss
+	braw	Lad_d_next
+Lad_d_statbad:
+	addql	&1,a3p_d_badstat
+	braw	Lad_d_quar
+
+| --- MESSAGE IN: consume one byte and acknowledge, so the target can move on.
+Lad_d_msgin:
+	bsrw	Lad_d_tc1
+	bsrw	Lad_d_guard
+	moveb	&0x18,%a2@(65)
+	moveb	&0x20,%a2@(67)
+	bsrw	Lad_d_dbr
+	tstl	%d0
+	bnew	Lad_d_quar
+	moveb	&0x19,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_d_msg
+	moveb	&0x18,%a2@(65)
+	moveb	&0x03,%a2@(67)		| CLR_ACK
+	bsrw	Lad_d_waitss
+	braw	Lad_d_next
+
+Lad_d_next:
+	subql	&1,a3p_d_phases
+	tstl	a3p_d_phases
+	bnew	Lad_d_phase
+	addql	&1,a3p_d_exp_phase
+	braw	Lad_d_quar
+
+| --- helpers.  %d3 returns the status; %d0 returns 0 on success, 1 on a bound.
+Lad_d_guard:
+	movel	%d3,%sp@-
+	pea	8
+	jsr	delayus
+	addql	&4,%sp
+	movel	%sp@+,%d3
+	rts
+Lad_d_tc1:
+	moveb	&0x12,%a2@(65)
+	clrb	%a2@(67)
+	moveb	&0x13,%a2@(65)
+	clrb	%a2@(67)
+	moveb	&0x14,%a2@(65)
+	moveb	&1,%a2@(67)
+	rts
+Lad_d_readss:
+	moveb	&0x17,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	addql	&1,a3p_d_ssn
+	rts
+Lad_d_dbr:
+	movel	%d2,%sp@-
+	moveq	&32,%d2
+Lad_d_dbr1:
+	moveb	&0x1f,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	btst	&0,%d3
+	bnes	Lad_d_dbr_ok
+	bsrw	Lad_d_guard
+	subql	&1,%d2
+	bnes	Lad_d_dbr1
+	addql	&1,a3p_d_exp_dbr
+	moveq	&1,%d0
+	movel	%sp@+,%d2
+	rts
+Lad_d_dbr_ok:
+	clrl	%d0
+	movel	%sp@+,%d2
+	rts
+Lad_d_waitss:
+	movel	%d2,%sp@-
+	moveq	&32,%d2
+Lad_d_wss1:
+	moveb	&0x1f,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	btst	&7,%d3
+	bnes	Lad_d_wss_ok
+	bsrw	Lad_d_guard
+	subql	&1,%d2
+	bnes	Lad_d_wss1
+	addql	&1,a3p_d_exp_ss
+	movel	%sp@+,%d2
+	moveq	&0xf,%d3		| an impossible phase: the dispatcher quarantines it
+	rts
+Lad_d_wss_ok:
+	movel	%sp@+,%d2
+	bsrw	Lad_d_readss
+	rts
+
+| --- bus free consumed: only now may ownership change.
+Lad_d_busfree:
+	addql	&1,a3p_d_busfree
+	movel	a3091_curunitp,%d3
+	beqw	Lad_d_quar
+	moveal	%d3,%a2
+	movel	%a2@(4),%d3		| unit->comhead: the cleanup owner
+	beqw	Lad_d_quar
+	cmpl	a3p_req,%d3		| it must still be the request we failed
+	bnes	Lad_d_owner
+	movel	%d3,a3p_d_req
+	moveal	%d3,%a0
+	movel	%a0@,%d0
+	movel	%d0,%a2@(4)		| unlink exactly once
+	beqs	Lad_d_bf_noq
+	movel	%a2,%sp@-
+	jsr	a3091_uqueue
+	addql	&4,%sp
+Lad_d_bf_noq:
+	movel	a3p_d_req,%d3
+	moveal	%d3,%a0
+	moveal	%a0@(36),%a1		| the request's own callback
+	movel	%d3,%sp@-
+	jsr	%a1@			| okay is still FALSE: this IS the error report
+	addql	&4,%sp
+	addql	&1,a3p_d_failed
+	clrl	a3091_istate		| IDLE published last of all
+	jsr	a3091_startany
+
+	movel	a3p_d_bytes,%sp@-
+	movel	a3p_d_ss,%sp@-
+	movel	a3p_d_sent,%sp@-
+	movel	a3p_d_busfree,%sp@-
+	pea	La3p_d1
+	jsr	printf
+	lea	%sp@(20),%sp
+	movel	a3091_istate,%d0
+	moveml	%sp@+,%d2-%d3/%a2
+	unlk	%fp
+	rts
+Lad_d_owner:
+	addql	&1,a3p_d_notowner	| MUST STAY 0: someone else became current
+	braw	Lad_d_quar
+
+| --- quarantine: report which bound fired, hand nothing off, let the stock body declare DEAD.
+Lad_d_quar:
+	addql	&1,a3p_d_quar
+	movel	a3p_d_bytes,%sp@-
+	movel	a3p_d_ss,%sp@-
+	movel	a3p_d_phase,%sp@-
+	movel	a3p_d_phases,%sp@-
+	pea	La3p_d2
+	jsr	printf
+	lea	%sp@(20),%sp
+	movel	a3p_d_exp_phase,%sp@-
+	movel	a3p_d_exp_ss,%sp@-
+	movel	a3p_d_exp_dbr,%sp@-
+	movel	a3p_d_exp_bytes,%sp@-
+	movel	a3p_d_exp_poll,%sp@-
+	pea	La3p_d3
+	jsr	printf
+	lea	%sp@(24),%sp
+	braw	Lad_relfail
 
 Lad_atn_free:
 	addql	&1,a3p_atn_free	| the target let go before we could speak: the
@@ -927,6 +1221,15 @@ La3p_p1:
 	.even
 La3p_p2:
 	.asciz	"a3p P sac0=%x sac=%x cntr=%x istr=%x dmaon=%d\n"
+	.even
+La3p_d1:
+	.asciz	"a3p D RETIRED busfree=%d sent=%d ss=%x bytes=%d\n"
+	.even
+La3p_d2:
+	.asciz	"a3p D QUAR phases=%d phase=%d ss=%x bytes=%d\n"
+	.even
+La3p_d3:
+	.asciz	"a3p D exp poll=%d bytes=%d dbr=%d ss=%d phase=%d\n"
 	.even
 La3p_p3:
 	.asciz	"a3p P cp=%x di=%x con=%x as2=%x bsyw=%d\n"
@@ -1192,4 +1495,70 @@ a3p_p_istr:
 	.globl	a3p_p_dmaon
 a3p_p_dmaon:
 	.long	0		| the driver's own DMA flag; must still be 0
+	.balign	4
+| --- Stage D.  Each bound has its own counter: one aggregate timeout would make a fourth
+|     failure no more informative than the first three.
+	.globl	a3p_d_try
+a3p_d_try:
+	.long	0		| Stage D entered
+	.globl	a3p_d_phases
+a3p_d_phases:
+	.long	0		| phase budget left
+	.globl	a3p_d_phase
+a3p_d_phase:
+	.long	0		| current phase
+	.globl	a3p_d_ss
+a3p_d_ss:
+	.long	0		| last status
+	.globl	a3p_d_ssn
+a3p_d_ssn:
+	.long	0		| statuses read
+	.globl	a3p_d_bytes
+a3p_d_bytes:
+	.long	0		| DATA IN bytes discarded
+	.globl	a3p_d_sent
+a3p_d_sent:
+	.long	0		| ABORT bytes sent
+	.globl	a3p_d_stat
+a3p_d_stat:
+	.long	0		| the STATUS byte, only 0x00 accepted
+	.globl	a3p_d_msg
+a3p_d_msg:
+	.long	0		| the MESSAGE IN byte
+	.globl	a3p_d_busfree
+a3p_d_busfree:
+	.long	0		| bus-free events consumed
+	.globl	a3p_d_req
+a3p_d_req:
+	.long	0		| the request retired
+	.globl	a3p_d_failed
+a3p_d_failed:
+	.long	0		| failed completions -- the success metric
+	.globl	a3p_d_quar
+a3p_d_quar:
+	.long	0		| quarantines
+	.globl	a3p_d_badphase
+a3p_d_badphase:
+	.long	0		| unrecognised phase
+	.globl	a3p_d_badstat
+a3p_d_badstat:
+	.long	0		| STATUS byte was not Command Complete
+	.globl	a3p_d_notowner
+a3p_d_notowner:
+	.long	0		| MUST STAY 0: comhead was not the request we failed
+	.globl	a3p_d_exp_poll
+a3p_d_exp_poll:
+	.long	0		| bound: no DBR and no INT in DATA IN
+	.globl	a3p_d_exp_bytes
+a3p_d_exp_bytes:
+	.long	0		| bound: still talking past the 0x800 ceiling
+	.globl	a3p_d_exp_dbr
+a3p_d_exp_dbr:
+	.long	0		| bound: no DBR for a single-byte transfer
+	.globl	a3p_d_exp_ss
+a3p_d_exp_ss:
+	.long	0		| bound: no status after a phase completed
+	.globl	a3p_d_exp_phase
+a3p_d_exp_phase:
+	.long	0		| bound: more than four phase transitions
 	.balign	4
