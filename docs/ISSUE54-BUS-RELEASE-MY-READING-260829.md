@@ -62,3 +62,56 @@ when the disconnect interrupt lands*.
 
 So my reading is: the bus release is `ABORT` then `DISC`, and the harder half of the problem is
 not issuing them but surviving the interrupt they cause.
+
+---
+
+# Scored against the independent answer, 2026-08-29
+
+`docs/contracts/A3091-BUS-RELEASE-CONTRACT.md`. **One of three right, and the two wrong ones
+were wrong in a way that would have caused a new defect.**
+
+## Wrong: Abort is unnecessary here, and it is hazardous
+
+I read NetBSD's `sbicabort()` and reported its sequence. That routine is a driver-wide
+*unknown-state* recovery entry. The measured tuple is not an unknown state: `AS=0` means no
+`DBR`, no `CIP`, no `BSY`, so nothing is jammed and the drain loop has nothing to drain. `CP=46`
+and `TC=0` mean the Level II command has already terminated, so Abort has nothing to abort.
+
+Worse than unnecessary: **Abort carries a direction-sensitive FIFO contract.** On an initiator
+*receive* — which is exactly this case, `rd=1`, `DATA_IN` — the host must keep servicing WD data
+requests until the Abort interrupt arrives, so that incoming FIFO data reaches its destination.
+A fix that issued `stopdma(); Abort` would have violated that on the one path it was written
+for.
+
+## Wrong: a host-issued Disconnect raises no completion interrupt
+
+I assumed it did, because NetBSD polls for status after issuing it. The data sheet says Abort
+interrupts and Disconnect does not, and the contract notes that NetBSD waits for status after
+Disconnect **even though the manufacturer says the command does not interrupt.** The
+manufacturer contract wins where a maintained driver and the data sheet disagree.
+
+So the `0x85` in the capture was never the release's own event — it is the target disconnecting
+on its own, which `CON=0x8c`'s `IDI` policy asks the WD to report. I had the right observation
+and the wrong owner for it.
+
+## Right, and then extended past where I stopped
+
+Ending at `istate = IDLE; startany()` is unsafe. I found the empty-queue case — a delayed `0x85`
+dispatches through `atab[IDLE][3] = 1` into `DEAD` — and then said the non-empty case is
+"handled", because `atab[STARTING][3] = 7` is the disconnect action.
+
+It is not handled. Action 7 stops the DMA belonging to the **newly started** request, treats
+that request as temporarily disconnected on the strength of an event that belonged to the old
+target, and returns without completing or requeueing it. That is silent misattribution of an
+interrupt across two requests, and it can strand or corrupt unrelated I/O — a worse class of
+outcome than the wedge, by this project's own standard.
+
+**Both queue states are invalid, in different ways.** My "unless the queue was non-empty" was
+the reassuring half of a sentence whose other half I had not checked.
+
+## What the method got right
+
+Committing my answer before writing the task was worth doing. Two of my three conclusions were
+wrong, and had I written the task after forming them, the two errors are exactly the kind that
+survive into a prompt as background assumptions — "confirm that Abort then Disconnect is
+right" would very likely have been confirmed.
