@@ -9,6 +9,14 @@ family, and both failed for the same reason: *the meaning was inferred from the 
 code.* So the deliverable here is the measurement plus the questions that must be answered
 before a byte moves.
 
+> **ROOT-CAUSED 2026-08-29, AND THE FIX IS NEITHER CANDIDATE IN THIS DOCUMENT.** Target 3 is a
+> ZuluSCSI-emulated CD-ROM, block size **2048**, against a driver that assumes 512. Resuming is
+> wrong: the LBA arithmetic is in 512-byte units, so for this target the driver addresses the
+> wrong place as well as transferring the wrong amount, and a completion reported as good would
+> be wrong data. The correct behaviour is to fail the request — `cp->okay` is already FALSE and
+> action 5 leaves it so — and to release the bus, which the audit shows action 5 does not do
+> after `MIS_1`. See `docs/REALHW-ISSUE54-CLASSIFY-260829-07.md` and the ledger.
+
 > **SUPERSEDED IN PART, 2026-08-29.** An external audit answered §8's load-bearing question and
 > **rejected this document's candidate fix.** The WD does preserve Command Phase across the
 > termination and does treat a reissued `0x09` as a resume — but only for a *compatible* saved

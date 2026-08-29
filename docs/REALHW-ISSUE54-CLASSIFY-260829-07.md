@@ -61,7 +61,26 @@ measurement rather than a fix.
 The DMA cursor supports the same reading. `sac` is 496 bytes past `segpa` of a 512-byte segment
 — 16 short, one SDMAC FIFO's worth in flight. The transfer had reached its end, not its middle.
 
-## A hypothesis, marked as one
+## The hypothesis, confirmed the same day
+
+**Target 3 is a ZuluSCSI-emulated CD-ROM — a Civilization II disc — and a CD-ROM data block is
+2048 bytes.** The driver assumes 512. Confirmed from the ZuluSCSI configuration, not inferred.
+
+Every number follows. The driver asked for 512; `tc` reached 0 with the target still in
+`DATA_IN` holding 1536 more; `cp` read `0x46` because the count it had been given was complete;
+the mismatch is `MIS_1|DATA_IN`. `sac` is 16 bytes short of the segment end, which is the SDMAC
+FIFO.
+
+**ID 4 is a tape drive**, so `/dev/rdsk/c4d0s0` is a second trigger and equally destructive.
+
+This settles the fix, and it is neither candidate this line proposed. Resuming is wrong because
+the driver's LBA arithmetic is in 512-byte units: for this target it addresses the wrong place,
+not merely the wrong length, so a completion reported as good would be wrong data. Keeping the
+first 512 bytes of a 2048-byte block is wrong for the same reason. The request must **fail** —
+`cp->okay` is already FALSE and action 5 leaves it so — and the bus must be **released**, which
+the audit establishes action 5 does not do after `MIS_1`.
+
+## The hypothesis as it was written, before the confirmation
 
 If the count is exhausted and the target is still in `DATA_IN`, the target has more to send than
 was asked for. `dd bs=512` issues READ(10) for one 512-byte block; a target whose native block

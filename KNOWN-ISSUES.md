@@ -6857,7 +6857,7 @@ emulator.**
 
 ---
 
-## ⚠ ISSUE-54 (2026-08-27, OPEN): a WD phase mismatch on **any** target kills the A3091 driver permanently — reproducible on demand
+## ⚠ ISSUE-54 (2026-08-27, OPEN): reading a device whose block size is not 512 kills the A3091 driver permanently — root-caused 2026-08-29
 
 > **CLASSIFIED ON SILICON 2026-08-29, `68060-260829-07`** —
 > [`docs/REALHW-ISSUE54-CLASSIFY-260829-07.md`](docs/REALHW-ISSUE54-CLASSIFY-260829-07.md).
@@ -6871,9 +6871,24 @@ emulator.**
 > command phase already held the value action 9 writes to resume *past* the data. The cursor
 > agrees: 496 of 512 bytes, one SDMAC FIFO short of the end.
 >
-> Hypothesis, not established: a target returning more data than was asked for. `dd bs=512`
-> issues READ(10) for one 512-byte block and target 3 is not a normal disk. Nothing in the
-> capture reads its block size.
+> **CONFIRMED the same day.** Target 3 is a ZuluSCSI-emulated **CD-ROM** — a Civilization II
+> disc — and a CD-ROM data block is **2048 bytes**. The driver assumes 512. Every number in the
+> capture follows: it asked for 512, `tc` reached 0 with the target still in `DATA_IN` holding
+> 1536 more bytes, `cp` read `0x46` because the count it was given was complete, and the
+> mismatch is exactly `MIS_1|DATA_IN`. The 16-byte gap between `sac` and the end of the segment
+> is the SDMAC FIFO.
+>
+> **This is why the heading changed.** It is not "any target": the defect needs a device whose
+> block size is not 512, which is why the root disk has been fine for months. **ID 4 is a tape
+> drive**, so `/dev/rdsk/c4d0s0` is a second trigger and touching it is equally destructive.
+>
+> **And it settles the fix.** Resuming is wrong — the driver's LBA arithmetic is in 512-byte
+> units, so for this target it does not merely transfer the wrong amount, it addresses the wrong
+> place; a "successful" read would be wrong data reported as good. Completing the command and
+> keeping the first 512 bytes is wrong for the same reason. The correct behaviour is to **fail
+> the request** — `cp->okay` is already FALSE and action 5 leaves it so — **and release the
+> bus**, which the audit establishes action 5 does not do after `MIS_1`. So the fix is action
+> 5's body plus a WD bus-release, and neither the resume nor the table change this line proposed.
 
 > **Ledger: OPEN.** Root-caused from the driver's own tables and a console capture. **This was
 > triggered deliberately-by-accident from this side** — see "How it was found" — which makes it
