@@ -6871,6 +6871,18 @@ emulator.**
 > command phase already held the value action 9 writes to resume *past* the data. The cursor
 > agrees: 496 of 512 bytes, one SDMAC FIFO short of the end.
 >
+> **STAGE P 2026-08-30, `68060-260830-02`: the PIO discard primitive works** —
+> [`docs/REALHW-ISSUE54-STAGEP-260830-02.md`](docs/REALHW-ISSUE54-STAGEP-260830-02.md).
+> `a3p P got=1 ... byte=50`, `sac0 == sac`, `dmaon=0`, and on the next interrupt **`ss=0x19` =
+> `XFERRED | DATA_IN`** — the WD's own statement that `COM=0x20` with `TC=1` transferred exactly
+> one byte. Six of eight predictions held and the quarantine did its job: no root command was
+> started, and the machine wedged where it was told to.
+>
+> ⚠ **`tc`, `cp`, `di` and `con` printed `FF` and are unmeasured, not failed.** `sbicreg.h`:
+> `SBIC_ASR_BSY 0x20 — "Busy, only cmd/data/asr readable"`. They were captured with `BSY` still
+> set. The evidence was in the same line: `as=0x21` is `DBR | BSY`. Fixed by waiting for `BSY`
+> before the gated reads.
+
 > **ATN MEASURED 2026-08-29, `68060-260829-15`: the target answers `DATA_IN`, not `MESSAGE OUT`** —
 > [`docs/REALHW-ISSUE54-ATN-260829-15.md`](docs/REALHW-ISSUE54-ATN-260829-15.md).
 > `a3p ATN-FAILED stage=5 as=80 ss=89 polls=1`. `SET_ATN` was asserted and accepted — no `LCI`,

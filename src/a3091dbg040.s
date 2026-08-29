@@ -702,6 +702,26 @@ Lad_p_int:
 	moveb	%a2@(67),%d3
 	movel	%d3,a3p_p_ss
 Lad_p_capture:
+| BSY GATES FOUR OF THESE READS, which cost the first Stage P run its headline number.  sbicreg.h
+| says it in one line -- "Busy, only cmd/data/asr readable" -- and 68060-260830-02 printed
+| tc=FFFFFF cp=FF di=FF con=FF beside an as=0x21 that had BSY set.  The bit that invalidated
+| those four numbers was printed next to them and not looked at.  DR and AS are readable
+| throughout, so the byte and the status were never at risk; only the gated four were.
+	moveq	&16,%d2
+Lad_p_bsy:
+	moveb	&0x1f,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_p_as2		| the AS the gated reads were actually taken under
+	btst	&5,%d3			| BSY
+	beqs	Lad_p_rdy
+	pea	8
+	jsr	delayus
+	addql	&4,%sp
+	addql	&1,a3p_p_bsyw
+	subql	&1,%d2
+	bnew	Lad_p_bsy
+Lad_p_rdy:
 	clrl	%d0			| TC after: must read exactly one less
 	moveb	&0x12,%a2@(65)
 	moveb	%a2@(67),%d0
@@ -757,12 +777,14 @@ Lad_p_capture:
 	pea	La3p_p2
 	jsr	printf
 	lea	%sp@(24),%sp
+	movel	a3p_p_bsyw,%sp@-
+	movel	a3p_p_as2,%sp@-
 	movel	a3p_p_con,%sp@-
 	movel	a3p_p_di,%sp@-
 	movel	a3p_p_cp,%sp@-
 	pea	La3p_p3
 	jsr	printf
-	lea	%sp@(16),%sp
+	lea	%sp@(24),%sp
 	braw	Lad_relfail		| quarantine: DEAD, and DEAD starts nothing
 
 Lad_atn_free:
@@ -907,7 +929,7 @@ La3p_p2:
 	.asciz	"a3p P sac0=%x sac=%x cntr=%x istr=%x dmaon=%d\n"
 	.even
 La3p_p3:
-	.asciz	"a3p P cp=%x di=%x con=%x\n"
+	.asciz	"a3p P cp=%x di=%x con=%x as2=%x bsyw=%d\n"
 	.even
 	.balign	4			| the .asciz blocks above are only .even, so without this
 					| the counter block can land 2 mod 4 -- it did, the moment
@@ -1140,6 +1162,12 @@ a3p_p_ss:
 	.globl	a3p_p_tc
 a3p_p_tc:
 	.long	0		| Transfer Count after -- must have gone 1 -> 0
+	.globl	a3p_p_as2
+a3p_p_as2:
+	.long	0		| AS the gated reads were taken under; BSY must be clear
+	.globl	a3p_p_bsyw
+a3p_p_bsyw:
+	.long	0		| delays spent waiting for BSY to clear
 	.globl	a3p_p_cp
 a3p_p_cp:
 	.long	0		| command phase after
