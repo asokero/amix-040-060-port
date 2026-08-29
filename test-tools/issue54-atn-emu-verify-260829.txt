@@ -1,0 +1,16 @@
+ISSUE-54 ATN path -- emulator verification, 2026-08-29, 68040-260829-12/13
+
+  a3p_magic      41335021  A3P!
+  a3p_seen       0     a3p_n41        0
+  a3p_rel_try    0     a3p_atn_try    0
+  a3p_atn_mout   0     a3p_atn_sent   0
+  a3p_atn_free   0     a3p_atn_lci    0
+
+with a denominator:
+
+  dma_cmpl_count 3568     dma_prep_to 1131 == dma_cmpl_to 1131
+
+Inert.  Every branch of the ATN path is behind the same tuple gate as the release it replaces,
+and the gate rejects everything Amiberry can present, so none of SET_ATN, CLR_ACK, XFER_INFO or
+the data-register write has executed.  That is all the emulator can say: it produces no phase
+mismatch, so the CD is the only way to reach any of this.

@@ -460,15 +460,128 @@ Lad_rel_int:
 	beqw	Lad_rel_raced
 	braw	Lad_relfail		| any other status is outside this path
 
-| 5. Disconnect.  0x04, a Level I command, valid while connected as an initiator.
+| 5. ADDRESS THE TARGET.  A WD Disconnect drops the initiator's own signals and tells the target
+|    nothing, which 68060-260829-11 measured directly: after a release that passed every
+|    chip-level acceptance test, the very next selection reached CP=0x3A -- target 6 had accepted
+|    CDB bytes -- and then the bus went free under it.  So the release must be a SCSI operation
+|    addressed to the target, not a chip operation addressed to ourselves.
+|
+|    SET_ATN (0x02) then CLR_ACK (0x03) so the target can change phase, wait for a Message Out
+|    phase status, then one PIO byte: SCSI ABORT, 0x06.  The primitives are proven in this
+|    driver already -- action 8 issues a single-byte transfer the same way, only inbound.
+|
+|    Everything here is bounded and fails closed.  A Message Reject, a wrong phase, an ignored
+|    command or a timeout is a fail-stop, not a success: the contract is explicit that this path
+|    must not pretend.  That deliberately gives up the partial behaviour of -09 on the failure
+|    branch, where dd at least got an error before the machine died.  It costs nothing real --
+|    that branch wedged one command later anyway -- and pretending is the more expensive habit.
 Lad_rel_cmd:
+	addql	&1,a3p_atn_try
+	moveb	&0x18,%a2@(65)		| COM
+	moveb	&0x02,%a2@(67)		| SET_ATN, Level I, valid while connected
+	pea	8
+	jsr	delayus
+	addql	&4,%sp
+	moveb	&0x1f,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_atn_as
+	btst	&6,%d3			| LCI: the ATN write lost a race and was ignored
+	beqs	Lad_atn_ack
+	addql	&1,a3p_atn_lci
+	braw	Lad_relfail
+Lad_atn_ack:
 	moveb	&0x18,%a2@(65)
-	moveb	&0x04,%a2@(67)
+	moveb	&0x03,%a2@(67)		| CLR_ACK -- release ACK so the target may change phase
 
-| 6. Bounded post-command check.  There is no completion interrupt to wait for: acceptance plus
-|    the immediate-disconnect postcondition is the proof.  16 iterations of delayus(8) is about
-|    32 scan lines, ~2 ms -- orders of magnitude more than the WD needs, and finite, which the
-|    old cipwait() was not.
+| 6a. Bounded wait for the target to ask for Message Out.  Accept the transferred and mismatch
+|     variants, which are the low three bits reading 6.  A bus-free status here means the target
+|     let go on its own before we could speak, which is the outcome we wanted anyway.
+	moveq	&16,%d2
+Lad_atn_wait:
+	pea	8
+	jsr	delayus
+	addql	&4,%sp
+	addql	&1,a3p_atn_polls
+	moveb	&0x1f,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_atn_as
+	btst	&7,%d3			| INT: a status is pending
+	beqs	Lad_atn_next
+	moveb	&0x17,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_atn_ss
+	cmpil	&0x41,%d3
+	beqw	Lad_atn_free		| target already went bus free
+	cmpil	&0x85,%d3
+	beqw	Lad_atn_free
+	movel	%d3,%d0
+	andil	&0x07,%d0
+	cmpil	&0x06,%d0		| MESSAGE OUT phase?
+	bnew	Lad_relfail
+	movel	%d3,%d0
+	andil	&0xf8,%d0		| and one of XFERRED/MIS/MIS_1/MIS_2
+	cmpil	&0x18,%d0
+	beqs	Lad_atn_mout
+	cmpil	&0x28,%d0
+	beqs	Lad_atn_mout
+	cmpil	&0x48,%d0
+	beqs	Lad_atn_mout
+	cmpil	&0x88,%d0
+	beqs	Lad_atn_mout
+	braw	Lad_relfail
+Lad_atn_next:
+	subql	&1,%d2
+	bnew	Lad_atn_wait
+	braw	Lad_relexp
+
+| 6b. Send one byte.  Direction to SCSI (clear DPD in DI), transfer count 1, XFER_INFO, then the
+|     byte into DR when DBR says the buffer wants it.  NetBSD sends message bytes exactly this
+|     way, one at a time, because sending them in one go locks the chip against some targets.
+Lad_atn_mout:
+	addql	&1,a3p_atn_mout
+	moveb	&0x15,%a2@(65)		| DI
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	andil	&0xbf,%d3		| clear DPD: transfer runs TO the bus
+	moveb	&0x15,%a2@(65)
+	moveb	%d3,%a2@(67)
+	moveb	&0x12,%a2@(65)		| TC = 1
+	clrb	%a2@(67)
+	moveb	&0x13,%a2@(65)
+	clrb	%a2@(67)
+	moveb	&0x14,%a2@(65)
+	moveb	&1,%a2@(67)
+	moveb	&0x18,%a2@(65)
+	moveb	&0x20,%a2@(67)		| XFER_INFO
+	moveq	&16,%d2
+Lad_atn_dbr:
+	pea	8
+	jsr	delayus
+	addql	&4,%sp
+	addql	&1,a3p_atn_polls
+	moveb	&0x1f,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_atn_as
+	btst	&0,%d3			| DBR: the buffer is ready for our byte
+	bnes	Lad_atn_put
+	btst	&7,%d3			| an interrupt instead means the phase changed
+	bnew	Lad_relfail
+	subql	&1,%d2
+	bnew	Lad_atn_dbr
+	braw	Lad_relexp
+Lad_atn_put:
+	moveb	&0x19,%a2@(65)		| DR
+	moveb	&0x06,%a2@(67)		| SCSI ABORT
+	addql	&1,a3p_atn_sent
+
+| 6c. The target must go BUS FREE after recognising ABORT.  That is the only proof accepted here,
+|     and it is a SCSI-level fact rather than the chip-level acceptance that -09 mistook for one.
+	moveq	&16,%d2
+
 Lad_rel_poll:
 	pea	8
 	jsr	delayus
@@ -480,14 +593,14 @@ Lad_rel_poll:
 	movel	%d3,a3p_rel_as
 	btst	&7,%d3			| INT -- a status is pending, classify it
 	bnes	Lad_rel_pint
-	btst	&6,%d3			| LCI: the Disconnect was ignored
+	btst	&6,%d3			| LCI: the command was ignored
 	bnew	Lad_relfail
-	btst	&4,%d3			| CIP still set -- command not yet taken
-	bnes	Lad_rel_next
-	movel	%d3,%d0
-	andil	&0x21,%d0		| BSY|DBR must be clear for acceptance
-	bnew	Lad_relfail
-	braw	Lad_rel_ok
+	braw	Lad_rel_next
+| THE CHIP-ACCEPTANCE SHORTCUT USED TO BE HERE AND IT WAS WRONG.  Until 68060-260829-11 this
+| loop also accepted "CIP clear, BSY and DBR clear" as success.  That is the WD reporting on its
+| own command register; it says nothing about whether a target is still driving the cable, and
+| the -11 capture showed the next selection reaching CP=0x3A before the bus went free under it.
+| The only proof accepted now is a SCSI bus-free status.
 Lad_rel_pint:
 	moveb	&0x17,%a2@(65)
 	clrl	%d3
@@ -503,6 +616,9 @@ Lad_rel_next:
 	bnew	Lad_rel_poll
 	braw	Lad_relexp
 
+Lad_atn_free:
+	addql	&1,a3p_atn_free	| the target let go before we could speak: the
+				| outcome we wanted, reached without the message
 Lad_rel_raced:
 	addql	&1,a3p_rel_raced	| the target freed the bus before we asked
 	bras	Lad_rel_hwm
@@ -787,4 +903,31 @@ a3p_rel_ss:
 	.globl	a3p_rel_req
 a3p_rel_req:
 	.long	0		| the request that was failed
+	.balign	4
+| --- ISSUE-54 ATN/Message-Out path.  a3p_atn_try = mout + free + lci + (fail/exp remainder),
+|     and a3p_atn_sent <= a3p_atn_mout always.
+	.globl	a3p_atn_try
+a3p_atn_try:
+	.long	0		| ATN path entered: the denominator for everything below
+	.globl	a3p_atn_lci
+a3p_atn_lci:
+	.long	0		| SET_ATN was ignored (LCI) -- fail-closed
+	.globl	a3p_atn_mout
+a3p_atn_mout:
+	.long	0		| the target asked for MESSAGE OUT
+	.globl	a3p_atn_sent
+a3p_atn_sent:
+	.long	0		| the ABORT byte was written to the data register
+	.globl	a3p_atn_free
+a3p_atn_free:
+	.long	0		| target went bus free before we could send -- also success
+	.globl	a3p_atn_polls
+a3p_atn_polls:
+	.long	0		| poll iterations across the whole ATN path
+	.globl	a3p_atn_as
+a3p_atn_as:
+	.long	0		| last Auxiliary Status seen on the ATN path
+	.globl	a3p_atn_ss
+a3p_atn_ss:
+	.long	0		| last SCSI Status, read only when AS.INT allowed it
 	.balign	4
