@@ -1,0 +1,37 @@
+ISSUE-54 classification build -- emulator verification, 2026-08-29
+kernel 68040-260829-07, Amiberry 040 bed, build/unix-040 staged
+
+All five predictions from test-tools/issue54-classify-predictions-260829.md hold.
+
+  a3p_magic       41335021  A3P!      (E2)
+  a3p_ran         0                   (E3)
+  a3p_seen        0                   (E3)
+  a3p_n49         0                   (E3)
+  a3d_n           0                   (E4)
+  a3p console lines                0  (E5)
+  panics / bus errors / traps      0
+
+WITH A DENOMINATOR, which the first attempt at this check lacked:
+
+  dma_cmpl_count  3584
+  dma_prep_to     1135
+  dma_cmpl_to     1135   == prep_to, the block's own pairing acceptance
+
+The first read of this bed recorded the same zeros without any of the three numbers above.
+That reading was worthless: a kernel that never touched the disk has a3p_seen == 0 trivially,
+and the whole point of the block is that it must stay zero on a healthy machine.  The zeros
+are only evidence beside a denominator proving the driver ran and completed transfers.
+
+WHAT THIS DOES AND DOES NOT SHOW
+
+Shows: the classification code is inert.  It does not fire on any status the emulator produces,
+it does not perturb the driver, the kernel boots and does normal disk I/O, and the block is
+where tools/status-facts.sh says it is.
+
+Does not show: anything about ISSUE-54.  Amiberry's SCSI does not produce a phase mismatch, so
+0x48/0x49/0x4a never arrive and the measuring half of this instrument has never executed.  That
+requires the hardware trigger, and it costs a power cycle and an fsck.
+
+Serial carries the loader only on this bed -- 18 lines, ending at the image checksum.  "Booted"
+here means the kernel's own memory reads back correctly over Amiberry IPC and the DMA counters
+advance, not that a login prompt was seen on the serial log.

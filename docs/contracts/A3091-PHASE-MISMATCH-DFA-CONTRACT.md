@@ -9,6 +9,16 @@ family, and both failed for the same reason: *the meaning was inferred from the 
 code.* So the deliverable here is the measurement plus the questions that must be answered
 before a byte moves.
 
+> **SUPERSEDED IN PART, 2026-08-29.** An external audit answered §8's load-bearing question and
+> **rejected this document's candidate fix.** The WD does preserve Command Phase across the
+> termination and does treat a reissued `0x09` as a resume — but only for a *compatible* saved
+> phase, so `itab[0x48..0x4A] = 2` is too broad: it validates neither the phase, the direction,
+> the DMA cursor, nor any retry bound. And §7's fallback is unsafe too — action 5 reports the
+> request failed but never releases a bus the WD is still connected to. See
+> [`A3091-PHASE-MISMATCH-RESUME-AUDIT.md`](A3091-PHASE-MISMATCH-RESUME-AUDIT.md), which
+> supersedes this one wherever they disagree. What survives here is the measurement: §1–§6, and
+> §4's retraction. The next build is that audit's classification instrument, not a fix.
+
 > **Read `sys/amiga/alien/a3091.c` first — it is in `vanilla/amix-sources.tar`.** This document
 > was drafted from disassembly and then rewritten against the source, which changed three of its
 > conclusions and killed one of its own arguments outright (§4). The private Codex task for

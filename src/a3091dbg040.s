@@ -120,6 +120,185 @@ a3091_badhardware_dbg:
 	movel	%d3,a3d_istr		| handler's own entry test reads on every interrupt
 Lad_noistr:
 
+| --- ISSUE-54 classification (2026-08-29).  Gated to the three phase-mismatch statuses,
+|     because it touches the device and every other status reaching this handler already has
+|     four captures that say the same thing.  Specified by
+|     docs/contracts/A3091-PHASE-MISMATCH-RESUME-AUDIT.md, which rejected the three-byte table
+|     change this line proposed and asked for this measurement instead.
+|
+|     Reading here is safe in a way reading SS would not be: a3091intr has already done
+|     `ss = reg(SS)` before it ever calls badhardware, so the interrupt is acknowledged and
+|     these are status reads that acknowledge nothing further.  The file header's caution above
+|     is about SS specifically and still stands.
+	moveq	&0x48,%d3
+	cmpl	%d3,%d2
+	bcsw	Lad_nopm		| ss < 0x48
+	moveq	&0x4a,%d3
+	cmpl	%d3,%d2
+	bhiw	Lad_nopm		| ss > 0x4a
+	movel	&0x41335052,a3p_ran	| "A3PR" -- this body ran
+	addql	&1,a3p_seen
+	moveq	&0x48,%d3
+	cmpl	%d3,%d2
+	bnes	Lad_pm49
+	addql	&1,a3p_n48		| DATA_OUT: never yet observed
+	bras	Lad_pmdev
+Lad_pm49:
+	moveq	&0x49,%d3
+	cmpl	%d3,%d2
+	bnes	Lad_pm4a
+	addql	&1,a3p_n49		| DATA_IN: the reproducible one
+	bras	Lad_pmdev
+Lad_pm4a:
+	addql	&1,a3p_n4a		| CMD: never yet observed
+Lad_pmdev:
+	movel	a3091_device,%d3
+	beqw	Lad_pmreq
+	moveal	%d3,%a2
+| reg(n), inlined: write the register number to scsi_a (+65), read it back from scsi_n (+67).
+| Offsets confirmed against the driver's own reg() at .text+0xd5f2, not assumed from the struct.
+| Deliberately NO cipwait: this runs in an interrupt handler on a machine that is already in
+| trouble, and a spin loop waiting on hardware is how a diagnostic becomes the hang it was
+| written to explain.  AS is latched instead, so the CIP bit gets reported rather than obeyed.
+	moveb	&0x1f,%a2@(65)		| AS  -- auxiliary status: CIP, DBR, connected state
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_as
+	moveb	&0x10,%a2@(65)		| CP  -- command phase: this is what selects the valid
+	clrl	%d3			|        resume set, and it is the whole reason for
+	moveb	%a2@(67),%d3		|        this capture existing
+	movel	%d3,a3p_cp
+	clrl	%d0			| TC -- three bytes, most significant first
+	moveb	&0x12,%a2@(65)
+	moveb	%a2@(67),%d0
+	andil	&0xff,%d0
+	lsll	&8,%d0
+	moveb	&0x13,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	orl	%d3,%d0
+	lsll	&8,%d0
+	moveb	&0x14,%a2@(65)
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	orl	%d3,%d0
+	movel	%d0,a3p_tc		| the SCSI-bus residual, as the chip sees it
+	moveb	&0x15,%a2@(65)		| DI  -- destination ID; bit 6 (DPD) is the phase direction
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_di
+	moveb	&0x01,%a2@(65)		| CON -- control: DMA mode and the disconnect interrupts
+	clrl	%d3
+	moveb	%a2@(67),%d3
+	movel	%d3,a3p_con
+	clrl	%d3			| and the SDMAC's own side, straight from the struct
+	movew	%a2@(10),%d3		| cntr
+	movel	%d3,a3p_cntr
+	movel	%a2@(12),a3p_sac	| sac -- the address the DMA engine has reached
+Lad_pmreq:
+	movel	a3091_curunitp,%d3
+	beqs	Lad_pmv
+	moveal	%d3,%a2
+	movel	%a2@(4),%d3		| unit->comhead
+	movel	%d3,a3p_req
+	beqs	Lad_pmv
+	moveal	%d3,%a2
+	clrl	%d3
+	moveb	%a2@(4),%d3		| sdcom->reading
+	movel	%d3,a3p_rd
+	clrl	%d3
+	moveb	%a2@(7),%d3		| sdcom->cdb[0] -- the SCSI opcode
+	movel	%d3,a3p_op
+	movel	%a2@(20),a3p_addr	| sdcom->addr
+	movel	%a2@(24),a3p_nbyte	| sdcom->nbyte -- what was asked for
+Lad_pmv:
+| Recurrence: the same request arriving here twice is the audit's no-progress case, and it is
+| what any future resume has to be bounded by.  Counted now so the bound can be chosen from a
+| measurement rather than from a guess.
+	movel	a3p_req,%d0
+	cmpl	a3p_prevreq,%d0
+	bnes	Lad_pmnew
+	addql	&1,a3p_retry
+	bras	Lad_pmcls
+Lad_pmnew:
+	movel	%d0,a3p_prevreq
+	clrl	a3p_retry
+Lad_pmcls:
+| Verdict, from the audit's interpretation table.  Computed here rather than on the host so the
+| console line carries the answer even when the machine takes kernel memory with it.
+|   1 resume candidate   2 no data left    3 command sequencing
+|   4 direction disagreement                5 other command phase
+	moveq	&4,%d1
+	movel	a3p_rd,%d3
+	beqs	Lad_pmrd0
+	moveq	&1,%d3
+Lad_pmrd0:
+	movel	a3p_di,%d0
+	andil	&0x40,%d0		| DPD
+	beqs	Lad_pmdp0
+	moveq	&1,%d0
+Lad_pmdp0:
+	cmpl	%d0,%d3
+	bnew	Lad_pmset		| chip direction disagrees with the request
+	movel	a3d_segdir,%d0
+	cmpl	%d0,%d3
+	bnew	Lad_pmset		| our own DMA ownership disagrees with the request
+	movel	a3p_cp,%d0
+	moveq	&0x41,%d3
+	cmpl	%d3,%d0
+	beqs	Lad_pmdata
+	moveq	&0x45,%d3
+	cmpl	%d3,%d0
+	beqs	Lad_pmdata
+	moveq	&0x46,%d3
+	cmpl	%d3,%d0
+	beqs	Lad_pmv2		| data count already complete
+	moveq	&0x40,%d3
+	cmpl	%d3,%d0
+	bcss	Lad_pmv3		| below the data-phase range: command sequencing
+	moveq	&5,%d1
+	bras	Lad_pmset
+Lad_pmdata:
+	movel	a3p_tc,%d0
+	beqs	Lad_pmv2		| phase permits data, but nothing is left to move
+	moveq	&1,%d1
+	bras	Lad_pmset
+Lad_pmv2:
+	moveq	&2,%d1
+	bras	Lad_pmset
+Lad_pmv3:
+	moveq	&3,%d1
+Lad_pmset:
+	movel	%d1,a3p_verdict
+
+	movel	a3p_as,%sp@-
+	movel	a3p_con,%sp@-
+	movel	a3p_di,%sp@-
+	movel	a3p_tc,%sp@-
+	movel	a3p_cp,%sp@-
+	movel	%d2,%sp@-
+	pea	La3p_m1
+	jsr	printf
+	lea	%sp@(28),%sp
+
+	movel	a3p_nbyte,%sp@-
+	movel	a3p_addr,%sp@-
+	movel	a3p_rd,%sp@-
+	movel	a3p_op,%sp@-
+	movel	a3p_req,%sp@-
+	pea	La3p_m2
+	jsr	printf
+	lea	%sp@(24),%sp
+
+	movel	a3p_retry,%sp@-
+	movel	a3p_verdict,%sp@-
+	movel	a3p_cntr,%sp@-
+	movel	a3p_sac,%sp@-
+	pea	La3p_m3
+	jsr	printf
+	lea	%sp@(20),%sp
+Lad_nopm:
+
 | --- print.  Three bounded lines, not a dump: this runs in an interrupt handler on a
 |     machine that is about to stop, and the output has to get out before it does. ---
 	movel	a3d_dmaon,%sp@-
@@ -179,6 +358,15 @@ La3d_m3:
 	.even
 La3d_m4:
 	.asciz	"a3091dbg dev=%x istr=%x entry=%x\n"
+	.even
+La3p_m1:
+	.asciz	"a3p ss=%x cp=%x tc=%x di=%x con=%x as=%x\n"
+	.even
+La3p_m2:
+	.asciz	"a3p req=%x op=%x rd=%d addr=%x len=%x\n"
+	.even
+La3p_m3:
+	.asciz	"a3p sac=%x cntr=%x verdict=%d retry=%d\n"
 	.even
 	.balign	4			| the .asciz blocks above are only .even, so without this
 					| the counter block can land 2 mod 4 -- it did, the moment
@@ -252,4 +440,74 @@ a3d_devp:
 	.globl	a3d_istr
 a3d_istr:
 	.long	0			| device->istr at death; bit 4 is the handler's own gate
+	.balign	4
+
+	.balign	4
+| --- ISSUE-54 classification block.  Magic first, as everywhere in this port.  This block is
+|     expected to read all zeros for its whole life on a healthy machine, which is exactly why
+|     it needs a magic: an all-zero read from a wrong address is indistinguishable from an
+|     all-zero read from the right one.
+	.globl	a3p_magic
+a3p_magic:
+	.long	0x41335021		| "A3P!" -- STATIC: proves the address
+	.globl	a3p_ran
+a3p_ran:
+	.long	0		| "A3PR" once the classification body has run
+	.globl	a3p_seen
+a3p_seen:
+	.long	0		| every 0x48/0x49/0x4a arrival: the denominator
+	.globl	a3p_n48
+a3p_n48:
+	.long	0		| MIS_1|DATA_OUT -- never yet observed
+	.globl	a3p_n49
+a3p_n49:
+	.long	0		| MIS_1|DATA_IN  -- the reproducible one
+	.globl	a3p_n4a
+a3p_n4a:
+	.long	0		| MIS_1|CMD      -- never yet observed
+	.globl	a3p_cp
+a3p_cp:
+	.long	0		| WD command phase: selects the valid resume set
+	.globl	a3p_tc
+a3p_tc:
+	.long	0		| WD transfer count, 24 bits: the SCSI-bus residual
+	.globl	a3p_di
+a3p_di:
+	.long	0		| WD destination ID; bit 6 DPD = phase direction
+	.globl	a3p_con
+a3p_con:
+	.long	0		| WD control: DMA mode, disconnect interrupts
+	.globl	a3p_as
+a3p_as:
+	.long	0		| WD auxiliary status; reported, never waited on
+	.globl	a3p_req
+a3p_req:
+	.long	0		| curunitp->comhead: the request identity
+	.globl	a3p_op
+a3p_op:
+	.long	0		| cdb[0], the SCSI opcode
+	.globl	a3p_rd
+a3p_rd:
+	.long	0		| sdcom->reading
+	.globl	a3p_addr
+a3p_addr:
+	.long	0		| sdcom->addr
+	.globl	a3p_nbyte
+a3p_nbyte:
+	.long	0		| sdcom->nbyte: what was asked for
+	.globl	a3p_sac
+a3p_sac:
+	.long	0		| SDMAC DMA address -- the host-side cursor
+	.globl	a3p_cntr
+a3p_cntr:
+	.long	0		| SDMAC control
+	.globl	a3p_prevreq
+a3p_prevreq:
+	.long	0		| previous request, for recurrence detection
+	.globl	a3p_retry
+a3p_retry:
+	.long	0		| same request seen again: the no-progress case
+	.globl	a3p_verdict
+a3p_verdict:
+	.long	0		| 1 resume 2 no-data 3 cmd-seq 4 direction 5 other
 	.balign	4
