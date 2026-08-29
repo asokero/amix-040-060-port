@@ -130,14 +130,30 @@ Lad_noistr:
 |     `ss = reg(SS)` before it ever calls badhardware, so the interrupt is acknowledged and
 |     these are status reads that acknowledge nothing further.  The file header's caution above
 |     is about SS specifically and still stands.
+| 0x41 was added to this gate on 2026-08-29 and it is a CAPTURE ONLY -- the status still falls
+| through to the stock fail-stop, nothing about the driver's behaviour changes.  It is here to
+| answer one question that the 68060-260829-09 capture could not: whose event the 0x41 after a
+| release actually was.  This line read `unit=8113A44` as identity and concluded the root disk's
+| command had terminated; docs/contracts/A3091-BUS-FREE-FOLLOWUP-AUDIT.md shows that startany()
+| writes DI, the CDB, the DMA arm, curunitp and STARTING all BEFORE it writes the command, so
+| every one of those fields describes the new target while its selection is still pending.  CP is
+| the field that does not lie: it records how far a command actually got.
+	cmpil	&0x41,%d2
+	beqs	Lad_pm_in
 	moveq	&0x48,%d3
 	cmpl	%d3,%d2
 	bcsw	Lad_nopm		| ss < 0x48
 	moveq	&0x4a,%d3
 	cmpl	%d3,%d2
 	bhiw	Lad_nopm		| ss > 0x4a
+Lad_pm_in:
 	movel	&0x41335052,a3p_ran	| "A3PR" -- this body ran
 	addql	&1,a3p_seen
+	cmpil	&0x41,%d2
+	bnes	Lad_pm_mis
+	addql	&1,a3p_n41		| unexpected target bus free
+	braw	Lad_pmdev
+Lad_pm_mis:
 	moveq	&0x48,%d3
 	cmpl	%d3,%d2
 	bnes	Lad_pm49
@@ -228,6 +244,20 @@ Lad_pmcls:
 | console line carries the answer even when the machine takes kernel memory with it.
 |   1 resume candidate   2 no data left    3 command sequencing
 |   4 direction disagreement                5 other command phase
+|   6 0x41 with CP=0   -- NO new selection completed: the strong result for a late event
+|                         belonging to the previous target's cleanup rather than to this request
+|   7 0x41 with CP>=10 -- a new selection really did progress, so the event is this request's
+| DI is captured beside CP but is NOT used here.  It is a host-programmed destination register,
+| so it says who the driver MEANT to talk to, never who the event came from -- the same trap
+| that produced the wrong reading of the 260829-09 capture.
+	cmpil	&0x41,%d2
+	bnes	Lad_pmmis2
+	moveq	&6,%d1
+	tstl	a3p_cp
+	beqw	Lad_pmset
+	moveq	&7,%d1
+	braw	Lad_pmset
+Lad_pmmis2:
 	moveq	&4,%d1
 	movel	a3p_rd,%d3
 	beqs	Lad_pmrd0
@@ -676,6 +706,9 @@ a3p_n49:
 	.globl	a3p_n4a
 a3p_n4a:
 	.long	0		| MIS_1|CMD      -- never yet observed
+	.globl	a3p_n41
+a3p_n41:
+	.long	0		| 0x41 unexpected target bus free -- capture only
 	.globl	a3p_cp
 a3p_cp:
 	.long	0		| WD command phase: selects the valid resume set
