@@ -7,6 +7,22 @@ because each one here was learned by breaking it.
 **Where this file and `STATUS.md` disagree, `STATUS.md` is right.** It is the canonical record;
 this file is instructions.
 
+
+## Session plans are local, not tracked
+
+A next-session prompt or run-list is one person's worklist for one machine on one day. It names
+a build host, a card that is currently installed, and a plan that ages the moment anything
+lands. Write them to `private/session-plans/`, which is gitignored, and not to the repository.
+
+The archived ones under `docs/archive/` stay where they are. They are cited as provenance by 34
+references across the tree — "this finding came from that session" — so they function as
+historical records rather than instructions, and `docs/archive/` already says they are not
+current. Moving them would replace those references with pointers into a directory a reader of
+the published repository cannot open, which is worse than leaving them.
+
+The distinction is whether anything cites it. The two prompts moved out on 2026-08-30 had **zero**
+references between them.
+
 ## Read these first
 
 | | |
