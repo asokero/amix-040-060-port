@@ -322,13 +322,21 @@ needs exceptions counted from the first instruction needs the default back at 1,
 rebuild.
 
 **Artifact note, and a mistake worth recording.** Rebuilding for the flip overwrote
-`build/unix-040-quiet`, which *was* the accepted `68040-260830-06` (`e1fb866e`). That image no
-longer exists on the build host — only on the Amiga's own boot volume. Its source is commit
-`8698f12` and its sha is recorded at the top of this document, so the acceptance rests on its
-record rather than on the file; but the file should have been copied aside first, and the tree
-already carries `build/unix-040.ACCEPTED-260807-11` for exactly that reason. The new pair is
-preserved as `build/unix-040.KVPOFF-260830-09` and `build/unix-040-quiet.KVPOFF-260830-10`
-(`457a406d`) before anything else can overwrite them.
+`build/unix-040-quiet`, which *was* the accepted `68040-260830-06`. It should have been copied
+aside first — the tree already carries `build/unix-040.ACCEPTED-260807-11` for exactly that
+reason.
+
+**Recovered the same day, and verified rather than assumed:** the image is on the build host as
+`build/unix-040-3091fix1`, and `sha256sum` reads
+`e1fb866eb72af3b8381868846e85e6176afbe6455c2b96a1f43f3437bddcc361` — the accepted sha, byte for
+byte, with `status-facts.sh` reading back `68040-260830-06` and the same 1 009 096 / 106 996
+sizes. *(An earlier version of this section said the image no longer existed on the build host.
+That was written before the copy was found and is wrong; it is corrected here rather than
+deleted, because the mistake that produced it — rebuilding over an accepted artifact — is real
+and the recovery was luck rather than process.)*
+
+The new pair is preserved as `build/unix-040.KVPOFF-260830-09` and
+`build/unix-040-quiet.KVPOFF-260830-10` (`457a406d`) before anything else can overwrite them.
 
 One number is not explained here and should not be quietly rounded away: 7.74 µs is about 193
 cycles at 25 MHz, for a wrapper of roughly twenty instructions. The instruction count alone
