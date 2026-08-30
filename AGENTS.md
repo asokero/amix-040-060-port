@@ -115,7 +115,13 @@ next rule exists. Cite them by file, line and function — never paste their lin
   which is how a failing byte-patch assertion went unnoticed for weeks (ISSUE-45). Use
   `run_step` from `tools/build-step.sh`.
 * **Do not paste lines from a reference source tree.** Cite file, line and function; describe the
-  algorithm. `tools/check-verbatim.py` is the gate and it must report 0 unexplained.
+  algorithm. `tools/check-verbatim.py` is the gate and it must report 0 unexplained. It compares
+  line to line **and** with every line break removed on both sides, which is what catches a
+  quotation that was re-wrapped to fit — the edit an author actually makes to a pasted sentence.
+  **It reads commit messages too**, so a quotation in a message fails the gate like one in a file;
+  the difference is that a pushed message cannot be edited afterwards, which is why the gate looks
+  before you push rather than after. A match you decide to keep is recorded span by span in
+  `tools/check-verbatim.allow`, with the reason it is dictated rather than chosen.
 
 ## Code that runs on AMIX itself
 

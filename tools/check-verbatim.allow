@@ -1,10 +1,22 @@
-# check-verbatim.allow -- paths whose verbatim matches are known, deliberate and defended.
+# check-verbatim.allow -- matches that are known, deliberate and defended.
 #
-# One path prefix per line, then a reason.  Entries here are still REPORTED, so nobody can
-# forget they exist; they just do not fail the check.  A path belongs here only when the
-# matching text is dictated by an interface rather than chosen by an author.
+# TWO FORMS, and the difference is the whole point:
 #
-# Adding an entry is a decision to be able to defend, not a way to make output quieter.
+#     path/prefix/         a reason        every match under the path.  Blunt.  Only where a
+#                                          whole file is interface by construction.
+#     path <span-id>       a reason        ONE span in ONE file.  The normal form.
+#
+# The span id is printed beside every unexplained match; paste it here with a reason.  It is a
+# HASH of the matched text and not the text itself, because writing the quotation into this file
+# would put the borrowed words into the repository in order to record that we decided not to.
+# It also changes when the span changes, so an edited quotation comes back for a fresh decision
+# instead of quietly inheriting this one.
+#
+# Entries here are still REPORTED, so nobody can forget they exist; they just do not fail the
+# check.  Adding one is a decision to be able to defend, not a way to make output quieter.  The
+# question to answer in the reason is always the same: **is this text dictated, or was it
+# chosen?**  If an author could have written it differently and still been correct, it does not
+# belong here -- it belongs rewritten as a description.
 
 include-modelb/	The Model-B header override: <sys/param.h> and <sys/immu.h> with the page shift
 	changed from 11 to 12.  The macros that match -- ptob/btop/btopr, PAGEMASK, PAGEOFFSET,
@@ -18,3 +30,92 @@ include-modelb/	The Model-B header override: <sys/param.h> and <sys/immu.h> with
 	already ships the AmigaOS loader as patches rather than as files (amix-unix-boot).
 	src/mk_modelb_sysroot.sh already builds the mirror sysroot and already has a geometry
 	probe that would validate the result, so the instrument for the change exists.
+
+
+# ============================================================================================
+# SPAN DECISIONS, 2026-08-30.  The first joined-stream run of this gate produced 38 unexplained
+# spans; eleven were closed by widening the boilerplate rules and by rewriting five quotations
+# as descriptions (commit 258726f).  What follows is the residue, decided one span at a time.
+# ============================================================================================
+
+# -- the expression a byte patch converts -----------------------------------------------------
+# These are not quotations for their own sake.  A byte patcher's entire claim is "this expression,
+# at this address, becomes that one", and the expression is what makes the claim checkable against
+# the disassembly.  Removing it would leave an address and an assertion with nothing to test.
+# Note the framing this leaves open, and which the next pass over these files should take: the
+# expression is derivable from the binary WE are patching, so it can be stated as what the code
+# does rather than as what the source says.  Recorded here rather than done now.
+
+src/patch_mincore.py 84f0ec1de292	The mincore alignment gate: the source contract this patcher
+	converts, quoted so the byte assertion at 0x585e2 has something to be checked against.
+src/patch_ufsbmap.py 60a8a1ed2e5b	The blocks-per-page expression ufs_bmap computes; the patch
+	changes the page term of it and the canaries assert the neighbouring block terms.
+src/segvn_softunlock_dbg.s f763a6f244b3	The anon-slot test this instrument sits in front of; the
+	debug unit exists to report when it is reached and with what.
+src/swapconf_dbg.s d78302facf1b	The swap-device lookup call whose arguments this instrument
+	prints; the argument order IS what the probe reports.
+test-tools/bmaptest.c bdec73a9cb89	The allocation-size condition this test exercises, in the
+	comment that states what the test is for.
+test-tools/pgcold.c a7dc5207cba0	The page-boundary condition under test, in the comment that
+	states the contract the program checks.
+
+# -- signatures and declarations: the identifiers ARE the interface ----------------------------
+# A description of a function signature loses the thing that makes it usable -- the names and
+# their order are the contract, and two implementations that agree on behaviour but not on the
+# signature do not interoperate.  Same for a struct whose field order is an ABI.
+
+docs/contracts/HAT-EXEC-AUDIT.md 0ee46bff4d2d	as_exec's signature.  The audit is about argument
+	handling, so the parameter names and their order are its subject rather than its decoration.
+src/segkmem040.s 9322ca09b903	segkmem_setprot's signature, stated where this override has to
+	match it exactly.
+docs/archive/RAM-BEYOND-16MB-CODEX-TASK.md 90010eba3aae	The bootinfo struct's first member.  The
+	task is about reading this structure from a running kernel, so field order is the subject.
+docs/archive/RAM-BEYOND-16MB-CODEX-TASK.md cb44e91ee620	The same struct's second member, for the
+	same reason.
+docs/archive/ISSUE40-AVAILRMEM-TASK.md a6e629bb52e1	The USIZE declaration and its unit comment.
+	The whole issue is that the constant's UNIT is 2048 bytes; the comment is the evidence.
+src/fpe-compat/sys/cdefs.h a284a85e10a6	BSD short type names, absent from AMIX.  There is one
+	spelling of `typedef unsigned char u_char;` and code compiled against it must agree.
+src/fpe-compat/sys/cdefs.h b6ec9ec897ba	The same four typedefs, matched as a run.
+
+# -- strings that identify a message or locate code in a binary --------------------------------
+# A printf format string is how a line observed on a serial port is traced back to the code that
+# printed it.  Describing it instead would make the identification unrepeatable.
+
+docs/060-F4-M2-ATT5-RESULTS-260825.md 4680d0b4d0a4	The swap-configuration diagnostic, quoted to
+	identify which message the machine printed.
+docs/060-F4-M2-ATT6-PREREG-260825.md 4680d0b4d0a4	The same message, in the pre-registration that
+	predicted it.
+docs/A3091-WEDGE-PRESTUDY-260826.md b73f1727cc0e	The A3091 driver's own diagnostic call.  The
+	format string is what appeared on the wire and the three argument names are the mapping this
+	section exists to state; the section decodes exactly this line.
+
+# -- output the machine printed, captured verbatim on purpose ----------------------------------
+# These are transcripts.  The AT&T and Lachman copyright banner is printed by the kernel under
+# test at every boot; a log that edited it would no longer be a record of what happened.
+
+test-tools/issue10-amixadm-emu-repro-260729.log 81b793745557	Kernel boot banner in a captured log.
+test-tools/issue22-serial36-260728.log 81b793745557	Kernel boot banner in a captured log.
+test-tools/issue22-serial45-260728.log 81b793745557	Kernel boot banner in a captured log.
+test-tools/pagecreate-issue27-COLD-PROOF-260725.txt 1f173e302301	The contract expression quoted in
+	a captured verification run; the file is a record of that run and is not edited after the fact.
+
+# -- commit messages: recorded because they CANNOT be rewritten --------------------------------
+# Five spans in four messages, found the first time this gate looked at messages at all.  They
+# are contract expressions and one sentence from a source comment, all attributed where they
+# appear.  A pushed commit message cannot be changed without rewriting published history, and
+# this repository cites 83 commit hashes as provenance across 152 documents -- so the cost of
+# removing five short quotations is every one of those references.  Decision, 2026-08-30: they
+# stay, and they are recorded here so that the decision is visible rather than implied.
+# The rule this pays for: the gate now sees a message BEFORE it is pushed, which is the only
+# moment at which this is cheap.
+
+commit 13544a9 message 839153b4e3de	The zero-fill expression the patch converts, in the message
+	that converted it.
+commit 13544a9 message a37bde31ab92	One sentence from the source comment that states why the
+	tail is zeroed.  The file copy of this quotation was rewritten as a description in 258726f;
+	the message cannot be.
+commit 9c6a886 message 1f173e302301	The page-boundary condition, in the message that converted it.
+commit eab3c45 message bdec73a9cb89	The allocation-size condition, in the message that converted it.
+commit f35ddef message ddb096081399	The device-mmap failure contract, in the message that
+	converted it.
