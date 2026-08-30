@@ -6857,7 +6857,7 @@ emulator.**
 
 ---
 
-## ⚠ ISSUE-54 (2026-08-27, OPEN): reading a device whose block size is not 512 kills the A3091 driver permanently — root-caused 2026-08-29
+## ✅ ISSUE-54 (2026-08-27, CONTAINED 2026-08-30): reading a device whose block size is not 512 no longer kills the A3091 driver
 
 > **CLASSIFIED ON SILICON 2026-08-29, `68060-260829-07`** —
 > [`docs/REALHW-ISSUE54-CLASSIFY-260829-07.md`](docs/REALHW-ISSUE54-CLASSIFY-260829-07.md).
@@ -6871,6 +6871,31 @@ emulator.**
 > command phase already held the value action 9 writes to resume *past* the data. The cursor
 > agrees: 496 of 512 bytes, one SDMAC FIFO short of the end.
 >
+> **STAGE D WORKS 2026-08-30, `68060-260830-06`** —
+> [`docs/REALHW-ISSUE54-STAGED-260830-06.md`](docs/REALHW-ISSUE54-STAGED-260830-06.md).
+>
+> ```
+> a3p D RETIRED busfree=1 sent=1 ss=41 bytes=1536
+> ```
+>
+> **`bytes=1536`** is 2048 − 512, the CD block's exact residual, and it was written into the
+> predictions before the run as the number that would confirm the root cause independently.
+> **No `a3091:` line at all** — `badhardware()` never ran.
+>
+> Twice, which is the difference between luck and a mechanism: `d_try 2, d_sent 2, d_busfree 2,
+> d_failed 2`, and `d_quar = d_badphase = d_badstat = d_notowner = 0`. The CD returns
+> `dd: read error: I/O error`, `CD=2`; the root disk returns `8+0 records`, `ROOT=0`.
+>
+> All eight of the design's falsification conditions reported individually in the record.
+>
+> **Contained, not solved.** The CD is still unreadable — no block-size support is added. `0x48`
+> `DATA_OUT` and `0x4A` `CMD` remain unobserved and unhandled, target 4 is a tape and has never
+> been touched, and `a2091.c` has the identical tables and defect.
+>
+> Cost: six hardware runs and four designs. The first three were implemented to specification and
+> failed on silicon for reasons the specification did not anticipate. What made the fourth
+> different was proving its primitive in a separate build that attempted no recovery at all.
+
 > **STAGE P ACCEPTED 2026-08-30, `68060-260830-04`: 8/8** —
 > [`docs/REALHW-ISSUE54-STAGEP-ACCEPTED-260830-04.md`](docs/REALHW-ISSUE54-STAGEP-ACCEPTED-260830-04.md).
 > `got=1 tc=0`, `sac0 == sac`, `cp=46 di=43 con=0C`, `as2=80` proving `BSY` was clear for the
