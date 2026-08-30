@@ -7288,3 +7288,101 @@ and found it could not make one.
 `check_relink_relocs.py`. Adding it would not have caught this — a duplicate symbol is a link
 error, not a relocation defect — so it is recorded here rather than fixed as if it were the
 remedy.
+
+## ✅ ISSUE-57 (2026-08-30, FIXED same day): `devmaptest` printed PASS on an A3640 having measured nothing
+
+> **Ledger: FIXED and hardware-run.** `68040-260830-06` on an A3640/68040, 2026-08-30. Before the
+> fix: `T1 SKIP`, `T2 SKIP`, `DEVMAPTEST-RESULT PASS`. After: probe settles on `0x07000000`,
+> `T1 PASS`, `T2 PASS`, `fails=0 skips=0`. Evidence: `docs/REALHW-BATTERY-68040-260830.md`.
+
+`devmaptest` is the twelfth row of the battery and the acceptance test for ISSUE-33's device-mmap
+page geometry and ISSUE-49's `/dev/screen` fault path. Both of its cases need a physical address
+that `/dev/mem` will map and whose content is distinctive, and both used the kernel load base for
+it — written into the source as a constant:
+
+```c
+/* Physical 0x08000000 is the kernel load base on this machine, so this window
+ * has DISTINCTIVE, non-zero content. */
+base = 0x08000000;
+```
+
+**The load base is a property of the accelerator, not of the machine.** Every card this project
+had used until 2026-08-30 carried its own RAM at `0x08000000`. An A3640 has none and the kernel
+runs from A3000 motherboard RAM at `0x07000000`, where `0x08000000` is not memory at all. Both
+`mmap()`s returned `ENXIO`, both cases took their `SKIP` return, and neither `SKIP` incremented
+`fails` — so the program printed:
+
+```
+  T1 SKIP: mmap /dev/mem failed errno=6
+  T2 SKIP: mmap failed errno=6
+DEVMAPTEST fails=0
+DEVMAPTEST-RESULT PASS
+```
+
+The battery driver greps for `DEVMAPTEST-RESULT PASS` and scored the row `ok`. The run reported
+**12/12 on a 68040 for the first time in this project** and one of the twelve had measured
+nothing.
+
+### What gave it away
+
+Not the battery, which was green. The serial log, which carried four lines the battery never
+prints:
+
+```
+WARNING: DBG krnxflt FAILEXIT w=2 va=8000000 rw=1 depth=1
+WARNING: DBG krnxflt FAILEXIT w=2 va=8000000 rw=1 depth=1
+WARNING: DBG krnxflt FAILEXIT w=2 va=8000800 rw=1 depth=1
+WARNING: DBG krnxflt FAILEXIT w=2 va=8000000 rw=1 depth=1
+```
+
+Three reads at `0x08000000` and one at `0x08000000+2048` — exactly `a`, `b` and `c` of T1 — denied
+by this port's own fault instrument. The same instrument had printed the same shape a day earlier
+for two `kpeek` reads at stale counter addresses, which is why the shape was recognised.
+
+### Fix
+
+`test-tools/devmaptest.c`:
+
+* the base is **probed** rather than assumed. Candidates `0x08000000` then `0x07000000`, and a
+  candidate is accepted only if it both maps **and** reads back non-zero — mappable-but-zero is
+  the exact signature T1 exists to detect, so a base chosen on mappability alone could hand T1 a
+  window in which its own discriminator can never fire. `devmaptest <hex>` forces a base for a
+  machine neither candidate fits;
+* **a skip is no longer a pass.** `skips` is counted alongside `fails` and the verdict is
+  `DEVMAPTEST-RESULT PASS` only when both are zero. A check that reads nothing must not be able
+  to print a verdict — the same rule the battery driver already applies to its own verdict log.
+
+### Which earlier results this does and does not invalidate
+
+**No 68060 acceptance is affected.** The defect needs a card with no RAM at `0x08000000`, and
+every Mercury run had RAM there — including `68060-260827-06`, whose row in `STATUS.md` §1 claims
+the first 12/12 battery in this project. That run mapped real memory and measured what it says it
+measured. The only readings this invalidates are `devmaptest`'s on an A3640, and the only A3640
+session before this one is 2026-08-13, whose acceptance record does not list `devmaptest` among
+what it ran.
+
+### What it cost, and what it did not
+
+Nothing was wrong with the kernel. The measurement the row was supposed to make had simply never
+been made on this card; with the fix it was made, and it passes: `T1` confirms a `base+2048`
+device offset aliases to the same 4 KiB page, `T2` confirms `mincore` over a four-page device
+mapping writes four entries and no more. That is ISSUE-33 and ISSUE-49's fault path measured on
+68040 silicon for the first time.
+
+### The family this belongs to
+
+This is the third time a hard-coded `0x08000000` has been wrong, and the second time it was wrong
+*silently*:
+
+* **ISSUE-101** is the same constant in the other direction — `config()`'s memory-sizing fallback
+  is `0x07000000`-shaped and silently wrong at load base `0x08000000`;
+* `tools/status-facts.sh` takes the base as an argument for this reason, and its header says so;
+* now `devmaptest`.
+
+Any test that names a physical address should be assumed to carry this defect until it is read.
+The remaining candidates in `test-tools/` are `fpenab060.c`, `fpimm60.c`, `ftunimp0.c`,
+`isp61ea.c`, `isp61test.c`, `kdepthmax.c`, `kpeek.c`, `memwatch.c` and `proctest.c`. Three were
+read while writing this entry: `kpeek` takes its address from `argv[1]` and is correct on any
+card, though its header comment asserted the `0x08000000` base as fact and has been corrected;
+`proctest`'s hit is a comment about user VAs at `0x80000000` and is unrelated. **The other six
+have not been read and are not claimed to be correct here.**
