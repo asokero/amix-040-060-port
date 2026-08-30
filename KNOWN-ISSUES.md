@@ -7153,11 +7153,25 @@ wants the same treatment ISSUE-53's got: a contract first, then a counter with a
 
 ---
 
-## ⚠ ISSUE-55 (2026-08-28, OPEN upstream): the cross compiler this port ships with existed only as an uncommitted working-tree change
+## ✅ ISSUE-55 (2026-08-28, CLOSED 2026-08-30): the cross compiler this port ships with existed only as an uncommitted working-tree change
 
-> **Ledger: OPEN** until the upstream PR lands. Nothing in this repository is wrong any more —
-> `BUILDING.md` now says what is needed — but a clone still cannot reproduce the compiler until
-> `gcc-cross-amix` carries the repairs.
+> **Ledger: CLOSED 2026-08-30.** `isoriano1968/gcc-cross-amix` merged the PR as `048e85c`. The
+> chain is verified rather than assumed: upstream `main`'s `amix-gcc-wrapper.sh`, with `@TARGET@`
+> substituted, is now **byte-identical** to the compiler installed on this build host, and a
+> rebuild against it changes exactly **one byte** of `build/unix-040` — the build-id stamp.
+>
+> So a fresh clone following `BUILDING.md` now produces the compiler every hardware acceptance in
+> this project came from. That was the whole of the issue.
+>
+> ⚠ **The wrapper is not finished, and that is a different matter.** A collaborator exercising it
+> as a general C toolchain — cross-building a libc shim and GNU patch as SVR4 packages, rather
+> than compiling a kernel — found four more defects and raised them as PR #3: the `bfffo`
+> bit-field operands (a fifth SGS spelling; all eight `bf*` mnemonics still fail), `-E`
+> unimplemented so `gcc -E` **links** and autoconf silently falls back to the build host's
+> `/lib/cpp`, a named archive placed before the objects, and an explicit `-l` suppressing the
+> implicit libc. None touch `-march` or the kernel path, which is why neither line saw them.
+> The `-E` one is this project's favourite shape of defect: it fails nothing and mis-sets
+> `HAVE_*` quietly.
 
 `BUILDING.md` told a reader to build the toolchain from `isoriano1968/gcc-cross-amix`. Doing so
 produced a **different compiler** from the one every kernel in this project was built with, and
