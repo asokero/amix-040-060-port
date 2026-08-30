@@ -45,6 +45,7 @@ a named test on a named platform is.
 
 | Build id | sha256 (prefix) | Platform accepted on | What it established | Evidence |
 |---|---|---|---|---|
+| `68040-260830-10` | `457a406d` | 68040 hardware (A3640), 2026-08-30 | **`kvp_on` defaults to 0**, accepted the same evening: battery 12/12, 38/38 magics at the same addresses as `-06`, `devmaptest fails=0 skips=0`, `fp060probe` 7/7 with `f60` untouched. The syscall probe's 8.09% is now measured across two boots rather than within one | `docs/REALHW-BATTERY-68040-260830.md` |
 | `68040-260830-06` | `e1fb866e` | 68040 hardware (A3640), 2026-08-30 | **First 12/12 battery on a 68040**, 38/38 magics at load base `0x07000000`, every must-stay-zero counter 0, `fp060probe` 7/7 bit-exact with the `f60` block untouched. The driver is generated (`tools/gen-battery.sh`) rather than hand-edited. Found ISSUE-57: `devmaptest` was printing PASS having measured nothing on this card | `docs/REALHW-BATTERY-68040-260830.md` |
 | `68060-260827-06` | `c2fb10fc` | 68060 hardware, 2026-08-27 | **First 12/12 battery in this project** (`devmaptest` passes: ISSUE-49's fault path). Burst 96/96. ISSUE-53 wrapper wired and correct, but its own subject event never occurred | `docs/REALHW-ISSUE53-260827-06.md` |
 | `68060-260828-02` | `3de029c0` | 68060 hardware, 2026-08-28 | The collaborating line's FPE branch built here and run on three beds. Never-engage bar **proved declined rather than unreached** on silicon: 12 vector-11 events, all format 2, `fpe_entry_n` 0. Oracle passes. Not merged | `docs/FPE-BRANCH-REVIEW-260828.md` |

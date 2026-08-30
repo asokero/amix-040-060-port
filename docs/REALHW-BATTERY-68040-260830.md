@@ -344,6 +344,59 @@ predicts well under a microsecond. The five separate `.data` longwords it writes
 data cache, are the obvious suspect — but that is a hypothesis, not a measurement, and nothing
 here tests it.
 
+## The flip accepted on silicon: `68040-260830-10`, same evening
+
+`build/unix-040-quiet.KVPOFF-260830-10`, sha256 `457a406d…`, A3640/68040, load base `0x07000000`.
+The image is `-06` with one data word changed, so this is the acceptance of that word.
+
+**Every prediction written before the boot came back as written.**
+
+| | prediction | outcome |
+|---|---|---|
+| K1 | `kvp_on` = 0, and `kvp_n` = 0 for the whole boot | ✅ 0 before the battery and 0 after it — twelve programs, and the counter never moved. On `-06` it read 184 815 at the same point |
+| K2 | the 38 magic words at the **same addresses**, driver unchanged | ✅ `all 38 magics OK` with `batteryrun-260830-06.sh` verbatim; only its identity block is stale |
+| K3 | battery 12/12 | ✅ and `MUST-STAY-ZERO-OK` |
+| K4 | `devmaptest` passes for real | ✅ `fails=0 skips=0`, probe rejects `0x8000000` with errno 6 and settles on `0x7000000` |
+| K5 | `kvpcost` gives the B-arm numbers without `kpoke` | ✅ see below |
+| K6 | `fp060probe` 7/7 with `f60` untouched | ✅ 7/7 bit-exact, `f60` byte-identical across the run |
+| K7 | `f60_*` zero, `wbf_slot` 3, `a3w_eint_only` 0 | ✅ all three |
+
+### The saving is real, and now measured across two boots rather than within one
+
+```
+probe ON,  compiled in   (-06)   1254 1252 1275 1257 1271 1246   mean 1259.33   104.9 us/call
+probe OFF, via kpoke     (-06)   1166 1163 1170                  mean 1166.33    97.2 us/call
+probe OFF, in the image  (-10)   1150 1170 1152                  mean 1157.33    96.4 us/call
+```
+
+**8.09 % of system time, 8.49 µs per system call.** The third row is the one this boot adds, and
+what makes it worth having is that it is a *different kernel on a different boot*: the within-boot
+A/B could only show that the flag works, and this shows that shipping the flag off delivers the
+same saving. The two off-rows differ by 9 ticks — 0.77 %, inside the run-to-run spread of both
+(1163–1170 and 1150–1170), so they are the same measurement taken two ways.
+
+`kvp_vec[]` stayed all-zero throughout, which is the gate check rather than the timing: the probe
+is not merely cheap here, it does not execute.
+
+### The serial line, which is where the last confirmation was
+
+```
+WARNING: DBG krnxflt FAILEXIT w=2 va=8000000 rw=1 depth=1
+NOTICE: User BUS ERROR at C1033000 ... CMD:./protfault a
+NOTICE: User BUS ERROR at C1034040 ... CMD:./protfault b
+```
+
+Three lines for the whole acceptance, and the first one is the ISSUE-57 fix visible from outside:
+**four denied reads became one.** The broken `devmaptest` mapped `0x08000000` three times and
+`+2048` once, blindly; the fixed one probes it once, is refused, and moves on. The two bus errors
+are `protfault` doing what it exists to do.
+
+### Readings
+
+`a3w_calls` 64 408, `a3w_own` 9 055, **`a3w_eint_only` 0** — ISSUE-53's subject event still has
+not occurred, now across two kernels and two boots on this card. `a3p_d_*` all zero: no Stage D
+drain this boot. `wbf_slot` 3.
+
 ## ISSUE-51: six burst rounds, in flight as this was written
 
 `burstloop11.sh 6` was launched on the same boot: 6 rounds x 4 bursts x (6 concurrent 4 MiB
