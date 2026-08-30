@@ -27,8 +27,27 @@
 | instruction (moveml) does not read.
 |
 | NOT cputype-gated, deliberately: this measures BOTH processors and the 040 numbers are the
-| control for the 060 ones.  It is gated on the kvp_on data flag instead (default 1), so the
-| probe can be taken out of the path within a single boot -- the wb_dfc_on / kdbg_on pattern.
+| control for the 060 ones.  It is gated on the kvp_on data flag instead, so the probe can be
+| taken out of the path within a single boot -- the wb_dfc_on / kdbg_on pattern.
+|
+| THE DEFAULT IS 0 SINCE 2026-08-30, AND THE COST IS WHY.  Measured on 68040-260830-06, an
+| A3640, three arms 1 -> 0 -> 1 in one boot with a syscall-tight loop (test-tools/kvpcost.c):
+| the probe costs 7.74 us per system call, 7.4% of system time.  It is on the system-call path
+| and the page-fault path -- vector 32 and vector 2 were the only two non-empty buckets of 64 --
+| so that is 7.4% of every syscall and every fault, permanently, for a diagnostic.  Turn it on
+| for a session that needs it:  kpoke <kvp_on> 0 1.
+| Evidence: docs/REALHW-BATTERY-68040-260830.md.
+|
+| ⚠ WHAT A DEFAULT OF 0 COSTS, so that nobody rediscovers it as a defect:
+|   * kvp_n, kvp_user_n, kvp_super_n, kvp_over_n, kvp_vec[], kvp_last_vec and kvp_last_pc all
+|     stay 0 for the whole boot.  THAT IS NOT THE ATTEMPT-5 CONTRADICTION.  The invariant
+|     `kvp_n >= srg_ut_n` in docs/060-F4-M2-ATT5-RESULTS-260825.md holds only "whenever
+|     kvp_on != 0", and kvp_n = 0 against a large srg_ut_n now means the flag is off and
+|     nothing else.  kvecdisp040.s samples kvp_on into kvd_a_kvpon in the same breath for
+|     exactly this reason -- READ THAT SLOT BEFORE READING kvp_n;
+|   * kpoke can turn the probe on mid-boot but CANNOT recover boot-time coverage.  Anything
+|     that needs to count exceptions from the first instruction needs this default back at 1,
+|     which is a rebuild.
 |
 | Install: --weaken-symbol nullvect + --add-symbol nullvect_orig=.text:0x11b4 (address
 | asserted from build/unix-stage1 and vanilla stand/unix; both read 0x000011b4).
@@ -97,7 +116,9 @@ kvp_magic:
 	.long	0x4b565021		| "KVP!" -- read this before trusting an address
 	.globl	kvp_on
 kvp_on:
-	.long	1			| 0 = probe out of the path, for a single-boot A/B
+	.long	0			| 1 = probe in the path.  Default 0 since 2026-08-30:
+					| it costs 7.4% of system time on every syscall and
+					| every page fault.  See the header.  kpoke to enable.
 	.globl	kvp_n
 kvp_n:
 	.long	0			| every entry to nullvect

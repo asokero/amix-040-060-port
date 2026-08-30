@@ -221,17 +221,28 @@ running it.
 ### Where the probe actually is
 
 `src/kvecprobe040.s` wraps `nullvect` and describes it as *"the catch-all that turns an unhandled
-exception into SIGSYS"*. Its own per-vector histogram says something else. After the battery,
-exactly two of the 64 buckets were non-empty and every other one read zero:
+exception into SIGSYS"*.
+
+**Correction to the first version of this document, which claimed the repository did not know
+better.** It did. `src/kvecdisp040.s`, written 2026-08-25, says it exactly and in those words:
+
+> Every vector in this kernel that has no dedicated handler — 237 of the 256 entries in
+> `M68Kvec`, **INCLUDING vector 2 (access fault) and vector 32 (TRAP #0, the syscall gate)** —
+> points at `nullvect`. `nullvect` is not a SIGSYS catch-all: it is the shared trap entry stub.
+
+So the stale text is `kvecprobe040.s`'s own header, not the project's understanding, and
+`docs/060-F3-FPSP-PLAN-260807.md` §148 already said "the probe sits on the syscall path, which is
+why `kvp_on` exists". What is new here is the *measurement*: the histogram below is the first
+reading of which vectors actually arrive and in what proportion. After the battery, exactly two of
+the 64 buckets were non-empty and every other one read zero:
 
 ```
 kvp_vec[2]  =  62 432      vector 2  = access fault  (page fault)
 kvp_vec[32] = 124 400      vector 32 = TRAP #0       (system call)
 ```
 
-So the probe runs on the system-call path and the page-fault path — which is what the session
-plan asserted and what the source comment does not. The attribution was then measured rather than
-inferred: a loop of `n` = 200 000 `lseek()` calls moved `kvp_vec[32]` by 203 264 / 201 550 /
+So the probe runs on the system-call path and the page-fault path, in the proportion 2:1 in favour
+of system calls. The attribution was then measured rather than inferred: a loop of `n` = 200 000 `lseek()` calls moved `kvp_vec[32]` by 203 264 / 201 550 /
 201 550 in the first arm. Every call trapped, and the excess is the rest of the machine.
 
 ### Why not Dhrystone
@@ -280,10 +291,44 @@ worth recording as a result about the instrument, not about the probe.
 ### What follows
 
 7.4 % of system time on every system call and every page fault is material for what is a
-debugging aid — the plan's own rule was *"if the cost is material the default flips to 0"*. That
-flip is a one-word change to `src/kvecprobe040.s` and a new image, and it was **not** made in this
-session; the flag can be taken out of the path live with `kpoke <kvp_on> 1 0` in the meantime,
-which is exactly what this measurement did.
+debugging aid — the plan's own rule was *"if the cost is material the default flips to 0"*, and
+**the flip was made the same day**: `src/kvecprobe040.s`, `kvp_on: .long 1` → `.long 0`.
+`kpoke <kvp_on> 0 1` turns the probe on for a session that needs it, which is what this
+measurement did in reverse.
+
+**What the flip changes, byte for byte.** The two kernels differ in exactly **two bytes** out of
+1 862 881:
+
+```
+offset 0x10ed63   '8' -> '9'              the build-id stamp, 68040-260830-08 -> -09
+offset 0x10ee3c   00000001 -> 00000000    kvp_on  (nm 0x188ac, resolved through .data)
+```
+
+`text` stays 1 009 096 and `data` stays 106 996, so **no counter address moves**. All 132 address
+and magic lines of the generated battery driver are identical between the two images, so
+`batteryrun-260830-06.sh` addresses the new kernel correctly and only the identity block at its
+top is stale. That is what makes this cheap to accept: the evening's battery is the same battery
+at the same addresses.
+
+**⚠ The one trap it creates, written down so that nobody rediscovers it as a defect.** With the
+default at 0, `kvp_n` and the whole `kvp_vec[]` histogram read zero for the entire boot while
+`srg_ut_n` climbs. **That is the exact shape of the attempt-5 contradiction** in
+`docs/060-F4-M2-ATT5-RESULTS-260825.md` — `kvp_n = 3` against `srg_ut_n = 1270`. It is not that
+contradiction: the invariant is stated there as holding *"whenever `kvp_on != 0`"*, and
+`kvecdisp040.s` samples `kvp_on` into `kvd_a_kvpon` in the same breath for exactly this reason.
+**Read that slot before reading `kvp_n`.** The capability genuinely lost is boot-time coverage:
+`kpoke` can turn the probe on mid-boot but cannot count what already happened, so anything that
+needs exceptions counted from the first instruction needs the default back at 1, which is a
+rebuild.
+
+**Artifact note, and a mistake worth recording.** Rebuilding for the flip overwrote
+`build/unix-040-quiet`, which *was* the accepted `68040-260830-06` (`e1fb866e`). That image no
+longer exists on the build host — only on the Amiga's own boot volume. Its source is commit
+`8698f12` and its sha is recorded at the top of this document, so the acceptance rests on its
+record rather than on the file; but the file should have been copied aside first, and the tree
+already carries `build/unix-040.ACCEPTED-260807-11` for exactly that reason. The new pair is
+preserved as `build/unix-040.KVPOFF-260830-09` and `build/unix-040-quiet.KVPOFF-260830-10`
+(`457a406d`) before anything else can overwrite them.
 
 One number is not explained here and should not be quietly rounded away: 7.74 µs is about 193
 cycles at 25 MHz, for a wrapper of roughly twenty instructions. The instruction count alone
