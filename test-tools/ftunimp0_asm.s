@@ -1,6 +1,10 @@
 | ftunimp0_asm.s -- replicate Motorola ftest's unimp_0 sub-test EXACTLY, including the parts
 | that make it "fail", and report what actually happened (F3 M2b, 2026-08-08).
 |
+| CROSS-BUILD ONLY: this is GNU assembler syntax (`#` immediates).  The guest's native
+| /usr/ccs/bin/as rejects it ("invalid instruction name") -- that is a toolchain mismatch, not a
+| result.  Assemble with the m68k-cbm-sysv4 cross toolchain on the host; see ftunimp0.c's header.
+|
 | WHY.  Motorola's own FP-unimplemented suite prints "1 failed" on our kernel, and its
 | chk_test tells you the sub-test number and nothing else.  Sub-test 1 is unimp_0
 | (dist/ftest.s:245), which is one instruction:

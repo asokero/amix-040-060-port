@@ -30,10 +30,18 @@ plain byte count and `cat -v`, not a negated character class.
 
 ## Test programs — what to run, and what each one actually proves
 
-All are K&R C for the native AMIX `cc`. Build on the guest with `cc -o NAME NAME.c`.
+Most are K&R C for the native AMIX `cc`. Build on the guest with `cc -o NAME NAME.c`.
 Push the sources with `tftp_onesock.py` (the guest disk is wiped by every
 `emu-reset-boot.sh`). **`/tmp` is cleared on every AMIX boot** — put anything that has
 to survive a reboot under `/` (the two-phase tests use `/pgc`).
+
+**Exceptions — cross-build-only, NOT native-`cc` buildable.** A few tools here must be built with
+the m68k-cbm-sysv4 cross toolchain on the host and transferred as binaries, because they use GNU C
+or GNU-syntax assembly the guest's 1991 AT&T `cc`/`as` cannot compile. **Do not read the native
+compile/assemble error as a result** — it is a toolchain mismatch. `fp060probe.c` uses GNU C
+`__asm__ volatile`; `ftunimp0` (`ftunimp0.c` + `ftunimp0_asm.s`) has a GNU-syntax assembler half.
+Each says so in its own header, and `mk060.sh` documents the same for the other 68060-specific
+tools it cross-builds.
 
 Model-B / VM correctness (all added 2026-07-25 unless noted):
 

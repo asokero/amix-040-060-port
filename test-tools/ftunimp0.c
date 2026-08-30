@@ -10,6 +10,13 @@
  *   - every other FP register and every integer register must be unchanged
  * ftest checks all of these and prints one word.  This prints which one.
  *
+ * CROSS-BUILD ONLY -- this tool does NOT build with the box's native K&R `cc`.  Its other half,
+ * ftunimp0_asm.s, is GNU assembler syntax (`#` immediates); the guest's own /usr/ccs/bin/as
+ * rejects it ("invalid instruction name").  That is a TOOLCHAIN mismatch, not a measurement -- do
+ * not read the native assembler error as a result.  Build only with the m68k-cbm-sysv4 cross
+ * toolchain on the host and transfer the binary:
+ *     m68k-cbm-sysv4-gcc -m68040 -o ftunimp0 ftunimp0.c ftunimp0_asm.s
+ *
  * usage: ftunimp0
  */
 

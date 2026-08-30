@@ -33,8 +33,14 @@
  * CONTAINMENT: one child per instruction, no handler, so a death is a result and never takes
  * the parent with it.  Same shape as protfault.c.
  *
- * Cross-compiled (m68k-cbm-sysv4-gcc -m68020 -m68881); the guest's own compilers cannot be
- * trusted for FP source on this machine -- that is the very thing being measured.
+ * CROSS-BUILD ONLY -- this does NOT build with the box's native K&R `cc`.  The probes use GNU C
+ * `__asm__ volatile`, which the guest's 1991 AT&T cc does not know; a native build dies with
+ * "undefined symbol: __asm__".  That is a TOOLCHAIN mismatch, not a measurement -- do not read the
+ * native error as a result.  Build only with the m68k-cbm-sysv4 cross toolchain on the host and
+ * transfer the binary:
+ *     m68k-cbm-sysv4-gcc -m68020 -m68881 -o fp060probe fp060probe.c
+ * (See test-tools/mk060.sh, which builds it this way for exactly this reason.)  The guest's own
+ * compilers cannot be trusted for FP source anyway -- that is the very thing being measured.
  *
  * usage: fp060probe
  */
