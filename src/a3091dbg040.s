@@ -32,9 +32,9 @@
 | what ACKNOWLEDGES the interrupt.  An instrument that perturbs what it measures is worse
 | than a smaller instrument.
 |
-| `istr` is the exception, and it is not a new kind of access: a3091intr's own first line is
-| `unless ((device) and (device->istr & 1<<4)) return`, so the driver reads this register on
-| every interrupt already.  Reading it here adds nothing the hardware does not see anyway.
+| `istr` is the exception, and it is not a new kind of access: a3091intr's own admission test
+| already reads this register on every interrupt -- it returns unless the device pointer is
+| non-null and ISTR bit 4 is set.  Reading it here adds nothing the hardware does not see anyway.
 |
 | ENTRY istr ADDED 2026-08-27, and the reason is a mistake worth keeping visible.  The demux
 | wrapper (src/a3091demux040.s) latches the entry snapshot in a3w_dead_istr precisely so the
