@@ -111,6 +111,12 @@ fpe_vec11:
 | ANY 040 boot: an FPU-present 040 takes format-2 frames at vector 11 for every unimplemented FP
 | instruction the FPSP handles.
 |
+| CORRECTION (verified on 68060 silicon 2026-08-30): format 2 is the UNIMPLEMENTED-INSTRUCTION
+| frame, NOT a 68040-specific shape.  A 68060 with a WORKING FPU takes the same six-word format-2
+| frame for unimplemented FP -- on that run fpe_v11_n and fpe_v11_fmt2_n both moved 0 -> 12 while
+| fpe_v11_fmtx_n stayed 0, so both shapes still decode and only the label was ever wrong, never the
+| dispatch.  The census that closes this "on ANY 040 boot" closes it on any FPU-present part.
+|
 | THE NEVER-ENGAGE BAR IS UNCHANGED.  fpe_entry_n stays behind both gates, below.  The fpe_v11_*
 | family are PRE-GATE OBSERVERS and are EXPECTED to move on FPU-present rigs -- that is their
 | whole purpose -- so any reading of the bar must exclude them by name.
@@ -152,8 +158,8 @@ Lfpe_cen_done:
 	addql	&1,fpe_entry_n
 	cmpiw	&0x402c,%sp@(6)		| eight-word, format 4: 68060 FP disabled
 	beqs	Lfpe_fmt4
-	cmpiw	&0x202c,%sp@(6)		| six-word, format 2: 68040 unimplemented FP
-	beqs	Lfpe_fmt2
+	cmpiw	&0x202c,%sp@(6)		| six-word, format 2: unimplemented FP instruction
+	beqs	Lfpe_fmt2			| (68040 OR 68060-with-FPU -- see the census note above)
 	cmpiw	&0x002c,%sp@(6)		| four-word, format 0: a real bad F-line word
 	beqs	Lfpe_fmt0
 	addql	&1,fpe_fmtx_n		| a fourth shape at vector 11 would be a finding
@@ -163,7 +169,7 @@ Lfpe_fmt0:
 	addql	&1,fpe_fmt0_n		| SIGSYS, unchanged.  See the header.
 	bras	fpe_decline
 Lfpe_fmt2:
-	addql	&1,fpe_fmt2_n		| the 68040 unimplemented-FP arm is documented and NOT
+	addql	&1,fpe_fmt2_n		| the unimplemented-FP arm is documented and NOT
 	bras	fpe_decline		| implemented this round; today it keeps its FPSP outcome
 Lfpe_fmt4:
 	addql	&1,fpe_fmt4_n
@@ -709,8 +715,11 @@ fpe_v11_fmt4_n:
 	.long	0			| 0x402c  eight-word, 68060 FP disabled
 	.globl	fpe_v11_fmt2_n
 fpe_v11_fmt2_n:
-	.long	0			| 0x202c  six-word, 68040 unimplemented FP.  THE counter
-					| FPE-GLUE-DESIGN.md 9 item 10 wanted and could not reach
+	.long	0			| 0x202c  six-word, format 2: unimplemented FP instruction.
+					| THE counter FPE-GLUE-DESIGN.md 9 item 10 wanted and could not
+					| reach.  NOT a 68040-specific frame: a 68060 with a WORKING FPU
+					| takes the same format-2 frame for unimplemented FP -- verified on
+					| 68060 silicon 2026-08-30, where this counter moved 0 -> 12
 	.globl	fpe_v11_fmt0_n
 fpe_v11_fmt0_n:
 	.long	0			| 0x002c  four-word, a genuine bad F-line word
@@ -743,7 +752,7 @@ fpe_fmt4_n:
 	.long	0			| eight-word format-4 frames -- every real LC060 event
 	.globl	fpe_fmt2_n
 fpe_fmt2_n:
-	.long	0			| six-word format-2 (68040 unimplemented FP): declined
+	.long	0			| six-word format-2 (unimplemented FP instruction): declined
 	.globl	fpe_fmt0_n
 fpe_fmt0_n:
 	.long	0			| four-word format-0: a genuine bad F-line -> SIGSYS

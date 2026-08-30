@@ -513,7 +513,7 @@ thing that distinguishes them**:
 | Cause | Frame | fmt nibble | fmt/vec word | size | extra fields |
 |---|---|---|---|---|---|
 | genuine line-F (non-FP opcode), any CPU | four-word, format 0 | 0 | `0x002c` | 8 bytes | — |
-| 68040 unimplemented FP instruction | six-word, format 2 | 2 | `0x202c` | 12 bytes | +8 **operand effective address** (0 when the operand is a register) — corrected below |
+| unimplemented FP instruction (68040 **or** 68060-with-FPU) | six-word, format 2 | 2 | `0x202c` | 12 bytes | +8 **operand effective address** (0 when the operand is a register) — corrected below |
 | 68060 FP disabled (incl. every LC060 event) | eight-word, format 4 | 4 | `0x402c` | 16 bytes | +8 `f_fea`, +12 `f_pcfi` |
 
 Evidence: the format-2/`0x202c` pairing is Motorola's own, from the FPSP source in the pinned
@@ -543,6 +543,15 @@ there, and 0 when there is none. Nothing in this tree consumes the field, so the
 no behaviour and none of the census's scored readings; it changes what the field may be built on
 later. The symbol keeps its round-4 name `fpe_v11_fmt2_ia` — renaming it is a code change for a
 comment-level fact — and `src/fpe040.s` says so at both the store and the reservation.
+
+**Format 2 is not a 68040-specific frame — verified on 68060 silicon 2026-08-30.** Rounds 1–5 of
+this table read the six-word format-2 shape as the "68040 unimplemented FP" frame, latched only off
+68040 rigs (line above). A run on a 68060 with a **working FPU** takes the same `0x202c` frame for
+every unimplemented FP instruction: `fpe_v11_n` and `fpe_v11_fmt2_n` both moved **0 → 12** on that
+run while `fpe_v11_fmtx_n` stayed 0, so both shapes still decode and the dispatch was unaffected —
+only the label was wrong. Format 2 is therefore the **unimplemented-INSTRUCTION** frame, taken by
+any FPU-present part (68040 and 68060-with-FPU alike); the 68060's *FP-disabled* case remains the
+distinct eight-word format-4 frame in the row below.
 
 **Consequence, and it is the first thing the fpe entry must do:** dispatch on the format nibble.
 A format-0 frame at vector 11 is a genuinely illegal F-line word and must become SIGSYS
