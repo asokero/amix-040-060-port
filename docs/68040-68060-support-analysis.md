@@ -107,15 +107,11 @@ error-prone parts of any 040/060 port (silent cache-coherency corruption).
 
 ### 2.3 Exception stack frames
 
-The trap return path rebuilds 68020/030 exception frames by frame format code,
-using a `framesz` lookup table:
-
-`sys/amiga/ml/ttrap.s`:
-```asm
-    mov.b   (framesz,%d0.w),%d0   # number of bytes in frame, by format nibble
-```
-Two routines in the same file carry the frame conversion: one collapses the exception frame to
-the four-word form, the other rebuilds a 68020 frame from the copy saved in the u-block.
+The trap return path rebuilds 68020/030 exception frames by frame format code: it takes the
+format nibble out of the saved frame, uses it as the index into a `framesz` table, and reads the
+frame's byte length from there (`sys/amiga/ml/ttrap.s:237`). Two routines in the same file carry
+the frame conversion: one collapses the exception frame to the four-word form, the other rebuilds
+a 68020 frame from the copy saved in the u-block.
 
 The 68040 and 68060 generate **different frame formats and sizes** (notably the
 format `$7` access-error frame on the 040, and the 060's frames), and the 060 in
