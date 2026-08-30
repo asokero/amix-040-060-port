@@ -54,3 +54,33 @@ WARNING: DBG krnxflt FAILEXIT w=2 va=810F7CC rw=1 depth=1
 This also bears on the open RAM-beyond-16MB question
 (`private/RAM-BEYOND-16MB-CODEX-TASK.md`): the two regions it describes are not both properties
 of the machine. One of them is a property of the accelerator.
+
+## The burst regression, which is also the Mercury discriminator
+
+`burst4.sh` — 4 bursts × 6 concurrent 4 MiB copies, each overlapped with 64 rounds of fork/COW
+pressure — **completed on the 68040**:
+
+```
+24/24 checksums 1570 8192, ALLBURSTS-DONE
+prep_to 31851 + prep_from 37319 == cmpl_to + cmpl_from
+zero_arm 0  reconn_arm 0  prep_owned 0  cmpl_noprep 0  range_ovf 0
+d_try 2   a3d_n 2   -- Stage D did not fire during the burst, correctly
+no panic, machine alive afterwards
+```
+
+That closes Stage D's regression, which the 68060 record could not claim.
+
+**And it is the same burst that panicked on the Mercury.** One run each way is not proof, but it
+is the strongest single-variable evidence available: same kernel image, same disk, same script,
+same NAS binaries, CPU card swapped. On the Mercury the day produced three unexplained events —
+a boot hang that did not reproduce, a panic during this burst, and a silent disappearance from
+the network with nothing on serial. On the A3640, none.
+
+Stated as what it is: **the Mercury is now the leading hypothesis for the day's instability, and
+it is a hypothesis.** Two of the three Mercury events printed nothing at all, which is the shape
+of a hardware fault rather than a software one, and that was the user's first reading before any
+of this was measured.
+
+`dma_cmpl_count` again read higher than the pairing sum — 69310 against 69170 — for the reason
+already recorded: the pairing counters come back in one `kpeek` and the count in another, with
+the machine still doing I/O in between. Not an invariant violation, a non-atomic snapshot.
