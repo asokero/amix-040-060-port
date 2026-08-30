@@ -49,12 +49,11 @@ unit, which is why everything that needed the disk stopped and nothing else did.
 ## Why the machine wedged instead of reporting an error
 
 `atab` row 3 — the `DEAD` row — is `1,1,1,1,1,1,1,1,1`. **Every input from every source maps back
-to "report that driver has shut down."** And `startany()` opens with
+to "report that driver has shut down."** And `startany()` returns immediately unless two
+things hold at once: `istate` is `IDLE`, and the start queue head is non-null (the assignment
+that fetches it is the second condition, so an empty queue also returns).
 
-    unless ((istate == IDLE) and (up = starthead))
-            return;
-
-so once `istate` is `DEAD`, no request is ever started again. Nothing re-arms, so no further
+So once `istate` is `DEAD`, no request is ever started again. Nothing re-arms, so no further
 interrupt arrives, so `badhardware()` is never reached a second time.
 
 That predicts exactly what the console showed: **one line, then permanent silence**, with every

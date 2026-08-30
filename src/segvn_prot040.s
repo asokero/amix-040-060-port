@@ -8,20 +8,18 @@
 |     ac06a: bfextu %a1@,0,4,%d2   load vpage->vp_prot
 |     ac070: braw ac07a            -> the fault body, unconditionally
 |
-| Every SVR4 reference rejects the access here (3B2 seg_vn.c:1074-1095, USL SVR4.2
-| seg_vn.c:1169-1190):
+| Every SVR4 reference rejects the access here.  Both of them select a single permission bit
+| from the fault type -- read, write or execute, with every other case falling back to all
+| three -- and then FAIL the fault with FC_PROT when that bit is absent from the page's own
+| vp_prot.  The rejection is the whole point of the switch: the value it computes exists only
+| to be tested against vp_prot on the next line.
+|     3B2      seg_vn.c:1074-1095
+|     USL SVR4.2   seg_vn.c:1169-1190
 |
-|     switch (rw) {
-|     case S_READ:  protchk = PROT_READ;  break;
-|     case S_WRITE: protchk = PROT_WRITE; break;
-|     case S_EXEC:  protchk = PROT_EXEC;  break;
-|     default:      protchk = PROT_READ | PROT_WRITE | PROT_EXEC;
-|     }
-|     if ((vpage->vp_prot & protchk) == 0)
-|             return (FC_PROT);
-|
-| That the compiler emitted a switch whose result is dead is itself evidence: protchk is
-| computed and discarded, i.e. the rejection was dropped from the source, not optimised away.
+| That the compiler emitted a switch whose result is dead is itself the evidence: the selected
+| bit is computed and then discarded, so the test that consumed it was dropped from the source
+| rather than optimised away -- an optimiser that could see the value was unused would have
+| removed the computation too.
 |
 | WHAT IT COSTS.  A denied write enters the COW/revalidation body, the mapping is reloaded
 | READ-ONLY, and as_fault returns 0.  The instruction restarts into the same violation.  On

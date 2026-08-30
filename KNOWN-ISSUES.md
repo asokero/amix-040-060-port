@@ -2493,8 +2493,9 @@ arvaamisen sijaan. Evidenssi `test-tools/modelb-tail-emu-verify-260725.txt`.
 `PRODUCER-CONSUMER-ASYMMETRY-CENSUS.md` luokitteli tämän P1:ksi.
 Lähdekontrakti `svr4-src-3b2/.../vm/vm_pvn.c` `pvn_vptrunc()`:
 `kzero(addr + (vplen & MAXBOFFSET), MAX(zbytes, PAGESIZE - (vplen & PAGEOFFSET)))`.
-Tarkoitus (ufs_inode.c): *"the contents of the pages following the end of the file must
-be zero'ed in case it ever become accessable again because of subsequent file growth"*.
+Tarkoitus, sellaisena kuin `ufs_inode.c`:n oma kommentti sen perustelee: viimeisen sivun
+häntä nollataan, jotta tiedoston lopun jälkeen jäävää vanhaa sisältöä ei voi lukea uudelleen
+siinä tapauksessa että tiedosto myöhemmin kasvaa ja tekee noista tavuista taas saavutettavia.
 Vain `PAGESIZE`/`PAGEOFFSET`-termi on sivugeometriaa — **`MAXBMASK`/`MAXBOFFSET`
 (0xb2474 `andiw #-8192`, 0xb24aa `andil #8191`) ovat 8 KiB segmap-slotti ja ne
 assertoidaan KANARIOINA**, koska ne ovat naapuriosoitteissa ja näyttävät samanlaisilta.

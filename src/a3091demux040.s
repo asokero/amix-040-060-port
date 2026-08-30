@@ -1,11 +1,10 @@
 | a3091demux040.s -- ISSUE-53: separate the A3091 interrupt SOURCES before the WD's
 | status register is read.
 |
-| THE DEFECT.  a3091intr's whole admission test is
-|
-|     unless ((device) and (device->istr & 1<<4))  return;
-|     cipwait( );
-|     ss = reg( SS);
+| THE DEFECT.  a3091intr's whole admission test is two conditions: the unit's device pointer
+| must be non-null, and ISTR bit 4 must be set.  If either fails the handler returns; if both
+| hold it waits for CIP to clear and then reads the WD's status register SS.  There is no
+| third test, and nothing between the ISTR read and the SS read narrows what raised the line.
 |
 | SDMAC ISTR bit 4 is INT_P, and INT_P is an AGGREGATE: the WD33C93A's own request
 | (INTS, bit 6), the SDMAC's end-of-process (E_INT, bit 5), and the FIFO under/over-run

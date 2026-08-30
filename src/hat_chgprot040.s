@@ -4,9 +4,10 @@
 | segvn_dup (seg_vn.c:540-543) implements fork's copy-on-write by calling
 |     hat_chgprot(seg, base, size, ~PROT_WRITE);   (* write-protect the PARENT *)
 |     anon_dup(...);                                (* bump each anon's an_refcnt *)
-| anon_dup's own comment (vm_anon.c:284) states the CONTRACT explicitly:
-|   "This code assumes that ... has already used hat_chgprot() to disable write
-|    access to the range of addresses that *old actually refers to."
+| anon_dup states the CONTRACT explicitly in its own comment (vm_anon.c:284): it assumes the
+| caller has ALREADY write-protected, through hat_chgprot, exactly the address range the anon
+| array being duplicated refers to.  anon_dup does not do it and does not check that anyone
+| has; the whole burden is on the caller.
 | The stock 030 hat_chgprot walks the INERT 030 SDE tree (deref as+20 -> 030 SDE,
 | index va>>17, 8-byte SDEs) which is empty on 040 -> it is a silent NO-OP.  So the
 | parent is never write-protected, the COW invariant is violated, and shared pages

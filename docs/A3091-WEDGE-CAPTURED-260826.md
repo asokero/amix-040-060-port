@@ -65,11 +65,8 @@ mechanisms, all mine, all wrong, and the state at the moment of death says so in
 
 At the controller's interrupt and status path, not at this port's cache work.
 
-The handler's entry is
-
-    unless ((device) and (device->istr & 1<<4))  return;
-    cipwait();
-    ss = reg(SS);
+The handler's entry admits an interrupt on two conditions and no more: a non-null device
+pointer, and `ISTR` bit 4 set. It then waits for `CIP` to clear and reads `SS`.
 
 If `istr` bit 4 is set without a new event, the handler reads `SS` — and `SS` holds the **last**
 status. After a heavy run that value is `0x16`. That accounts for both the value and the timing.
