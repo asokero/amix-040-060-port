@@ -397,25 +397,67 @@ are `protfault` doing what it exists to do.
 not occurred, now across two kernels and two boots on this card. `a3p_d_*` all zero: no Stage D
 drain this boot. `wbf_slot` 3.
 
-## ISSUE-51: six burst rounds, in flight as this was written
+## ISSUE-51: two clean runs of 144, and the estimate halves
 
-`burstloop11.sh 6` was launched on the same boot: 6 rounds x 4 bursts x (6 concurrent 4 MiB
-copies + `hat_dup_cow 64`), 144 checksums. The arithmetic was written down before the run,
-because the result is easy to over-read:
+`burstloop11.sh 6` — 6 rounds x 4 bursts x (6 concurrent 4 MiB copies + `hat_dup_cow 64`), so
+144 checksums per run with the fork/COW pressure present. Run twice: 2026-08-30 on
+`68040-260830-06`, and 2026-08-31 on `68040-260830-10` after a fresh boot.
 
-> ISSUE-51's observed rate is 2 wrong sums in 288. At p = 0.0069 per sum, the chance of seeing
-> **zero** events in 144 sums is `(1-p)^144 = 0.37`. A clean run is the more likely outcome even
-> if the defect is exactly as frequent as before, and is therefore **not evidence against it**.
-> What 144 clean sums buys is a tighter rate — 2/432 rather than 2/288.
+```
+                          good sums   anomaly patterns   wrong sums   serial output
+2026-08-30, -06, 42 min      144/144        all ten 0            0      0 bytes
+2026-08-31, -10, 53 min      144/144        all ten 0            0      0 bytes
+```
 
-A burst takes roughly eight minutes on this machine, so six rounds is about three hours and did
-not finish inside the session. The log is `/tmp/burstloop11.log` on the guest and the summary
-prints at the end; partial counts are `grep -c '1570 8192'` (expect 24 per completed round) and
-the ten anomaly patterns the driver checks one at a time, because AMIX `grep` has no `\|`.
+**The arithmetic was written down before each run, and updated between them**, because this is a
+result that is easy to read as more than it is:
 
-**Read the serial log too, not only the summary.** That is what caught ISSUE-57 on this same
-boot, and the burst is also the discriminator for the Mercury-instability hypothesis: the same
-load produced three unexplained events on the Mercury on 2026-08-29/30 and none on this A3640.
+| before the run | rate assumed | P(zero in 144) | outcome |
+|---|---|---|---|
+| 2026-08-30 | 2/288 = 0.00694 | 0.37 | clean |
+| 2026-08-31 | 2/432 = 0.00463 | 0.51 | clean |
+
+The second run was the harder test of the two only in the sense that a clean result had become
+*more* expected, not less: each clean run makes the next clean run less surprising, which is the
+right direction and the reason the estimate moves rather than the confidence.
+
+Both outcomes are the likely branch, so **neither run is evidence against the defect.** What they
+buy is a tighter rate:
+
+```
+originally      2/288 = 0.00694
+after run one   2/432 = 0.00463
+after run two   2/576 = 0.00347      half the original
+```
+
+### What that halving means, and the three readings that fit it
+
+The original 2/288 was **twice** the current estimate, and it rested on two events that fell in
+the same period. Three explanations fit the data and this evidence cannot separate them:
+
+1. the rate was always lower and 2/288 was a small-sample artefact;
+2. something changed since early August — over a hundred commits have touched `src/` since;
+3. **the defect depends on something these runs do not reproduce — the accelerator.**
+
+**The third is now the strongest, and it is the same hypothesis that explains something else.**
+The original ISSUE-51 events were seen on the Mercury 68060. On this A3640 there are now
+**48 consecutive bursts without a single sign** — 24 on 2026-08-30 and 24 on 2026-08-31, serial
+line included, across two different kernels and three boots. That is the same card and the same
+load that produced *zero* of the three unexplained events of 2026-08-29/30, all of which were on
+the Mercury (`memory: amix-mercury-instability-260830`).
+
+This is **not** recorded as ISSUE-51's resolution. It is recorded as the reason the next step is
+no longer more repetitions on this card: the cheap experiment now is the same suite on the
+Mercury, and a run there is worth more than another 144 here.
+
+### The other readings from the second run
+
+`kvp_n` stayed **0** through 6 rounds of 96 MiB copies with fork/COW pressure — the strongest
+demonstration yet that the flipped default takes the probe out of the path rather than making it
+cheap. `a3w_calls` 1 150 612, `a3w_eint_only` **0** (ISSUE-53 stays open), every must-stay-zero
+counter 0. The classifier's own invariant `a3w_own == ints_only + ints_eint + eint_only + other`
+came back exact at 352 773; `calls == nodev + notours + own` was 10 out of 1 150 612 apart, which
+is read skew — `kpeek` walks 21 longwords in sequence on a live machine and `calls` is read first.
 
 ## What this does not establish
 

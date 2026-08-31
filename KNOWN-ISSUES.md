@@ -6548,8 +6548,20 @@ where it lives.
 
 ## ⚠ ISSUE-51 (2026-08-26, OPEN): a burst read returned wrong bytes, silently, and the file was fine
 
-> **Ledger: OPEN** — found by the first burst run with the DMA counters read on both sides.
-> Image `68060-260826-04`, 4 rounds, `hat_dup_cow` pressure present.
+> **Ledger: OPEN, and the rate estimate has halved.** Found by the first burst run with the DMA
+> counters read on both sides. Image `68060-260826-04`, 4 rounds, `hat_dup_cow` pressure present.
+>
+> **2026-08-30 and 2026-08-31: two clean runs of 144 sums each on a 68040 (A3640)**, images
+> `68040-260830-06` and `-10`, both with the fork/COW pressure present, both with the serial line
+> silent throughout. Neither is evidence against the defect — a clean run was the likely branch
+> at the rate then assumed (P = 0.37 and 0.51) — but the estimate moves: **2/288 → 2/576**.
+>
+> ⚠ **The original events were on the Mercury 68060, and this card now has 48 consecutive bursts
+> without a sign.** Same load, three boots, two kernels. That is the same discriminator that
+> separates the Mercury from the A3640 for the unexplained events of 2026-08-29/30, so the next
+> experiment is this suite on the Mercury rather than more repetitions here — a run there is
+> worth more than another 144 on the A3640. Evidence:
+> `docs/REALHW-BATTERY-68040-260830.md`.
 
     rounds=4
     good_sums (expect 24 per round):
