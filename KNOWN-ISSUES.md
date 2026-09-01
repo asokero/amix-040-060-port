@@ -7399,3 +7399,87 @@ read while writing this entry: `kpeek` takes its address from `argv[1]` and is c
 card, though its header comment asserted the `0x08000000` base as fact and has been corrected;
 `proctest`'s hit is a comment about user VAs at `0x80000000` and is unrelated. **The other six
 have not been read and are not claimed to be correct here.**
+
+## ⚠ ISSUE-58 (2026-09-01, OPEN): the A3091 demux reads `ISTR` as all ones, once in every 726 interrupts
+
+> **Ledger: OPEN, and probably not a defect of this port.** Observed on the Mercury 68060 with
+> `68040-260831-01` (`build/unix-040-rtg`, load base `0x08000000`).  `a3w_other` is in the
+> battery's must-stay-zero set and had read 0 in every run until now.
+
+The console shows, up to the wrapper's print cap of four per boot:
+
+```
+a3091demux: unclassified istr=FFFF
+```
+
+That is our own ISSUE-53 wrapper (`src/a3091demux040.s`) taking its `Law_other` branch.  The
+machine is unaffected — the branch is fail-stop by design: it counts, it prints at most four
+times, and it hands the interrupt to the stock body exactly as before.
+
+### The reading
+
+```
+a3w_calls        532 207     every level-2 interrupt on the machine
+a3w_notours      524 228
+a3w_own            7 990     INT_P set: the A3091's own
+a3w_ints_only      7 979     ordinary disk traffic
+a3w_ints_eint          0
+a3w_eint_only          0     ISSUE-53's subject event: still never seen
+a3w_other             11     <-- 1 in every 726 of a3w_own
+a3w_other_pr           4     the print cap, working
+a3w_last_istr     0x00d1     INT_P + INTS: a normal disk interrupt
+a3w_or_istr       0xffff
+a3w_other_istr    0xffff
+```
+
+**Invariant 2 holds exactly**: `own = ints_only + ints_eint + eint_only + other`, 7990 =
+7979 + 0 + 0 + 11.  The classifier itself is sound.
+
+Invariant 1 appeared to fail by exactly 11 — the same number as `other`, which looked too tidy
+to be chance.  It was chance: reading the block three times gave drifts of +11, +6 and +8.
+`kpeek` walks the counters in sequence on a live machine and `calls` is read before `own`, so
+later counters are higher.  Recorded because the coincidence was convincing and the check took
+one command.
+
+### Why `0xFFFF` is not a plausible register content
+
+The wrapper classifies on `INTX(8) | UE_INT(3) | OE_INT(2)`, and `0xFFFF` has all three, so
+`Law_other` is the *correct* branch by the code's own rule.  But an all-ones read is not what a
+FIFO over-run looks like: a genuine error would set its own bit, not every bit including 15-9,
+which this port's own notes record as floating on hardware.  All ones is the signature of a read
+that did not land — the same shape as the `0xFF` SBIC registers in ISSUE-54, where the chip was
+gating the read.
+
+The comparison that makes this sharp: on the A3640, `a3w_or_istr` read `0xfed3` over hundreds of
+thousands of interrupts, and bits 2, 3 and 8 were **never** set — which is why `a3w_other` was 0
+there.  On the Mercury the same OR is `0xffff`.
+
+### ⚠ `a3w_or_istr` is now contaminated and must not be read as a source census
+
+Bit 5 is `E_INT`, ISSUE-53's whole subject, and it now appears in `a3w_or_istr`.  **That is not
+evidence that E_INT fired.**  The error-bit test runs *before* the INTS/E_INT classification, so
+an all-ones read short-circuits into `Law_other` and its bit 5 is never classified.
+`a3w_eint_only` is still 0.  The eleven bad reads put every bit into the OR, so
+`a3w_or_istr` no longer answers "which sources have asserted" on this machine.
+
+### What is worth doing
+
+**Immediately, with no code change:** `a3w_other` is a *rate meter* for whatever is wrong with
+this machine, and a fast one — 1 in 726 interrupts is visible in minutes where the burst suite
+needs hours.  It can be zeroed with `kpoke` without a reboot, so a fixed load can be run at
+different clock settings, or before and after reseating the card, and the counter compared.
+That is the cheapest instrument this investigation has produced.
+
+**Worth a small change to the unit, when a build is convenient:** the classifier currently
+conflates two different things in `Law_other` — a genuine error source, and a read that did not
+land.  Two additions would separate them:
+
+* test for all-ones explicitly and count it in its own counter, leaving `a3w_other` to mean what
+  it was designed to mean;
+* on such a read, **read `ISTR` a second time and latch both**.  The unit already re-reads the
+  register in its `Law_wd` path, so this is not a new kind of access.  If the second read returns
+  a plausible value while the first read all ones, the register is fine and the *bus read*
+  glitched — which is close to conclusive for the hardware question, and no burst run can say it.
+
+Behaviour should not otherwise change: fail-stop is right, and the stock body should keep
+deciding.
