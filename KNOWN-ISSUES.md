@@ -7405,6 +7405,13 @@ have not been read and are not claimed to be correct here.**
 > **Ledger: OPEN, and probably not a defect of this port.** Observed on the Mercury 68060 with
 > `68040-260831-01` (`build/unix-040-rtg`, load base `0x08000000`).  `a3w_other` is in the
 > battery's must-stay-zero set and had read 0 in every run until now.
+>
+> **Instrument extended 2026-09-01, not yet run on hardware.** `src/a3091demux040.s` now
+> classifies an all-ones read apart from a genuine error source, re-reads `ISTR` immediately and
+> latches the result, and keeps the all-ones read out of `a3w_or_istr` so that counter is a
+> source census again. Four counters appended at the END of the block, so no existing offset
+> moves: `a3w_allones`, `a3w_allones_re`, `a3w_allones_reff`, `a3w_allones_pr`. Invariant 1
+> gains a term: `calls = nodev + notours + own + allones`.
 
 The console shows, up to the wrapper's print cap of four per boot:
 
@@ -7470,9 +7477,9 @@ needs hours.  It can be zeroed with `kpoke` without a reboot, so a fixed load ca
 different clock settings, or before and after reseating the card, and the counter compared.
 That is the cheapest instrument this investigation has produced.
 
-**Worth a small change to the unit, when a build is convenient:** the classifier currently
-conflates two different things in `Law_other` — a genuine error source, and a read that did not
-land.  Two additions would separate them:
+**Done 2026-09-01** (was: worth a small change when a build is convenient).  The classifier had
+conflated two different things in `Law_other` — a genuine error source, and a read that did not
+land.  Two additions separate them:
 
 * test for all-ones explicitly and count it in its own counter, leaving `a3w_other` to mean what
   it was designed to mean;

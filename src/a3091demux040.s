@@ -71,12 +71,22 @@
 |   a3w_other    -- 0.  A nonzero value is a source with no recovery contract yet
 |   a3w_nodev    -- 0
 |   a3d_n        -- 0.  The wedge is what this is for
+|   a3w_allones  -- 0 on a healthy machine.  See ISSUE-58: nonzero means ISTR read back as
+|                   all ones, which is a read that did not reach the chip rather than a
+|                   source.  Measured 11 in 7990 A3091 interrupts on one Mercury 68060 and
+|                   0 in hundreds of thousands on an A3640.  Read a3w_allones_re with it:
+|                   a plausible second read says the register was fine and the bus was not.
 |
 | INVARIANTS (all three must hold exactly; two counters that cannot both be true have
 | caught more here than green tests have):
-|   a3w_calls     = a3w_nodev + a3w_notours + a3w_own
+|   a3w_calls     = a3w_nodev + a3w_notours + a3w_own + a3w_allones
 |   a3w_own       = a3w_ints_only + a3w_ints_eint + a3w_eint_only + a3w_other
 |   a3w_eint_acked = (a3w_eint_only - a3w_eint_deleg) + a3w_resid_eint
+|
+| a3w_or_istr IS A SOURCE CENSUS AND MUST STAY ONE.  An all-ones read is rejected BEFORE the
+| OR, because eleven of them put every bit into it on one machine and made the counter say
+| that E_INT had asserted when it never had.  A bit in this counter should mean a source
+| raised it, not that a read failed.
 |
 | a3w_consume IS A LIVE A/B.  1 (the default) consumes a pure E_INT; 0 delegates it and the
 | unit becomes pure instrumentation with the stock behaviour intact.  kpoke flips it without
@@ -99,7 +109,11 @@ a3091intr_demux:
 
 	clrl	%d2
 	movew	%a2@(30),%d2		| THE snapshot.  device->istr, one read, before
-	orl	%d2,a3w_or_istr		| anything else can change what it says
+					| anything else can change what it says
+	cmpil	&0x0000ffff,%d2		| ISSUE-58: a read that did not land, not a source.
+	beqw	Law_allones		| Tested BEFORE the OR below, so the census stays
+					| a census -- see the counter's own comment.
+	orl	%d2,a3w_or_istr
 
 	btst	&4,%d2			| INT_P -- the same gate, unchanged
 	beqw	Law_notours
@@ -169,6 +183,35 @@ Law_other_go:
 	bsr	Law_call
 	braw	Law_out
 
+| --- ISSUE-58: ISTR read back as all ones.  That is not a register value -- a real error
+|     sets its own bit, not every bit including 15-9, which float on this hardware -- so it
+|     is a read that did not reach the chip.  Counted apart from a3w_other so that a genuine
+|     error source is still visible if one ever occurs, and READ AGAIN immediately: if the
+|     second read is plausible, the register was fine and the bus read glitched.  The unit
+|     already re-reads this register in the Law_wd path, so this is not a new kind of access.
+|     Still fail-stop: the stock body decides, exactly as before. ---
+Law_allones:
+	addql	&1,a3w_allones
+	clrl	%d0
+	movew	%a2@(30),%d0		| the second read, taken as soon as possible
+	movel	%d0,a3w_allones_re	| ... and latched whatever it says
+	cmpil	&0x0000ffff,%d0
+	bnes	Law_allones_pr
+	addql	&1,a3w_allones_reff	| the second read was all ones too
+Law_allones_pr:
+	movel	a3w_allones_pr,%d1	| its own cap: an all-ones storm must not hide a
+	cmpil	&4,%d1			| genuine a3w_other line, nor the reverse
+	bccs	Law_allones_go
+	addql	&1,a3w_allones_pr
+	movel	%d0,%sp@-		| printf(fmt, first, second) -- args right to left
+	movel	%d2,%sp@-
+	pea	La3w_m2
+	jsr	printf
+	lea	%sp@(12),%sp		| addq only reaches 8; lea is the idiom for 12
+Law_allones_go:
+	bsr	Law_call
+	braw	Law_out
+
 Law_notours:
 	addql	&1,a3w_notours
 	bras	Law_out
@@ -198,6 +241,9 @@ Law_call_ret:
 	.even
 La3w_m1:
 	.asciz	"a3091demux: unclassified istr=%x\n"
+	.even
+La3w_m2:
+	.asciz	"a3091demux: istr all ones, reread=%x\n"
 	.even
 	.balign	4			| .asciz + .even can leave this 2 mod 4; the counter
 					| block below is longwords and every tool that
@@ -266,4 +312,18 @@ a3w_dead_n:
 	.globl	a3w_dead_istr
 a3w_dead_istr:
 	.long	0			| and the ENTRY istr of the interrupt that did it
+| --- ISSUE-58, appended at the END so no existing offset moves (the a3d block gained its
+|     last two counters the same way on 2026-08-27) ---
+	.globl	a3w_allones
+a3w_allones:
+	.long	0			| ISTR read back 0xffff: a read that did not land
+	.globl	a3w_allones_re
+a3w_allones_re:
+	.long	0			| the immediate second read of the last such
+	.globl	a3w_allones_reff
+a3w_allones_reff:
+	.long	0			| ... of which the second read was all ones too
+	.globl	a3w_allones_pr
+a3w_allones_pr:
+	.long	0			| console lines spent on the above; capped at 4
 	.balign	4
