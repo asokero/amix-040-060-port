@@ -35,13 +35,39 @@ Push the sources with `tftp_onesock.py` (the guest disk is wiped by every
 `emu-reset-boot.sh`). **`/tmp` is cleared on every AMIX boot** — put anything that has
 to survive a reboot under `/` (the two-phase tests use `/pgc`).
 
-**Exceptions — cross-build-only, NOT native-`cc` buildable.** A few tools here must be built with
+**Exceptions — cross-build-only, NOT native-`cc` buildable.** Some tools here must be built with
 the m68k-cbm-sysv4 cross toolchain on the host and transferred as binaries, because they use GNU C
 or GNU-syntax assembly the guest's 1991 AT&T `cc`/`as` cannot compile. **Do not read the native
-compile/assemble error as a result** — it is a toolchain mismatch. `fp060probe.c` uses GNU C
-`__asm__ volatile`; `ftunimp0` (`ftunimp0.c` + `ftunimp0_asm.s`) has a GNU-syntax assembler half.
-Each says so in its own header, and `mk060.sh` documents the same for the other 68060-specific
-tools it cross-builds.
+compile/assemble error as a result** — it is a toolchain mismatch. This is the whole list. It used
+to name two of them and wave at the rest, which is how a reader who picked `isp61ea` or `fpimm60`
+instead met exactly the error the paragraph exists to pre-empt:
+
+| Tool | Why the guest cannot build it | Recipe of record |
+|---|---|---|
+| `fp060probe.c` | GNU C `__asm__ volatile`; native `cc` answers "undefined symbol: `__asm__`" | `m68k-cbm-sysv4-gcc -m68040 -o fp060probe fp060probe.c` (`mk060.sh`:16, `../docs/ACCEPTANCE.md`:201). The file's own header gives `-m68020 -m68881` instead; the two recipes have never been reconciled |
+| `fpimm60.c` | GNU C `__asm__`, same reason | `m68k-cbm-sysv4-gcc -O0 -o fpimm60 fpimm60.c` (`../docs/contracts/FPE-R10-VEC60.md`:668). **`-O0` is mandatory**, not a preference: gcc 2.7.2.3 constant-folds floating point at every other level and silently replaces the thing under test |
+| `ftunimp0.c` + `ftunimp0_asm.s` | the assembler half is GNU syntax (`#` immediates); `/usr/ccs/bin/as` answers "invalid instruction name" | its header gives `m68k-cbm-sysv4-gcc -m68040 -o ftunimp0 ftunimp0.c ftunimp0_asm.s`, but `../docs/REALHW-260807-11-ACCEPTANCE.md`:433 records that the SVR4 cross-assembler rejects the `.s` too — assemble it with `m68k-linux-gnu-gcc -c -x assembler` and link the object with `m68k-cbm-sysv4-gcc` |
+| `isp61ea.c` + `isp61ea_asm.s` | GNU-syntax assembler half | `m68k-linux-gnu-as -m68040 isp61ea_asm.s -o isp61ea_asm.o` then `m68k-cbm-sysv4-gcc -m68040 -o isp61ea isp61ea.c isp61ea_asm.o` (`mk060.sh`:17-18, `../docs/ACCEPTANCE.md`:202-203) |
+| `fpenab060.c` + `fpenab060_asm.s` | GNU-syntax assembler half **and** cpp macros — `fpenab060_asm.s`:35, 50, 59 are `#define`s with line continuations, which a bare assembler cannot expand | assemble through the preprocessor: `m68k-linux-gnu-gcc -m68060 -c -x assembler-with-cpp -o x.o fpenab060_asm.s`, then `m68k-cbm-sysv4-gcc -m68020 -m68881 -O -o fpenab060 fpenab060.c x.o` (`../docs/archive/NEXT-SESSION-PROMPT-260812.md`:105-106) |
+| `ftest060` | not a guest build at all: Motorola's `dist/ftest.sa` image plus a 128-byte call-out section, assembled by `m68k-linux-gnu-gcc` and linked by `m68k-cbm-sysv4-gcc` | `sh ../build-ftest060.sh` → `build/ftest060`; push that binary |
+
+Two entries in that table correct documents elsewhere, and the correction is worth stating rather
+than leaving as a discrepancy for the next reader to re-derive:
+
+* **`fpenab060` is not unresolved.** `mk060.sh`:19-20 and `../docs/ACCEPTANCE.md`:206 say its
+  recipe "is still unknown". That is true only of a bare assembler: the file is cpp-macro
+  assembly, so `as` dies at the first continuation line, which is the `line 36` in `mk060.sh`'s
+  note. Routed through `gcc -x assembler-with-cpp` it builds, and it has — the silicon run in
+  `f3-m4-enabled-hw-260811.txt` (kernel 68060-260810-03, 2026-08-11) was made with that binary.
+* **`isp61xf` is NOT cross-build-only**, despite sitting beside `isp61ea` in the same lane.
+  `isp61xf_asm.s` is SVR4-dialect assembly — every immediate in it is `&`, not `#` (the `#`
+  forms in that file are inside `|` comments quoting a GNU disassembly), so the guest's own
+  assembler takes it. Likewise `isp61test_asm.s` and `isp61neg_asm.s`.
+
+`fputest060.c` is not in the table either: its header records that the AT&T chain died on it, but
+that was measured in the F0 era before the 68060 FPSP existed, and `mk060.sh`:9 records the later
+measurement — `/usr/ccs/bin/cc` builds it on the guest. `mk060.sh` builds one of its four tools
+for exactly the reasons tabulated above.
 
 Model-B / VM correctness (all added 2026-07-25 unless noted):
 
