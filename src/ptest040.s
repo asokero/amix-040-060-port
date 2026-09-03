@@ -86,6 +86,10 @@ Lpt_060:
 	btst	&1,%d0				| UDT resident?
 	beqw	Lpt_np				|   invalid -> 030 I (demand path)
 	andil	&0xfffffe00,%d0			| pointer-table base (512-byte aligned)
+	bsrw	Lpt_inram			| ISSUE-59: is that a managed RAM frame?
+	tstl	%d1
+	beqw	Lpt_np				|   no -> report invalid, do NOT dereference
+	movel	%a0,%d1				| the check clobbered d1; a0 still holds the VA
 	moveal	%d0,%a1
 	movel	%d1,%d0				| pointer index PI = VA[24:18]
 	swap	%d0
@@ -98,6 +102,10 @@ Lpt_060:
 	btst	&1,%d0				| UDT resident?
 	beqw	Lpt_np
 	andil	&0xffffff00,%d0			| page-table base (256-byte aligned)
+	bsrw	Lpt_inram			| ISSUE-59: THE one that faulted -- a descriptor
+	tstl	%d1				| of 0xFFFFFFFF passes the UDT test above and
+	beqw	Lpt_np				| masks to 0xFFFFFF00, which is not RAM
+	movel	%a0,%d1				| the check clobbered d1; a0 still holds the VA
 	moveal	%d0,%a1
 	movel	%d1,%d0				| page index PGI = VA[17:12]
 	lsrl	&8,%d0
@@ -112,6 +120,9 @@ Lpt_060:
 	cmpib	&2,%d1
 	bnew	Lpt_pte				| 01/11 = resident
 	andil	&0xfffffffc,%d0			| 10 = indirect: follow the pointer (long-aligned)
+	bsrw	Lpt_inram			| ISSUE-59: same guard before the indirect read
+	tstl	%d1
+	beqw	Lpt_np
 	moveal	%d0,%a1
 	movel	%a1@,%d0
 	moveq	&3,%d1
@@ -126,3 +137,37 @@ Lpt_pte:
 	movew	&0x0800,%d1			|   write-protected -> 030 W (COW path)
 	braw	Lpt_ret
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
+
+| --- ISSUE-59 (2026-09-01): is a descriptor-derived physical address inside managed RAM? ---
+|
+| The 68060 walk masks a table base out of a descriptor and dereferences it.  A garbage
+| descriptor with the UDT bits set -- 0xFFFFFFFF is the one that was captured -- passes the
+| resident test and masks to an address that is not memory, and the read takes a kernel bus
+| error inside the fault path.  Reported from a Doom timedemo on 68060-260831-01:
+|     WARNING: DBG krnxflt FAILEXIT w=2 va=FFFFFF00 rw=1 depth=1
+|     PANIC: KERNEL FAULT ... pc=0x80D9EF4  (= object 0x000D9EF4, the page-table read)
+|
+| The same test already guards hat_chgprot040.s and hat_free040.s; it was missing here.  A
+| frame outside [pages_base, pages_end) means the descriptor is not describing memory this
+| kernel manages, so the walk reports 030-form 0x0400 (invalid / not present) and the demand
+| path deals with it -- exactly what it does for a descriptor whose UDT bits are clear.
+|
+| in:   d0 = physical address, preserved
+| out:  d1 = 0 if the frame is OUTSIDE managed RAM, nonzero if inside
+| a0 is untouched, so the caller reloads the fault VA from it after calling.
+| Shifts are two immediates because the caller's contract leaves only d0/d1 scratch and
+| `lsrl &n` takes n = 1..8 -- the same idiom the walk above already uses for VA>>12.
+Lpt_inram:
+	movel	%d0,%d1
+	lsrl	&8,%d1
+	lsrl	&4,%d1				| frame = addr >> 12
+	cmpl	pages_base,%d1
+	bcss	Lpt_inram_no
+	cmpl	pages_end,%d1
+	bccs	Lpt_inram_no
+	moveq	&1,%d1
+	rts
+Lpt_inram_no:
+	moveq	&0,%d1
+	rts
+	.balign	4

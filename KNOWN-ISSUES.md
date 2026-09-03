@@ -7490,3 +7490,73 @@ land.  Two additions separate them:
 
 Behaviour should not otherwise change: fail-stop is right, and the stock body should keep
 deciding.
+
+## ✅ ISSUE-59 (2026-09-01, FIXED same day — NOT YET RUN): the 68060 `ptest` walk dereferences an unvalidated page-table descriptor
+
+> **Ledger: fix built, byte-identity of the 68040 path verified, hardware acceptance outstanding.**
+> Reported by the Doom port's line from a `-timedemo demo3` run on `68060-260831-01`; the
+> analysis is `docs/KERNEL-PTEST-060-FAULT.md` in that repository, not this one.
+
+The 68060 has no `PTEST`, so `src/ptest040.s` walks the URP in software. The walk masks a table
+base out of each descriptor and dereferences it after testing only the UDT resident bits. A
+descriptor of `0xFFFFFFFF` passes that test and masks to an address that is not memory:
+
+```
+WARNING: DBG krnxflt FAILEXIT w=2 va=FFFFFF00 rw=1 depth=1
+PANIC: KERNEL FAULT psw=0x2004, pc=0x80D9EF4, fmt=0x4, vector=0x2 (Bus Error)
+```
+
+Load base `0x08000000`, so `pc` is object `0x000D9EF4` — the page-table read, two instructions
+after `andil &0xffffff00,%d0`. The kernel took a bus error **inside the fault path**, which is
+why it panicked rather than signalling the process.
+
+**This is a defect of this port, not of Doom.** Doom only reached it. Whether the descriptor was
+corrupt because of something Doom did is a separate question that this panic was hiding — the
+panic destroys the very fault address and PC that would answer it.
+
+### The fix
+
+`hat_chgprot040.s` and `hat_free040.s` already validate a table base against
+`[pages_base, pages_end)` before dereferencing it, for exactly this class of garbage descriptor
+(their own comments name the `0xFFFFFFFF` fill relics). The 68060 walk had no such test. It has
+one now at all three derived addresses:
+
+* the 512-byte pointer-table base from the root descriptor;
+* the 256-byte page-table base from the pointer descriptor — **the one that faulted**;
+* the target of an indirect (PDT = 10) descriptor, before its read.
+
+A frame outside managed RAM returns the 030-form `0x0400` (invalid / not present) and the demand
+path handles it, which is what the walk already does for a descriptor whose UDT bits are clear.
+The check is a local subroutine, `Lpt_inram`, because three copies of six instructions in a fault
+path is where a typo hides; it preserves `d0`, returns the verdict in `d1`, and never touches
+`a0`, so each caller reloads the fault VA from `a0` afterwards. The calling contract is unchanged:
+`d0`/`d1`/`a0`/`a1` remain the scratch set.
+
+**Not done, and deliberately:** the active URP is not range-checked. The report offers it as an
+optional defence, but it is kernel-managed, and adding an unrequested test to a path that works
+risks the acceptance criterion that the existing 68060 loader and fork/COW tests keep passing.
+Recorded here so the decision is visible rather than forgotten.
+
+### What is verified, and what is not
+
+* ✅ **The 68040 path is byte-for-byte identical.** `ptest`, `Lpt_np`, `Lpt_ret` and `Lpt_060` are
+  at the same addresses as before and the 72 bytes from `ptest` to `Lpt_060` are unchanged;
+  only `Lpt_pte` moved, by the 0x22 bytes the three checks add. Verified by comparing the built
+  images, not by inspection.
+* ✅ Builds clean: `TOTAL complaints: 0`, `bindings failing: 0`, and the guard disassembles as
+  intended with both `pages_base` and `pages_end` resolving through `R_68K_32` relocations, the
+  same way `hat_chgprot040.s` reaches them.
+* ⏳ **Everything else needs a run.** An artificial `0xFFFFFFFF` upper-level descriptor must
+  return `0x0400` without a kernel bus error; an invalid indirect PTE must do the same; the
+  existing 68060 dynamic-loader/GOT and fork/COW tests must still pass; and the Doom reproduction
+  must leave the kernel alive.
+
+### The acceptance test this wants, and why it needs no new kernel code
+
+The guard can be exercised on hardware with the tools this port already has. `kpeek` the live
+page-table descriptor for a mapped user VA, `kpoke` `0xFFFFFFFF` into it, then touch that VA from
+a small program. Before the fix that is a kernel panic; after it the process should take an
+ordinary fault and the machine should stay up. The same method with a PDT = 10 descriptor
+pointing outside RAM covers the indirect case. **Do not re-run the Doom timedemo before the fix
+is on the machine** — that was the reporter's own instruction, and the reason is that the panic
+overwrites the evidence for the user-space fault underneath it.
