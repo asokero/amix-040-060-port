@@ -164,6 +164,15 @@ broken upstream; neither is on the port's critical path.
 2026-07-30, hardware-accepted including power-cut disk truth. Measured gain: Dhrystone +59 %
 when the data cache was first enabled write-through, more with copyback.
 
+**What the kernel is now known to carry.** A parallel line building OpenTTD 1.0.5 with a GCC 14
+cross toolchain reports it running on this kernel on a 68060: it prints its help and exits
+cleanly, with a hosted `libstdc++`, a working exception unwinder and C++ static constructors.
+No display yet. That is a broader statement of what the port carries than any test in this tree
+makes, and it is cited rather than claimed — the measurement is theirs, on image
+`68040-260903-04` running on a 68060. Two limits found on the way are ours and are open:
+ISSUE-59 (the 68060 `ptest` walk) and ISSUE-60 (static constructors need a modern `crt`), and a
+third is the ISP's missing divide, recorded under §4.
+
 **DMA.** A3091/SDMAC coherence hooks landed and hardware-verified. `bp_map`/`bp_mapout` are
 native 040 ports (ISSUE-13).
 

@@ -7560,3 +7560,45 @@ ordinary fault and the machine should stay up. The same method with a PDT = 10 d
 pointing outside RAM covers the indirect case. **Do not re-run the Doom timedemo before the fix
 is on the machine** — that was the reporter's own instruction, and the reason is that the panic
 overwrites the evidence for the user-space fault underneath it.
+
+## ⚠ ISSUE-60 (2026-09-04, OPEN — a symptom record, not a defect of this port): C++ static constructors never run, because 1991's `crt1.o` has never heard of `.init_array`
+
+> **Ledger: not ours to fix, and recorded because it will be hit again.** Found and root-caused
+> by the parallel OpenTTD-for-AMIX line while building with a GCC 14 cross toolchain; the fix is
+> in that toolchain, not in this kernel. It is here because the symptom points at the wrong
+> subsystem and the cost of not knowing is a day spent in it.
+
+The program dies with a **SIGSEGV deep inside `std::_Rb_tree_increment`**, walking a `std::map`
+that was never constructed. Every global object is still zero. Nothing about the fault says so.
+
+### The mechanism, and why the disassembly looks correct
+
+A modern linker script folds `.ctors` from ordinary objects into **`.init_array`**. AMIX's 1991
+`crt1.o` predates `.init_array` entirely and knows only `.ctors`. So:
+
+* `.ctors` ends up holding only the two sentinels — `crtbegin`'s `-1` and `crtend`'s `0`;
+* `__do_global_ctors_aux` is present, is reached, walks that list, finds it empty, and returns;
+* every constructor that was supposed to run is sitting in a section nothing traverses.
+
+**The walker is there, the list is well-formed, and it is empty.** That is what makes it
+expensive: reading the disassembly confirms the mechanism right up to the point where it does
+nothing, so the evidence agrees with the wrong hypothesis at every step.
+
+The other line's fix is an `.init` fragment that walks `.init_array`, in their toolchain.
+
+### Why it belongs in this list rather than only in theirs
+
+It is not a discovery anyone owns — it is what happens whenever a 1991 `crt1.o` meets a modern
+linker script, and it will be true for every modern-toolchain build on this machine whether or
+not it is written down. The symptom is a segmentation fault inside a container walk, which looks
+like a kernel or a `libstdc++` defect, and this is the list a reader searches when the kernel is
+the suspect. `KNOWN-ISSUES.md` already carries entries labelled as symptom records rather than
+defects of the port (ISSUE-103, ISSUE-106); this is another.
+
+### What it is not
+
+Not ISSUE-59. The same line's console showed a "bus error" from OpenTTD that was briefly a
+candidate second sighting for the `ptest` panic; they root-caused it to this instead and said so
+explicitly. **ISSUE-59 still rests on exactly one sighting**, the Doom timedemo, and its fix is
+still unrun. A second sighting that was never real is precisely the kind of thing that hardens
+into a fact in a record like this one, so it is written down here that this was not one.
