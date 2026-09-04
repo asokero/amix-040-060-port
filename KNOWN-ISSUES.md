@@ -7601,6 +7601,86 @@ pointing outside RAM covers the indirect case. **Do not re-run the Doom timedemo
 is on the machine** — that was the reporter's own instruction, and the reason is that the panic
 overwrites the evidence for the user-space fault underneath it.
 
+## ISSUE-61 (2026-09-04, RECORDED — a symptom record; this port is not exposed): AMIX's 1991 X11 archives carry a self-referential `sh_link`, and a modern GNU ld drops their relocations without a word
+
+> **Ledger: not ours, and no action follows.** Found by the parallel OpenTTD-for-AMIX line and
+> confirmed by the XAnim line; verified here independently. It is written down because the symptom
+> arrives at runtime in the wrong place entirely, and because the one condition under which it
+> would reach this repository is a toolchain choice somebody could make without noticing.
+
+Every object in `/usr/X/lib/libX11.a`, `libXext.a` and `libXmu.a` has its relocation section's
+`sh_link` pointing at **the relocation section itself** rather than at `.symtab`. Counted here on
+the read-only vanilla mount:
+
+```text
+libX11.a    255 members, 236 carry RELA sections
+            236 of 236 have sh_link wrong          0 correct
+```
+
+A modern GNU ld does not diagnose this. It **silently drops** those relocations and copies the
+section into the output's `.rela.dyn` by name, so the pointers that should have been relocated stay
+zero and the program jumps to address 0 on first use. It links cleanly and produces a valid
+executable, which is what makes it expensive: nothing about the failure points at the linker.
+
+### Why nobody has hit it in thirty years
+
+AMIX's own 1991 `ld` reads those archives correctly — it is the linker they were built for. The
+defect only exists relative to a linker that was written later and is stricter about a field the
+original never checked.
+
+### The discriminator, which is the reusable part
+
+The XAnim line settled the question with a controlled comparison: the same GCC 14 objects, the same
+unrepaired archives, only the linker changed.
+
+```text
+                                        ld 2.8.1    modern ld
+dynamic R_68K_32                               0         7453
+.data words holding a 0x800xxxxx address      66            1
+.data zero words                             963         2961
+```
+
+**A relocation count alone would not have settled it.** Zero dynamic relocations is equally
+consistent with "resolved statically" and with "dropped silently", and that ambiguity is precisely
+what hides the bug. The `.data` column separates them: real relocated addresses sitting in the
+image under one linker, zeroed words under the other. Static analysis of the linked image, not a
+run — the machine was down.
+
+### Why this port is not exposed — four reasons, each sufficient
+
+1. `relink-040.sh` links with **`m68k-cbm-sysv4-ld`, binutils 2.8.1**, which the comparison above
+   shows applies these relocations correctly.
+2. The kernel never links `libX11` at all.
+3. **The stock AMIX kernel is itself clean.** `stand/unix`'s `.rela.text` and `.rela.data` both
+   carry `sh_link = 4 = .symtab`, checked directly. So this is *not* a general property of 1991
+   AMIX ELF — it is specific to those three X archives, which were presumably produced by a
+   different tool than the kernel was.
+4. The vanilla copies are read-only and pristine, and the cross-toolchain sysroot's copies are
+   byte-identical to them.
+
+### The one condition under which it would reach us
+
+Linking an AMIX X client with the **modern `m68k-linux-gnu` toolchain**, which this project has
+installed as toolchain #1 for ELF inspection and relink. Nothing stops someone reaching for it.
+The repair is four bytes per section (`fix-elf-relalink.py` in the `gcc14-amix` tree), and it must
+be run against a copy you own — see below.
+
+### A near miss worth more than the defect
+
+The repair was first applied **in place inside this project's cross-toolchain sysroot**, by a line
+that read `$AMIX_SYSROOT` from its own configuration and had no way to know whose tree it was. It
+was noticed, restored byte-identical with timestamps intact, and moved to a directory that line
+owns. No acceptance was affected, because the kernel does not link these archives.
+
+That is **ISSUE-55 recurring**: there, the cross compiler turned out to carry an uncommitted
+working-directory change from which every kernel and every hardware acceptance in this repository
+had been born, and its closing note — that nothing gates the installed toolchain — is still true.
+An edit being correct is not what makes it safe; what makes it unsafe is that nothing downstream
+can tell it happened.
+
+⚠ **And the detection was luck.** This was found only because a claim about the archives was being
+checked in order to *disprove* it. There is still no gate that would have noticed.
+
 ## ⚠ ISSUE-60 (2026-09-04, OPEN — a symptom record, not a defect of this port): C++ static constructors never run, because 1991's `crt1.o` has never heard of `.init_array`
 
 > **Ledger: not ours to fix, and recorded because it will be hit again.** Found and root-caused
