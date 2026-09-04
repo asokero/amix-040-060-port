@@ -124,6 +124,27 @@ expensive here.
 The ratio that carries the hypothesis is unaffected and the two agree: board write is **0.30** of
 local by our measurement (7.66 / 25.91) and **0.365** by theirs (4.60 / 12.60).
 
+### The Dhrystone-per-MHz constant now has a second point, and the machine has other users
+
+`916.1 dhry/MHz` was measured at one clock only, 66 MHz, which made it a calibration resting on a
+single observation. On 2026-09-04 the Xrtg line ran the same binary on a machine whose clock they
+could not read and got **50 820/s, i.e. 55.5 MHz ± 0.8** by this constant. The owner then stated
+the clock: **56 MHz**, set by hand while chasing a suspected Mercury contact fault. So the ruler
+predicted an unknown clock to within 1 %, on a different kernel, at a clock 15 % away from where it
+was calibrated. It is a usable instrument for reading the clock, and that is worth having on a
+machine with no `dmesg`.
+
+⚠ **This machine now has three sessions working on it, and benchmarks must have it to themselves.**
+That run's repeat spread was **3.9 %** against the 0.05–0.2 % this benchmark has produced here
+across a year, and the owner identified the cause: concurrent measurement work from the OpenTTD
+line, which nobody was coordinating. Not a hardware fault — the Mercury instability reading this
+document's author offered was wrong, and is recorded as wrong because a benchmark anomaly that gets
+attributed to a suspected hardware fault is exactly the kind of thing that hardens into a fact.
+
+For the `ESB` A/B specifically this is not a nicety. The knob's expected effect is the size of that
+spread. **Quiet machine, stated clock, and a reboot first if the machine has been worked hard**,
+or the measurement cannot distinguish the store buffer from another session's process.
+
 ### What this changes about the run
 
 * Add a noncacheable-store measurement to candidate 1's acceptance. `busbench` is the better
