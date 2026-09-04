@@ -10,7 +10,36 @@ Vector 61 (unimplemented integer instruction) on the 68060:
   DIVU.L/DIVS.L <ea>,Dr:Dq   64/32         opcode 0x4C40..0x4C7F, ext bit10 = 1
   MOVEP, CMP2, CHK2, CAS2, misaligned CAS  (mnemonic match is enough)
 
-usage: scan060.py <objdump-listing> [...]
+WHAT A RESULT PROVES, AND WHAT IT DOES NOT (2026-09-04).  objdump disassembles
+linearly, so anything that is not code decodes as code anyway.  That happens
+INSIDE .text: a gcc switch dispatch puts its offset table immediately after the
+jmp, and those offsets decode as instructions.  In the AMIX Doom binary all 14
+MOVEP "hits" were jump-table entries -- a run of increasing 16-bit values, step
+0x26, sitting four bytes past a `movew %pc@(...,%dN:l:2),%d0` / `jmp` pair.
+A section filter does NOT catch this: the table is in a code section.
+
+So the two verdicts are not symmetric:
+
+  a CLEAN result is strong    -- data decoded as code can only ADD candidates
+  a DIRTY result is a LIST    -- each candidate needs its surrounding bytes read
+
+with one limit on the clean side worth stating, because it is easy to promote
+"can only add" into "can never hide".  That holds when the misdecoded bytes are
+data, which contains no real instruction to lose.  It does not hold in general:
+if objdump loses sync inside real code, a real instruction can be consumed as
+another's operand and vanish from the listing.  On m68k both instructions and
+tables are 2-byte aligned so sync is usually regained at the table's end, but
+"usually" is the honest word.  --context is the cheap check; a per-function
+disassembly from the symbol table is the thorough one.
+
+Reading a candidate: a `jmp` followed by increasing 16-bit values is a table.
+A `movel` of an immediate followed by the multiply is code.  For MOVEP there is
+also a prior that needs no bytes at all -- gcc 2.x never emits MOVEP from C, so
+a MOVEP in a compiled C binary is a misdecode until proven otherwise.  No such
+prior exists for the multiply and divide forms: an ordinary compiler emits them
+constantly, so only the surrounding bytes decide.
+
+usage: scan060.py [--context] <objdump-listing> [...]
 """
 import re
 import sys
@@ -46,11 +75,27 @@ def scan(path):
     return hits, total
 
 
-for path in sys.argv[1:]:
+args = sys.argv[1:]
+want_context = "--context" in args
+paths = [a for a in args if a != "--context"]
+
+for path in paths:
     hits, total = scan(path)
+    lines = open(path, "r", errors="replace").read().splitlines() if want_context else []
     print("== %s  (%d decoded lines)" % (path, total))
     if not hits:
-        print("   CLEAN -- no 060-unimplemented integer instruction")
+        print("   CLEAN -- no candidate found.  Data decoding as code can only add")
+        print("   candidates, so a clean listing is the strong verdict; see the note")
+        print("   in this file on the one way a real instruction can still hide.")
     for addr, mnem, ops, why in hits:
         print("   %s  %-8s %-32s %s" % (addr, mnem, ops, why))
-    print("   total hits: %d" % len(hits))
+        if want_context:
+            for i, raw in enumerate(lines):
+                if raw.lstrip().startswith(addr + ":"):
+                    for ctx in lines[max(0, i - 3):i + 4]:
+                        print("        | %s" % ctx.rstrip())
+                    break
+            print()
+    if hits:
+        print("   total candidates: %d -- each needs its surrounding bytes read"
+              " before it counts as an instruction" % len(hits))
