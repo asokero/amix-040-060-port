@@ -90,6 +90,51 @@ Baseline to beat, same machine, same binary, copyback, ESS=1:
 
 The 68040 reference for per-clock comparison is **855.7 /MHz** (29 950.4 at 35 MHz).
 
+## The store buffer needs an instrument Dhrystone does not provide (added 2026-09-04)
+
+The acceptance shape above would have measured `ESB` with Dhrystone and could well have recorded
+"no effect". **Dhrystone never writes to noncacheable space at all**, and noncacheable writes are
+the only thing the store buffer can help: writes to cache-inhibited *serialised* pages bypass it by
+design, and cached writes do not depend on it in the same way. So the knob's own use case is
+outside the measurement.
+
+This came from the Xrtg line, which is bound by exactly those writes and offered a probe
+(`tools/copyfloor.c` in `xrtg-amix`, native `cc`, no X server, framebuffer only, never a register).
+Their reasoning about *which pages* is correct and is checkable here rather than taken on trust:
+
+* framebuffer pages are classified `0x60` — CM = 11, **noncacheable, not serialised**, the class
+  the store buffer serves. `hat040.s:690`, `Lcm_fb`, whose own comment says so.
+* the VA2000's control registers are mapped `VA2000_CM_NCS` = `0x40` — CM = 10, noncacheable
+  **serialised**, which bypasses the store buffer structurally. `va2000_040.c:173`.
+
+So for this driver the usual `ESB` worry — a register write that has not landed before a dependent
+read — is closed by the mapping rather than by argument. **Other drivers need the same check**, and
+it is mechanical: does the driver map its registers with a serialised class.
+
+### But the premise that the CPU is mysteriously slow does not survive our own baseline
+
+Their probe reports 12 600 KB/s filling local RAM and reads that as ~16 cycles per longword,
+"where four to eight would be expected". `busbench` measured the same operation on the same machine
+class at **25 910 KB/s** (2026-08-19, Mercury 68060 @ 66 MHz, same CACR `0x80008000`), which is
+~10 cycles per longword — inside the band they expected. The difference is the loop, not the core:
+`busbench`'s `write32` is **unrolled ×4** with the comment "loop overhead off the measurement",
+theirs is `while (n--) *d++ = v;`. With the branch cache *also* off, that overhead is unusually
+expensive here.
+
+The ratio that carries the hypothesis is unaffected and the two agree: board write is **0.30** of
+local by our measurement (7.66 / 25.91) and **0.365** by theirs (4.60 / 12.60).
+
+### What this changes about the run
+
+* Add a noncacheable-store measurement to candidate 1's acceptance. `busbench` is the better
+  primary instrument because it already has a same-machine baseline to compare against
+  (`REALHW-Z3-VA2000-ACCEPTANCE-260819.md`: local 25.91 / VA2000 Z3 7.66 MB/s, write32);
+  `copyfloor` is the useful second opinion because it is shaped like the server's real inner loop.
+* **Change `ESB` alone.** A non-unrolled probe partly measures loop overhead, so enabling `EBC` in
+  the same boot would move the board number for a reason that has nothing to do with the store
+  buffer. The order of work above already separates them, for the independent reason that `EBC`
+  carries an unmet invalidation obligation.
+
 ## What is deliberately not claimed
 
 No number is predicted for either knob. Motorola describes branch folding as significant and
