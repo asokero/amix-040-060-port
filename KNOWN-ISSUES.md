@@ -2990,6 +2990,29 @@ tavallisesta C-rakenteesta:
    `divs.l <ea>,Dr:Dq`. **objdump erottaa nämä:** `divsll` = 32-bittinen (060 OK),
    **`divsl` = 64-bittinen (060 tappaa prosessin)**.
 
+> **Nimeämisen ansa, varmistettu 4.9.2026.** objdump pudottaa lähdemnemonicin pisteen, jolloin
+> nimet näyttävät menevän väärinpäin: lähteen `divu.l` (64-bittinen jaettava, **poistettu**)
+> tulostuu `divul`, ja lähteen `divul.l` (32-bittinen, **säilytetty**) tulostuu `divull`.
+> **Ylimääräinen `l` tarkoittaa jakojäännösrekisteriä, ei pidempää jaettavaa.** Rinnakkaislinja
+> kompastui tähän ja korjasi sen itse; tarkistettu tässä puussa kääntämällä kaikki neljä muotoa:
+>
+> ```text
+> 4c41 3402  divul   %d1,%d2,%d3   ext bit10=1 → 64-bit  POISTETTU
+> 4c41 3002  divull  %d1,%d2,%d3   ext bit10=0 → 32-bit  säilytetty
+> 4c41 3c02  divsl   %d1,%d2,%d3   ext bit10=1 → 64-bit  POISTETTU
+> 4c41 3802  divsll  %d1,%d2,%d3   ext bit10=0 → 32-bit  säilytetty
+> ```
+>
+> ⚠ **Kertolaskun puolella nimi ei erota lainkaan.** Molemmat alla ovat `mulul`:
+>
+> ```text
+> 4c01 3000  mulul %d1,%d3         ext bit10=0 → 32x32→32  säilytetty
+> 4c01 3402  mulul %d1,%d2,%d3     ext bit10=1 → 32x32→64  POISTETTU
+> ```
+>
+> Siksi alla oleva greppi on **jakopuolella tarkka mutta kertopuolella yli-ilmoittava**, ja
+> laajennussanan luku on pakollinen eikä valinnainen. `test-tools/scan060.py` tekee sen jo.
+
 `busbench.c`:n ensimmäinen versio sisälsi molemmat. Kierrot:
 
 ```c
@@ -3000,6 +3023,10 @@ r = x - q * D100;                   /* EI `%` */
 
 **Tarkista aina 060:lle tarkoitettu käyttäjätilan koodi:**
 ```sh
+# suositeltu: enkoodauspohjainen, ei mnemonicin varassa
+m68k-linux-gnu-objdump -d prog > /tmp/prog.dis && test-tools/scan060.py /tmp/prog.dis
+
+# nopea silmäys; muista että mulul/mulsl osuu MYÖS säilytettyihin 32-bittisiin muotoihin
 m68k-linux-gnu-objdump -d prog | grep -E '\b(mulsl|mulul|divsl|divul)\b'
 # ja dekoodaa laajennussanan bitti 10: 1 = 64-bittinen = 060 tappaa
 ```
