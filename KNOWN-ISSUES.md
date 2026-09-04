@@ -3035,6 +3035,19 @@ Tämä selittää osan siitä miksi `bmaptest` ja `pgcold` kuolivat emu-060:llä
 sisältävät vakiojakoja. `proctest`/`exectest`/`msynctst` eivät, ja ne toimivat.
 Ks. ISSUE-34a, `test-tools/issue34-060-unimpl-integer-260727.txt`.
 
+**Altistus on kääntäjän konfiguraation eikä ohjelman ominaisuus (lisätty 4.9.2026).** Meidän
+5.8. censuksemme skannasi asennetut *binäärit* ja löysi nolla 64-bittistä jakoa koko joukosta;
+natiivi `/usr/ccs/bin/cc` emittoi `divsll` (bitti 10 = 0). Se ei kuitenkaan kata sitä mitä
+gcc **tuottaa ja linkittää**: `longlong.h`:n `udiv_qrnnd` on `__mc68020__`-ehdon takana juuri
+se poistettu 64/32-jako, eikä gcc 2.7.2.3:ssa (`/usr/local/bin/gcc` vieraalla) ole
+`__mc68060__`-vahtia. Jokainen `long long` -jako sen kääntämässä C:ssä menee siitä läpi, ja
+`libgcc` ei koskaan näkynyt binääriskannauksissa koska se ei ole erillinen asennettu ohjelma.
+Rinnakkaislinjan mittaus: heidän ristiinkäännetyssä OpenTTD:ssään on 2214 pitkää kerto-/
+jakokäskyä ja **nolla** 64-bittisessä muodossa — mutta vain siksi että heidän ketjunsa on
+`--with-cpu=68060`. Samat lähteet tavallisella m68k-ketjulla kantaisivat ne jaot.
+**Jaolla vakiolla ei ole väliä** (gcc taittaa sen kertolaskuksi eikä kutsu `libgcc`:tä), joten
+sama lähdekoodi toimii tai kuolee sen mukaan onko jakaja literaali.
+
 ## 060 XPAGE unit — LANDED 2026-07-28, static + both-CPU regression only
 
 > **2026-08-01 correction:** the original heading said "no 060 hardware exists". That was wrong --

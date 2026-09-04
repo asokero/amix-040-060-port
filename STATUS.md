@@ -167,7 +167,9 @@ when the data cache was first enabled write-through, more with copyback.
 **What the kernel is now known to carry.** A parallel line building OpenTTD 1.0.5 with a GCC 14
 cross toolchain reports it running on this kernel on a 68060: it prints its help and exits
 cleanly, with a hosted `libstdc++`, a working exception unwinder and C++ static constructors.
-No display yet. That is a broader statement of what the port carries than any test in this tree
+No display **on this kernel** yet: an X11 video driver exists on that line and draws the
+game, but so far only on a development host under a nested server, not on this hardware.
+That is a broader statement of what the port carries than any test in this tree
 makes, and it is cited rather than claimed — the measurement is theirs, on image
 `68040-260903-04` running on a 68060. Two limits found on the way are ours and are open:
 ISSUE-59 (the 68060 `ptest` walk) and ISSUE-60 (static constructors need a modern `crt`), and a
