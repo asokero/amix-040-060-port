@@ -26,11 +26,35 @@ So the two verdicts are not symmetric:
 with one limit on the clean side worth stating, because it is easy to promote
 "can only add" into "can never hide".  That holds when the misdecoded bytes are
 data, which contains no real instruction to lose.  It does not hold in general:
-if objdump loses sync inside real code, a real instruction can be consumed as
-another's operand and vanish from the listing.  On m68k both instructions and
-tables are 2-byte aligned so sync is usually regained at the table's end, but
-"usually" is the honest word.  --context is the cheap check; a per-function
-disassembly from the symbol table is the thorough one.
+if a decoder loses sync inside real code, a real instruction can be consumed as
+another's operand and vanish from the listing.
+
+HOW FAR THAT LIMIT ACTUALLY REACHES, measured 2026-09-04 rather than reasoned.
+Both objdumps in this tree -- Debian binutils 2.44 and the 2.8.1-era cross one
+-- restart decoding at every symbol boundary.  Fed an opword whose extension
+word would cross a label, each stops and emits a .short instead of consuming
+the next function's first instruction.  So lost sync is CONTAINED WITHIN ONE
+SYMBOL, and cannot hide anything past the next label.
+
+Two consequences, both counter-intuitive:
+
+  * A desync detector built on "the next instruction must start exactly at the
+    label address" cannot fire on either objdump, because objdump already
+    guarantees it.  Run against the Doom listing -- 800 labels, 43 922
+    instruction starts, 14 known-bad lines -- it reports zero.  A check that
+    passes on the known-bad case is worse than no check: it manufactures
+    confidence.  That is why this file records the property instead of testing
+    for it.
+  * Per-function disassembly from the symbol table, the obvious thorough fix,
+    is a no-op for the same reason.  What remains open is only a table INSIDE a
+    function hiding a real instruction before the end of that same function,
+    and only following control flow closes it.
+
+--context is therefore the working check, and for the clean verdicts this
+project actually leans on there is corroboration outside the tool: libc.so.1
+and ld.so.1 scanned clean, and the machine boots, runs a shell, telnet and
+Dhrystone on a real 68060 without a vector-61 death, which exercises them far
+harder than a disassembler reads them.
 
 Reading a candidate: a `jmp` followed by increasing 16-bit values is a table.
 A `movel` of an immediate followed by the multiply is code.  For MOVEP there is
