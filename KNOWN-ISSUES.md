@@ -7601,6 +7601,107 @@ pointing outside RAM covers the indirect case. **Do not re-run the Doom timedemo
 is on the machine** — that was the reporter's own instruction, and the reason is that the panic
 overwrites the evidence for the user-space fault underneath it.
 
+## ⚠⚠ ISSUE-62 (2026-08-19 measured, 2026-09-05 seen in the wild, OPEN): any unprivileged process can panic the kernel with a `shmget` size whose remainder mod 4096 lands in `[1, 2048]`
+
+> **This is a real defect of this port, reachable with no privileges, and it had no issue number
+> until it panicked a working machine.** It was measured on hardware in August and written up as
+> "Candidate B" inside a document about an unrelated investigation
+> (`docs/ISSUE10-SETUPSH-WALL-260819.md` §5). That is how a finding gets lost, so it has one now.
+
+**The predicate, measured, not inferred:**
+
+> A SysV shared-memory segment panics with `PANIC: segvn_create anon_map size`
+> **if and only if `size mod 4096` falls in `[1, 2048]`.**
+
+`test-tools/shmband.c` walks `shmget` → `IPC_STAT` → `shmat` → first and last byte → detach:
+
+| size | `mod 4096` | in `[1,2048]`? | measured |
+|---:|---:|:---:|---|
+| 2047 | 2047 | no | survive |
+| **2048** | 2048 | **yes** | **PANIC** |
+| 2049 | 2049 | no | survive, attached at `c1001000` |
+| 4095 | 4095 | no | survive |
+| 4096 | 0 | no | survive |
+| **4097** | 1 | **yes** | **PANIC** |
+| **6144** | 2048 | **yes** | **PANIC** |
+| 6145 | 2049 | no | survive |
+| 8191 | 4095 | no | survive |
+| 8192 | 0 | no | survive |
+
+**Both edges of two consecutive bands are pinned** — 4096 survives and 4097 panics, 6144 panics
+and 6145 survives. That is what makes this a *band* rather than a threshold, and it is the specific
+claim that rules out "large sizes fail". `IPC_STAT` reports the original byte count for every size
+including the fatal ones, so the API-visible contract is intact right up to the point of creation.
+
+### Seen in the wild, 2026-09-05, exactly as predicted
+
+The parallel OpenTTD line's X11 client requested a MIT-SHM buffer of 320 × 240 × 2 = **153 600
+bytes**. `153600 mod 4096 = 2048` — in the band. The machine panicked with that message during an
+X session. They diagnosed a rounding inconsistency from one data point without knowing this record
+existed, which is the correct family: **a 2 KiB constant that survived this port's 2 KiB → 4 KiB
+page conversion.** The August write-up had already named X11's MIT-SHM as the caller that would
+find it.
+
+Workaround for a caller: round the request up to a multiple of 4096. That hides it; the hole stays.
+
+### What is not known
+
+Which site. The family is certain and the predicate is exact, but the specific 2 KiB constant has
+not been located — that is the work, and it is the same shape as ISSUE-35/36, where naming the site
+turned a blind six-site conversion into a two-site fix.
+
+## ⚠ ISSUE-63 (2026-09-05, OPEN): `pollwakeup` calls through a function pointer out of a freed `polldat`, and takes an address error during X session shutdown
+
+Hardware, `68040-260903-04` on a 68060 at 52 MHz with the Mercury's own RAM disabled, after a
+two-hour X and OpenTTD session, at the moment `twm` was exiting:
+
+```text
+TRAP  proc = 401E1A00 (pid 511, twm)  psw = 2400  pc = 70532BC
+PANIC: KERNEL FAULT psw=0x2400, pc=0x70532BC, fmt=0x2, vector=0x3 (Address Error)
+4.0 2.1c 0800430 Backtrace:
+40001D98:
+```
+
+The kernel was loaded at `0x07000000`, so `pc` is file offset **`0x0532BC` = `pollwakeup+0x36`**,
+and the faulting instruction is the indirect call:
+
+```asm
+532ac:  moveal %a3@,%a2         | a2 = *pollhead -- first polldat
+532ae:  tstl   %a2
+532b0:  beqw   ...              | NULL -> done
+532b4:  movel  %a2@(24),%sp@-   | push polldat->arg
+532b8:  moveal %a2@(20),%a0     | a0 = polldat->func
+532bc:  jsr    %a0@             | <-- vector 3 here: %a0 was ODD
+532cc:  moveal %a3@,%a2         | re-read the head and repeat
+```
+
+Vector 3 on the 68040/68060 is an attempt to execute from an **odd** address, so `polldat->func`
+held a non-pointer value.
+
+**The loop shows the broken contract.** The walker re-reads the list head after every callback, so
+it only terminates if **the callback unlinks its own entry**. A `polldat` that is freed without
+being unlinked leaves the head pointing into free memory, and the next `pollwakeup` reads a function
+pointer out of it and jumps there.
+
+### Why this is read as software rather than as the hardware fault being chased
+
+* **An odd target is the signature of a non-pointer in a pointer slot** — freelist links, lengths,
+  ASCII. Failing memory more typically gives a bus error from a random place.
+* **Locality.** The fault is on the pointer-dereference instruction of a list walker, at the exact
+  moment X shutdown is tearing those lists down. Failing memory does not preferentially corrupt the
+  one structure being freed that second.
+* `pollwakeup` is **untouched stock code** — no override in `src/`, named in no relink script.
+
+⚠ Not proven. Bad memory can corrupt a kernel structure and trip this. **The decisive test is free:
+start an X session and exit it again.** A second fault at the same PC settles it.
+
+### Two notes that will otherwise cost someone time
+
+* `40001D98` is a **kernel-stack address in the fixed u-area at `0x40000000`**, not a return
+  address. It will not resolve to a symbol.
+* The `0800430` in the banner line is **constant across two different panics**, so it is a fixed
+  field and not an address worth chasing.
+
 ## ISSUE-61 (2026-09-04, RECORDED — a symptom record; this port is not exposed): AMIX's 1991 X11 archives carry a self-referential `sh_link`, and a modern GNU ld drops their relocations without a word
 
 > **Ledger: not ours, and no action follows.** Found by the parallel OpenTTD-for-AMIX line and
