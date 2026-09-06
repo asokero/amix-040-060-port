@@ -135,3 +135,32 @@ it is *not*: not the mapping, not the cache class, not the bus.
 No long pressure run. And two defects are now on the usability path rather than being curiosities:
 ISSUE-47 (an access to an unbacked part of the aperture is killed with `SIGKILL` rather than
 signalled with `SIGBUS`, or in another case retried forever) and ISSUE-48 above.
+
+## A third qualification, added 2026-09-06: the 2.45× carries two variables, not one
+
+The instrument note `busbench` printed under every run of this measurement said that mmap lands
+outside DTT0, that every device aperture is therefore `CM=0x40` NCS, and that **both are measured
+serialised, which makes them comparable to each other.** That note was committed in `a8010b4` at
+17:50 on 2026-08-19. Change D landed in `4124258` at **18:06 the same day** — sixteen minutes
+later — and made it false for a registered framebuffer. Nobody went back to the tool.
+
+So the two figures compared above were not taken in the same cache class:
+
+* the **Zorro II baseline, 3.12 MB/s**, predates change D — `CM=0x40`, noncacheable **serialised**;
+* the **Zorro III figure, 7.66 MB/s**, was taken after it, from offset `0x10000`, which is inside
+  the registered interval — `CM=0x60`, noncacheable **not serialised**.
+
+Measured on 2026-09-06 with `cmfcensus` against the live page table, at the very offset `busbench`
+maps: `pte 40010069`, i.e. `CM=11`, not serialised. So the class difference is real and not a
+reading of the comment.
+
+**What this does and does not disturb.** The width discriminator is untouched — `write32/write16`
+is a ratio taken *within* one run, at one class, and 1.86× still says a 32-bit datapath is in use.
+The conclusion "Zorro III works and is much faster" is untouched. What cannot be claimed from these
+two numbers alone is that **2.45× is the bus**: serialisation is exactly the kind of thing that
+costs a large fraction of a write burst, and the two changes moved together. Separating them needs
+an aperture mapped at `CM=0x40` while the interval is registered, which no tool here can currently
+ask for.
+
+The number stays as measured, and so does this qualification. The 2026-09-06 68040 run
+(`docs/REALHW-Z3-040-260906.md`) has the same asymmetry for the same reason and says so.

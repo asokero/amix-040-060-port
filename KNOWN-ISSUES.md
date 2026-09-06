@@ -4575,6 +4575,219 @@ for something else.
 
 Full context: `docs/REALHW-Z3-APERTURE-PROBE-260819.md`.
 
+### Root cause, 2026-09-06 — and both of those questions are now answered
+
+**It decides.** `hardbus_orig` (`.text 0x5b3c2`, disassembled; relocations `0005b3ec bprobe`,
+`0005b40e cmn_err`) is short enough to read whole:
+
+```
+phys = (*ptep page base) + (addr & 0xfff)
+if (bprobe(phys, -1) != 0) { cmn_err(...); return 9; }   /* genuine hard error */
+else                         return 0;                    /* "fine" -> retry */
+```
+
+and its return becomes `usrxmemflt`'s return verbatim — the call site at `.text 0x5b11a` stores
+`%d0` straight through `%fp@(12)` and returns it. So a 0 is a positive decision that the access is
+fine, and the CPU re-executes.
+
+**`bprobe` is handed a PHYSICAL address and can only dereference it as a VIRTUAL one.** DTT0
+identity-maps `0x00000000-0x3FFFFFFF`, DTT1 `0x80000000-0xFFFFFFFF`, and the band between them is
+the kernel's own virtual region 1 — which is exactly where AmigaOS allocates Zorro III. A probe of
+physical `0x40000071` therefore reads VA `0x40000071`, **the fixed u-area**, which always answers.
+Hence 0, hence retry, hence forever.
+
+**This is the same `0x40000000` collision as ISSUE-64**, found the same day, in a second and
+entirely independent piece of code — and this one is stock rather than ours. The collision is not a
+property of any one driver; it is a property of that address on this machine, and *anything* that
+treats a Zorro III physical address as dereferenceable inherits it. That is the general lesson and
+it is why `docs/AMIGA-PHYSICAL-MEMORY-MAP.md` exists.
+
+**And yes, it happens in supervisor mode** — which is the "considerably more serious" case this
+entry anticipated. ISSUE-65 is that case: the 68040 write-back replay is supervisor code, the retry
+never terminates, and the recursion eats the u-area kernel stack until `wb040`'s landing-pad
+ownership guard panics. The retry is also what has been preventing ISSUE-42's already-implemented
+propagation from ever running: with the retry gone, `k_trap` fails to resolve, lands on `Lwb_fail`,
+and the process is told.
+
+### The guard, built 2026-09-06, not yet run
+
+In **both** `hardbus` overrides — `src/runtime040.s` (base) and `src/sigkill_dbg.s` (which the dbg
+build promotes over it) — refuse to consult a probe that cannot reach its target:
+
+```
+tstl hbu_on                      ; .data escape hatch, 0 = pre-ISSUE-47 behaviour in one boot
+phys = *ptep & 0xfffff000
+if (phys <  0x40000000) -> tail  ; DTT0 reaches it -> bprobe is meaningful
+if (phys >= 0x80000000) -> tail  ; DTT1 reaches it -> meaningful again
+hbu_n++ ; hbu_addr = addr ; hbu_pte = *ptep
+return 9                         ; hardbus_orig's OWN hard-error value (5b412)
+```
+
+Causal rather than heuristic: it cannot affect any case that converges, because it only refuses
+probes whose answer was never evidence. `hbu_*` is defined once, in `runtime040.s`, and the dbg
+copy references it through the base image — one escape hatch and one counter, not two that can
+drift. That structure is deliberate: ISSUE-64, found hours earlier, was two build lines diverging
+with no gate to catch it.
+
+Built as `68040-260906-11` (`build/unix-040-quiet-rtg`) and `68040-260906-12`
+(`build/unix-040-rtg-dbg`), on base `68040-260906-08`. `TOTAL complaints: 0`, `bindings failing:
+0`, exactly one strong `hardbus` in each image (`0xdac22` in the base, `0xf8df8` — the instrumented
+twin — in the dbg). A peer review of the contract is out with Codex
+(`private/ISSUE47-HARDBUS-RETRY-CODEX-TASK.md`); the two questions it carries are whether the band
+is the right shape and whether 9 is the right value.
+
+### Hardware acceptance, 2026-09-06, `68040-260906-12` — six predictions, six results
+
+Predictions were written to `issue47-prediction-260906.md` before the run. Every one held.
+
+Before starting X, at a quiet login: `hbu_magic` = `48425521` "HBU!", `hbu_on` = 1, and
+**`hbu_n` = 0** — nothing in a whole boot plus login lands a fault on a physical page in
+`[0x40000000, 0x80000000)`. That is the first evidence on the Codex brief's Q2, and it says the
+band is not too broad in ordinary operation. The same boot's serial log contains **no
+`DBG hardbus` line at all** before X.
+
+Starting `Xrtg :0`, on serial:
+
+```text
+WARNING: DBG hardbus pid=192 addr=C108C071 pte=40000059 ret=9 upc=80004BFA uva=48472000 n=1
+WARNING: DBG wb040 replay UNRESOLVED addr=C108C072 wbs=C1
+```
+
+**One call, `ret=9`.** Before the guard the identical line read `ret=0` and repeated until the
+print cap at n=8, with the retry itself unbounded. Counters afterwards:
+
+| counter | value | meaning |
+|---|---:|---|
+| `hbu_n` | 1 | the guard tripped exactly once |
+| `hbu_addr` | `c108c071` | the predicted address, to the digit |
+| `hbu_pte` | `40000059` | the predicted PTE, to the digit |
+| `wbf_fail_n` | 1 | the replay reported its own failure |
+| `wbf_user_n` | 1 | classified user-FC, per ISSUE-42 contract item 9 |
+| **`wbf_signal_n`** | **1** | **a signal was delivered — ISSUE-42's propagation ran, on hardware, for the first time** |
+| `wbf_alien_n` | 0 | the ownership guard never fired: no recursion at all |
+| `wbf_swallow_n` | 0 | nothing was silently dropped |
+| **`wbf_last_addr`** | **`c108c071`** | the failing byte — **this is the canonical one, not `wbf_addr`** |
+| `wbf_addr` | `c108c072` | one byte ahead: `%a3@+` had already post-incremented |
+| `wbf_last_signo` | 9 | **`SIGKILL`** |
+| `wbf_signo` / `wbf_code` / `wbf_fa` | 0 / 0 / 0 | **the siginfo the contract asks for was never built** |
+
+Two of those rows are corrections rather than results, and both came out of Codex's review
+(`amix-kernel-analysis/vm-map/ISSUE47-HARDBUS-UNPROBEABLE-PHYS-CONTRACT.md`):
+
+* **`wbf_addr` is one byte ahead of the fault** because the replay's `moves.b %d1,%a3@+`
+  post-increments before the landing pad records it. `wbf_last_addr` is the address to quote, and
+  it reads `c108c071` — which **agrees exactly with `hbu_addr`**, an independent counter in a
+  different unit written by a different code path. Two counters that could disagree and do not is
+  worth more here than either reading alone.
+* **`wbf_signo`, `wbf_code` and `wbf_fa` are all zero** while `wbf_last_signo` is 9. The process was
+  killed, not informed: there is no `SIGBUS`, no `BUS_ADRERR`, and no faulting address in the
+  siginfo. So ISSUE-42's propagation *ran*, but what it propagated is a bare kill. That is the
+  remaining ISSUE-47 work, and it is now measured rather than assumed.
+
+**The machine stayed up.** No `kstack`, no panic, and a normal telnet session throughout.
+
+Two things follow that are worth separating. First, **the retry was what had been preventing
+ISSUE-42's fix from ever running**: that fix landed on 2026-08-12 and `wbf_signal_n` had never
+been non-zero on hardware, because `hardbus` resolved the fault before the landing pad could ever
+be reached. Second, **`wbf_last_signo = 9` is `SIGKILL`, not `SIGBUS`** — which is this entry's
+*other* half, still open, and now measured rather than inferred. The prediction said in advance
+that SIGKILL here would confirm the two halves are separable; it did.
+
+**This does not make Xrtg work.** It was never meant to. It converts an unbounded kernel-stack
+recursion into a killed process and a live machine, which is what makes the remaining defect
+(ISSUE-65) cheap to iterate on instead of costing a boot per attempt.
+
+### Regression, same boot: battery 12/12, and the guard counted nothing else
+
+`batteryrun-260906-12.sh`, generated against the running artifact: **39/39 magics** (the block count
+went 38 -> 39 because `gen-battery.sh` picked `hbu_magic` up by itself), **`BATTERY-RESULT PASS`**
+on all twelve, `MUST-STAY-ZERO-OK`.
+
+And the number that matters most for the Codex brief's Q2 — *is refusing the whole band too broad?*
+— `hbu_n` read **1 before the battery and 1 after it**. Twelve tests including `protfault a` and
+`protfault b`, which exist precisely to provoke protection faults and exercise the write-back
+replay, and the guard did not trip once. `wbf_fail_n`, `wbf_signal_n` and `wbf_alien_n` were
+likewise unchanged at 1 / 1 / 0.
+
+So on this machine the guard fires for the Zorro III access and for nothing else, across a boot, a
+login, an X server start and a full battery. That is not proof that no legitimate mapping can ever
+land in `[0x40000000, 0x80000000)` — a machine with RAM up there would be a different case — but it
+is the coverage this configuration can give.
+
+### Codex's review, and what it changes
+
+Contract: `amix-kernel-analysis/vm-map/ISSUE47-HARDBUS-UNPROBEABLE-PHYS-CONTRACT.md` (that is the
+analysis repository, not this one; it is cited rather than copied).
+
+**Answered, and the band survives:**
+
+* `[0x40000000, 0x80000000)` is the right band under the current DTT settings — and the reason is
+  sharper than the one this entry inferred: **`bprobe` performs an ordinary virtual `move.b`. It is
+  not a physical probe at all.** So it was never capable of testing an address outside the
+  transparent windows, and calling its answer "not evidence" understates it.
+* **Do not narrow the band to devices.** The open question here asked whether the test should be
+  "unreachable AND unmanaged device". The answer is no: RAM in that range would be equally
+  untestable by this `bprobe`, so restricting the guard to device pages would leave a real hole.
+  That closes Q2 of the brief in favour of the shape already built.
+* `return 9` stops the retry safely. The hardware run confirmed both halves of that: it stops, and
+  it means `SIGKILL`.
+
+**Remaining, and now specified rather than merely suspected:**
+
+* A complete ISSUE-47 fix needs a **`SIGBUS` / `BUS_ADRERR` conversion carrying the exact faulting
+  address**. The measurement above is what that has to fix — `wbf_signo`/`wbf_code`/`wbf_fa` all
+  zero — and `wbf_last_addr` is the address it must carry.
+* ~~The duplicated `hardbus` logic should collapse into one `hardbus040_core`~~ — **done the same
+  evening.** Both the page-crossing fix and the ISSUE-47 band guard now exist once, in
+  `src/runtime040.s`, under the two names `hardbus` and `hardbus040_core` on one body; the dbg twin
+  in `src/sigkill_dbg.s` is reduced to a measurement wrapper that calls it. The structure is
+  checked rather than asserted: in the base image `hardbus` and `hardbus040_core` are the **same
+  address** (`0xdac22`), and in the dbg image they are **different** (`0xf8e00` and `0xdac22`), so
+  the wrapper demonstrably calls the shared core instead of carrying its own copy.
+
+  What was lost is stated rather than left to be found: the per-event `DBG hardbus XPAGE ...` line
+  went with the duplicated body. Its count survives as `hbu_xpage_n` in the core, so the quantity
+  is still readable and only the individual print is gone. That probe was written for the
+  2026-07-04 `date` hang, which has been fixed since.
+
+  Rebuilt as base `68040-260906-13`, `68040-260906-16` (`unix-040-quiet-rtg`) and
+  `68040-260906-17` (`unix-040-rtg-dbg`); `TOTAL complaints: 0` and `bindings failing: 0` on both.
+
+  **Hardware-verified the same evening on `68040-260906-17`, and it reproduces `-12` exactly.**
+  The claim was that nothing about the decision changed; that was a claim about a diff, so it was
+  measured rather than left standing:
+
+  | | `-12` (pre-refactor) | `-17` (one core) |
+  |---|---|---|
+  | `hbu_n` | 1 | 1 |
+  | `hbu_addr` | `c108c071` | `c108c071` |
+  | `hbu_pte` | `40000059` | `40000059` |
+  | `wbf_fail_n` / `wbf_signal_n` / `wbf_alien_n` | 1 / 1 / 0 | 1 / 1 / 0 |
+  | `wbf_last_addr` | `c108c071` | `c108c071` |
+  | `wbf_last_signo` | 9 | 9 |
+  | machine after Xrtg | up | up |
+
+  The serial line is identical too, down to everything but the pid:
+  `DBG hardbus pid=190 addr=C108C071 pte=40000059 ret=9 ... n=1`.
+
+### ⚠ And the new counter says the page-crossing fix never runs
+
+`hbu_xpage_n` was added to replace the per-event `XPAGE` print. It reads **0 after a full boot,
+a login, an X server start and the fault above.** So the page-crossing path — the genuine fix for
+the 2026-07-04 `date` hang, and until today the only thing this override existed for — **was not
+exercised even once**.
+
+That is not a defect, and the source comment predicted it: the trigger is a multi-word instruction
+whose extension words straddle a not-yet-resident page, which it calls "pure layout luck (why
+`date`; why nondeterministic)". What is new is that there is now a number instead of an
+expectation. The dbg build used to print the first 16 firings and then every 1024th, a cadence that
+reads as though frequency was assumed; on this machine, in this configuration, it is zero.
+
+**A branch that never ran is not a branch that works.** The fix is still right — it was proven
+against the `date` hang in 2026-07 — but nothing in current operation re-proves it, and anything
+that refactors this routine again gets no regression signal from it. Worth knowing before the next
+person changes `hardbus` and concludes from a green boot that the crossing path is fine.
+
 
 ---
 
@@ -4617,6 +4830,23 @@ The fix belongs in the driver and needs the Zorro III firmware's own passthrough
 readable in `va2000.v` — not guessable from the Zorro II values that are there now.
 
 ---
+
+### 2026-09-06: this is why a live machine looks like a crashed one
+
+Worth writing down because it cost a reset and a "was that the hardware fault?" question. On this
+date Xrtg was started three times on a Zorro III VA2000 and killed each time (ISSUE-65). After the
+kill the board stays in RTG mode, ISSUE-48 means passthrough is never restored, and **the native
+Amiga console does not come back**. The screen is dead.
+
+The machine is not. Telnet answered throughout, counters were read over it after every one of those
+kills, and the serial log shows the kernel idling normally and running processes right up to a
+`Keyboard reset` — a deliberate Ctrl-Amiga-Amiga — followed by a clean
+`The system is halted; you may reboot or turn off power.`
+
+So the failure mode of ISSUE-48 is not only cosmetic: **it makes a healthy machine indistinguishable
+from a dead one at the console**, and on a machine with five genuinely unexplained events open it
+invites attributing a reset to the hardware. Anyone judging liveness after an RTG server exits
+should use the serial mirror or the network, not the screen.
 
 ## ⚠ ISSUE-49 (2026-08-21, OPEN): a 2048-aligned device mmap offset yields the NEXT page — and two bugs were cancelling to keep the test green
 
@@ -7823,3 +8053,483 @@ candidate second sighting for the `ptest` panic; they root-caused it to this ins
 explicitly. **ISSUE-59 still rests on exactly one sighting**, the Doom timedemo, and its fix is
 still unrun. A second sighting that was never real is precisely the kind of thing that hardens
 into a fact in a record like this one, so it is written down here that this was not one.
+
+## ✅ ISSUE-64 (2026-09-06, FIXED AND HARDWARE-ACCEPTED the same day): the combined RTG kernel never got the Zorro III define, so its VA2000 driver read and wrote the fixed u-area instead of the board
+
+`relink-040-rtg.sh` builds the one graphics kernel that carries both RTG drivers — the artifact a
+hardware session takes so it does not have to carry four. It compiled `build/va2000_040.c`
+**without `-DVA2000_KVA`** and never assembled `src/devkvmap040.s`. This is not a regression:
+`git log -S'VA2000_KVA' -- relink-040-rtg.sh` is empty, so the define was never there. Zorro III
+change D (`4124258`, 2026-08-19) touched three files — `relink-040-va2000.sh`, `src/hat040.s`,
+`src/va2000_modelb.py` — and the combined script was not one of them.
+
+Since 2026-08-19, therefore, **the single-driver line has shipped the address-agnostic driver and
+the combined line has shipped the pre-Zorro-III one.** The 7.66 MB/s acceptance
+(`docs/REALHW-Z3-VA2000-ACCEPTANCE-260819.md`) was measured on the single-driver kernel, so
+nothing that ran afterwards had a reason to look at the other one.
+
+### What the `#else` branch does
+
+Without the define, `va2000_map_regs()` takes the vanilla-68030 path and assigns
+`va2000_regs[dev] = va2000_boards[dev]` — it dereferences the AutoConfig board address as a kernel
+virtual address. In Zorro II that is harmless, because the address is inside DTT0's identity
+window and the access reaches the board. AmigaOS allocates Zorro III from `0x40000000` upward, and
+**`0x40000000` is the fixed u-area** (`docs/AMIGA-PHYSICAL-MEMORY-MAP.md`). The register window is
+`base+0x000 … base+0xFFF`; `va2000_setmode()` writes eighteen `unsigned short`s between `+0x00`
+and `+0x30` and a palette at `+0x600 … +0x7FE`. All of it lands in `[0x40000000, 0x400007FF]` —
+the first 2 KiB of the running process's u-block, which is its kernel stack.
+
+The same branch is also the reason the framebuffer cache class is never registered:
+`hat_cm_fb_add()` is called only from the `#ifdef VA2000_KVA` side.
+
+### Measured on hardware, 2026-09-06
+
+Kernel `68040-260906-01` (kept as `build/unix-040-quiet-rtg.AS-BOOTED-260906-01`), Mercury with
+its own RAM, 68040, load base `0x08000000`. Identity was proven by reading four magic words back
+at addresses computed from that artifact — `LKX!`, `CMFB`, `SCF!`, `FP60` — not from the banner,
+which reads the CPU.
+
+| read | value | what it says |
+|---|---|---|
+| `va2000_boards[0]` (3 agreeing reloc sites) | `0x40000000` | board present, and at the u-area's number |
+| `va2000_size[0]` (3 agreeing reloc sites) | `0x02000000` | 32 MB — a Zorro III aperture |
+| `hat_cm_fb` (4 longs) | `0 0 0 0` | `hat_cm_fb_add()` was never called |
+| `cmf_fb_n` | `0` | no leaf ever classified as framebuffer |
+| `cmf_ncs_n` | `10` | the selector itself works; nothing calls the FB arm |
+| `nm -u build/va2000_040.o` | `autocon copyin copyout printf uiomove` | no `dev_kvmap`, no `hat_cm_fb_add` |
+
+Four independent readings, and all four are what the `#else` branch predicts. That is an
+invariant, not a passing test.
+
+`/kpeek 40000000` returned `c0800000`, so the driver's presence check reads `fw = 0xc080` —
+which passes all three of its tests (`!= 0`, `!= 0xFFFF`, `>= 5`). **The driver believes the board
+is there and proceeds to write.** There is no diagnostic between the wrong address and the
+corruption.
+
+### Why the symptom is a `kstack` cascade
+
+A corrupted kernel stack faults inside the kernel; `krnlflt` faults again while handling it, and
+prints `kstack 0xXXXXXXXX!` once per level as it marches down through `[0x40000000, 0x40001FFF]`
+until `u_procp` is zero and it panics. The observed failure — Xrtg started, screen filled with
+`kstack` — is exactly that, in exactly that address range. **No hardware fault is required to
+explain it**, which matters here because five unexplained events on this machine between
+2026-08-30 and 09-05 are open and unattributed; this is not one of them.
+
+### Why it became lethal only now
+
+In the accepted 2026-08-19 configuration a Piccolo RAM board held `0x40000000` and the VA2000 sat
+at `0x42000000`. That machine ran the fixed driver — but even the defective one would have failed
+*safely* there: `0x42000000` is an unmapped address in kernel region 1, so the dereference takes a
+clean fault. `0x40000000` is a **mapped** one. Removing the Piccolo moved the VA2000 down to the
+first Zorro III slot and converted a latent defect into silent u-area corruption. The board did
+not have to change for this to happen; the machine's board *order* did.
+
+### The fix
+
+Five changes to `relink-040-rtg.sh`, all of them what `relink-040-va2000.sh` has had since change
+D: `-DVA2000_KVA` on the compile, assemble `devkvmap040.o`, link it, admit `dev_kv*` and
+`hat_cm_fb_add` to the import allow-list, and require `dev_kvmap`/`dev_kvunmap` to be defined with
+their own imports resolved. Built as `68040-260906-06` (`build/unix-040-quiet-rtg`) and
+`68040-260906-07` (`build/unix-040-rtg-dbg`), both `TOTAL complaints: 0`.
+
+### The gate that was missing, and the one that replaces it
+
+Every existing check passed on the defective build, and would pass again on a repeat of it: the
+kernel links, `dev_kvmap` is *defined* the moment `devkvmap040.o` is linked whether or not the
+driver calls it, and no test boots the combined kernel against a Zorro III board. So the new
+assertion is on the **import**, in both scripts:
+
+```
+m68k-linux-gnu-nm build/va2000_040.o | grep -qE ' U dev_kvmap$'
+```
+
+That is the thing `-DVA2000_KVA` actually produces, and it is what a repeat of this defect would
+remove. Asserting the definition would not have caught it.
+
+This is the ISSUE-56 family — two parallel build lines, one updated, and no gate that runs the
+other. ISSUE-56 was `relink-040-dbg.sh` failing to compile at all for some period with nothing to
+notice. Two instances make it a pattern rather than an accident: **the repository has more build
+lines than it has gates**, and the untested one is not always the unimportant one.
+
+### Hardware acceptance, 2026-09-06, `68040-260906-06`
+
+The serial capture caught **both kernels booting the same board in the same session**, which makes
+this a single-variable comparison rather than a comparison across configurations:
+
+```
+68040-260906-01   va2000: board found at 0x40000000, aperture 32768 KB
+                  va2000: firmware version 49280, ready
+68040-260906-06   va2000: board found at 0x40000000, aperture 32768 KB
+                  va2000: firmware version 90, ready
+```
+
+**49280 is `0xC080`, and `/kpeek 40000000` on the defective kernel returned `c0800000`.** The
+driver was reading the u-area and reporting it as a firmware version — predicted before the log
+was read, and confirmed to the digit. 90 is the board. Nothing else differs between the two lines:
+same board, same address, same boot session, one compile flag.
+
+The loader's own census settles the configuration question the reading depended on:
+
+```
+board[0] mfg=0202 prod=70 addr=00e90000 size=00010000    A2065        Zorro II
+board[1] mfg=4231 prod=01 addr=00ea0000 size=00010000    Prelude      Zorro II
+board[2] mfg=6d6e prod=01 addr=40000000 size=02000000    VA2000       ZORRO III, 32 MB
+kernel: entry=08000000 tvaddr=08000000 tsize=000ff9d8
+```
+
+Three boards, no Piccolo — so the VA2000 has the first Zorro III slot, which is why it sits at
+`0x40000000`. (`/lszorro` on the guest reported *eighteen* boards, with kernel `.data` addresses
+among them. It is wrong, and the loader census is the instrument to trust.)
+
+Counters on the fixed kernel, read at the addresses computed from that artifact:
+
+| read | before (`-01`) | after (`-06`) |
+|---|---|---|
+| `hat_cm_fb` | `0 0 0 0` | `00040010 00042000 00000000 00000000` |
+| `cmf_fb_n` | 0 | 0 before any mapping, then rising |
+| 38-block magic check | — | **38/38 OK** |
+| battery | — | **12/12 PASS**, `MUST-STAY-ZERO-OK` |
+
+`00040010 00042000` was written down as a prediction before the read: `phystopfn(0x40010000)` to
+`phystopfn(0x42000000)`, the framebuffer half-open interval for a 32 MB aperture at `0x40000000`.
+
+### `Lcm_fb` on a 68040, measured in isolation before X ran
+
+`cmfcensus` against the live page table, one page at a time with X stopped — the first time change
+D's classification has run on a 68040, whose data cache is in copyback here:
+
+```
+CMF registered intervals: [40010,42000) [00000,00000)
+CMF +00010000  FB   events +1  pte 40010069  pfn 40010  NC  noncacheable, not serialised
+CMF +01fff000  FB   events +1  pte 41fff069  pfn 41fff  NC  noncacheable, not serialised
+CMF +00000000  DEV  events +1  pte 40000049  pfn 40000  NCS noncacheable SERIALISED
+CMF-DONE ok=3 bad=0
+```
+
+All three as predicted. **The register page comes out in a different class from the two
+framebuffer pages**, which is the discriminator that proves the interval is consulted rather than
+that some constant happens to be right. The last page of a 32 MB aperture resolves to pfn
+`0x41fff`, so the whole Zorro III window is addressable and not just its first megabyte.
+
+One thing to note about the instrument rather than the result: all three reads latched the *same*
+leaf address `091f50cc`, which cannot cover pfns 16 pages and 8175 pages apart. The explanation is
+page-table page reuse between the three map/unmap cycles, and the reason it is not a stale latch is
+that **the PTE read back at that address tracked the requested pfn every time**. A stale latch
+would have repeated one PTE.
+
+### What ISSUE-64 did NOT explain
+
+**Xrtg still dies in a `kstack` cascade on the fixed kernel.** This entry originally reasoned that
+the u-area writes were a complete explanation of the observed Xrtg failure; that inference was
+wrong, and the fix disproved it the same day. What survives is narrower and is what the
+measurements above actually support: ISSUE-64 was a real defect, it made the board unreachable, and
+it was a *sufficient* mechanism for a kstack cascade — but it was not the one that fired. The
+remaining fault is ISSUE-65.
+
+That distinction is the reason this section exists rather than a quiet edit. A defect whose fix is
+proven by four independent readings, and a hypothesis about which crash it caused, are two claims
+with different evidence, and only one of them held.
+
+## ⚠⚠ ISSUE-65 (2026-09-06, OPEN — diagnosed the same day): the 68040 write-back replay retries an unanswerable Zorro III access forever, and the recursion eats the u-area kernel stack
+
+This is what was left after ISSUE-64 was fixed and proven fixed. Same machine, same session, same
+board — kernel `68040-260906-06`, whose VA2000 driver now reaches the board through `dev_kvmap`
+(`va2000: firmware version 90, ready`) and whose framebuffer pages classify correctly
+(`cmfcensus` 3/3). Starting `/usr/bin/X11/Xrtg :0` still kills the machine.
+
+### The trace, caught whole for the first time
+
+The serial mirror was live, so this is not the truncated screenful the failure usually leaves:
+
+```text
+kstack 0x40000CC0!
+kstack 0x40000BD4!
+kstack 0x40000AE8!
+kstack 0x400009FC!
+kstack 0x400008BC!
+TRAP
+proc = 400007EB (pid -1, @"4) psw = 2204
+pc = 803E024
+
+PANIC: KERNEL FAULT psw=0x2204, pc=0x803E024, fmt=0x2, vector=0x3 (Address Error)
+4.0 2.1c 0800430 Backtrace:
+40000804:
+```
+
+Five `krnlflt` recursion levels, descending 0xEC (236) bytes each — the u-area kernel stack being
+eaten from `0x40000CC0` downward.
+
+### What the panic PC says, and it is more specific than "the last domino"
+
+`0x803E024` is load base `0x08000000` plus `.text 0x3E024`, and that is **`clock+0x488`** — the
+last instruction of the timer interrupt handler:
+
+```
+3e01a:	4cee 0c1c ffec 	moveml %fp@(-20),%d2-%d4/%a2-%a3
+3e020:	2040           	moveal %d0,%a0
+3e022:	4e5e           	unlk %fp
+3e024:	4e75           	rts            <- vector 3, Address Error
+```
+
+An address error on `rts` means `unlk %fp` had just loaded a **garbage stack pointer out of the
+stack frame**, and `rts` then tried to pop a return address from an odd address. The banner's
+`proc = 400007EB` is odd and inside the u-area range, which is consistent with that being the
+value.
+
+So the panic is still the last domino — but it identifies the *family* of the primary corruption,
+which the recursion alone does not. This is **a write into the kernel stack**, not a call through a
+bad function pointer: a wild `jsr` lands at a wild PC (that is ISSUE-63's shape, `jsr %a0@` through
+a freed `polldat`), whereas this one has a valid PC in a valid function whose own frame was
+overwritten underneath it. `clock` is the victim, not the site — it runs on that stack at every
+tick, so it is simply the first code to touch the wreckage.
+
+### Why ISSUE-64 is not the answer
+
+ISSUE-64 was exactly such a writer, and it is gone: the driver no longer holds `0x40000000` as a
+kernel address, and that is proven by the firmware-version read and by `hat_cm_fb`. There is a
+second writer.
+
+### The instrument, and it is already built
+
+`src/ktrap_latch.s` exists for precisely this and is in **`relink-040-dbg.sh` only**, so it ships
+in `68040-260906-07` (`build/unix-040-rtg-dbg`) and not in the primary. Of its two halves,
+**KSTKCHAIN is the one that fits**: it fires when `k_trap` runs critically deep — which is exactly
+what five recursion levels means — and walks up to sixteen return addresses from the frame-pointer
+chain. The `ktrap_latch` half keys on a frame PC inside `[0x40000000, 0x4C000000)`, and the fault
+we can see has its PC in kernel text instead, so it may not fire at all; that is a reason to read
+both and not to treat a silent latch as an absent fault. Both self-limit after two firings so they
+cannot add stack pressure of their own.
+
+## The diagnosis, from `68040-260906-07` the same evening
+
+KSTKCHAIN fired **twice, at exactly the predicted levels** — the trigger is `fp < 0x40000C00` and
+the cascade starts at `0x40000CC0`, so level 1 is above the threshold and level 2 is the first
+firing. Written down before the run; that is what came out.
+
+```text
+DBG hardbus pid=193 addr=C108C071 pte=40000059 ret=0 upc=80004BFA uva=48472000 n=1
+DBG hardbus pid=193 addr=C108C071 pte=40000059 ret=0 upc=80004BFA uva=48472000 n=2
+   ... identical, n=3 through n=8 ...
+DBG KSTKCHAIN sp=40000BCC fv=7008 pc=80D9D28 fa=C108C071
+DBG KSTKWB    w1a=C108C071 w1d=480000 w3a=40000374 w3d=0
+DBG KSTKCHAIN RA 805A1EE 80011D8 805A1EE 80011D8      (x4 lines, 16 slots, two addresses)
+DBG KSTKCHAIN sp=40000AE0 fv=7008 pc=80D9D28 fa=C108C071
+PANIC: wb040: u_nofault landing pad entered with a FOREIGN stack sp=40000878
+       (armed replay sp=40000A78)
+```
+
+Symbolised against the running artifact:
+
+| field | value | meaning |
+|---|---|---|
+| `pc` | `080D9D28` | **`Lwb_loop+0x12`** — the byte-wise `moves.b` in our own `src/wb040.s` |
+| `fv` | `7008` | format 7 (68040 access-error frame), vector 2 — **bus error** |
+| `fa` | `C108C071` | the denied byte's own address, exact because the replay goes byte by byte |
+| `pte` | `40000059` | pfn `0x40000` = physical `0x40000000`, `CM=0x40` NCS, M set |
+| RA chain | `k_trap_orig+0x106` ↔ `ktraps+0xa`, alternating 16 deep | the recursion itself |
+
+**pfn `0x40000` is the VA2000's REGISTER page**, not its framebuffer: `hat_cm_fb` registers
+`[0x40010, 0x42000)` and `cmfcensus` measured this same page as `pte 40000049` earlier the same
+evening — same page, same class, the only difference being the M bit now set. So the access that
+cannot complete is to the Zorro III **register window**, mapped into Xrtg's address space at user
+VA `0xC108C000`.
+
+### Why it never terminates, and the repository already documented this
+
+`hardbus` returning **0 means retry**, and `src/sigkill_dbg.s` records what that costs when the
+access can never succeed: during the 2026-07-04 `date` loop the same shape was "observed 3.1+
+MILLION iterations". Here it is eight, because the *message* is capped at eight — the retrying is
+not. Each retry re-faults `Lwb_loop`, re-enters `ktraps` → `k_trap_orig` (which is precisely the
+two-address chain KSTKCHAIN walked), and spends about 236 bytes of u-area kernel stack. Five levels
+in, the landing pad is reached at a stack depth that is not the one the replay armed, and
+`Lwbf_alien` panics.
+
+**The guard did its job.** `wbf_own_sp` said `0x40000A78` and the landing came in at `0x40000878`,
+two levels lower. That check exists to refuse a foreign landing rather than unwind somebody else's
+state, and this is the first time it has fired on hardware.
+
+### Why this could not have happened before today
+
+`src/wb040.s` has **no cputype test** — its gate is the format-7 access-error frame, which only a
+68040 produces. It is unreachable on a 68060. The whole Zorro III track, including the
+2026-08-19 acceptance that ran X11 over it, was developed and accepted on a **68060**. So the
+68040 write-back replay and a Zorro III aperture had never met. The plan for this session ranked
+"the Z3 aperture and cache-mode path on an 040" second of four candidates on exactly that
+reasoning, and that is where it landed.
+
+This is therefore a **composition of two open items**, not a new defect in either:
+
+* **ISSUE-47** — an unresponsive Zorro III access is retried rather than signalled. Recorded
+  2026-08-19 from user mode, where it kills the process. This is the same behaviour reached from
+  the kernel's write-back replay instead, where there is no process to kill and the retry loop
+  consumes the kernel stack.
+* the **68040-only write-back replay**, which by design converts one deferred store into
+  *per-byte* `moves.b` accesses (`Lwb_loop`, and the byte-wise shape is deliberate — it is what
+  makes `wbf_addr` exact).
+
+### What is measured and what is still hypothesis
+
+**Measured:** everything in the table above; eight identical retries with `ret=0`; the pending
+write-back `w1a=C108C071 w1d=480000`; the recursion chain; the guard's two stack pointers; and
+that Xrtg's mapping places board offset 0 — the register page — at user VA `0xC108C000`.
+
+**Both candidates were then settled from source, at no hardware cost**, and one of them died:
+
+* **`0x70` is a real register.** `VA2_H_SS`, horizontal sync start — the driver's own map has it,
+  along with `H_SE 0x72`, `H_MAX 0x74`, `V_SS 0x76`, `V_SE 0x78`, `V_MAX 0x7A`, `PIX_CLK 0x7C`. It
+  is decoded, and it is exactly the block `va2000_setmode` programs. So "Xrtg writes somewhere
+  undecoded" is **refuted**.
+* **Xrtg's mapping is correct and its register access is word-wide.** It maps
+  `fbSize + VA2000_FB_OFFSET` from offset 0 deliberately and sets `fbBase = base + FB_OFFSET`, so
+  there is no off-by-`0x10000`; and `VA2000_WRITEREG` is
+  `*(volatile unsigned short *)(base + reg) = val` — an **aligned 16-bit store**, never a byte one.
+
+That reading was corrected once and then corrected back, and both moves are kept here because the
+second one is the instructive part.
+
+The first correction came from `wbf_wbs = 0xC1` (V=1, size bits 6:5 = `10` = **word**, TM = user
+data) and read the pending write-back as a *misaligned word at the odd address `0xC108C071`*. That
+inference was wrong: it assumed the address our counters record is `WB1A`, when what they record is
+the address `hardbus` was called with — the **failing byte**, not the write-back's base.
+
+The evidence that settles it is the kernel's own notice, which is not one of our probes:
+
+```text
+NOTICE: User BUS ERROR at C108C070, PC:80004BFA FAULT:1 PID:190 CMD:/usr/bin/X11/Xrtg :0
+```
+
+**`C108C070` — even.** So the picture that reconciles every reading is the original one:
+
+| reading | value | what it is |
+|---|---|---|
+| kernel `NOTICE` | `C108C070` | the user access: an **aligned** word store to `VA2_H_SS` |
+| `wbs` | `0xC1` | word-sized, user-FC |
+| `hbu_addr`, `wbf_last_addr` | `C108C071` | the byte the replay could not write |
+| `wbf_addr` | `C108C072` | `%a3@+` after it |
+
+`Lwb_loop` starts at `C108C070`, writes the first byte, advances, and the **second** byte at
+`C108C071` takes the bus error. Xrtg's store is legal, aligned, and exactly what
+`VA2000_WRITEREG` is supposed to emit; there is no odd register address and no Xrtg bug here.
+
+**So `Lwb_loop`'s byte decomposition is the trigger, and nothing in user space is at fault.** What
+the decomposition then runs into was still an inference, so it was asked of the board directly.
+
+### The board was asked, and it refused to confirm the obvious answer
+
+`test-tools/va2byte.c` + `va2probe.sh`, on `68040-260906-16`, reads only, one probe per process
+because a user bus error is `SIGKILL` here and cannot be caught. Prediction written first:
+`0x70` survives, **`0x71` bus-errors**.
+
+| board offset | access | result |
+|---:|---|---|
+| `0x00` | byte read | OK, `0x00` |
+| `0x01` | byte read | OK, **`0x5a`** |
+| `0x70` | byte read | OK |
+| **`0x71`** | **byte read** | **OK — the prediction was wrong** |
+| `0x72` / `0x73` | byte read | OK |
+| `0x70` | word read | OK |
+| `0x10000` / `0x10001` | byte read | OK, `0xff` |
+| `0x2000` | byte read | **SIGKILL** (positive control) |
+
+The control did its job: `0x2000` is the undecoded gap and it killed the process, `status=137`
+= 128 + 9, so the harness detects deaths and every surviving line above means something.
+
+And the probe proves it is reading the **real board**, not a stale or shadowed mapping:
+`0x01` returns `0x5a` = 90 decimal, which is exactly the value the driver printed at boot as
+`va2000: firmware version 90`. An odd-offset byte read of a 16-bit register returns the correct
+low half.
+
+Independent cross-check of the instrument itself: `hbu_n` read 1 afterwards — **one fault, one
+missing OK line** — with `hbu_addr` = `c1033000` and `hbu_pte` = `40002049`, i.e. pfn `0x40002` =
+board offset `0x2000`. The counter and the missing-line method are different mechanisms and they
+agree on both the count and the page.
+
+**So "the board refuses byte accesses at odd offsets" is refuted for reads.** The write pass, run
+the same evening, found the rule — and it is narrower than either guess.
+
+### The rule, measured: an ODD byte WRITE to the REGISTER window is what the board refuses
+
+Same probe, `mode=x` = read the location and write **the same value** back, so the bus cycle
+happens and nothing changes:
+
+| board offset | access | read | write | result |
+|---:|---|---|---|---|
+| `0x00` | byte | `0x00` | `0x00` | OK |
+| **`0x01`** | **byte** | `0x5a` | — | **KILLED** |
+| `0x00` | word | `0x005a` | `0x005a` | OK |
+| `0x10000` | byte | `0xff` | `0xff` | OK |
+| **`0x10001`** | **byte** | `0xff` | `0xff` | **OK** |
+| `0x10000` | word | `0xffff` | `0xffff` | OK |
+| `0x70` | byte | `0x00` | `0x00` | OK |
+| **`0x71`** | **byte** | `0x00` | — | **KILLED** |
+| `0x70` | word | `0x0000` | `0x0000` | OK |
+| `0x2000` | byte read | — | — | KILLED (control) |
+
+Four facts fall out, and together they are the whole answer:
+
+1. **Byte reads work everywhere** — including `0x01` and `0x71`, and `0x01` returns `0x5a` = 90,
+   the firmware version. The board is being read correctly at odd register offsets.
+2. **Byte writes to the FRAMEBUFFER work at odd offsets** (`0x10001`). So this is not a
+   Zorro III bus-width property and not a "no byte writes" property.
+3. **Byte writes to the REGISTER window work at even offsets and fail at odd ones** — `0x00` and
+   `0x70` pass, `0x01` and `0x71` die. Note `0x01` was *read* successfully and then died on the
+   *write* at the same address, which isolates it to the write.
+4. **Word writes work everywhere**, which is why Xrtg gets as far as `mode 800x600`.
+
+**And it reproduces from user space with an ordinary `move.b`.** That kills the remaining
+alternative: it is *not* the `moves` instruction, *not* the DFC, and *not* supervisor state. A
+plain user byte store to an odd register address does it.
+
+Cross-checked three ways, which is what makes this an invariant rather than a run: the
+missing-`OK`-line method counted three deaths; `hbu_n` went **1 → 4**; and the kernel's own notices
+named exactly those three addresses, two of them at the write instruction `PC:80000836` and the
+control at the read instruction `PC:800007C4`.
+
+```text
+NOTICE: User BUS ERROR at C1033001, PC:80000836 FAULT:1 PID:340 CMD:./va2byte 1 b x
+NOTICE: User BUS ERROR at C1033071, PC:80000836 FAULT:1 PID:346 CMD:./va2byte 71 b x
+NOTICE: User BUS ERROR at C1033000, PC:800007C4 FAULT:1 PID:348 CMD:./va2byte 2000 b r
+```
+
+### ISSUE-65, stated completely
+
+Xrtg writes an aligned 16-bit value to `VA2_H_SS` at board offset `0x70`. The 68040 defers it as a
+write-back. `Lwb_loop` replays it **byte by byte** — a deliberate design choice, so that
+`wbf_addr` is exact per byte — emitting `moves.b` at `0x70` and then at `0x71`. The VA2000's
+Zorro III **register window does not accept a byte write to an odd address**, so the second one
+takes a bus error. Before ISSUE-47's guard that bus error was retried forever and the recursion ate
+the u-area kernel stack; with the guard it is one clean `SIGKILL` and a live machine.
+
+Nothing in user space is at fault, and the board is not at fault either in any sense that can be
+fixed — it is a register-file that decodes 16-bit accesses. **The fix belongs in `Lwb_loop`:
+replay a write-back at its recorded size when the address is aligned for that size, and fall back
+to byte-wise only to localise a fault that has already happened.** The size is already decoded two
+instructions above the loop, from `WBxS` bits 6:5, and then used only as a byte count.
+
+That change is to the hottest path this project touches, so it gets a contract before an
+implementation — and the contract now has a measured requirement rather than a hypothesis.
+
+
+So: **the byte-wise replay is the trigger.** One legal, aligned, 16-bit register write is
+decomposed by the kernel into two byte accesses, and the Zorro III register window does not answer
+the second one. That decomposition is deliberate — the comment at the `moves.b` says
+"per-byte access -> correct per-byte FA on fault", and it is what makes `wbf_addr` exact — so this
+is a design trade-off meeting a case it was never tested against, not a coding error.
+
+The size is not lost, either: two instructions above the loop, `WBxS` bits 6:5 are decoded into
+`Lwb_long`/`Lwb_word`/`Lwb_byte` and then used **only as a byte count**. A replay that issued the
+recorded size when the address is aligned for it, and fell back to byte-wise only to localise a
+fault that already happened, would keep both properties. That is the shape of the fix, and it
+belongs to a unit the code itself calls "the hottest path in the kernel that this project touches"
+(`wb_replay_n` reaches five figures per boot), so it wants a contract before an implementation.
+
+Note the two fixes are independent and both are worth having:
+
+1. **`Lwb_loop` replaying at native size** is the enabling fix — it is what would let Xrtg run.
+2. **ISSUE-47** — `hardbus` returning 0 = retry for a bus error it cannot resolve — is the safety
+   net. With it fixed, this failure would be a `SIGBUS` to Xrtg instead of a dead machine, whatever
+   else is wrong. Every unanswerable Zorro III access anywhere gets that protection, not just
+   this one.
+
+Also still open: whether this is the same failure the owner hit before ISSUE-64 was found. Both are
+`kstack` cascades. Nothing distinguishes them yet, and the earlier one was not captured on serial.

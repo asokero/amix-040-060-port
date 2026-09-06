@@ -298,9 +298,14 @@ char **argv;
 	printf("BUSBENCH-DONE %s\n", isram ? "-r" : argv[1]);
 	printf("BUSBENCH note: compare against the -r reference before drawing any conclusion,\n");
 	printf("BUSBENCH       and note the mapping VA above: mmap lands OUTSIDE DTT0, so the\n");
-	printf("BUSBENCH       class comes from the leaf PTE -- CM=0x40 NCS for EVERY device\n");
-	printf("BUSBENCH       aperture here, Zorro II and Zorro III alike.  Both are measured\n");
-	printf("BUSBENCH       serialised, which makes them comparable to each other.\n");
+	printf("BUSBENCH       class comes from the leaf PTE.  This note used to say CM=0x40\n");
+	printf("BUSBENCH       NCS for EVERY device aperture, which stopped being true 16\n");
+	printf("BUSBENCH       minutes after it was written: change D gives a REGISTERED\n");
+	printf("BUSBENCH       framebuffer page CM=0x60 NC, and only an unregistered device\n");
+	printf("BUSBENCH       page stays CM=0x40 NCS.  So a pre-change-D aperture figure and\n");
+	printf("BUSBENCH       a post-change-D one differ in CACHE CLASS as well as in bus\n");
+	printf("BUSBENCH       width, and are NOT comparable as one variable.  cmfcensus reads\n");
+	printf("BUSBENCH       the live class; do not infer it from this tool.\n");
 
 	if (!isram) {
 		(void) munmap(p, (size_t) sz);
