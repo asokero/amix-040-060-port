@@ -81,18 +81,47 @@ echo "[*] VA2000: Model-B source copy (>>11 -> >>12, exactly one site)"
 python3 "$HERE/src/va2000_modelb.py"
 
 echo "[*] VA2000: cross-compile build/va2000_040.c"
+# -DVA2000_KVA turns on the address-agnostic path (Zorro III track, 2026-08-19):
+# register access goes through a kernel mapping made by dev_kvmap instead of
+# dereferencing cd_BoardAddr, which only works while the board happens to sit in
+# transparently translated Zorro II space.
+#
+# ISSUE-64: this script is the SECOND graphics line and it never got the define.
+# Change D updated relink-040-va2000.sh only, so every combined RTG kernel built
+# since 2026-08-19 shipped the pre-Zorro-III driver while the single-driver line
+# shipped the fixed one -- and the 7.66 MB/s acceptance was measured on the other
+# script, so nothing caught it.  What the `#else` branch does is assign
+# va2000_regs = cd_BoardAddr; AmigaOS allocates Zorro III from 0x40000000, which
+# is the fixed u-area, so va2000_setmode writes its 18 registers into the running
+# process's kernel stack and the machine dies in a krnlflt recursion.
 VA2000_CFLAGS=$(echo "$AMIX_KERNEL_CFLAGS" | sed 's/-m68020/-m68040/')
-m68k-cbm-sysv4-gcc $VA2000_CFLAGS -I"$HERE/build" \
+m68k-cbm-sysv4-gcc $VA2000_CFLAGS -DVA2000_KVA -I"$HERE/build" \
 	-c "$HERE/build/va2000_040.c" -o "$HERE/build/va2000_040.o"
 sh "$HERE/src/check_page_geometry.sh" "$HERE/build/va2000_040.o" | sed 's/^/      /'
+
+echo "[*] VA2000: assemble dev_kvmap (MMIO window with an explicit cache class)"
+m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/devkvmap040.s" -o "$HERE/build/devkvmap040.o"
 
 echo "[*] VA2000: assemble the parinit wrapper"
 m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/parinit_va2000.s" -o "$HERE/build/parinit_va2000.o"
 
 echo "[*] checking va2000_040.o has no surprise unresolved refs:"
-LEAK0=$(m68k-linux-gnu-nm "$HERE/build/va2000_040.o" | grep ' U ' | grep -vE '^\s*U (autocon|printf|uiomove|copyin|copyout)$' || true)
-[ -z "$LEAK0" ] && echo "      only expected kernel imports (autocon/printf/uiomove/copyin/copyout)" \
+LEAK0=$(m68k-linux-gnu-nm "$HERE/build/va2000_040.o" | grep ' U ' | grep -vE '^\s*U (autocon|printf|uiomove|copyin|copyout|dev_kvmap|dev_kvunmap|hat_cm_fb_add)$' || true)
+[ -z "$LEAK0" ] && echo "      only expected kernel imports (autocon/printf/uiomove/copyin/copyout/dev_kv*/hat_cm_fb_add)" \
 	|| { echo "[FAIL] unexpected unresolved refs in va2000_040.o:"; echo "$LEAK0"; exit 1; }
+
+# The define is what makes the driver address-agnostic, and its absence is SILENT:
+# without it the `#else` branch compiles, dev_kvmap stays defined-but-unused, every
+# check above still passes, and the kernel dereferences cd_BoardAddr instead.  That
+# is ISSUE-64, so assert the IMPORT -- the thing the define actually produces --
+# rather than the definition, which survives the regression.
+m68k-linux-gnu-nm "$HERE/build/va2000_040.o" | grep -qE ' U dev_kvmap$' || {
+	echo "[FAIL] va2000_040.o does not import dev_kvmap -- built without -DVA2000_KVA."
+	echo "       On Zorro III the driver would then write its registers to the board's"
+	echo "       AutoConfig address, and AmigaOS allocates that from 0x40000000, which"
+	echo "       is the fixed u-area.  See ISSUE-64."
+	exit 1; }
+echo "      va2000_040.o imports dev_kvmap (-DVA2000_KVA took)"
 
 # ---------------------------------------------------------------------------
 # Link.  VA2000 needs the base's strong `parinit` weakened first; Xsvga needs nothing
@@ -106,20 +135,28 @@ m68k-linux-gnu-objcopy \
 	--add-symbol parinit_orig=.text:$PARINIT_ADDR,function,global \
 	"$STAGE"
 
-echo "[*] ld -r: base(weakened, FPSP in it) + xsvga_exp.o + va2000_040.o + parinit_va2000.o"
+echo "[*] ld -r: base(weakened, FPSP in it) + xsvga_exp.o + va2000_040.o + devkvmap040.o + parinit_va2000.o"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$STAGE" \
 	"$HERE/build/xsvga_exp.o" \
-	"$HERE/build/va2000_040.o" "$HERE/build/parinit_va2000.o"
+	"$HERE/build/va2000_040.o" "$HERE/build/devkvmap040.o" \
+	"$HERE/build/parinit_va2000.o"
 
 echo "[*] symbols from all three features must be defined:"
 for s in fpsp_vec11 fpsp_done fpsp_fline fpsp_unimp \
 	svgaopen svgaclose svgaread svgawrite svgaioctl svgammap \
 	Piccolo_SwitchToSVGA PicassoII_SwitchToSVGA \
 	va2000init va2000open va2000close va2000read va2000write va2000ioctl va2000mmap va2000_boards \
+	dev_kvmap dev_kvunmap \
 	parinit parinit_orig; do
 	m68k-linux-gnu-nm "$OUT" | grep -qE " [A-Za-z] $s$" || { echo "[FAIL] $s missing"; exit 1; }
 done
-echo "      FPSP + svga* + va2000* + parinit/parinit_orig all defined"
+echo "      FPSP + svga* + va2000* + dev_kv* + parinit/parinit_orig all defined"
+
+# dev_kvmap's own imports must all be satisfied by the base image.  A missing one
+# would leave `ld -r` perfectly happy and the kernel would jump to 0 at boot.
+LEAK1=$(m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -E 'sptalloc|sptfree|vatosde|vatopte|flushmmu|hat_cm_fb_add' || true)
+[ -z "$LEAK1" ] && echo "      dev_kvmap + hat_cm_fb_add imports all resolved" \
+	|| { echo "[FAIL] dev_kvmap has unresolved imports:"; echo "$LEAK1"; exit 1; }
 
 LEAK=$(m68k-linux-gnu-nm "$OUT" | grep ' U ' | grep -iE 'fpsp_|mem_read|mem_write|real_|svga|va2000|screengroups|activescreen' || true)
 [ -z "$LEAK" ] && echo "      no unresolved FPSP/svga/va2000 symbols" || { echo "[FAIL] unresolved:"; echo "$LEAK"; exit 1; }

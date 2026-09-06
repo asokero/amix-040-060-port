@@ -98,6 +98,19 @@ LEAK0=$(m68k-linux-gnu-nm "$HERE/build/va2000_040.o" | grep ' U ' | grep -vE '^\
 [ -z "$LEAK0" ] && echo "      only expected kernel imports (autocon/printf/uiomove/copyin/copyout/dev_kv*/hat_cm_fb_add)" \
 	|| { echo "[FAIL] unexpected unresolved refs in va2000_040.o:"; echo "$LEAK0"; exit 1; }
 
+# The define is what makes the driver address-agnostic, and its absence is SILENT:
+# without it the `#else` branch compiles, dev_kvmap stays defined-but-unused, every
+# check above still passes, and the kernel dereferences cd_BoardAddr instead.  That
+# is ISSUE-64, so assert the IMPORT -- the thing the define actually produces --
+# rather than the definition, which survives the regression.
+m68k-linux-gnu-nm "$HERE/build/va2000_040.o" | grep -qE ' U dev_kvmap$' || {
+	echo "[FAIL] va2000_040.o does not import dev_kvmap -- built without -DVA2000_KVA."
+	echo "       On Zorro III the driver would then write its registers to the board's"
+	echo "       AutoConfig address, and AmigaOS allocates that from 0x40000000, which"
+	echo "       is the fixed u-area.  See ISSUE-64."
+	exit 1; }
+echo "      va2000_040.o imports dev_kvmap (-DVA2000_KVA took)"
+
 echo "[*] weaken base parinit + expose parinit_orig -> build/unix-stage-va2000"
 STAGE="$HERE/build/unix-stage-va2000"
 cp "$IN" "$STAGE"
