@@ -648,68 +648,24 @@ Lhbx_msg:
 	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
 	.text
 	.globl	hardbus
+| MEASUREMENT WRAPPER ONLY (2026-09-06).  This used to carry its own copy of the
+| page-crossing fix and of the ISSUE-47 band guard.  Both now live once, in
+| src/runtime040.s as hardbus040_core, and this calls that body; the dbg build weakens
+| `hardbus` so this twin wins, but hardbus040_core keeps its own strong name and is
+| inherited from the base image.  Requested by Codex's ISSUE-47 contract, and the reason
+| is ISSUE-64: two copies of one decision, one of them updated.
+|
+| What is lost, said plainly rather than left to be discovered: the per-event
+| "DBG hardbus XPAGE ..." line is gone with the duplicated body.  Its count survives as
+| hbu_xpage_n in the core, so the quantity is still readable; the individual print is not.
+| That probe existed for the 2026-07-04 date hang, which has been fixed since.
 hardbus:
 	linkw	%fp,&0
 	moveml	%d2-%d3,%sp@-
 	addql	&1,Lhb_n
-	movel	%fp@(8),%d0		| addr
-	cmpil	&0x80000000,%d0
-	bcsw	Lhb_norm		| kernel/low address -> normal hardbus
-	movel	%d0,%d1
-	andil	&0xfff,%d1
-	cmpil	&0xff8,%d1
-	bcsw	Lhb_norm		| not within 8 bytes of page end -> normal hardbus
-	andil	&0xfffff000,%d0
-	movel	%d0,%d3			| d3 = current page base
-| -- resolve the CURRENT page (usually already valid -> cheap no-op) --
-	pea	1			| rw = read
-	clrl	%sp@-			| type = F_INVAL
-	pea	4			| len
-	movel	%d3,%sp@-
-	moveal	u+0x730,%a0
-	movel	%a0@(124),%sp@-		| as = curproc->p_as
-	jsr	as_fault
-	lea	%sp@(20),%sp
-	movel	%d0,%d2			| remember current-page result
-| -- resolve the NEXT page (the actual crossing target) --
-	addil	&0x1000,%d3
-	pea	1			| rw = read
-	clrl	%sp@-			| type = F_INVAL
-	pea	4			| len
-	movel	%d3,%sp@-
-	moveal	u+0x730,%a0
-	movel	%a0@(124),%sp@-
-	jsr	as_fault
-	lea	%sp@(20),%sp
-	tstl	%d0
-	beqw	Lhb_fixed		| next page mapped -> retry
-	tstl	%d2
-	beqw	Lhb_fixed		| current page (re)resolved -> retry
-	braw	Lhb_norm		| both failed -> genuine hard-error path
-Lhb_fixed:
-	movel	Lhbx_n,%d0
-	addql	&1,%d0
-	movel	%d0,Lhbx_n
-	cmpil	&16,%d0
-	blsw	Lhbx_log		| first 16 -> log
-	andil	&0x3ff,%d0
-	beqw	Lhbx_log		| every 1024th -> log (loop visibility)
-	braw	Lhbx_q
-Lhbx_log:
-	movel	Lhbx_n,%sp@-		| n
-	movel	%d3,%sp@-		| next page va
-	movel	%fp@(8),%sp@-		| original fault addr
-	pea	Lhbx_msg
-	pea	2
-	jsr	cmn_err
-	lea	%sp@(20),%sp
-Lhbx_q:
-	clrl	%d2			| return 0 = not a hard error, retry
-	braw	Lhb_out
-Lhb_norm:
 	movel	%fp@(12),%sp@-		| ptep
 	movel	%fp@(8),%sp@-		| addr
-	jsr	hardbus_orig
+	jsr	hardbus040_core
 	addqw	&8,%sp
 	movel	%d0,%d2			| ret
 	movel	Lhb_n,%d3

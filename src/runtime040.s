@@ -52,8 +52,17 @@ idle:
 | next page (read, F_INVAL); either resolving -> return 0 and retry.  Both fail ->
 | genuine hardbus.
 | --weaken-symbol hardbus + --add-symbol hardbus_orig=.text:0x5b3c2.
+| hardbus040_core is the SINGLE copy of the decision -- the page-crossing fix and the
+| ISSUE-47 unprobeable-band guard both live here and nowhere else.  The dbg build weakens
+| `hardbus` and supplies its own strong one, but that twin is a MEASUREMENT wrapper: it
+| calls this body under its other name rather than reimplementing it.  Codex's contract
+| (amix-kernel-analysis/vm-map/ISSUE47-HARDBUS-UNPROBEABLE-PHYS-CONTRACT.md) asked for
+| exactly that, and ISSUE-64 -- found the same day -- is what two copies of one decision
+| cost when only one of them gets updated.
 	.globl	hardbus
+	.globl	hardbus040_core
 hardbus:
+hardbus040_core:
 	linkw	%fp,&0
 	moveml	%d2-%d3,%sp@-
 	movel	%fp@(8),%d0		| addr
@@ -91,11 +100,49 @@ hardbus:
 	beqw	Lrt_hbfixed		| current page (re)resolved -> retry
 	braw	Lrt_hbnorm		| both failed -> genuine hard-error path
 Lrt_hbfixed:
+	addql	&1,hbu_xpage_n		| the dbg twin used to print this per event; count it instead
 	clrl	%d0			| return 0 = not a hard error, retry
 	moveml	%fp@(-8),%d2-%d3
 	unlk	%fp
 	rts
 Lrt_hbnorm:
+| --- ISSUE-47 (2026-09-06): do not trust bprobe between DTT0 and DTT1. ---
+| hardbus_orig (.text 0x5b3c2, disassembled) computes a PHYSICAL address from the PTE --
+| page base + (addr & 0xfff) -- and hands it to bprobe, which can only dereference it as a
+| VIRTUAL address.  DTT0 identity-maps 0x00000000-0x3FFFFFFF and DTT1 0x80000000-0xFFFFFFFF;
+| the band between them is the kernel's own virtual region 1, and that is exactly where
+| AmigaOS allocates Zorro III boards.  So a probe of physical 0x40000071 reads VA 0x40000071
+| -- THE FIXED U-AREA -- which always answers.  bprobe returns 0, hardbus_orig returns 0 =
+| "not a hard error, retry", and the faulting access repeats forever.  src/sigkill_dbg.s
+| records the same shape costing "3.1+ MILLION iterations" in the 2026-07-04 date hang.
+|
+| Measured 2026-09-06 (ISSUE-65, kernel 68040-260906-07): a VA2000 register write on a
+| Zorro III board at 0x40000000, PTE 40000059, eight logged retries on addr C108C071 before
+| the 68040 write-back replay recursion ate the u-area kernel stack and wb040's landing-pad
+| ownership guard panicked.  The retry is what has been preventing ISSUE-42's already
+| implemented propagation from ever running.
+|
+| In that band the probe is not evidence, so do not consult it.  Return 9 -- hardbus_orig's
+| OWN hard-error value (5b412: `moveq &9,%d0`) -- so nothing downstream sees a code this
+| kernel does not already produce.  d0 alone carries the result, matching the two existing
+| return paths in this function.
+	tstl	hbu_on
+	beqw	Lrt_hbtail		| escape hatch: 0 = pre-ISSUE-47 behaviour, for an A/B in one boot
+	moveal	%fp@(12),%a0
+	movel	%a0@,%d1		| PTE
+	andil	&0xfffff000,%d1		| physical page base
+	cmpil	&0x40000000,%d1
+	bcsw	Lrt_hbtail		| below DTT0's top -> bprobe reaches it -> meaningful
+	cmpil	&0x80000000,%d1
+	bccw	Lrt_hbtail		| inside DTT1 -> reaches it again -> meaningful
+	addql	&1,hbu_n
+	movel	%fp@(8),hbu_addr
+	movel	%a0@,hbu_pte
+	moveq	&9,%d0			| hardbus_orig's own hard-error return
+	moveml	%fp@(-8),%d2-%d3
+	unlk	%fp
+	rts
+Lrt_hbtail:
 	movel	%fp@(12),%sp@-		| ptep
 	movel	%fp@(8),%sp@-		| addr
 	jsr	hardbus_orig
@@ -103,6 +150,29 @@ Lrt_hbnorm:
 	moveml	%fp@(-8),%d2-%d3	| d0 = hardbus_orig's ret, untouched
 	unlk	%fp
 	rts
+
+	.data
+	.balign 4
+	.globl	hbu_magic
+hbu_magic:
+	.long	0x48425521		| "HBU!"
+	.globl	hbu_on
+hbu_on:
+	.long	1			| 0 = restore the pre-ISSUE-47 retry, inside one boot
+	.globl	hbu_n
+hbu_n:
+	.long	0			| probes refused because they land outside DTT0/DTT1
+	.globl	hbu_addr
+hbu_addr:
+	.long	0			| the last refused fault address
+	.globl	hbu_pte
+hbu_pte:
+	.long	0			| and its PTE, so the physical page is readable afterwards
+	.globl	hbu_xpage_n
+hbu_xpage_n:
+	.long	0			| page-crossing resolves (the 2026-07-04 date-hang path)
+	.balign 4			| pad section to a 4-byte multiple (bss placement: rel.c puts .bss at data_end UNALIGNED)
+	.text
 
 | ---------------------------------------------------------------------------
 | resume OVERRIDE (stock at .text 0x9c) -- native 040 context-switch core.
