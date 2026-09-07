@@ -122,7 +122,12 @@ char **argv;
 		 * would still fault here, which is worth separating from the panic. */
 		p[0] = 'A';
 		p[sz - 1] = 'Z';
-		if (p[0] != 'A' || p[sz - 1] != 'Z')
+		/* At sz == 1 both writes land on the SAME byte, so 'A' is legitimately gone
+		 * and checking for it fails by construction rather than by defect.  That
+		 * false positive was invisible until 2026-09-07, because size 1 has
+		 * `1 mod 4096 = 1`, i.e. inside ISSUE-62's band -- it panicked the kernel
+		 * before it could ever reach this line. */
+		if ((sz > 1 && p[0] != 'A') || p[sz - 1] != 'Z')
 			printf("RW-BAD ");
 		if (((unsigned long)p & 0xfff) != 0)
 			printf("UNALIGNED ");

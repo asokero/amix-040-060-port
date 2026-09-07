@@ -7831,7 +7831,7 @@ pointing outside RAM covers the indirect case. **Do not re-run the Doom timedemo
 is on the machine** — that was the reporter's own instruction, and the reason is that the panic
 overwrites the evidence for the user-space fault underneath it.
 
-## ⚠⚠ ISSUE-62 (2026-08-19 measured, 2026-09-05 seen in the wild, OPEN): any unprivileged process can panic the kernel with a `shmget` size whose remainder mod 4096 lands in `[1, 2048]`
+## ✅ ISSUE-62 (2026-08-19 measured, 2026-09-05 seen in the wild, FIXED AND HARDWARE-ACCEPTED 2026-09-07): any unprivileged process could panic the kernel with a `shmget` size whose remainder mod 4096 lands in `[1, 2048]`
 
 > **This is a real defect of this port, reachable with no privileges, and it had no issue number
 > until it panicked a working machine.** It was measured on hardware in August and written up as
@@ -8043,11 +8043,47 @@ Attempt A plus the three consumers it omitted:
 All six verified in the built image by disassembly rather than from the build log, which shows only
 the last few lines. `TOTAL complaints: 0`, `bindings failing: 0`, battery 40 blocks.
 
-**Not yet run on hardware.** The acceptance is written down in advance and has two parts, because
-**both earlier attempts passed the first and failed the second**: every size in the table survives,
-**and no other panic replaces it.** `shmband` does `shmget` → `shmat` → touch → `shmdt` →
-`IPC_RMID`, so a clean run exercises all three newly converted consumers rather than merely
-compiling them.
+### ✅ Hardware-accepted 2026-09-07, `68040-260907-17`
+
+The acceptance was written down in advance and had two parts, because **both earlier attempts
+passed the first and failed the second**. Both parts held.
+
+```text
+SHMBAND size=2047   mod4096=2047 segsz=2047   SURVIVE      <- panicked on stock
+SHMBAND size=2048   mod4096=2048 segsz=2048   SURVIVE      <- panicked on stock
+SHMBAND size=2049   mod4096=2049 segsz=2049   SURVIVE
+SHMBAND size=4095   mod4096=4095 segsz=4095   SURVIVE
+SHMBAND size=4096   mod4096=0    segsz=4096   SURVIVE
+SHMBAND size=4097   mod4096=1    segsz=4097   SURVIVE      <- panicked on stock
+SHMBAND size=6144   mod4096=2048 segsz=6144   SURVIVE      <- panicked on stock
+SHMBAND size=6145   mod4096=2049 segsz=6145   SURVIVE
+SHMBAND size=8191   mod4096=4095 segsz=8191   SURVIVE
+SHMBAND size=8192   mod4096=0    segsz=8192   SURVIVE
+SHMBAND-DONE
+```
+
+**And no other panic replaced it** — the machine stayed up and the serial mirror recorded nothing.
+That is the part both reverted attempts failed.
+
+Extended beyond the original table: **153600 survives**, which is the exact MIT-SHM request
+(320 × 240 × 2) that panicked a working machine on 2026-09-05 — and it survives **under a live
+Xrtg server**, which is the situation it was found in. Also 1, 2, 4098, 65536 and 131072.
+
+`SHMBAND-DONE` for every run means the full `shmget` → `shmat` → touch → `shmdt` → `IPC_RMID` cycle
+completed each time, so `shm_lock`, `shm_unlock` and `shm_rm_amp` were exercised rather than merely
+compiled. `segsz` reports the original byte count throughout, so `IPC_STAT`'s contract is intact.
+
+Same boot: battery **12/12**, **40/40** magics, `MUST-STAY-ZERO-OK`; and ISSUE-65 survives the base
+change — Xrtg reaches `InitOutput: done` / `InitInput: done` with `wbn_fail_n` = 0 over 14 273
+native write-back replays.
+
+### A test bug that only the fix could reveal
+
+`shmband` reported `RW-BAD` at size 1. That is the *test*, not the kernel: it writes `'A'` to
+`p[0]` and `'Z'` to `p[sz-1]`, and at `sz == 1` those are the same byte, so checking that `p[0]` is
+still `'A'` fails by construction. The false positive had been latent since the tool was written
+and **could not surface before**, because `1 mod 4096 = 1` is inside the band — size 1 panicked the
+kernel before it could ever reach that line. Fixed in `test-tools/shmband.c`.
 
 ### Reverted (superseded — kept as the record of two wrong fixes)
 
