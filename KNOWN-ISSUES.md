@@ -7928,19 +7928,49 @@ array by 2×**, harmlessly, and one corrected computation fixes both. That is th
 argument for changing the three constants rather than patching `amp->size` alone.
 
 **The fix is `2047` → `4095` at `0x559be`, and `11` → `12` at `0x559c4` and `0x55a38`.** Prediction
-to be written down before it is tested: every row of the table above survives, `shmband.c` finds no
-band at all, and the anon array halves.
+written down before it is tested: every row of the table above survives, `shmband.c` finds no band
+at all, and the anon array halves.
 
-### ⚠ One row of the table above contradicts its own predicate
+### Fixed 2026-09-07 in `src/patch_modelb.py`, built as `68040-260907-08`
 
-`| 2047 | 2047 | no | survive |` — but 2047 **is** in `[1, 2048]`, so that row's "no" is
-arithmetically false and the predicate says it should have panicked. The mechanism derived here
-also predicts a panic at 2047. So either the result column is a transcription error from the August
-write-up, or the predicate needs a correction that no simple rounding model produces.
+Three entries in the Model-B page-conversion table, which is where a missed 2 KiB → 4 KiB site
+belongs:
 
-Nine of the ten rows agree with the mechanism and with the predicate; the tenth disagrees with
-both. That makes the row the suspect rather than the mechanism, but it has not been re-measured and
-it is recorded here as unresolved rather than quietly fixed.
+```
+ (0x559be, 06 83 00 00 07 ff -> 06 83 00 00 0f ff)   round +2047 -> +4095
+ (0x559c4, 78 0b -> 78 0c)                           page count >>11 -> >>12
+ (0x55a38, 78 0b -> 78 0c)                           amp->size = pages <<11 -> <<12
+```
+
+All three verified in the built image by disassembly rather than from the build log — the log shows
+only two of them because `run_step 3` prints the last three lines of the patcher's output and the
+first entry fell off the top. The patcher itself `ABORT`s on any byte that is not what it expects,
+so a silent miss is not available to it.
+
+`TOTAL complaints: 0`, `bindings failing: 0`. **Not yet run on hardware**; the acceptance is that
+`shmband` finds no band, including at 2047, 2048, 4097 and 6144, which panic before the fix.
+
+### ⚠ → ✅ One row of the table above was wrong, and it has been re-measured
+
+`| 2047 | 2047 | no | survive |` — but 2047 **is** in `[1, 2048]`, so that row's "no" was
+arithmetically false, and both the stated predicate and the mechanism derived here said it should
+panic. Nine of the ten rows agreed with the mechanism; the tenth disagreed with the mechanism *and*
+with the entry's own predicate, which made the row the suspect.
+
+**Re-measured 2026-09-07 on the unfixed `68040-260907-04`:**
+
+```text
+SHMBAND size=2049 mod4096=2049 id=100 segsz=2049 ATTACH... at=c1033000 SURVIVE
+./shmband 2047  ->  PANIC: segvn_create anon_map size
+```
+
+So **2047 panics**, the August table row is a transcription error, and the predicate stands exactly
+as written. The mechanism predicted it from the disassembly before the test was run.
+
+Worth noting how narrow the window for this was: **the question is only answerable on an unfixed
+kernel.** Once the three constants are corrected every size survives and the discrimination is
+gone. It was run at the one moment it could be — the fixed kernel was already built and the machine
+was about to be rebooted anyway, so a panic cost nothing.
 
 ### A second, separate 2 KiB survivor found in the same hunt
 

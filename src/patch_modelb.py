@@ -665,6 +665,28 @@ P = [
  # 0xac922+, setprot/checkprot/getprot 0xaca06-0xacce0, segvn_kluster 0xacd80/86 and
  # segvn_swapout 0xace4c/98 are separate paths -- audit later (kluster only affects
  # readahead COUNT, not placement, once 0xac778 is correct).
+ # --- ISSUE-62 (site located 2026-09-07): shmget sizes the SysV shm anon_map in 2 KiB
+ #     pages while segvn_create checks it against a 4 KiB s_size, so any unprivileged
+ #     shmget whose size mod 4096 falls in [1,2048] panics the kernel with
+ #     "segvn_create anon_map size".  X11's MIT-SHM found it in the wild on 2026-09-05
+ #     (320*240*2 = 153600; 153600 mod 4096 = 2048).
+ #
+ #     The check is at 0xaaf08 inside segvn_create: amp->size - offset vs seg->s_size,
+ #     and that side already rounds by 4095 and shifts by 12.  anonmap_alloc (0xab3a6)
+ #     stores its size argument verbatim.  So the wrong rounding is here, in shmget:
+ #     d3 = (size + 2047) >> 11 is the page count, and it feeds BOTH consumers --
+ #     0x55a1e sizes the anon pointer array as d3*4, and 0x55a3a turns it back into
+ #     bytes for amp->size at %a0@(4), which is exactly the field the check reads.
+ #     One corrected computation fixes both; today the array is also over-allocated 2x.
+ #     shm_segsz (0x55a4c) keeps the ORIGINAL size, which is why IPC_STAT reports the
+ #     right byte count even for the fatal ones.
+ #
+ #     Predicate check: with amp = roundup2048 and s_size = roundup4096 the comparison
+ #     fails exactly when size mod 4096 is in [1,2048] -- derived from the disassembly
+ #     and then checked against the measured table, not fitted to it. ---
+ (0x559be, b"\x06\x83\x00\x00\x07\xff", b"\x06\x83\x00\x00\x0f\xff", "shmget:ISSUE-62 anon_map page count round +2047->+4095"),
+ (0x559c4, b"\x78\x0b", b"\x78\x0c", "shmget:ISSUE-62 anon_map page count >>11->>>12"),
+ (0x55a38, b"\x78\x0b", b"\x78\x0c", "shmget:ISSUE-62 amp->size = pages<<11-><<12"),
 ]
 # pea-800 sites DELIBERATELY NOT flipped (triaged 2026-07-03): 0xdbbe/0xdd58/0x20c60/0x20c9c
 # (ngeteblk/allocb buffer sizes -- STREAMS/block semantics, not page), 0xee3e/0xee90 (bbmem
