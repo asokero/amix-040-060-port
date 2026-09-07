@@ -8847,3 +8847,63 @@ Note the two fixes are independent and both are worth having:
 
 Also still open: whether this is the same failure the owner hit before ISSUE-64 was found. Both are
 `kstack` cascades. Nothing distinguishes them yet, and the earlier one was not captured on serial.
+
+## ⚠⚠ ISSUE-66 (2026-09-07, OPEN): `shmat` accepts a 2 KiB-aligned attach address on a 4 KiB kernel, and the segment then outruns its anon map
+
+Found by the probe written to ask whether the second 2 KiB survivor from ISSUE-62's hunt was a
+defect at all. It is.
+
+`shmat` enforces **SHMLBA = 2048**, in two places:
+
+```
+5538a:  andiw #-2048,%fp@(-34)   SHM_RND: round the attach address down to 2048
+553a0:  andil #2047,%d0          otherwise: not 2048-aligned -> EINVAL
+553a6:  bnew  553e0
+```
+
+On a 4 KiB-page kernel that lets a user attach at an address which is 2 KiB aligned and **not**
+page aligned — either by passing one directly, or by asking for `SHM_RND` and being rounded to the
+wrong multiple.
+
+### Measured, `68040-260907-17`, with ISSUE-62 already fixed and accepted
+
+`test-tools/shmalign.c`: `shmget(IPC_PRIVATE, 8192)`, attach once to learn a usable address, detach,
+then attach again at **that address + 2048**.
+
+```text
+PANIC: segvn_create anon_map size
+```
+
+The same panic message as ISSUE-62, on a kernel where `shmband` passes every size including 153600
+under a live X server. So this is not a regression of that fix — it is a second, independent route
+to the same check.
+
+**The mechanism, from the check's own arithmetic:**
+
+| attach at | segment spans | `s_size` | `amp->size` | |
+|---|---:|---:|---:|---|
+| `base + 0` | 8192 | 8192 | 8192 | ok |
+| **`base + 2048`** | **10240** | **12288** | **8192** | **`amp->size < s_size` → panic** |
+
+A non-page-aligned attach makes the segment span **one more page** than the anon map covers.
+ISSUE-62 corrected the map; it cannot correct an attach address the kernel should never have
+accepted. ⚠ The `s_size` value is inferred from the arithmetic, not read out of the kernel — the
+panic and the address that produces it are measured, the intermediate is not.
+
+### Why this is unprivileged and reachable
+
+Any process that calls `shmat` with an explicit address, or with `SHM_RND`, can produce it. `SHM_RND`
+is the dangerous one: a program that asks the kernel to round *for* it is rounded to 2048 and then
+panics the machine.
+
+### Not fixed, deliberately
+
+The obvious patch is `#-2048` → `#-4096` at `0x5538a` and `#2047` → `#4095` at `0x553a0`. That is
+exactly the shape of the two fixes ISSUE-62 refuted, and it has an extra hazard those did not:
+**SHMLBA is userland-visible.** A program computing `addr & ~(SHMLBA-1)` from its own
+`<sys/shm.h>` would produce a 2 KiB-aligned address and get `EINVAL` where it used to get a silent
+misaligned attach. That is better than a panic, but it is an ABI change and it belongs in a
+contract rather than in a two-constant guess.
+
+The complete producer/consumer question for the attach path — who else reads or assumes SHMLBA,
+and whether `as_map` should be rounding regardless — has not been enumerated.
