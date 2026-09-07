@@ -7947,8 +7947,53 @@ only two of them because `run_step 3` prints the last three lines of the patcher
 first entry fell off the top. The patcher itself `ABORT`s on any byte that is not what it expects,
 so a silent miss is not available to it.
 
-`TOTAL complaints: 0`, `bindings failing: 0`. **Not yet run on hardware**; the acceptance is that
-`shmband` finds no band, including at 2047, 2048, 4097 and 6144, which panic before the fix.
+`TOTAL complaints: 0`, `bindings failing: 0`.
+
+### ⚠ That fix was wrong, and the hardware said so within one run
+
+`68040-260907-08`, `shmband 2047 2048 2049 4095 4096 4097`:
+
+```text
+PANIC: swap_xlate
+```
+
+**Not `segvn_create anon_map size`.** 2047 was the first size tested and it panicked *immediately*
+on the unfixed kernel, so the check this issue is about demonstrably now passes — but converting
+all three constants makes `d3` the 4 KiB page count, and `d3` also sizes the anon pointer array at
+`0x55a1e`. The array was previously sized in 2 KiB pages, i.e. **twice what 4 KiB indexing needs**,
+and something still depends on that slack. `swap_xlate` (`0xb2aea`) panics when the anon it is
+handed has a zero field at `+8`, which is exactly what reading past the end of a too-small anon
+array produces.
+
+**The consumer that still indexes beyond `pages4k` has not been located.** Until it is, shrinking
+that array is not available, and the three-constant fix must not be used.
+
+### The corrected fix: one constant, and the array is left alone
+
+`68040-260907-11`. Change only the final shift and leave `d3` as the 2 KiB page count:
+
+```
+ (0x55a38, 78 0b -> 78 0c)    amp->size = pages2k <<11 -> <<12
+```
+
+| | array length | `amp->size` | vs `s_size` |
+|---|---|---|---|
+| stock | `pages2k` | `pages2k<<11` | **can be short → the panic** |
+| three-constant attempt | `pages4k` | `pages4k<<12` | ok, but the array shrank |
+| **this** | **`pages2k`, unchanged** | **`pages2k<<12`** | **≥ `s_size` for every size** |
+
+Two properties make this the right shape rather than merely a smaller change. `pages2k<<12` is
+`≥ roundup4096(size)` for every size, because `ceil(s/2048) ≥ ceil(s/4096)`, so the check can never
+fire. And `amp->size >> 12 == pages2k ==` the array length, so the map and the array describe the
+same number of 4 KiB pages — self-consistent, not just large. Nothing is shrunk, so nothing loses
+the slack the first attempt removed.
+
+The cost is that a segment reserves up to one extra 4 KiB page of anon map. That is
+over-provisioning, which is the pre-existing 2 KiB-era behaviour scaled up, rather than a new class
+of error.
+
+**Not yet run on hardware.** The acceptance is that `shmband` finds no band — 2047, 2048, 4097 and
+6144 included — and that nothing else panics in their place this time.
 
 ### ⚠ → ✅ One row of the table above was wrong, and it has been re-measured
 

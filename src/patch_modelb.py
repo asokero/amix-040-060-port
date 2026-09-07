@@ -684,9 +684,25 @@ P = [
  #     Predicate check: with amp = roundup2048 and s_size = roundup4096 the comparison
  #     fails exactly when size mod 4096 is in [1,2048] -- derived from the disassembly
  #     and then checked against the measured table, not fitted to it. ---
- (0x559be, b"\x06\x83\x00\x00\x07\xff", b"\x06\x83\x00\x00\x0f\xff", "shmget:ISSUE-62 anon_map page count round +2047->+4095"),
- (0x559c4, b"\x78\x0b", b"\x78\x0c", "shmget:ISSUE-62 anon_map page count >>11->>>12"),
- (0x55a38, b"\x78\x0b", b"\x78\x0c", "shmget:ISSUE-62 amp->size = pages<<11-><<12"),
+ #     ⚠ FIRST ATTEMPT WAS WRONG AND IS RECORDED HERE RATHER THAN DELETED.  Converting all
+ #     three constants -- +2047->+4095, >>11->>>12 and <<11-><<12 -- makes d3 the 4 KiB page
+ #     count, which is arithmetically right and HALVES the anon pointer array with it.  The
+ #     old array was sized in 2 KiB pages, i.e. 2x what 4 KiB indexing needs, and something
+ #     still depends on that slack: measured 2026-09-07 on 68040-260907-08, the segvn_create
+ #     panic was indeed gone and `shmband 2047 2048 2049 4095 4096 4097` reached
+ #     `PANIC: swap_xlate` instead -- swap_xlate (0xb2aea) panics when the anon it is handed
+ #     has a zero field at +8, which is what reading past a too-small anon array produces.
+ #     The consumer that still indexes beyond pages4k has NOT been located; until it is,
+ #     shrinking that array is not available.
+ #
+ #     SO: change ONE constant, the final shift, and leave the array exactly as it was.
+ #     d3 stays the 2 KiB page count, the array keeps its length, and amp->size becomes
+ #     pages2k<<12.  That is >= roundup4096(size) for every size, so the check can never
+ #     fire; and amp->size>>12 == pages2k == the array length, so the map and the array
+ #     describe the same number of 4 KiB pages -- self-consistent rather than merely large.
+ #     The cost is that a segment reserves up to one extra 4 KiB page of anon map, which is
+ #     over-provisioning rather than a new class of error. ---
+ (0x55a38, b"\x78\x0b", b"\x78\x0c", "shmget:ISSUE-62 amp->size = pages<<11-><<12 (array length deliberately unchanged)"),
 ]
 # pea-800 sites DELIBERATELY NOT flipped (triaged 2026-07-03): 0xdbbe/0xdd58/0x20c60/0x20c9c
 # (ngeteblk/allocb buffer sizes -- STREAMS/block semantics, not page), 0xee3e/0xee90 (bbmem
