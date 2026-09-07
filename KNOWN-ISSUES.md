@@ -8307,7 +8307,7 @@ That distinction is the reason this section exists rather than a quiet edit. A d
 proven by four independent readings, and a hypothesis about which crash it caused, are two claims
 with different evidence, and only one of them held.
 
-## ⚠⚠ ISSUE-65 (2026-09-06, OPEN — diagnosed the same day): the 68040 write-back replay retries an unanswerable Zorro III access forever, and the recursion eats the u-area kernel stack
+## ✅ ISSUE-65 (2026-09-06, FIXED AND HARDWARE-ACCEPTED 2026-09-07): the 68040 write-back replay decomposed an aligned register write into bytes, and the Zorro III register window refuses the odd one
 
 This is what was left after ISSUE-64 was fixed and proven fixed. Same machine, same session, same
 board — kernel `68040-260906-06`, whose VA2000 driver now reaches the board through `dev_kvmap`
@@ -8636,9 +8636,52 @@ The hand-encoded opwords were verified by disassembling the object rather than t
 claim a native transfer that never happened. `TOTAL complaints: 0`, `bindings failing: 0`, and the
 battery block count went 39 → 40 because `gen-battery.sh` picked `wbn_magic` up on its own.
 
-**Not yet run on hardware.** The acceptance matrix is the contract's, and the two denominators it
-insists on are the point: `wbn_fail_n` = 0 means nothing unless `wbn_b_n + wbn_w_n + wbn_l_n` is
-large, and `wbn_fallback_n` = 0 is coverage absence rather than a passing fallback.
+### ✅ Hardware-accepted 2026-09-07, `68040-260907-04` — and Xrtg runs
+
+```text
+va2000: firmware 90, framebuffer 32704 KB, bus Zorro III
+va2000InitHW: base=c108c000, mapped 1257 KB for a 937 KB mode
+va2000InitHW: mode 800x600 (800x600)
+va2000InitHW: done OK
+rtgScreenInit: done, returning TRUE
+InitOutput: done, n=1
+InitInput: done
+va2000: 1666 ms awake: 0 blits (0 polls), fill 0 hw + 208 cpu, copy 0 hw + 481024 cpu
+```
+
+**`va2000InitHW: done OK` is the line that had never appeared.** Every previous attempt died inside
+that function. The server now reaches `InitInput: done`, `/tmp/.X11-unix/X0` exists, and it is
+moving pixels. It reports the aperture as **32704 KB on bus Zorro III**, so it is using the whole
+32 MB window.
+
+The contract's acceptance matrix, measured:
+
+| | before Xrtg | after | required |
+|---|---:|---:|---|
+| `wbn_w_n` (native aligned word) | 297 | **303** | must increase — it did, by the six register writes |
+| `wbn_b_n` / `wbn_l_n` | 534 / 12298 | 1012 / 12808 | the denominator |
+| **`wbn_fail_n`** | 0 | **0** | no native replay faulted |
+| `wbf_fail_n` / `wbf_signal_n` | 0 / 0 | **0 / 0** | no denied write-back at all |
+| **`hbu_n`** | 3 | **3** | must NOT increase — and it did not |
+| `wbn_fallback_n` | 47 | 47 | unchanged: no misaligned WB during the run |
+
+`hbu_n` = 3 is entirely the `va2byte` control's own three kills, taken *before* Xrtg. And the serial
+mirror recorded **nothing at all** during the Xrtg run — no `hardbus` line, no bus error, no
+`kstack`, no panic.
+
+The denominators the contract insisted on are real rather than nominal: **13 129 native replays
+before the run and 14 123 after, with zero failures**, and `wbn_fallback_n` = 47 rather than 0, so
+the retained misaligned byte path is genuinely exercised and its coverage is a measured number.
+
+Everything else held on the same boot: battery **12/12**, **40/40** magics, `MUST-STAY-ZERO-OK`,
+`protfault a`/`b` passing so ISSUE-42's denied-write-back behaviour is intact, and the `va2byte`
+control **byte-identical to before the change** — odd register byte writes still fail, aligned word
+writes still pass, framebuffer byte writes still pass at both parities. The kernel did not hide the
+device property; it stopped generating the access the device refuses.
+
+Still unrun from the matrix: the 68060 control (all `wbn_*` must stay zero there, since `wb040` is
+gated by the format-7 frame), and a deliberately forced aligned native bus error to confirm one
+attempt, one terminal fault and no retry flood.
 
 
 So: **the byte-wise replay is the trigger.** One legal, aligned, 16-bit register write is
