@@ -847,9 +847,83 @@ Lwb_fcok:
 	movel	&0x57424f21,wbf_own_cookie	| "WBO!"
 	movel	%sp,wbf_own_sp		| set BEFORE arming: never armed without an owner
 	movel	&Lwb_fail,u+0x374	| arm: unresolved nested fault lands at Lwb_fail
+| ===========================================================================
+| ISSUE-65 (2026-09-07): replay a normal write-back with ONE MOVES of its own
+| recorded size.  Contract: amix-kernel-analysis/vm-map/ISSUE65-WBREPLAY-
+| NATIVE-SIZE-CONTRACT.md, which reads Motorola MC68040UM 7.3 / 8.4.6.3-7,
+| NetBSD m68040_writeback and Linux do_040writeback1 -- all three preserve the
+| recorded width, and none of them decomposes a normal WB into bytes.
+|
+| WHY IT MATTERED HERE.  Measured 2026-09-06: Xrtg stores an aligned 16-bit
+| value to a VA2000 register at C108C070; the byte loop below reissued it as
+| C108C070 then C108C071, and that Zorro III register file rejects an odd byte
+| WRITE.  Proven from user space with an ordinary move.b, so it is not the
+| MOVES instruction, not the DFC and not supervisor state -- byte reads pass at
+| the same address, and byte writes pass in the framebuffer.  A native word
+| store preserves the width the device actually accepts.
+|
+| ⚠ A FAILED NATIVE REPLAY MUST NEVER BE FOLLOWED BY A BYTE REPLAY.  A bus
+| error does not prove that none of the transfer completed -- the 68040 splits
+| an unaligned operand into several aligned cycles, and a FIFO, an acknowledge
+| register or a write-one-to-clear field may have consumed the first one.
+| Replaying any part of it can duplicate an irreversible effect.  So there is
+| no byte-localisation pass here and there must never be one; Lwb_fail records
+| WBxA plus the size instead.  That is also why the native forms do NOT
+| postincrement: a3 keeps naming the transfer start on both paths.
+|
+| ALIGNED-ONLY PILOT, deliberately.  A misaligned word or long WB is entirely
+| legal (Motorola's WB1 alignment table lists them), and byte-decomposing one
+| is exactly as questionable for a device as the case above -- but the existing
+| byte path is the proven ISSUE-7 implementation, so it is retained unchanged
+| for those and COUNTED as an explicit residual rather than quietly kept.  A
+| naturally aligned word or long cannot cross a 4 KiB page, so this pilot is
+| independent of the cross-page work.  A later unit that preflights the whole
+| WB range can replace the fallback; it needs its own coverage first.
+|
+| The data needs no shaping: d2 is right-justified at Lwb_do for all three
+| slots and was copied to d1 above.  The swap/lsl/rol below are the BYTE LOOP's
+| serialisation convention and nothing else, which is why they stay in the
+| fallback branch only.
 	movel	%d3,%d0
 	lsrl	&5,%d0
-	andil	&3,%d0			| SIZE: 0=long, 1=byte, 2=word; Z = (size==0), tested by the next insn
+	andil	&3,%d0			| SIZE: 0=long, 1=byte, 2=word, 3=line
+	tstl	wbn_on
+	beqw	Lwb_serial		| escape hatch: 0 = the pre-ISSUE-65 replay, whole
+	cmpil	&1,%d0
+	beqw	Lwb_nbyte		| byte: native unconditionally
+	cmpil	&2,%d0
+	beqw	Lwb_nword
+	tstl	%d0
+	bnew	Lwb_serial		| size 3 = line: never a normal native store
+| long: native only when naturally aligned
+	movel	%a3,%d0
+	andil	&3,%d0
+	bnew	Lwb_mis
+	addql	&1,wbn_l_n
+	movel	&2,wbn_mode		| 2 = native long
+	.word	0x0e93,0x1800		| moves.l %d1,%a3@   (no postincrement: a3 = WBxA)
+	braw	Lwb_ndone
+Lwb_nword:
+	movel	%a3,%d0
+	andil	&1,%d0
+	bnew	Lwb_mis
+	addql	&1,wbn_w_n
+	movel	&1,wbn_mode		| 1 = native word
+	.word	0x0e53,0x1800		| moves.w %d1,%a3@
+	braw	Lwb_ndone
+Lwb_nbyte:
+	addql	&1,wbn_b_n
+	clrl	wbn_mode		| 0 = native byte
+	.word	0x0e13,0x1800		| moves.b %d1,%a3@
+	braw	Lwb_ndone
+Lwb_mis:
+	addql	&1,wbn_fallback_n	| misaligned word/long: the retained ISSUE-7 path,
+					| counted so its coverage is a number and not a hope
+Lwb_serial:
+	movel	&3,wbn_mode		| 3 = byte-serialising fallback
+	movel	%d3,%d0
+	lsrl	&5,%d0
+	andil	&3,%d0			| SIZE again; Z = (size==0), tested by the next insn
 	beqw	Lwb_long
 	cmpil	&1,%d0
 	beqw	Lwb_byte
@@ -865,9 +939,11 @@ Lwb_long:
 	moveq	&4,%d0			| long: d1 = d2 as-is, 4 bytes
 Lwb_loop:
 	roll	&8,%d1			| rotate next MSB down into bits 7..0
-	.word	0x0e1b,0x1800		| moves.b %d1,%a3@+  (per-byte access -> correct per-byte FA on fault)
+	.word	0x0e1b,0x1800		| moves.b %d1,%a3@+  (per-byte access -> exact per-byte FA on fault,
+					| which is true for the byte path ONLY -- see the header)
 	subql	&1,%d0
 	bnew	Lwb_loop
+Lwb_ndone:
 	movel	%d2,u+0x374		| disarm: restore the outer u_nofault value
 	movel	%a0,wbf_own_cookie	| ...and the landing pad's outer owner, so a nested
 	movel	%a1,wbf_own_sp		| replay hands the parent's arm back intact
@@ -928,8 +1004,24 @@ Lwb_fail:
 	movel	%a0,wbf_own_cookie	| and the outer owner, BEFORE anything below can fault
 	movel	%a1,wbf_own_sp		| (audit item 5: clear ownership before logging)
 	addql	&1,wbf_fail_n
-	movel	%a3,wbf_addr		| the DENIED BYTE's own address: exact, because the
-	movel	%d3,wbf_wbs		| replay loop goes byte by byte (the ISSUE-7 shape)
+	cmpil	&3,wbn_mode
+	beqs	Lwbf_nonat
+	addql	&1,wbn_fail_n		| a NATIVE replay failed.  Nothing below re-touches the
+					| target: no byte-localisation pass, no retry.  The
+					| transfer may have partially completed and a second
+					| store could repeat an irreversible device effect.
+Lwbf_nonat:
+	movel	%a3,wbf_addr		| WHAT THIS ADDRESS MEANS DEPENDS ON wbn_mode, and it is
+	movel	%d3,wbf_wbs		| no longer universally "the denied byte":
+					|   mode 0/1/2 (native) -- a3 = WBxA, the TRANSFER START.
+					|     Motorola defines the format-7 FA as the initial
+					|     address of the faulted access, so for a wide operand
+					|     there is no architecturally supported exact-byte
+					|     claim to make.  WBxA plus wbf_wbs's SIZE is the
+					|     complete and correct report -- NetBSD and Linux
+					|     record the slot's WBxA for the same reason.
+					|   mode 3 (byte fallback) -- exact, because the faulted
+					|     access really was one byte (the ISSUE-7 shape).
 	movel	Lwbf_n,%d0
 	cmpil	&8,%d0
 	bccw	Lwbf_q			| print cap -- it caps the MESSAGE, not the propagation
@@ -1026,6 +1118,39 @@ Lwbf_n:
 	.globl	wbf_magic
 wbf_magic:
 	.long	0x57424621		| "WBF!"
+	.balign 4
+	.globl	wbn_magic
+wbn_magic:
+	.long	0x57424e21		| "WBN!" -- ISSUE-65 native-size replay
+	.globl	wbn_on
+wbn_on:
+	.long	1			| 0 = restore the pre-ISSUE-65 replay whole, in one .data
+					| long, for an A/B inside a single boot
+	.globl	wbn_b_n
+wbn_b_n:
+	.long	0			| native byte replays
+	.globl	wbn_w_n
+wbn_w_n:
+	.long	0			| native ALIGNED word replays
+	.globl	wbn_l_n
+wbn_l_n:
+	.long	0			| native ALIGNED long replays
+	.globl	wbn_fallback_n
+wbn_fallback_n:
+	.long	0			| misaligned word/long left on the retained byte path.
+					| This is the residual's denominator: zero here means
+					| the workload never produced a misaligned WB, NOT that
+					| the fallback is correct.
+	.globl	wbn_fail_n
+wbn_fail_n:
+	.long	0			| native replays that faulted.  Meaningless without
+					| wbn_b_n + wbn_w_n + wbn_l_n as its denominator.
+	.globl	wbn_mode
+wbn_mode:
+	.long	3			| the LAST replay's mode: 0=native byte, 1=native word,
+					| 2=native long, 3=byte fallback.  Read it to know what
+					| wbf_addr means; initialised to 3 so a read before any
+					| replay does not claim a native transfer.
 	.globl	wbf_prop_on
 wbf_prop_on:
 	.long	1			| 1 = propagate a denied write-back (the fix)

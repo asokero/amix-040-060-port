@@ -7957,7 +7957,6 @@ family and the same file, but it is **not** the cause of this panic — the pred
 `size`, and the panic names `anon_map size`. It needs its own measurement before it is called a
 defect, and it is written down so the next reader of `shmat` does not have to find it twice.
 
-
 ## ⚠ ISSUE-63 (2026-09-05, OPEN): `pollwakeup` calls through a function pointer out of a freed `polldat`, and takes an address error during X session shutdown
 
 Hardware, `68040-260903-04` on a 68060 at 52 MHz with the Mercury's own RAM disabled, after a
@@ -8586,6 +8585,60 @@ instructions above the loop, from `WBxS` bits 6:5, and then used only as a byte 
 
 That change is to the hottest path this project touches, so it gets a contract before an
 implementation — and the contract now has a measured requirement rather than a hypothesis.
+
+### The contract, and the four things in it that changed the design
+
+`amix-kernel-analysis/vm-map/ISSUE65-WBREPLAY-NATIVE-SIZE-CONTRACT.md` (the analysis repository;
+cited, not copied). It read Motorola MC68040UM 7.3 and 8.4.6.3–7, NetBSD's `m68040_writeback` and
+Linux's `do_040writeback1` against this code. All three preserve the recorded width and none
+decomposes a normal write-back into bytes, so the direction was confirmed — but four of its answers
+changed what got built:
+
+1. **"One native-size replay" is one logical INSTRUCTION, not one bus cycle.** Motorola §7.3: an
+   unaligned noncacheable operand becomes a sequence of aligned external cycles — a word at an odd
+   address is two, a long is two or three. Writing the invariant as "one bus cycle" would have been
+   wrong in exactly the configurations this issue is about.
+2. **The double-write hazard is answered: never.** A failed native replay must not be followed by a
+   byte pass to localise it, because a bus error does not prove that none of the transfer
+   completed, and a FIFO or a write-one-to-clear field may have consumed the first cycle. There is
+   no architecturally supported exact-byte claim for a wide operand: the format-7 FA is the
+   transfer's **initial** address whichever sub-cycle failed. NetBSD and Linux both record `WBxA`
+   for that reason.
+3. **Misaligned word and long write-backs are legal** — Motorola's WB1 alignment table lists words
+   with A0 set and longs with every A1:A0 — so they are not corrupt state to be rejected. And
+   `wbf_last_addr = C108C071` was never evidence of a misaligned WB: it is the second byte the
+   *software* loop generated. The original `WBxA` was the aligned `C108C070`, exactly as the
+   kernel's own notice said.
+4. **A naturally aligned word or long cannot cross a 4 KiB page**, which makes an aligned-only
+   pilot independent of the proven cross-page path rather than entangled with it.
+
+### Implemented 2026-09-07 — aligned-only pilot, `68040-260907-04` / `-05`
+
+`src/wb040.s`, all eight points of the contract's minimum unit in one change: native
+byte/word/long dispatch behind natural-alignment gates; `d1` consumed directly, because `d2` is
+right-justified at `Lwb_do` for all three slots and the `swap`/`lsl`/`rol` are the byte loop's own
+serialisation and nothing else; **non-postincrement** native forms, so `a3` keeps naming the
+transfer start on both the normal and the fault path; the misaligned word/long case left byte-
+identical on the retained path and **counted**; mode- and size-aware failure recording; an
+`wbn_on` escape hatch that restores the whole pre-ISSUE-65 replay in one `.data` long; and an
+explicit rule, written at the site, that no native failure starts a diagnostic byte replay.
+
+The hand-encoded opwords were verified by disassembling the object rather than trusted:
+
+```
+ 694:  0e93 1800   movesl %d1,%a3@     native long,  no postincrement
+ 6b8:  0e53 1800   movesw %d1,%a3@     native word
+ 6cc:  0e13 1800   movesb %d1,%a3@     native byte
+ 712:  0e1b 1800   movesb %d1,%a3@+    the retained fallback loop, postincrementing
+```
+
+`wbn_mode` is initialised to 3 (byte fallback) rather than 0, so a read before any replay cannot
+claim a native transfer that never happened. `TOTAL complaints: 0`, `bindings failing: 0`, and the
+battery block count went 39 → 40 because `gen-battery.sh` picked `wbn_magic` up on its own.
+
+**Not yet run on hardware.** The acceptance matrix is the contract's, and the two denominators it
+insists on are the point: `wbn_fail_n` = 0 means nothing unless `wbn_b_n + wbn_w_n + wbn_l_n` is
+large, and `wbn_fallback_n` = 0 is coverage absence rather than a passing fallback.
 
 
 So: **the byte-wise replay is the trigger.** One legal, aligned, 16-bit register write is
