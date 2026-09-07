@@ -7968,69 +7968,52 @@ array produces.
 **The consumer that still indexes beyond `pages4k` has not been located.** Until it is, shrinking
 that array is not available, and the three-constant fix must not be used.
 
-### The corrected fix: one constant, and the array is left alone
+### The corrected fix also panicked — and that is what identified the real defect
 
-`68040-260907-11`. Change only the final shift and leave `d3` as the 2 KiB page count:
+`68040-260907-11`, one constant, array untouched. `shmband 2047 2048 2049 4095 4096 4097` →
+**`PANIC: swap_xlate`** again.
 
-```
- (0x55a38, 78 0b -> 78 0c)    amp->size = pages2k <<11 -> <<12
-```
+That refutes the explanation given above. Variant B did **not** shrink the array, so "the array
+shrank" cannot be why either version failed. What both versions did do is **double `amp->size`**,
+and that is the property they share:
 
-| | array length | `amp->size` | vs `s_size` |
-|---|---|---|---|
-| stock | `pages2k` | `pages2k<<11` | **can be short → the panic** |
-| three-constant attempt | `pages4k` | `pages4k<<12` | ok, but the array shrank |
-| **this** | **`pages2k`, unchanged** | **`pages2k<<12`** | **≥ `s_size` for every size** |
+| variant | array length | `amp->size` | `amp->size >> 11` | vs array |
+|---|---|---|---|---|
+| **stock** | `pages2k` | `pages2k<<11` | `pages2k` | **fits exactly** |
+| A: three constants | `pages4k` | `pages4k<<12` | `2·pages4k` | overrun 2× → panic |
+| B: one constant | `pages2k` | `pages2k<<12` | `2·pages2k` | overrun 2× → panic |
 
-Two properties make this the right shape rather than merely a smaller change. `pages2k<<12` is
-`≥ roundup4096(size)` for every size, because `ceil(s/2048) ≥ ceil(s/4096)`, so the check can never
-fire. And `amp->size >> 12 == pages2k ==` the array length, so the map and the array describe the
-same number of 4 KiB pages — self-consistent, not just large. Nothing is shrunk, so nothing loses
-the slack the first attempt removed.
+**So there is a live consumer that recovers the array length as `amp->size >> 11`.** All three
+observations fit that and nothing else needs to be assumed. It was derived after the second failure
+rather than before it, so it is a hypothesis with three data points, not a proven mechanism — but
+it is the only one that explains why an untouched array still overran.
 
-The cost is that a segment reserves up to one extra 4 KiB page of anon map. That is
-over-provisioning, which is the pre-existing 2 KiB-era behaviour scaled up, rather than a new class
-of error.
+### What ISSUE-62 actually is, restated
 
-**Not yet run on hardware.** The acceptance is that `shmband` finds no band — 2047, 2048, 4097 and
-6144 included — and that nothing else panics in their place this time.
+Not "shmget rounds wrong". **The shm anon_map is built *and consumed* in 2 KiB units throughout,
+and it is internally consistent that way.** `shmget` makes `d3 = ceil(size/2048)`, sizes the anon
+pointer array from it, and stores `amp->size = d3<<11`; something downstream shifts that back by
+11 to recover the same count. The only thing that disagrees is `segvn_create`'s check, which
+compares it against a **4 KiB** `s_size`.
 
-### ⚠ → ✅ One row of the table above was wrong, and it has been re-measured
+Converting the producer alone therefore does not fix the defect — **it makes it worse**. The 2×
+overrun does not depend on the size band, so sizes that survive on stock (2049, 4095, 4096) panic
+too. Both attempts widened an `[1, 2048]`-band panic into an every-size one.
 
-`| 2047 | 2047 | no | survive |` — but 2047 **is** in `[1, 2048]`, so that row's "no" was
-arithmetically false, and both the stated predicate and the mechanism derived here said it should
-panic. Nine of the ten rows agreed with the mechanism; the tenth disagreed with the mechanism *and*
-with the entry's own predicate, which made the row the suspect.
+The real unit is the whole anon_map construction and consumption for SysV shm, and **the consumer
+has not been located.** Finding it is static work and needs no hardware.
 
-**Re-measured 2026-09-07 on the unfixed `68040-260907-04`:**
+### Reverted
 
-```text
-SHMBAND size=2049 mod4096=2049 id=100 segsz=2049 ATTACH... at=c1033000 SURVIVE
-./shmband 2047  ->  PANIC: segvn_create anon_map size
-```
+`src/patch_modelb.py` carries no ISSUE-62 entry; the table is back to stock behaviour, which is the
+known state and the one everything else was accepted against. Rebuilt as `68040-260907-14`,
+`TOTAL complaints: 0`. The reason is recorded at the site in the patch table as well, so the next
+reader does not re-derive the same wrong fix.
 
-So **2047 panics**, the August table row is a transcription error, and the predicate stands exactly
-as written. The mechanism predicted it from the disassembly before the test was run.
-
-Worth noting how narrow the window for this was: **the question is only answerable on an unfixed
-kernel.** Once the three constants are corrected every size survives and the discrimination is
-gone. It was run at the one moment it could be — the fixed kernel was already built and the machine
-was about to be rebooted anyway, so a panic cost nothing.
-
-### A second, separate 2 KiB survivor found in the same hunt
-
-`shmat` enforces **2 KiB** alignment on the attach address:
-
-```
-5538a:  andiw #-2048,%fp@(-34)   ; SHM_RND: round the address down to 2048
-553a0:  andil #2047,%d0          ; otherwise: not 2048-aligned -> error
-553a6:  bnew  553e0
-```
-
-On a 4 KiB-page kernel that accepts an address which is 2 KiB but not 4 KiB aligned. It is the same
-family and the same file, but it is **not** the cause of this panic — the predicate here is on
-`size`, and the panic names `anon_map size`. It needs its own measurement before it is called a
-defect, and it is written down so the next reader of `shmat` does not have to find it twice.
+**What was gained rather than lost:** the panic string's site is located (`segvn_create+0x306`, and
+the check itself), `anonmap_alloc` is cleared as a suspect, the 2047 table row is corrected, the
+predicate is confirmed exactly, and the failure is now attributed to a *consumer* rather than the
+producer — which is a much sharper target than "a 2 KiB constant somewhere in the shm path".
 
 ## ⚠ ISSUE-63 (2026-09-05, OPEN): `pollwakeup` calls through a function pointer out of a freed `polldat`, and takes an address error during X session shutdown
 

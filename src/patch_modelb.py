@@ -665,44 +665,19 @@ P = [
  # 0xac922+, setprot/checkprot/getprot 0xaca06-0xacce0, segvn_kluster 0xacd80/86 and
  # segvn_swapout 0xace4c/98 are separate paths -- audit later (kluster only affects
  # readahead COUNT, not placement, once 0xac778 is correct).
- # --- ISSUE-62 (site located 2026-09-07): shmget sizes the SysV shm anon_map in 2 KiB
- #     pages while segvn_create checks it against a 4 KiB s_size, so any unprivileged
- #     shmget whose size mod 4096 falls in [1,2048] panics the kernel with
- #     "segvn_create anon_map size".  X11's MIT-SHM found it in the wild on 2026-09-05
- #     (320*240*2 = 153600; 153600 mod 4096 = 2048).
+ # --- ISSUE-62: NOT PATCHED HERE, and the two attempts that were are recorded in
+ #     KNOWN-ISSUES.md rather than left in the table.  The shm anon_map is built AND
+ #     CONSUMED in 2 KiB units throughout: shmget makes d3 = ceil(size/2048), sizes the
+ #     anon pointer array from it, and stores amp->size = d3<<11.  Something downstream
+ #     still does amp->size>>11 to recover that array length -- measured, because BOTH
+ #     ways of correcting the producer doubled amp->size and both overran the array by
+ #     exactly 2x, giving PANIC: swap_xlate on 68040-260907-08 and -11.
  #
- #     The check is at 0xaaf08 inside segvn_create: amp->size - offset vs seg->s_size,
- #     and that side already rounds by 4095 and shifts by 12.  anonmap_alloc (0xab3a6)
- #     stores its size argument verbatim.  So the wrong rounding is here, in shmget:
- #     d3 = (size + 2047) >> 11 is the page count, and it feeds BOTH consumers --
- #     0x55a1e sizes the anon pointer array as d3*4, and 0x55a3a turns it back into
- #     bytes for amp->size at %a0@(4), which is exactly the field the check reads.
- #     One corrected computation fixes both; today the array is also over-allocated 2x.
- #     shm_segsz (0x55a4c) keeps the ORIGINAL size, which is why IPC_STAT reports the
- #     right byte count even for the fatal ones.
- #
- #     Predicate check: with amp = roundup2048 and s_size = roundup4096 the comparison
- #     fails exactly when size mod 4096 is in [1,2048] -- derived from the disassembly
- #     and then checked against the measured table, not fitted to it. ---
- #     ⚠ FIRST ATTEMPT WAS WRONG AND IS RECORDED HERE RATHER THAN DELETED.  Converting all
- #     three constants -- +2047->+4095, >>11->>>12 and <<11-><<12 -- makes d3 the 4 KiB page
- #     count, which is arithmetically right and HALVES the anon pointer array with it.  The
- #     old array was sized in 2 KiB pages, i.e. 2x what 4 KiB indexing needs, and something
- #     still depends on that slack: measured 2026-09-07 on 68040-260907-08, the segvn_create
- #     panic was indeed gone and `shmband 2047 2048 2049 4095 4096 4097` reached
- #     `PANIC: swap_xlate` instead -- swap_xlate (0xb2aea) panics when the anon it is handed
- #     has a zero field at +8, which is what reading past a too-small anon array produces.
- #     The consumer that still indexes beyond pages4k has NOT been located; until it is,
- #     shrinking that array is not available.
- #
- #     SO: change ONE constant, the final shift, and leave the array exactly as it was.
- #     d3 stays the 2 KiB page count, the array keeps its length, and amp->size becomes
- #     pages2k<<12.  That is >= roundup4096(size) for every size, so the check can never
- #     fire; and amp->size>>12 == pages2k == the array length, so the map and the array
- #     describe the same number of 4 KiB pages -- self-consistent rather than merely large.
- #     The cost is that a segment reserves up to one extra 4 KiB page of anon map, which is
- #     over-provisioning rather than a new class of error. ---
- (0x55a38, b"\x78\x0b", b"\x78\x0c", "shmget:ISSUE-62 amp->size = pages<<11-><<12 (array length deliberately unchanged)"),
+ #     Converting the producer alone therefore makes the defect WORSE: sizes that survive
+ #     on stock (2049, 4095, 4096) also panic, because the 2x overrun does not depend on
+ #     the size band.  The real unit is the whole anon_map construction and consumption
+ #     for shm, and the consumer has not been located yet.  Stock behaviour is the known
+ #     state and everything else was accepted against it, so the table stays clean. ---
 ]
 # pea-800 sites DELIBERATELY NOT flipped (triaged 2026-07-03): 0xdbbe/0xdd58/0x20c60/0x20c9c
 # (ngeteblk/allocb buffer sizes -- STREAMS/block semantics, not page), 0xee3e/0xee90 (bbmem
