@@ -7874,11 +7874,89 @@ find it.
 
 Workaround for a caller: round the request up to a multiple of 4096. That hides it; the hole stays.
 
-### What is not known
+### The site, located 2026-09-07 — `shmget`, three constants, one computation
 
-Which site. The family is certain and the predicate is exact, but the specific 2 KiB constant has
-not been located — that is the work, and it is the same shape as ISSUE-35/36, where naming the site
-turned a blind six-site conversion into a two-site fix.
+Found from the panic string rather than by searching for constants. `segvn_create anon_map size` is
+`LC%2` at `.text 0xaabc8`; its only reference in that compilation unit is `.text 0xaaf08`, inside
+`segvn_create`, and the check reads:
+
+```
+aaef2:  moveal %a3@(16),%a0      ; a0 = crargs->amp
+aaef6:  movel  %a0@(4),%d0       ; d0 = amp->size
+aaefa:  subl   %a3@(4),%d0       ; -= offset
+aaefe:  cmpl   %a5@(8),%d0       ; vs seg->s_size
+aaf02:  bccw   aaf18             ; >= -> ok
+aaf06:  pea    LC%2 ; pea 3 ; jsr cmn_err      <- PANIC
+aaf18:  movel  %a3@(4),%d6
+aaf1c:  addil  #4095,%d6         ; this side IS converted
+aaf24:  lsrl   #12,%d6
+```
+
+`anonmap_alloc` (`.text 0xab3a6`) stores its size argument verbatim — `amp->size = arg` at
+`0xab3da` — and its own page arithmetic is correctly 4 KiB. So the wrong rounding is upstream, and
+it is in **`shmget`**:
+
+```
+559bc:  movel %d2,%d3            ; d3 = the requested size
+559be:  addil #2047,%d3          ; + 2047          <- NOT CONVERTED
+559c4:  moveq #11,%d4
+559c6:  lsrl  %d4,%d3            ; >> 11           <- NOT CONVERTED
+   ...
+55a32:  moveal %a1@(48),%a0      ; a0 = the anon_map
+55a36:  movel %d3,%d0
+55a38:  moveq #11,%d4
+55a3a:  lsll  %d4,%d0            ; << 11           <- NOT CONVERTED
+55a3c:  movel %d0,%a0@(4)        ; amp->size = roundup2048(size)
+55a40:  movel %d0,%a0@(12)
+55a4c:  movel %d2,%a1@(44)       ; shm_segsz = the ORIGINAL size
+```
+
+`%a0@(4)` is exactly the field `segvn_create` reads. So **`amp->size` is rounded up to a multiple
+of 2048 while `s_size` is rounded to 4096**, and the last line is why `IPC_STAT` still reports the
+original byte count for every size including the fatal ones — which the August measurement already
+noted without being able to explain.
+
+**The arithmetic reproduces the measured predicate.** With `amp = roundup2048(size)` and
+`s_size = roundup4096(size)`, the check `amp < s_size` fails exactly when `size mod 4096` is in
+`[1, 2048]`: for `r` in `[1,2048]` the 2 KiB roundup lands a half-page short, for `r` in
+`[2049,4095]` both round to the same value, and for `r = 0` neither rounds at all. That was derived
+from the disassembly and then checked against the table above, not fitted to it.
+
+`d3` — the page count in 2 KiB units — is used twice: once at `0x55a1e` to size the anon pointer
+array and once at `0x55a36` for `amp->size`. So the current code also **over-allocates the anon
+array by 2×**, harmlessly, and one corrected computation fixes both. That is the consistency
+argument for changing the three constants rather than patching `amp->size` alone.
+
+**The fix is `2047` → `4095` at `0x559be`, and `11` → `12` at `0x559c4` and `0x55a38`.** Prediction
+to be written down before it is tested: every row of the table above survives, `shmband.c` finds no
+band at all, and the anon array halves.
+
+### ⚠ One row of the table above contradicts its own predicate
+
+`| 2047 | 2047 | no | survive |` — but 2047 **is** in `[1, 2048]`, so that row's "no" is
+arithmetically false and the predicate says it should have panicked. The mechanism derived here
+also predicts a panic at 2047. So either the result column is a transcription error from the August
+write-up, or the predicate needs a correction that no simple rounding model produces.
+
+Nine of the ten rows agree with the mechanism and with the predicate; the tenth disagrees with
+both. That makes the row the suspect rather than the mechanism, but it has not been re-measured and
+it is recorded here as unresolved rather than quietly fixed.
+
+### A second, separate 2 KiB survivor found in the same hunt
+
+`shmat` enforces **2 KiB** alignment on the attach address:
+
+```
+5538a:  andiw #-2048,%fp@(-34)   ; SHM_RND: round the address down to 2048
+553a0:  andil #2047,%d0          ; otherwise: not 2048-aligned -> error
+553a6:  bnew  553e0
+```
+
+On a 4 KiB-page kernel that accepts an address which is 2 KiB but not 4 KiB aligned. It is the same
+family and the same file, but it is **not** the cause of this panic — the predicate here is on
+`size`, and the panic names `anon_map size`. It needs its own measurement before it is called a
+defect, and it is written down so the next reader of `shmat` does not have to find it twice.
+
 
 ## ⚠ ISSUE-63 (2026-09-05, OPEN): `pollwakeup` calls through a function pointer out of a freed `polldat`, and takes an address error during X session shutdown
 

@@ -1,148 +1,151 @@
-# batteryrun-260906-16.sh -- GENERATED, do not edit by hand.
-#   sh tools/gen-battery.sh build/unix-040-quiet-rtg 0x08000000 > test-tools/batteryrun-260906-16.sh
+# batteryrun-260907-04.sh -- GENERATED, do not edit by hand.
+#   sh tools/gen-battery.sh build/unix-040-quiet-rtg 0x08000000 > test-tools/batteryrun-260907-04.sh
 #
 #   artifact   build/unix-040-quiet-rtg
-#   build id   68040-260906-16
-#   sha256     e77c43db1b39ad538b3fae21b449b499f497ee9799d1b169768ce053cfbdc8ff
+#   build id   68040-260907-04
+#   sha256     82996ef772d529de9c9486b9a1f453829a2c8fe75a315eea88f6a74071735b23
 #   load base  0x08000000   <- from the loader's boot output, not assumed
-#   text       1047080 (0xffa28)
+#   text       1047252 (0xffad4)
 #
 # Relinking bumps the build id and the sha256 every time, and moves these addresses whenever a
 # counter block is added, removed or resized.  Regenerate rather than edit: `uname -m` on the
 # guest must print the build id above, and the magic check below is what proves the addresses
 # belong to the kernel that is actually running.
 #
-# 39 BLOCKS, 39 CHECKS.  A block whose magic does not read back aborts the run: every
+# 40 BLOCKS, 40 CHECKS.  A block whose magic does not read back aborts the run: every
 # other number taken from a wrong address is plausible, and none of it is a measurement.
 #
-#   (nohup sh -c "sh /tmp/batteryrun-260906-16.sh /tmp/battery.log > /tmp/battery.log 2>&1" &)
+#   (nohup sh -c "sh /tmp/batteryrun-260907-04.sh /tmp/battery.log > /tmp/battery.log 2>&1" &)
 K=/kpeek
 
-LKX=08118408            # the block is not contiguous: 2 reads
-LKX_R1=08118408
+LKX=081184D4            # the block is not contiguous: 2 reads
+LKX_R1=081184D4
 LKX_N1=17               # 17 longwords
-LKX_R2=08118768
+LKX_R2=08118834
 LKX_N2=6                # 6 longwords
-A3D=08118B08
-A3D_R1=08118B08
+A3D=08118BD4
+A3D_R1=08118BD4
 A3D_N1=21               # 21 longwords
-A3P=08118B5C
-A3P_R1=08118B5C
+A3P=08118C28
+A3P_R1=08118C28
 A3P_N1=79               # 79 longwords
-A3W=08118CE0
-A3W_R1=08118CE0
+A3W=08118DAC
+A3W_R1=08118DAC
 A3W_N1=25               # 25 longwords
-BT=08118F7C
-BT_R1=08118F7C
+BT=08119048
+BT_R1=08119048
 BT_N1=9                 # 9 longwords
-CMF=08117D28
-CMF_R1=08117D28
+CMF=08117DD4
+CMF_R1=08117DD4
 CMF_N1=5                # 5 longwords
-DMA=081187A4            # the block is not contiguous: 2 reads
-DMA_R1=081187A4
+DMA=08118870            # the block is not contiguous: 2 reads
+DMA_R1=08118870
 DMA_N1=16               # 16 longwords
-DMA_R2=0811E15C
+DMA_R2=0811E228
 DMA_N2=1                # 1 longwords
-F60=08119BE0
-F60_R1=08119BE0
+F60=08119CAC
+F60_R1=08119CAC
 F60_N1=32               # 32 longwords
-FPC=08118244
-FPC_R1=08118244
+FPC=08118310
+FPC_R1=08118310
 FPC_N1=16               # 16 longwords
-FPI=08118284
-FPI_R1=08118284
+FPI=08118350
+FPI_R1=08118350
 FPI_N1=17               # 17 longwords
-HBU=081183F0
-HBU_R1=081183F0
+HBU=081184BC
+HBU_R1=081184BC
 HBU_N1=6                # 6 longwords
-HG=081190B0
-HG_R1=081190B0
+HG=0811917C
+HG_R1=0811917C
 HG_N1=16                # 16 longwords
-I10=081190F0
-I10_R1=081190F0
+I10=081191BC
+I10_R1=081191BC
 I10_N1=6                # 6 longwords
-I10A=081197F4
-I10A_R1=081197F4
+I10A=081198C0
+I10A_R1=081198C0
 I10A_N1=31              # 31 longwords
-I10B=08119870
-I10B_R1=08119870
+I10B=0811993C
+I10B_R1=0811993C
 I10B_N1=23              # 23 longwords
-I10C=081198CC
-I10C_R1=081198CC
+I10C=08119998
+I10C_R1=08119998
 I10C_N1=37              # 37 longwords
-I10D=08119960
-I10D_R1=08119960
+I10D=08119A2C
+I10D_R1=08119A2C
 I10D_N1=14              # 14 longwords
-I10G=08119328
-I10G_R1=08119328
+I10G=081193F4
+I10G_R1=081193F4
 I10G_N1=132             # 132 longwords
-I10P=08119108
-I10P_R1=08119108
+I10P=081191D4
+I10P_R1=081191D4
 I10P_N1=77              # 77 longwords
-I10R=08119600
-I10R_R1=08119600
+I10R=081196CC
+I10R_R1=081196CC
 I10R_N1=79              # 79 longwords
-I10S=0811973C
-I10S_R1=0811973C
+I10S=08119808
+I10S_R1=08119808
 I10S_N1=46              # 46 longwords
-I10T=08119538
-I10T_R1=08119538
+I10T=08119604
+I10T_R1=08119604
 I10T_N1=50              # 50 longwords
-I10W=0811923C
-I10W_R1=0811923C
+I10W=08119308
+I10W_R1=08119308
 I10W_N1=59              # 59 longwords
-I39=08118DF0
-I39_R1=08118DF0
+I39=08118EBC
+I39_R1=08118EBC
 I39_N1=14               # 14 longwords
-I40=08118E28
-I40_R1=08118E28
+I40=08118EF4
+I40_R1=08118EF4
 I40_N1=13               # 13 longwords
-INI=08119054
-INI_R1=08119054
+INI=08119120
+INI_R1=08119120
 INI_N1=7                # 7 longwords
-ISP61=08118208
-ISP61_R1=08118208
+ISP61=081182D4
+ISP61_R1=081182D4
 ISP61_N1=15             # 15 longwords
-IUR=08119070
-IUR_R1=08119070
+IUR=0811913C
+IUR_R1=0811913C
 IUR_N1=16               # 16 longwords
-KVP=081182D0
-KVP_R1=081182D0
+KVP=0811839C
+KVP_R1=0811839C
 KVP_N1=9                # 9 longwords
-PGZ=08118E9C
-PGZ_R1=08118E9C
+PGZ=08118F68
+PGZ_R1=08118F68
 PGZ_N1=12               # 12 longwords
-PTD=08118E5C
-PTD_R1=08118E5C
+PTD=08118F28
+PTD_R1=08118F28
 PTD_N1=11               # 11 longwords
-SCRFIX=08118D68
-SCRFIX_R1=08118D68
+SCRFIX=08118E34
+SCRFIX_R1=08118E34
 SCRFIX_N1=15            # 15 longwords
-SDC=08118D44
-SDC_R1=08118D44
+SDC=08118E10
+SDC_R1=08118E10
 SDC_N1=9                # 9 longwords
-SEGVN_PROT=0811819C
-SEGVN_PROT_R1=0811819C
+SEGVN_PROT=08118268
+SEGVN_PROT_R1=08118268
 SEGVN_PROT_N1=5         # 5 longwords
-SMU=08118ECC
-SMU_R1=08118ECC
+SMU=08118F98
+SMU_R1=08118F98
 SMU_N1=44               # 44 longwords
-SRG=08118FC8
-SRG_R1=08118FC8
+SRG=08119094
+SRG_R1=08119094
 SRG_N1=17               # 17 longwords
-SYNCG=08118E88
-SYNCG_R1=08118E88
+SYNCG=08118F54
+SYNCG_R1=08118F54
 SYNCG_N1=5              # 5 longwords
-UNT=08118FA0
-UNT_R1=08118FA0
+UNT=0811906C
+UNT_R1=0811906C
 UNT_N1=10               # 10 longwords
-WBF=0811807C
-WBF_R1=0811807C
-WBF_N1=27               # 27 longwords
+WBF=08118128
+WBF_R1=08118128
+WBF_N1=35               # 35 longwords
+WBN=0811812C
+WBN_R1=0811812C
+WBN_N1=8                # 8 longwords
 
 echo "=== IDENTITY ==="
 uname -m
-echo "=== MAGIC CHECK (39 blocks, 39 checks) ==="
+echo "=== MAGIC CHECK (40 blocks, 40 checks) ==="
 chk() {
 	m=`$K $1 1 | sed "s/.*= //;s/ .*//"`
 	if [ "$m" != "$2" ]; then
@@ -188,7 +191,8 @@ chk $SRG            53524721 srg_magic
 chk $SYNCG          53594e47 syncg_magic
 chk $UNT            554e5421 unt_magic
 chk $WBF            57424621 wbf_magic
-echo "all 39 magics OK"
+chk $WBN            57424e21 wbn_magic
+echo "all 40 magics OK"
 
 dump() {
 	echo "Lkx:            " ; $K $LKX_R1 $LKX_N1
@@ -232,6 +236,7 @@ dump() {
 	echo "syncg:          " ; $K $SYNCG_R1 $SYNCG_N1
 	echo "unt:            " ; $K $UNT_R1 $UNT_N1
 	echo "wbf:            " ; $K $WBF_R1 $WBF_N1
+	echo "wbn:            " ; $K $WBN_R1 $WBN_N1
 }
 
 echo "=== COUNTERS BEFORE ==="
@@ -295,24 +300,24 @@ fi
 # in this file can match a line this file printed.  Addresses are spelled out because AMIX
 # `expr` cannot do hex arithmetic, and they carry a Z_ prefix so that no counter address can
 # collide with a block length above.
-Z_A3W_NODEV=08118CF0
-Z_A3W_OTHER=08118D08
-Z_A3W_DEAD_N=08118D2C
-Z_A3D_N=08118B10
-Z_A3W_CALLS=08118CEC
-Z_A3W_OWN=08118CF8
-Z_A3W_EINT_ONLY=08118D04
-Z_A3W_EINT_ACKED=08118D0C
-Z_A3P_D_QUAR=08118C74
-Z_A3P_D_BADPHASE=08118C78
-Z_A3P_D_BADSTAT=08118C7C
-Z_A3P_D_NOTOWNER=08118C80
-Z_A3P_D_TRY=08118C44
-Z_A3P_D_BYTES=08118C58
-Z_A3P_D_SENT=08118C5C
-Z_A3P_D_BUSFREE=08118C68
-Z_A3P_D_FAILED=08118C70
-Z_A3W_RAN=08118CE4
+Z_A3W_NODEV=08118DBC
+Z_A3W_OTHER=08118DD4
+Z_A3W_DEAD_N=08118DF8
+Z_A3D_N=08118BDC
+Z_A3W_CALLS=08118DB8
+Z_A3W_OWN=08118DC4
+Z_A3W_EINT_ONLY=08118DD0
+Z_A3W_EINT_ACKED=08118DD8
+Z_A3P_D_QUAR=08118D40
+Z_A3P_D_BADPHASE=08118D44
+Z_A3P_D_BADSTAT=08118D48
+Z_A3P_D_NOTOWNER=08118D4C
+Z_A3P_D_TRY=08118D10
+Z_A3P_D_BYTES=08118D24
+Z_A3P_D_SENT=08118D28
+Z_A3P_D_BUSFREE=08118D34
+Z_A3P_D_FAILED=08118D3C
+Z_A3W_RAN=08118DB0
 
 peek1() { $K $1 1 | sed "s/.*= //;s/ .*//"; }
 zbad=0
