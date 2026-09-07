@@ -8003,7 +8003,53 @@ too. Both attempts widened an `[1, 2048]`-band panic into an every-size one.
 The real unit is the whole anon_map construction and consumption for SysV shm, and **the consumer
 has not been located.** Finding it is static work and needs no hardware.
 
-### Reverted
+### The contract: six sites, one atomic unit
+
+`amix-kernel-analysis/vm-map/ISSUE62-SHM-ANONMAP-UNITS-CONTRACT.md`. It answered the unit question
+and enumerated what both attempts had missed.
+
+**`anon_map.size` is a byte count** — that settles the first question, and it means AMIX is not
+storing the wrong kind of value; it is storing a byte count derived in 2 KiB units.
+
+**The three `>>11` consumers are real, and there are exactly three**, all in the retained SysV SHM
+code: `shm_lock` (`0x55e92`, the lock and vpage count), `shm_unlock` (`0x56096`, the anon traversal
+count) and `shm_rm_amp` (`0x561e8`, the pointer-allocation size handed to `kmem_free`). The
+post-hoc hypothesis was right in kind; it did not say how many or where.
+
+**It also explains `swap_xlate` without a new hypothesis**: `shm_rm_amp` calls `shm_unlock` before
+freeing the map, and `shm_unlock` used the unchanged `amp->size >> 11` count to walk twice the
+array. That is where both attempts landed.
+
+**And it rejects the option neither attempt tried.** Rounding `shmget`'s size argument up to 4 KiB
+instead leaves `shm_lock` counting twice as many slots and vpage entries, so it is not a safe
+smaller fix.
+
+`shmat`, `shmctl`, `kshmdt`, `shmfork`, `shmexit` and `shmexec` hold or pass the byte size and
+perform no page conversion — checked, not assumed, so they need no patch.
+
+### Fixed 2026-09-07 — `68040-260907-17`
+
+Attempt A plus the three consumers it omitted:
+
+| owner | site | old | new |
+|---|---:|---|---|
+| `shmget` | `0x559be` | `06 83 00 00 07 ff` | `06 83 00 00 0f ff` |
+| `shmget` | `0x559c4` | `78 0b` | `78 0c` |
+| `shmget` | `0x55a38` | `78 0b` | `78 0c` |
+| `shm_lock` | `0x55e92` | `72 0b` | `72 0c` |
+| `shm_unlock` | `0x56096` | `72 0b` | `72 0c` |
+| `shm_rm_amp` | `0x561e8` | `72 0b` | `72 0c` |
+
+All six verified in the built image by disassembly rather than from the build log, which shows only
+the last few lines. `TOTAL complaints: 0`, `bindings failing: 0`, battery 40 blocks.
+
+**Not yet run on hardware.** The acceptance is written down in advance and has two parts, because
+**both earlier attempts passed the first and failed the second**: every size in the table survives,
+**and no other panic replaces it.** `shmband` does `shmget` → `shmat` → touch → `shmdt` →
+`IPC_RMID`, so a clean run exercises all three newly converted consumers rather than merely
+compiling them.
+
+### Reverted (superseded — kept as the record of two wrong fixes)
 
 `src/patch_modelb.py` carries no ISSUE-62 entry; the table is back to stock behaviour, which is the
 known state and the one everything else was accepted against. Rebuilt as `68040-260907-14`,

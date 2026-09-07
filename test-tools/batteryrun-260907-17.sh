@@ -1,9 +1,9 @@
-# batteryrun-260907-14.sh -- GENERATED, do not edit by hand.
-#   sh tools/gen-battery.sh build/unix-040-quiet-rtg 0x08000000 > test-tools/batteryrun-260907-14.sh
+# batteryrun-260907-17.sh -- GENERATED, do not edit by hand.
+#   sh tools/gen-battery.sh build/unix-040-quiet-rtg 0x08000000 > test-tools/batteryrun-260907-17.sh
 #
 #   artifact   build/unix-040-quiet-rtg
-#   build id   68040-260907-14
-#   sha256     e6ea3d151915862d17e2a93b652067d058560e7fb24066f5004e85ae8241c77f
+#   build id   68040-260907-17
+#   sha256     e708b12ef3da1ef395aa1a98f5ba770f23e942148a06cffcd15444132f28e67b
 #   load base  0x08000000   <- from the loader's boot output, not assumed
 #   text       1047252 (0xffad4)
 #
@@ -15,7 +15,7 @@
 # 40 BLOCKS, 40 CHECKS.  A block whose magic does not read back aborts the run: every
 # other number taken from a wrong address is plausible, and none of it is a measurement.
 #
-#   (nohup sh -c "sh /tmp/batteryrun-260907-14.sh /tmp/battery.log > /tmp/battery.log 2>&1" &)
+#   (nohup sh -c "sh /tmp/batteryrun-260907-17.sh /tmp/battery.log > /tmp/battery.log 2>&1" &)
 K=/kpeek
 
 LKX=081184D4            # the block is not contiguous: 2 reads

@@ -665,19 +665,37 @@ P = [
  # 0xac922+, setprot/checkprot/getprot 0xaca06-0xacce0, segvn_kluster 0xacd80/86 and
  # segvn_swapout 0xace4c/98 are separate paths -- audit later (kluster only affects
  # readahead COUNT, not placement, once 0xac778 is correct).
- # --- ISSUE-62: NOT PATCHED HERE, and the two attempts that were are recorded in
- #     KNOWN-ISSUES.md rather than left in the table.  The shm anon_map is built AND
- #     CONSUMED in 2 KiB units throughout: shmget makes d3 = ceil(size/2048), sizes the
- #     anon pointer array from it, and stores amp->size = d3<<11.  Something downstream
- #     still does amp->size>>11 to recover that array length -- measured, because BOTH
- #     ways of correcting the producer doubled amp->size and both overran the array by
- #     exactly 2x, giving PANIC: swap_xlate on 68040-260907-08 and -11.
+ # --- ISSUE-62: the SysV shm anon_map is one atomic Model-B unit of SIX sites.
+ #     Contract: amix-kernel-analysis/vm-map/ISSUE62-SHM-ANONMAP-UNITS-CONTRACT.md.
  #
- #     Converting the producer alone therefore makes the defect WORSE: sizes that survive
- #     on stock (2049, 4095, 4096) also panic, because the 2x overrun does not depend on
- #     the size band.  The real unit is the whole anon_map construction and consumption
- #     for shm, and the consumer has not been located yet.  Stock behaviour is the known
- #     state and everything else was accepted against it, so the table stays clean. ---
+ #     anon_map.size is a BYTE COUNT.  shmget builds the map in 2 KiB units -- round the
+ #     request by 2047, shift by 11 to a pointer count, size the anon array from it, and
+ #     store the count back as bytes with <<11 -- and THREE consumers in the retained SysV
+ #     SHM code recover that count again with amp->size >> 11: shm_lock (0x55e92, lock and
+ #     vpage count), shm_unlock (0x56096, anon traversal count) and shm_rm_amp (0x561e8,
+ #     the pointer-allocation size handed to kmem_free).
+ #
+ #     ⚠ TWO EARLIER ATTEMPTS ARE THE REASON THIS COMMENT IS LONG.  Converting the three
+ #     shmget sites alone (2026-09-07, 68040-260907-08) and converting only the final
+ #     shift (-11) both removed segvn_create's panic and both produced PANIC: swap_xlate
+ #     instead, because the untouched consumers then walked twice the array.  shm_rm_amp
+ #     calls shm_unlock before freeing the map, which is where it lands.  Both attempts
+ #     also made the defect WORSE rather than merely unfixed: the 2x overrun does not
+ #     depend on the size band, so sizes that survive on stock (2049, 4095, 4096) panicked
+ #     too.  Converting part of a self-consistent subsystem is not a smaller fix; it is a
+ #     different and larger bug.
+ #
+ #     Rounding shmget's size argument up to 4 KiB instead was considered and rejected by
+ #     the contract: it leaves shm_lock counting twice as many slots and vpage entries.
+ #
+ #     shmat, shmctl, kshmdt, shmfork, shmexit and shmexec hold or pass the byte size and
+ #     perform no page conversion, so they need no patch -- checked, not assumed. ---
+ (0x559be, b"\x06\x83\x00\x00\x07\xff", b"\x06\x83\x00\x00\x0f\xff", "shmget:ISSUE-62 anon_map round +2047->+4095 (1/6)"),
+ (0x559c4, b"\x78\x0b", b"\x78\x0c", "shmget:ISSUE-62 bytes->pointer count >>11->>>12 (2/6)"),
+ (0x55a38, b"\x78\x0b", b"\x78\x0c", "shmget:ISSUE-62 count->amp->size <<11-><<12 (3/6)"),
+ (0x55e92, b"\x72\x0b", b"\x72\x0c", "shm_lock:ISSUE-62 amp->size->lock/vpage count >>11->>>12 (4/6)"),
+ (0x56096, b"\x72\x0b", b"\x72\x0c", "shm_unlock:ISSUE-62 amp->size->anon traversal >>11->>>12 (5/6)"),
+ (0x561e8, b"\x72\x0b", b"\x72\x0c", "shm_rm_amp:ISSUE-62 amp->size->kmem_free size >>11->>>12 (6/6)"),
 ]
 # pea-800 sites DELIBERATELY NOT flipped (triaged 2026-07-03): 0xdbbe/0xdd58/0x20c60/0x20c9c
 # (ngeteblk/allocb buffer sizes -- STREAMS/block semantics, not page), 0xee3e/0xee90 (bbmem
