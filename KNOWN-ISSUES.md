@@ -8848,7 +8848,7 @@ Note the two fixes are independent and both are worth having:
 Also still open: whether this is the same failure the owner hit before ISSUE-64 was found. Both are
 `kstack` cascades. Nothing distinguishes them yet, and the earlier one was not captured on serial.
 
-## ⚠⚠ ISSUE-66 (2026-09-07, OPEN): `shmat` accepts a 2 KiB-aligned attach address on a 4 KiB kernel, and the segment then outruns its anon map
+## ✅ ISSUE-66 (2026-09-07, FIXED AND HARDWARE-ACCEPTED 2026-09-08): `shmat` accepted a 2 KiB-aligned attach address on a 4 KiB kernel, and the segment then outran its anon map
 
 Found by the probe written to ask whether the second 2 KiB survivor from ISSUE-62's hunt was a
 defect at all. It is.
@@ -8928,9 +8928,29 @@ Both verified in the built image by disassembly. `TOTAL complaints: 0`. `test-to
 gained the `SHM_RND` case, which the original probe did not exercise at all — the two paths now
 have different required outcomes and both are checked.
 
-**Not yet run.** Acceptance: a plain misaligned attach is **rejected with `EINVAL`** where it
-previously panicked; the same address **with `SHM_RND` is accepted, page aligned, and rounded
-down**; and ISSUE-62 does not regress.
+### ✅ Hardware-accepted 2026-09-08, `68040-260908-03`
+
+Three cases, three different required outcomes, all as predicted:
+
+```text
+SHMALIGN CONTROL      at=c1033000 pagealigned=1
+SHMALIGN TRY          addr=c1033800 (addr&2047=0 addr&4095=2048)
+SHMALIGN REJECTED     errno=22                              <- EINVAL
+SHMALIGN RND          addr=c1033800 with SHM_RND
+SHMALIGN RND-ACCEPTED at=c1033000 pagealigned=1 roundeddown=1
+SHMALIGN RND-TOUCHED  ok, read back 5a
+SHMALIGN-DONE
+```
+
+The middle line is the fix: that exact address **panicked the kernel** on `68040-260907-17` and is
+now an ordinary `EINVAL`. And `roundeddown=1` is the falsifier that mattered most — the contract
+says `SHM_RND` rounds **down**, and `c1033000 < c1033800` shows it does. Rounding up would have
+looked like a pass on every other line.
+
+No regression, same boot: `shmband` still gives `SURVIVE` for every size including 153600, so
+ISSUE-62 is intact; battery **12/12**, **40/40** magics, `MUST-STAY-ZERO-OK`; and Xrtg reaches
+`InitOutput: done` / `InitInput: done` with `wbn_fail_n` = 0 over 14 454 native write-back replays.
+The serial mirror recorded nothing at any point.
 
 ### Two things the census found that are not this issue
 
