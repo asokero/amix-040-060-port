@@ -78,6 +78,29 @@ char **argv;
 	}
 	fflush(stdout);
 
+	/* SHM_RND: the contract says round DOWN to the boundary, not up and not
+	 * unconditionally (amix-kernel-analysis ISSUE66-SHMLBA-PAGESIZE-ABI-CONTRACT.md).
+	 * So the same misaligned address must be ACCEPTED here and land page aligned,
+	 * at the address below it -- which is a different outcome from the plain attach
+	 * above, and the reason both are probed. */
+	printf("SHMALIGN RND  addr=%lx with SHM_RND\n", (unsigned long) at);
+	fflush(stdout);
+
+	base = (char *) shmat(id, at, SHM_RND);
+	if (base == (char *) -1) {
+		printf("SHMALIGN RND-REJECTED errno=%d\n", errno);
+	} else {
+		printf("SHMALIGN RND-ACCEPTED at=%lx pagealigned=%d roundeddown=%d\n",
+		       (unsigned long) base, ((unsigned long) base & 0xfff) == 0,
+		       (unsigned long) base <= (unsigned long) at);
+		fflush(stdout);
+		*base = 0x5a;
+		printf("SHMALIGN RND-TOUCHED ok, read back %x\n",
+		       (unsigned int) *base & 0xff);
+		shmdt(base);
+	}
+	fflush(stdout);
+
 	shmctl(id, IPC_RMID, (struct shmid_ds *) 0);
 	printf("SHMALIGN-DONE\n");
 	exit(0);

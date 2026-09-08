@@ -8896,14 +8896,48 @@ Any process that calls `shmat` with an explicit address, or with `SHM_RND`, can 
 is the dangerous one: a program that asks the kernel to round *for* it is rounded to 2048 and then
 panics the machine.
 
-### Not fixed, deliberately
+### The contract, and it corrected two things this entry had wrong
 
-The obvious patch is `#-2048` → `#-4096` at `0x5538a` and `#2047` → `#4095` at `0x553a0`. That is
-exactly the shape of the two fixes ISSUE-62 refuted, and it has an extra hazard those did not:
-**SHMLBA is userland-visible.** A program computing `addr & ~(SHMLBA-1)` from its own
-`<sys/shm.h>` would produce a 2 KiB-aligned address and get `EINVAL` where it used to get a silent
-misaligned attach. That is better than a panic, but it is an ABI change and it belongs in a
-contract rather than in a two-constant guess.
+`amix-kernel-analysis/vm-map/ISSUE66-SHMLBA-PAGESIZE-ABI-CONTRACT.md`.
 
-The complete producer/consumer question for the attach path — who else reads or assumes SHMLBA,
-and whether `as_map` should be rounding regardless — has not been enumerated.
+**SHMLBA is not required to equal the page size.** The 3B2 uses a **128 KiB** SHMLBA with 2 KiB
+pages. So the reasoning above — that `shm.h`'s `SHMLBA ctob(1)` makes this a page-size question and
+therefore a userland ABI question — was the wrong frame. These constants move because the
+**PAGEOFFSET this kernel actually has** is 4 KiB, not because SHMLBA must track the page size.
+
+**And the two sites are not the same thing**, which is the correction that matters most:
+
+* `0x5538a` **is** the real SHM_RND / SHMLBA rounding, and SVR4 rounds **down** to the boundary;
+* `0x553a0` is **not** a second SHMLBA user. It is the genuine PAGEOFFSET alignment check, and
+  without `SHM_RND` a misaligned address must be **rejected with `EINVAL`**, not quietly fixed up.
+
+**The "round unconditionally, never reject" idea in the task brief was rejected.** It was put
+forward as an ABI relaxation that would break nothing; the contract says rounding up, or rounding
+without the flag, breaks the documented `SHM_RND` contract. Asking was what stopped it.
+
+The fix belongs in `shmat` — not in the generic `as_map`, and not in `segvn_create`'s panic path.
+
+### Fixed 2026-09-08 — `68040-260908-03`
+
+```
+ 0x5538a  02 6e f8 00 ff de -> 02 6e f0 00 ff de   andiw #-2048 -> #-4096  (SHM_RND round-down)
+ 0x553a0  02 80 00 00 07 ff -> 02 80 00 00 0f ff   andil #2047  -> #4095   (PAGEOFFSET check)
+```
+
+Both verified in the built image by disassembly. `TOTAL complaints: 0`. `test-tools/shmalign.c`
+gained the `SHM_RND` case, which the original probe did not exercise at all — the two paths now
+have different required outcomes and both are checked.
+
+**Not yet run.** Acceptance: a plain misaligned attach is **rejected with `EINVAL`** where it
+previously panicked; the same address **with `SHM_RND` is accepted, page aligned, and rounded
+down**; and ISSUE-62 does not regress.
+
+### Two things the census found that are not this issue
+
+* **The userland ABI is no longer consistently 2 KiB.** The current kernel already reports 4096
+  through `sysconfig` and through ELF `AT_PAGESZ`, while the installed headers and some public VM
+  checks are still in the 2 KiB world. That is a real inconsistency and it is *not* what caused
+  ISSUE-66 — recorded so the next reader does not conflate them.
+* **`map_addr` at `0xaf108` still reserves only the old `2 × 2048` guard-page margin.** A separate
+  Model-B residual. It does not cause ISSUE-66 and does not belong in the same patch; it needs its
+  own measurement before it is called a defect, in the way this issue's own site did.

@@ -696,6 +696,29 @@ P = [
  (0x55e92, b"\x72\x0b", b"\x72\x0c", "shm_lock:ISSUE-62 amp->size->lock/vpage count >>11->>>12 (4/6)"),
  (0x56096, b"\x72\x0b", b"\x72\x0c", "shm_unlock:ISSUE-62 amp->size->anon traversal >>11->>>12 (5/6)"),
  (0x561e8, b"\x72\x0b", b"\x72\x0c", "shm_rm_amp:ISSUE-62 amp->size->kmem_free size >>11->>>12 (6/6)"),
+ # --- ISSUE-66: shmat let a user attach at an address the page table cannot use, and the
+ #     segment then outran its anon map.  Contract:
+ #     amix-kernel-analysis/vm-map/ISSUE66-SHMLBA-PAGESIZE-ABI-CONTRACT.md.
+ #
+ #     THE TWO SITES ARE NOT THE SAME THING, which is what the contract corrected:
+ #       0x5538a is the real SHM_RND / SHMLBA rounding -- round the attach address DOWN
+ #                to the boundary.  SVR4 rounds down; rounding up, or rounding
+ #                unconditionally, would break the documented SHM_RND contract.
+ #       0x553a0 is NOT a second SHMLBA user.  It is the genuine PAGEOFFSET alignment
+ #                check, and without SHM_RND a misaligned address must be REJECTED with
+ #                EINVAL rather than quietly fixed up.
+ #
+ #     ⚠ SHMLBA is not required to equal the page size -- the 3B2 uses a 128 KiB SHMLBA
+ #     with 2 KiB pages -- so "SHMLBA is the page size" is not the reason these move.
+ #     They move because the PAGEOFFSET this kernel actually has is 4 KiB.
+ #
+ #     Measured 2026-09-07 on 68040-260907-17 with ISSUE-62 already accepted:
+ #     test-tools/shmalign.c attaches an 8192-byte segment at a usable address + 2048 and
+ #     the machine dies with PANIC: segvn_create anon_map size -- the misaligned attach
+ #     makes the segment span one more page than the map covers.  The fix belongs here and
+ #     not in as_map or in segvn_create's panic path. ---
+ (0x5538a, b"\x02\x6e\xf8\x00\xff\xde", b"\x02\x6e\xf0\x00\xff\xde", "shmat:ISSUE-66 SHM_RND round-down -2048->-4096 (1/2)"),
+ (0x553a0, b"\x02\x80\x00\x00\x07\xff", b"\x02\x80\x00\x00\x0f\xff", "shmat:ISSUE-66 PAGEOFFSET alignment check 2047->4095 (2/2)"),
 ]
 # pea-800 sites DELIBERATELY NOT flipped (triaged 2026-07-03): 0xdbbe/0xdd58/0x20c60/0x20c9c
 # (ngeteblk/allocb buffer sizes -- STREAMS/block semantics, not page), 0xee3e/0xee90 (bbmem
