@@ -8183,11 +8183,41 @@ observations of one mechanism, and it should be written as such until the chain 
 It does supply what this entry said it lacked. **`ISSUE-63 still rests on exactly one sighting`**
 is no longer true of the subsystem, though it remains true of that PC.
 
-⚠ Not established: whether this reproduces on a clean boot. The XAnim line saw the same binary run
-correctly minutes earlier and then hang from about 15:44 onwards, with a file read going 333 ms →
-566 ms in consecutive diagnostics, which is the only sign either of us has that something
-accumulates rather than simply breaks. A boot and an immediate re-run is the discriminator and it
-belongs to that line, which owns the workload.
+### Why the symptom is total silence rather than a glitch
+
+The XAnim line supplied the piece that explains the *shape* of it. **Every frame is scheduled by
+`XtAppAddTimeOut`** — playback is not a loop but a chain of timeouts through the Xt event loop, i.e.
+through `poll`, where each frame's callback schedules its successor. So an ordinary X client
+survives a lost wakeup with one missed repaint, while this one loses the next frame **and every
+frame after it**, because the callback that would have scheduled the successor never runs. No
+crash, no spin, no partial progress. `+N` is identical because the no-display path is the same
+event loop.
+
+That makes this workload an unusually sensitive detector for the subsystem: one dropped wakeup is a
+total, silent stop instead of a glitch. Worth knowing when choosing a reproducer.
+
+⚠ Not established: whether it reproduces on a clean boot, and whether damage accumulates. The
+XAnim line has that measurement and had to withdraw a first attempt at it — see below — so the
+question is still open.
+
+## The `swap -s` question, answered: pre-existing
+
+Recorded here because it was raised alongside the hang and will be raised again. On a **clean boot,
+two minutes in, with no workload**, `swap -s` reads byte-for-byte what it read after a day of work:
+
+```text
+total: 1002352 allocated + -1002352 reserved = 0 blocks used, 1002352 blocks available
+swap -l:  /dev/dsk/c6d0s2  18,38  0  102400  96628
+```
+
+So `ani_max = 1002352` against a 102400-block area, and `ani_free = 0`, are **how this port reads
+from boot**. Pre-existing, unrelated to any workload, and not a symptom of anything. I said there
+was no baseline for this; there is one now, and it closes the question rather than the issue —
+whether those values *should* look like that is a separate matter nobody has taken up.
+
+The negative sign remains what it was: `reserved = ani_resv - allocated`, negative whenever nothing
+is reserved and `ani_free < ani_max`. And `swap -s` goes through `swapctl`, a syscall, so unlike
+`ipcs` (ISSUE-67) it is not reading a stale `/unix`.
 
 ## ISSUE-61 (2026-09-04, RECORDED — a symptom record; this port is not exposed): AMIX's 1991 X11 archives carry a self-referential `sh_link`, and a modern GNU ld drops their relocations without a word
 
