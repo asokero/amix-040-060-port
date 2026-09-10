@@ -9164,12 +9164,33 @@ ISSUE-41. It is recorded here because no user program should be able to panic th
 All four line references were checked against the source before recording; the mechanism is the
 tracker line's, the verification is this one's.
 
-### The trigger was an application bug, which makes it more important rather than less
+### The trigger: no application bug is needed at all
 
-The MOD player that found it was draining incorrectly: it used `poll()` with no descriptors as a
-millisecond timer without checking that this system's `poll` blocks in that case, so the drain never
-happened and `close` arrived with audio in flight. That is fixed on their side. It is the trigger,
-not the cause — the kernel must not panic because a program closed a device early.
+**The first report's trigger was wrong and has been refuted by measurement**, so it is kept here
+labelled rather than removed. It said the player drained incorrectly, using `poll()` with no
+descriptors as a millisecond timer on the theory that this system's `poll` returns at once when
+`nfds` is zero. Measured afterwards on the machine: **`poll(NULL, 0, 500)` waits 516 ms.** The drain
+code was never the problem; it was never reached.
+
+What actually happens: the player does not catch `SIGTERM` — its `Unix/ui.c` installs handlers for
+`SIGTSTP`, `SIGCONT`, `SIGINT`, `SIGQUIT` and `SIGUSR1` only — so a plain `kill` ends the process
+outright and **the kernel closes the descriptor on its behalf** with the pipeline still full. No
+user-space code runs at close time.
+
+So the reproduction is simpler and worse than first reported:
+
+```text
+send SIGTERM to any process holding /dev/noise with sound queued
+```
+
+Nothing has to misbehave first. The counter-example has the same shape: a test program in the
+tracker repository that does catch `SIGTERM` and drains has opened, written and closed the device
+dozens of times, including a 150-second run, without once bringing the machine down.
+
+**The workaround on their side is only a workaround**, and the record should say so: catching
+`SIGTERM` and `SIGHUP` in the audio backend and draining before close cannot cover `SIGKILL`, and it
+requires every author of every program that opens the device to know about it. The fix belongs in
+`audioclose`.
 
 ### Fixes that exist, neither applied
 
