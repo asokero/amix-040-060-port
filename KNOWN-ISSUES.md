@@ -8180,6 +8180,54 @@ A corrupted `polldat` chain explains both faces: follow a stale entry and you ju
 or stop short of a live entry and you lose its wakeup. That is one hypothesis, not two
 observations of one mechanism, and it should be written as such until the chain is actually read.
 
+### The chain, read 2026-09-10 — static, no machine needed
+
+`pollwakeup` (`.text 0x53286`) raises to IPL 4 (`movew #0x2400,%sr`) and has **two** walks:
+
+*Unconditional*, taken when `events` is 8 or 16 (`POLLERR` / `POLLHUP`): re-read `php@(0)`, call
+`pd@(20)(pd@(24))`, `polldel(php, pd)`, re-read the head, repeat. **`pollwakeup+0x36` is `0x532bc`,
+the `jsr %a0@`** — exactly the PC ISSUE-63 recorded, so that sighting is now placed in the code.
+
+*Selective*, otherwise:
+
+```
+5330e:  movew %d2,%d0 ; andw %a3@(8),%d0   ; events & php@(8)   -- the pollhead's mask
+53314:  bnew  532d8                        ; overlap -> walk from the head
+532e2:  andw  %a2@(12),%d0                 ; events & pd@(12)   -- this waiter's mask
+532e6:  beqw  53306                        ; no match -> pd = pd@(0), next
+532f2:  jsr   %a0@                         ; match -> call it
+532f8:  jsr   polldel                      ; then remove it
+53302:  braw  5330e                        ; back to the OUTER test
+```
+
+Both walks remove each entry through **`polldel`** — confirmed by relocation, not by guess.
+
+And `polldel` (`.text 0x5fe0a`) ends its unlink with:
+
+```
+5fe4c:  moveal %a1@(16),%a0
+5fe50:  clrw   %a0@(8)          ; clears offset +8 of whatever pd@(16) points at
+```
+
+⚠ **Read vs inferred, and the difference decides everything here.** What is *read*: `polldel` does
+a `clrw` on `+8` of `pd@(16)`; `pollwakeup` gates its whole selective walk on `andw %a3@(8)` where
+`%a3` is the pollhead. Same offset, same width. What is *inferred*: that `pd@(16)` is the pollhead.
+If it is, then `polldel` zeroes the very mask the outer test reads — so the selective walk calls one
+waiter, removes it, returns to the outer test, finds the mask now zero, and **exits with any other
+waiter on that pollhead still asleep.**
+
+That would be the lost wakeup, and it would be structural rather than accumulated.
+
+**It is also exactly where this must stop.** `polladd` (`0x5fdac`) never writes `php@(8)` at all — it
+only *tests* the overlap and bumps `pollcoll`, SVR4's poll-collision counter — so who maintains that
+mask, and whether `polldel` clearing it is correct or catastrophic, cannot be settled from the
+disassembly. SVR4's collision design routes multiple pollers on one pollhead through the
+`POLLERR`/`POLLHUP` path that wakes everyone, which may be the intended answer and may make the
+`clrw` deliberate. Two wrong fixes on ISSUE-62 came from exactly this kind of confident reading of a
+subsystem whose contract had not been checked.
+
+Request written: `private/ISSUE63-POLL-CHAIN-CODEX-TASK.md`.
+
 It does supply what this entry said it lacked. **`ISSUE-63 still rests on exactly one sighting`**
 is no longer true of the subsystem, though it remains true of that PC.
 
