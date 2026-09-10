@@ -8961,3 +8961,56 @@ The serial mirror recorded nothing at any point.
 * **`map_addr` at `0xaf108` still reserves only the old `2 × 2048` guard-page margin.** A separate
   Model-B residual. It does not cause ISSUE-66 and does not belong in the same patch; it needs its
   own measurement before it is called a defect, in the way this issue's own site did.
+
+## ⚠ ISSUE-67 (2026-09-10, RECORDED — not a defect of this port, but it will waste the next reader's time): every `/dev/kmem` tool reads symbols from a kernel that is not running
+
+Found because a parallel line porting XAnim reported `ipcs -m` hanging after an MIT-SHM workload and
+preserved the machine for diagnosis, on the reasonable suspicion that the shm subsystem had wedged.
+It had not. Nothing was wedged.
+
+`/unix` is a symlink to `/stand/unix`, which on this machine is **1 479 684 bytes dated May 12** — a
+stock-class kernel. The image actually running is **1 930 033 bytes**, relinked, loaded from the
+AmigaOS side by `unix_boot040`, and **never installed there**. So `nlist("/unix")` hands a tool the
+symbol addresses of a different kernel, and reading them through `/dev/kmem` gives `ENXIO` — which
+on this port is exactly what an unreachable kernel VA returns.
+
+### The tell, and it is not about the subsystem being inspected
+
+```text
+$ date          Sun May 26 15:58:40 MET DST 1996
+$ ipcs
+ipcs:  read error: No such device or address
+IPC status from /dev/kmem as of Thu Jan  1 01:00:00 1970
+```
+
+**`ipcs` read the kernel's `time` variable as zero** while the machine's clock is fine. A tool that
+cannot read the clock is not failing on shared-memory state; its `kmem` addressing is broken before
+shm is involved. That single line separates "the subsystem is wedged" from "the tool cannot see the
+kernel", and it costs nothing to look at.
+
+### The general rule
+
+**`/proc`-based tools work; `/dev/kmem`-based tools cannot.** `ps` reads `/proc` (`ls /proc` shows
+the numbered entries) and is reliable. Anything that resolves kernel symbols out of `/unix` —
+`ipcs`, `crash`, `nm /unix`, any hand-rolled `nlist` consumer — is reading a different kernel's
+layout and will fail, silently or with `ENXIO`, whatever it is pointed at.
+
+This is structural, not a bug to fix. The port's whole delivery mechanism is that the running
+kernel is a file on the AmigaOS side; installing it as `/stand/unix` is not part of the boot path
+and would not be enough anyway, because the load base and the relink both differ per build.
+
+### Two corrections to the report, kept because both were mine to make
+
+**It does not hang.** `ipcs -m` returns `exit=1` after printing `Shared Memory:` and the read error;
+it is merely slow over telnet. And my own first reading was wrong in the opposite direction — I
+piped it through `head -5`, which killed it with `SIGPIPE` and made a failing run look like a clean
+return. A pipe that truncates output can also truncate the process.
+
+### What this says about the machine, which is also worth knowing
+
+`uname -m` reads `68060-260908-03`. The **CPU is a 68060**, not the 68040 that ISSUE-62, ISSUE-65
+and ISSUE-66 were accepted on; the prefix is a CPU readout, not part of the image name. The
+ISSUE-62 and ISSUE-66 fixes are byte patches with no CPU gate and hold there unchanged, but
+**ISSUE-65's write-back replay is dormant on a 68060** — `wb040.s` is gated by the format-7
+access-error frame, which only a 68040 produces, so every `wbn_*` counter reads zero on that
+processor by construction rather than by good behaviour.
