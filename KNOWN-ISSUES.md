@@ -9132,3 +9132,67 @@ ISSUE-62 and ISSUE-66 fixes are byte patches with no CPU gate and hold there unc
 **ISSUE-65's write-back replay is dormant on a 68060** — `wb040.s` is gated by the format-7
 access-error frame, which only a 68040 produces, so every `wbn_*` counter reads zero on that
 processor by construction rather than by good behaviour.
+
+## ⚠⚠ ISSUE-68 (2026-09-10, RECORDED — a stock defect, not investigated here by request): closing `/dev/noise` with audio still pending panics the kernel
+
+Handed over by the parallel tracker/MOD-player line at the owner's request, **to be written down
+and not pursued now**. Reported reproduced twice on `68060-260908-03`; **not reproduced by this
+line**. The full write-up, with reproduction and the historical fix, is theirs:
+`~/kehitys/amix-playground/tracker-amix/docs/KERNEL-AUDIO-CLOSE-BUG.md`.
+
+This is a defect of the **stock** AMIX 2.1c audio driver, not of this port — the same category as
+ISSUE-41. It is recorded here because no user program should be able to panic the kernel through
+`close(2)`, and any program that exits mid-note will.
+
+### The mechanism, checked against the reader's own source
+
+`usr/sys/amiga/driver/audio.c` from a stock installation (cited by line, not quoted):
+
+* **`audioclose` does not wait for playback to drain.** The wait loop that sets `AUD_CCLOSING` and
+  sleeps until the write queue empties is present (lines 153–170) but sits inside `#if 0`.
+* **It then frees the client with `kmem_free` (line 181) without clearing
+  `audio_channel[...].client`**, which still points at that memory. That pointer is cleared in
+  exactly one place — the interrupt handler, line 495 — and only on the path where the queue drains
+  normally.
+* So between `close(2)` and the last DMA block completing, **the audio interrupt dereferences freed
+  kernel memory at interrupt level**: it reads the client at line 429 and goes on to use its queue,
+  flags and repeat state.
+* **A second, independent hazard in the same function:** the unlink loop at line 174 walks the
+  client list with no terminating check, so if the client is ever not on the list — a double close,
+  or a close racing the interrupt path — it walks off the end.
+
+All four line references were checked against the source before recording; the mechanism is the
+tracker line's, the verification is this one's.
+
+### The trigger was an application bug, which makes it more important rather than less
+
+The MOD player that found it was draining incorrectly: it used `poll()` with no descriptors as a
+millisecond timer without checking that this system's `poll` blocks in that case, so the drain never
+happened and `close` arrived with audio in flight. That is fixed on their side. It is the trigger,
+not the cause — the kernel must not panic because a program closed a device early.
+
+### Fixes that exist, neither applied
+
+* **Keith Gabryelski's replacement `audio.[ch]`**, posted to `comp.unix.amiga` on 1992-12-23 with a
+  follow-up on 1992-12-28; the owner has it at `~/kehitys/amix-playground/Amix-audio-driver.txt`.
+  Its close sleeps until the write queue drains, is woken from the interrupt via `AUD_CCLOSING`, and
+  clears the channel's client pointer before freeing. ⚠ Adopted wholesale it raises the write-queue
+  high-water mark from 300 bytes to 32768 and coalesces writes into whole 8192-byte DMA blocks,
+  taking latency from about 140 ms to **over two seconds** — unusable for anything interactive
+  unless the shipped high/low-water values are kept. Comparison in
+  `tracker-amix/docs/AUDIO-DRIVER-VARIANTS.md`.
+* **A minimal patch to the shipped driver**: restore the drain wait from under `#if 0`, clear the
+  channel's client pointer before `kmem_free`, and give the unlink loop a termination check. Three
+  changes in one function. The driver ships as part of the binary kernel, so this would be an
+  override unit or byte patches rather than a source edit — not designed here.
+
+### Recorded alongside, not verified by this line
+
+The tracker line reports that the `/dev/noise` node a stock installation ships is **major 4** — the
+`bb` console-capture driver in a 2.1 kernel — while the audio driver is **entry 46** in the device
+switch table. The second half is confirmed: `usr/sys/master.d/kernel.c` line 395 is marked
+`46=audio`. The first half is **not**: the host-side copy of the stock tree shows `/dev/noise` as
+`0, 0`, which is an artefact of extracting device nodes onto a Linux filesystem and says nothing
+either way, and the guest was off the network when this was written. If the report holds, the
+shipped node has always returned `EIO` on open and `mknod /dev/noise c 46 0` fixes it — a plausible
+reason so little AMIX software makes sound.
