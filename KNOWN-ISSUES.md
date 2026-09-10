@@ -9207,13 +9207,43 @@ requires every author of every program that opens the device to know about it. T
   changes in one function. The driver ships as part of the binary kernel, so this would be an
   override unit or byte patches rather than a source edit — not designed here.
 
-### Recorded alongside, not verified by this line
+### The shipped `/dev/noise` points at the wrong driver — measured on the live guest
 
-The tracker line reports that the `/dev/noise` node a stock installation ships is **major 4** — the
-`bb` console-capture driver in a 2.1 kernel — while the audio driver is **entry 46** in the device
-switch table. The second half is confirmed: `usr/sys/master.d/kernel.c` line 395 is marked
-`46=audio`. The first half is **not**: the host-side copy of the stock tree shows `/dev/noise` as
-`0, 0`, which is an artefact of extracting device nodes onto a Linux filesystem and says nothing
-either way, and the guest was off the network when this was written. If the report holds, the
-shipped node has always returned `EIO` on open and `mknod /dev/noise c 46 0` fixes it — a plausible
-reason so little AMIX software makes sound.
+First recorded here as half-verified; the missing half was measured by the tracker line on
+2026-09-10 on the live guest (AMIX 2.1c, kernel `68060-260908-03`), both states in one command:
+
+```text
+# ls -l /dev/noise
+crw-rw-rw-   1 root     root       4,  0 Nov 22  1991 /dev/noise
+# rm -f /dev/noise && mknod /dev/noise c 46 0 && chmod 666 /dev/noise && ls -l /dev/noise
+crw-rw-rw-   1 root     root      46,  0 May 26 09:22 /dev/noise
+```
+
+**Before: major 4, dated November 1991** — the node exactly as the distribution shipped it. Major 4
+in a 2.1 kernel is the `bb` console-capture driver, and opening it returns `EIO` in every mode tried
+(`O_WRONLY`, `O_WRONLY|O_NDELAY`, `O_RDWR`, all errno 5). **After: major 46**, and the open and both
+ioctls succeed first time. The audio driver really is entry 46 in the device switch table
+(`usr/sys/master.d/kernel.c` line 395).
+
+So the shipped node has presumably always returned `EIO`, and `mknod /dev/noise c 46 0` fixes it —
+a plausible reason so little AMIX software makes sound.
+
+Two caveats, so nobody chases a ghost later:
+
+* **That machine's node is now 46, 0**, changed at the owner's request. The first line above is
+  the only surviving observation of the original. A fresh `ls -l` there proves nothing about what
+  shipped.
+* **The host-side `0, 0` was an extraction artefact**, and it is now shown to be one across two
+  independent copies of the stock image — this line's and the tracker line's read-only mount both
+  show `crw-rw-rw- 1 root root 0, 0 22.11. 1991 /dev/noise`. It is not evidence about the real
+  node either way, and a host-side copy is the wrong place to read AMIX device numbers.
+
+(The guest clock is unset, hence the 1996-era `May 26` on the new node.)
+
+### The workaround, measured — and where it stops
+
+On the tracker side, both catchable stop paths are verified on the machine: ten seconds of playback
+stopped with `SIGINT` and with `SIGTERM`, the backend draining for **435 ms** in each case with
+about **2.4 KB** still outstanding, the device reopening cleanly afterwards, machine up. So catching
+the signal and draining before close holds for every signal that *can* be caught. **`SIGKILL`
+cannot be**, which is exactly why this stays a kernel defect: the fix belongs in `audioclose`.
