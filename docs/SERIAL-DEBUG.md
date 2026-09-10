@@ -124,3 +124,44 @@ WARNING: DBG sched ENTRY maxrunpri=4F
 If a build's log is **missing** output that appears in the baseline, that absence is real
 (not a capture artifact) — i.e. the boot genuinely isn't producing it. That alone is a
 strong diagnostic for "how far does this build actually get?".
+
+---
+
+## ⚠ The mirror can be dead while looking alive, and silence is then worth nothing
+
+Learned twice in one week, the second time expensively.
+
+**What it looks like.** The reader process is running. `pgrep` finds it. The log file exists and
+has content. Everything about the setup says the capture is live. And it has recorded nothing for
+two days, because `/dev/ttyUSB0` disappeared from the host and `cat` is holding a descriptor to a
+device node that no longer exists. A live process writing nothing to a file is **indistinguishable
+from a quiet machine**.
+
+**Why it matters more here than elsewhere.** This project classifies machine failures partly by
+whether they printed anything — three of the unexplained events on the Amiga are recorded as
+"completely silent", and a panic prints while those did not. That classification is only worth
+something if the capture was **provably** live at the time. On 2026-09-10 two machine
+disappearances went unobserved because the mirror had been dead since 2026-09-08 07:46, and the
+silence in the log said nothing about either.
+
+**How to prove it was dead, after the fact.** A reboot always prints loader lines and a banner. If
+a boot is known to have happened in the window and the log has no banner in it, the capture was
+down for that window. That check is free and it is conclusive.
+
+**How to prove it is live, before trusting it.** Bracket it. Any known kernel print will do:
+
+```sh
+cd /tmp && ./va2byte 2000        # a deliberate, harmless bus error into the Zorro III gap
+# expect: NOTICE: User BUS ERROR at C1033000 ... CMD:./va2byte 2000
+```
+
+`echo > /dev/console` does **not** work as a bracket on the quiet build: it reaches `coputc` and
+not `conputc`, so it never enters the serial hook. A boot banner is the other free bracket.
+
+`scratchpad/serial-restart.sh` does the restart and refuses to start at all when the device node is
+missing, rather than starting a reader that will look fine and record nothing. It prints the
+bracket instruction every time, because the step that gets skipped is always the last one.
+
+**One trap while restarting it.** `pkill -f "cat /dev/ttyUSB0"` matches the shell running the
+restart script and kills it mid-command. Look the pids up, filter out `$$`, and kill by number.
+Same family as `grep -v grep`, and it bites in exactly the same place.
