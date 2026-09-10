@@ -8149,6 +8149,46 @@ start an X session and exit it again.** A second fault at the same PC settles it
 * The `0800430` in the banner line is **constant across two different panics**, so it is a fixed
   field and not an address worth chasing.
 
+### A second sighting of the subsystem, 2026-09-10 — a LOST wakeup rather than a wild jump
+
+The parallel XAnim line reported a hang it had localised carefully and attributed to nothing: the
+player stops in `ShowAnimation()` before a single frame, `+N` (no display at all) hangs identically,
+the X server answers `xdpyinfo` and `xrefresh` normally, load average is 0.00, and nothing is left
+behind afterwards. It asked about `swap -s` printing a negative reserved count, explicitly as a
+question rather than a claim.
+
+It is not the swap accounting, and it is not `malloc`. Reproduced here on `68060-260908-03` and
+`ps -el` names it:
+
+```text
+ F S   UID   PID  PPID  C PRI NI     ADDR     SZ    WCHAN TTY      TIME COMD
+10 S     0   864   862  0  26 20 40215850    882  8137a08 pts/1    0:01 xanim
+```
+
+State **`S`** — sleeping, not spinning, after one second of CPU. And `WCHAN = 0x08137a08` resolves
+to **`pollwait`**, confirmed by reading all three of its relocation sites (`.text 0x05fc46`,
+`0x05fd3a`, `0x05fd70`), which agree. The process is blocked in `poll()` and nothing wakes it.
+
+**Whether this is this issue or a second defect in the same subsystem is open**, and the difference
+matters:
+
+* the 2026-09-05 sighting was `pollwakeup` **jumping through** a freed `polldat`'s function pointer
+  and taking an address error — a wild call;
+* this one is a wakeup that **never arrives** — the same list walked, but the sleeper left asleep.
+
+A corrupted `polldat` chain explains both faces: follow a stale entry and you jump into nothing,
+or stop short of a live entry and you lose its wakeup. That is one hypothesis, not two
+observations of one mechanism, and it should be written as such until the chain is actually read.
+
+It does supply what this entry said it lacked. **`ISSUE-63 still rests on exactly one sighting`**
+is no longer true of the subsystem, though it remains true of that PC.
+
+⚠ Not established: whether this reproduces on a clean boot. The XAnim line saw the same binary run
+correctly minutes earlier and then hang from about 15:44 onwards, with a file read going 333 ms →
+566 ms in consecutive diagnostics, which is the only sign either of us has that something
+accumulates rather than simply breaks. A boot and an immediate re-run is the discriminator and it
+belongs to that line, which owns the workload.
+
 ## ISSUE-61 (2026-09-04, RECORDED — a symptom record; this port is not exposed): AMIX's 1991 X11 archives carry a self-referential `sh_link`, and a modern GNU ld drops their relocations without a word
 
 > **Ledger: not ours, and no action follows.** Found by the parallel OpenTTD-for-AMIX line and
