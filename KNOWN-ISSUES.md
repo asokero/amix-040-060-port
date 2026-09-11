@@ -9297,6 +9297,13 @@ because the photograph does not show it. It is the same class of trigger as `SIG
 with audio in flight — so it remains a candidate. Its role in this panic is unproven, and it is
 recorded that way.
 
+**What changes for a future reproduction.** As reported by the tracker line and not checked here:
+their player now has an environment switch that writes the mix to a file instead of opening
+`/dev/noise`, paced to the sample rate so the timing behaves the same. The mixer, keyboard and
+display synchronisation can therefore be exercised without touching the audio device, and a
+further panic from that direction would be deliberate rather than incidental. It is also the
+clean way to take a baseline before testing any fix for this issue.
+
 ### The workaround, measured — and where it stops
 
 On the tracker side, both catchable stop paths are verified on the machine: ten seconds of playback
