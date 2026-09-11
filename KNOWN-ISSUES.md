@@ -9240,6 +9240,63 @@ Two caveats, so nobody chases a ghost later:
 
 (The guest clock is unset, hence the 1996-era `May 26` on the new node.)
 
+### A captured panic, and its PC lands in `fill_buffer`
+
+Handed over by the tracker line at the owner's request to be filed, not investigated. The console,
+photographed on the machine (`68060-260908-03`, VA2000 at `0x40000000`):
+
+```text
+solon
+login:
+WARNING: DBG krnxflt FAILEXIT w=2 va=8B224564 rw=1 depth=1
+TRAP
+proc = 40236000 (pid 189, xeyes) psw = 2418
+pc = 80145B2
+
+PANIC: KERNEL FAULT psw=0x2418, pc=0x80145B2, fmt=0x4, vector=0x2 (Bus Error)
+4.0 2.1c 0800430 Backtrace:
+40001B80:
+```
+
+The transcription was checked character by character against the photograph, at
+`~/.claude/uploads/053f927e-4835-4cc3-b2a8-716c07928c4a/30459333-image.jpg` (not copied into the
+repository). The same photograph shows the banner `68060-260908-03`.
+
+**The faulting process is `xeyes`, which at face value has nothing to do with audio** — and that
+is exactly why this needed one lookup rather than a guess. A fault taken at interrupt level is
+charged to whichever process happened to be current, and `xeyes` redraws itself on a timer. The
+tracker line named the single lookup that separates the two readings. It was done, and it was the
+only thing done:
+
+* **`pc = 0x080145B2` = `.text 0x145b2` = `fill_buffer+0x22`.** That is inside the audio driver —
+  `audioinit 0x13cd2` … `audiointr 0x14214`, `fill_buffer 0x14590` — and `fill_buffer` is the
+  function this entry's mechanism names: the interrupt calling it on a client that `audioclose` has
+  already freed.
+* Symbolised against `build/unix-040-quiet-rtg`, confirmed to be the image that panicked two
+  ways: its build id is `260908-03` with sha256 `8a14754c…`, and the `krnxflt FAILEXIT` string
+  on the console occurs in it exactly once.
+* **Independently, `psw = 0x2418` puts the CPU at IPL 4**, which is the Amiga's audio interrupt
+  level. That is a second, separate reason to read this as the audio interrupt rather than as
+  `xeyes`.
+* A bus error on a read of `0x8B224564`, a nonsense address, is what following a pointer out of
+  freed and reused memory looks like. It is a read because `rw=1` is `S_READ` as this kernel's
+  own fault path decodes it (`src/krnxmemflt040.s`, `Lkx_haverw`). `fmt = 0x4` is the 68060's
+  access-fault frame.
+
+**So this is recorded as an ISSUE-68 sighting, not as a new issue**, with the limit stated: the PC
+is placed in `fill_buffer` at the audio interrupt level, but the instruction at `+0x22` was not
+read, by request. It is strongly consistent with the mechanism and not confirmed at instruction
+level. The empty `Backtrace: 40001B80:` is the u-area stack, which never resolves.
+
+**Which `close` triggered it is unknown.** In that session a module was being played through
+`/dev/noise` and stopped with keystrokes, with the console at a login prompt and X up. The tracker
+line had also just found a defect in its own close path — a drain gated on a flag that a
+sample-rate change clears, so pressing `+` or `-` and then quitting closed the device mid-playback.
+That is fixed on their side, and they **withdrew** their first claim that it caused this panic
+because the photograph does not show it. It is the same class of trigger as `SIGTERM` — any close
+with audio in flight — so it remains a candidate. Its role in this panic is unproven, and it is
+recorded that way.
+
 ### The workaround, measured — and where it stops
 
 On the tracker side, both catchable stop paths are verified on the machine: ten seconds of playback
