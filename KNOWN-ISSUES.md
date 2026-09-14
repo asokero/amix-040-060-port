@@ -764,7 +764,7 @@ flakiness come first).
 
 ## ISSUE-10: `/bin/sh` heap contains a kvsegu-range pointer → SIGBUS fault-retry flood (amixadm repro)
 
-> **Ledger: OPEN** — 68040 hardware + emulator; INTERMITTENT, so a single-boot bisect is invalid. Canonical: [`STATUS.md`](STATUS.md) §4.
+> **Ledger: OPEN** — 68040 hardware + emulator; INTERMITTENT, so a single-boot bisect is invalid. A cure from the second development line, `src/hgfault040.s`, has been in the base since 2026-08-25 and is proven in the emulator only (`docs/ISSUE10-SETUPSH-WALL-260819.md`). Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
 > STATUS.md §7 lists which.
 
@@ -1501,7 +1501,7 @@ runtimessa (`sar`/`sadc` ei toimi relinkattua ET_REL-kerneliä vasten) — alloc
 symmetria on todistettu vain staattisesti. Evidenssi
 `test-tools/modelb-tail-emu-verify-260725.txt`. Ks. myös **ISSUE-29**.
 
-## ISSUE-16: RFS client cache 2 KiB page geometry — OPEN, ja se on 72 sitea, EI 5
+## ISSUE-16: RFS client cache 2 KiB page geometry — DEFERRED, and it is 72 sites, not 5
 
 > **Ledger: DEFERRED** — 72 sites; RFS is broken upstream anyway. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -1524,7 +1524,7 @@ sivugeometriaa, ja juuri se luokittelu on se työ jota ei saa ohittaa.
 muuntaminen olisi latentin bugin istuttamista ilman havaitsemiskeinoa.
 **STATUS: RFS-testaus 040/060-portilla on EPÄTURVALLISTA.** Lykätty, ei korjattu.
 
-## ISSUE-17: procfs prfastmapin/prfastmapout — ✅ FIXED (2026-07-25); oli KERNEL-PANIKKI
+## ISSUE-17: procfs prfastmapin/prfastmapout — ✅ FIXED (2026-07-25); it was a KERNEL PANIC
 
 > **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -1561,7 +1561,7 @@ flippaus jumitti bootin 2026-07-03 (overlapping softlocks).
 emu-040 **ja** emu-060 (260725-04); korjaamattomalla panikki. Buildit 260725-03/-04.
 Evidenssi `test-tools/modelb-tail-emu-verify-260725.txt`.
 
-## ISSUE-18: vtop user-VA walker — ✅ (a) FIXED, (b) hardened + mitattu no-op (2026-07-25)
+## ISSUE-18: vtop user-VA walker — ✅ (a) FIXED, (b) hardened + measured to be a no-op (2026-07-25)
 
 > **Ledger: FIXED** — emulator, both CPUs. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -1694,7 +1694,7 @@ jäi auki — varmistettu 3b2 grow.c:523:sta; hyväksyntä `test-tools/mincorets
 vec-tavua + EINVAL 2K-kohdistuksesta). Buildit 260719-04…-15; joka ryhmällä hat_dup_cow
 64 PASS, 0 bus-virhettä, 0 4AFC005F:ää. JÄLJELLÄ: real-HW-verify-delta (REALHW-VERIFY-tyyli).
 
-## ISSUE-20: stock hat_swapout = MIINA jos prosessi-swapout koskaan palautetaan
+## ISSUE-20: stock hat_swapout is a MINE if process swapout is ever reinstated
 
 > **Ledger: DEFERRED** — process swapout is disabled. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -1711,7 +1711,7 @@ sched or calling swapout directly) would run this body against live 040 tables �
 re-enabling: a native hat_swapout040 (or an explicit no-op policy) + segu/u-area swap-out
 validation. Until then sched STAYS overridden.
 
-## ISSUE-21: satunnainen boot-musta-ruutu real-HW:llä (~1/4 booteista) — RATKAISTU (config-wrapper, IC-handoff)
+## ISSUE-21: intermittent black screen at boot on real HW (~1 boot in 4) — RESOLVED (config wrapper, IC handoff)
 
 > **Ledger: FIXED** — 68040 hardware, 9/9. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2233,7 +2233,7 @@ kylmään page-cacheen. JAHTIRESEPTI: toista kylmä-boot→välitön pressure -s
 jos toistuu, lisää minimaalinen EFAULT-latch (u_error==EFAULT && syscall==read →
 latchaa faultannut VA+PC) baseen. Kirjattu test-tools/issue10-realhw-verify-260719.txt.
 
-## ISSUE-23: serdbg serial-merkkikato 9600:lla — FIKSATTU + REAL-HW-VERIFIED
+## ISSUE-23: serdbg serial character loss at 9600 baud — FIXED + REAL-HW-VERIFIED
 
 > **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2262,7 +2262,7 @@ ympärille (max 1 merkkiaika; @115200 vain 87 µs); (2) valinnainen SERPER-nosto
 kapenee, mutta EI yksin poista racea. HUOM: unix_boot040:n loader-diagit jäävät 9600:aan ellei
 nosteta molempia; vastaanottopää samaan nopeuteen. Verifiointi vain real-HW:lla.
 
-## ISSUE-24: init 6 jää runlevel-6-limboon real-HW:lla — rc6-userland, EI kernel-bugi
+## ISSUE-24: init 6 is left in runlevel-6 limbo on real HW — rc6 userland, NOT a kernel bug
 
 > **Ledger: NOT A KERNEL BUG** — 68040 hardware -- rc6 userland. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2279,7 +2279,7 @@ käytä pehmoreboottiin `reboot`-komentoa, EI `init 6`:tta; kylmäboottiin reset
 boot unix-040:lle konfiguroitu 2026-07-19). Selvitys: aja rc6 kädestä (`sh -x /sbin/rc6`)
 ja katso mihin uadmin-haara kuolee.
 
-## ISSUE-25: natiivi boot-osiopolku (boot1/boot2) on 030-only — 040-portti buutataan unix_boot040:llä
+## ISSUE-25: the native boot-partition path (boot1/boot2) is 030-only — the 040 port boots with unix_boot040
 
 > **Ledger: DEFERRED** — documented: boot via unix_boot040. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2298,7 +2298,7 @@ kernel-offsetista 0x260a). TULOKSET Amiberryssä (vain AMIX-hdf, KS 3.2.2):
   vs boot2). Ei estä mitään nykyistä: AmigaOS→unix_boot040 on virallinen boottipolku.
 (Alkup. sivulöydös shutdown -i0:sta eriytetty omaksi ISSUE-26:ksi alle — eristetty samana yönä.)
 
-## ISSUE-26: shutdown -i0 (halt) → shutdown-prosessin deterministinen 4AFC0003-bus-error-silmukka
+## ISSUE-26: shutdown -i0 (halt) → a deterministic 4AFC0003 bus-error loop in the shutdown process
 
 > **Ledger: OPEN** — good emulator repro; halt path only. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2316,7 +2316,7 @@ Deterministinen + halpa emu-repro = hyvä jahtikohde sopivassa välissä; ei blo
 mitään nykyistä (halttia ei käytetä työnkuluissa). Serial-evidenssi:
 durable-tools/shutdown-i0-crash-serial.log (kopio myös scratchpadissa).
 
-## ISSUE-27: segmap_pagecreate-perheen häntänollaus — ✅✅ TODISTETTU JA KORJATTU (2026-07-25, emu-040+060)
+## ISSUE-27: tail zeroing in the segmap_pagecreate family — ✅✅ PROVEN AND FIXED (2026-07-25, emu-040+060)
 
 > **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2402,7 +2402,7 @@ Codex on aiemmin auditoinut saman muodon erikseen `rwvp`:lle
 UFS:n oma `rwip` ja `as_iolock`in rooli `pagecreate`-lipun TUOTTAJANA puuttuivat.
 </details>
 
-## ISSUE-28: memcntl / mem_unlock mlock-bittikartan geometria — ✅ FIXED (2026-07-25, emu-040+060)
+## ISSUE-28: memcntl / mem_unlock mlock bitmap geometry — ✅ FIXED (2026-07-25, emu-040+060)
 
 > **Ledger: FIXED** — emulator, both CPUs. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2437,7 +2437,7 @@ lukittavan muistin loppumisen kesken operaation; konversio on perusteltu staatti
 MOLEMMILLA kerneleillä eli 16/17 siten runtime-näyttö on "ei regressiota", ei
 "todistettu oikeaksi". Evidenssi `test-tools/memcntl-issue28-emu-verify-260725.txt`.
 
-## ISSUE-29: kertaluontoinen KMA 128-tavuluokan vapaalista-hälytys (attribuutio TODISTAMATTA)
+## ISSUE-29: a one-off free-list alarm in the KMA 128-byte class (attribution UNPROVEN)
 
 > **Ledger: OPEN** — single occurrence, attribution unproven. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2482,7 +2482,7 @@ ISSUE-5:lle, ei koskaan suljettu) on vähintään yhtä todennäköinen, nyt pal
 siirtyneen layoutin takia. Jahti lopetettu projektin oman säännön mukaan; kirjattu
 arvaamisen sijaan. Evidenssi `test-tools/modelb-tail-emu-verify-260725.txt`.
 
-## ISSUE-30: pvn_vptrunc katkaisun häntänollaus oli 2 KiB — 🔶 MUUNNETTU, saavutettavuus TODISTAMATTA
+## ISSUE-30: pvn_vptrunc zeroed the truncated tail in 2 KiB — 🔶 CONVERTED, reachability UNPROVEN
 
 > **Ledger: CONVERTED** — reachability unproven. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2517,7 +2517,7 @@ s5-kutsujat (`s5alloc.c:481`) eivät ole mountattuina eikä negatiivinen tulos k
 `reboot`+`fsck`:n yli, emu-040 **ja** emu-060; ISSUE-27 ei regressoinut (pgcold E
 PRESERVED). Serialit puhtaat.
 
-## ISSUE-31: ufs_bmap sivugeometria — ✅ MUUNNETTU (2026-07-25, emu-040+060)
+## ISSUE-31: ufs_bmap page geometry — ✅ CONVERTED (2026-07-25, emu-040+060)
 
 > **Ledger: FIXED** — emulator, both CPUs. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2553,7 +2553,7 @@ levytotuus `sum 8320 5763` `reboot`+`fsck`:n yli — **emu-040 ja emu-060**. Ser
 ⚠️ EI testattu: `fs_bsize == PAGESIZE` tai pienempi (speksi: ei saa päätellä 8192-tuloksesta).
 Ei rautaa.
 
-## ISSUE-32: ELF-execin mäppäysrajapinta — ✅ MUUNNETTU (2026-07-25, emu-040+060)
+## ISSUE-32: the ELF exec mapping interface — ✅ CONVERTED (2026-07-25, emu-040+060)
 
 > **Ledger: FIXED** — emulator, both CPUs. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2600,7 +2600,7 @@ ISSUE-27 ei regressoinut (pgcold E PRESERVED), levytotuus `sum 8320 5763`
 modulo 4 KiB (vaatisi käsin rakennetun ELF:n; natiivi `cc` ei anna kontrollia
 segmenttikohdistukseen). Ei dynaamisesti linkitettyä `PT_INTERP`-polkua. Ei rautaa.
 
-## ISSUE-33: /dev/mem-mmapin PFN oli 2 KiB — ✅ TODISTETTU JA KORJATTU (2026-07-25, emu-040+060)
+## ISSUE-33: the /dev/mem mmap PFN was 2 KiB — ✅ PROVEN AND FIXED (2026-07-25, emu-040+060)
 
 > **Ledger: FIXED** — emulator, both CPUs. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2644,7 +2644,7 @@ kampanjassa.
 `trunctest`, `bmaptest`) PASS + levytotuus `sum 8320 5763` — **emu-040 ja emu-060**.
 Serialit puhtaat. ⚠️ Ei rautaa; VA2000/Piccolo-kortteja ei testattu tällä.
 
-## ISSUE-34: JAKAUTUU KAHTEEN — 34a (todistettu) 68060 tappaa vakiojaon; 34b (auki) cc1:n SIGSYS ei ole tämä
+## ISSUE-34: SPLITS IN TWO — 34a (FIXED) the 68060 kills any constant division; 34b (SUPERSEDED) cc1's SIGSYS was the missing FPSP
 
 > **Ledger: 34a FIXED / 34b SUPERSEDED** — 68060 hardware -- 34b was the missing FPSP after all. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2741,7 +2741,7 @@ joka ON todellinen ja ON todistettu, **ei ole se joka rikkoo `cc1`:n.** Kaksi er
 
 ---
 
-### ISSUE-34a: 68060 tappaa minkä tahansa käyttäjäohjelman joka jakaa vakiolla — vektori 61 ei ole kytketty
+### ISSUE-34a: the 68060 kills any user program that divides by a constant — vector 61 is not wired
 
 **OPEN, JUURISYY TODISTETTU 2026-07-27. Paljon isompi kuin alkuperäinen otsikko
 "natiivi cc ei toimi".** Emu-040 + emu-060, dbg 260726-02. Ei rautaa — eikä tässä
@@ -2813,7 +2813,7 @@ on trap-probe joka kirjaa vektorinumeron ja faulttaavan PC:n — ei enempää p�
 
 Evidenssi: `test-tools/issue34-060-unimpl-integer-260727.txt`.
 
-## ISSUE-35: NFS-kirjoitus menetti PUOLET JOKAISESTA SIVUSTA — ✅ KORJATTU JA TODISTETTU 27.7.
+## ISSUE-35: an NFS write lost HALF OF EVERY PAGE — ✅ FIXED AND PROVEN 2026-07-27
 
 > **Ledger: FIXED** — 68040 hardware, byte-verified from the server. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2870,7 +2870,7 @@ Pelkkä `0x8ba2c` ei tee mitään; pelkkä `0x8b9de` kuvaisi kaksi 4 KiB -sivua 
 
 ---
 
-### (historia) alkuperäinen kirjaus: NFS-kirjoitus menettää 2048 tavua kun tiedoston pituus on 8192:n monikerta
+### (history) the original entry: an NFS write loses 2048 bytes when the file length is a multiple of 8192
 
 **OPEN, TODISTETTU RAUDALLA 2026-07-27, attribuutio ei todistettu.** Löytyi rautasession
 ENSIMMÄISESSÄ NFS-kirjoituksessa (A3000 + Mercury 68040, kerneli 68040-260727-01). **Ei osa
@@ -2918,7 +2918,7 @@ koneelta katkeaa hiljaa 2 KiB lyhyemmäksi — tar-arkistot ja varmuuskopiot muk
 Evidenssi `test-tools/realhw-verify-260727.txt` §5; testitiedostot NAS:issa
 `amix/hwtest-260727/`.
 
-## ISSUE-36: NFS-tiedoston mmap SIGBUSaa viimeisellä OSITTAISELLA sivulla
+## ISSUE-36: mmap of an NFS file takes SIGBUS on the last PARTIAL page
 
 > **Ledger: FIXED** — 68040 hardware, A/B. Canonical: [`STATUS.md`](STATUS.md) §4.
 > The text below is the working record and may contain hypotheses later refuted;
@@ -2977,7 +2977,7 @@ sitteen konversion.
 
 Evidenssi `test-tools/issue36-nfs-mmap-tail-sigbus-260727.txt`, repro `test-tools/rdmin.c`.
 
-## Käytännön sääntö (ei issue): `%` ja vakiojako ovat 68060-miinoja käyttäjätilan koodissa
+## A rule of thumb (not an issue): `%` and constant division are 68060 mines in user-space code
 
 Seuraa ISSUE-34a:sta, mutta on tarpeeksi tärkeä ja tarpeeksi helppo unohtaa että se ansaitsee
 oman merkintänsä. Löytyi 27.7. kirjoittaessa `test-tools/busbench.c`:tä.
@@ -4509,7 +4509,11 @@ than being folded into unrelated work.
 
 ---
 
-## ⚠ ISSUE-47 (2026-08-19, OPEN): a user-mode bus error is mishandled — two different ways
+## ⚠ ISSUE-47 (2026-08-19, PARTLY FIXED 2026-09-06): a user-mode bus error is mishandled — two different ways
+
+> **Ledger: PARTLY FIXED** — the retry-forever case is guarded in `hardbus` and hardware-accepted
+> on `68040-260906-12`, six predictions and six results (below). The guard does not address
+> `SIGKILL` being sent instead of `SIGBUS`. Canonical: [`STATUS.md`](STATUS.md) §4.
 
 > **CORRECTED THE SAME DAY.** This entry first said "retried forever instead of signalling". That
 > is one of the two behaviours, not the whole of it. With a Zorro III card present, the serial
@@ -4534,7 +4538,7 @@ than being folded into unrelated work.
 > attributed — the retry-forever case was an uninitialised Piccolo aperture at `0x40000000`, the
 > `SIGKILL` case an undecoded gap inside a live board's aperture. The original text follows.
 
-## ⚠ ISSUE-47 (2026-08-19, OPEN): original text: a user-mode bus error is retried forever instead of signalling the process
+## ISSUE-47 — the original text (2026-08-19, corrected the same day): a user-mode bus error is retried forever instead of signalling the process
 
 > **Ledger: OPEN** — found while probing a Zorro III aperture; no fix attempted. Canonical:
 > [`STATUS.md`](STATUS.md) §4.
@@ -5250,8 +5254,8 @@ behaviour can be diffed against it, which `devmaptest` alone cannot do.
 
 ## ✅ ISSUE-100 (2026-08-20, FIXED THE SAME DAY): the panic path destroys its own diagnosis — `sync()` walks the vfs switch through a NULL pointer
 
-> **Ledger: FIXED, and CONFIRMED ON HARDWARE 2026-08-20** (same day). Not yet reflected
-> in [`STATUS.md`](STATUS.md). The hardware evidence is at the end of this entry; the
+> **Ledger: FIXED, and CONFIRMED ON HARDWARE 2026-08-20** (same day). Canonical:
+> [`STATUS.md`](STATUS.md) §4. The hardware evidence is at the end of this entry; the
 > static acceptance that preceded it is kept as written, because the prediction it made
 > is what the run tested.
 
@@ -5476,11 +5480,11 @@ cache handoff), so the wiring cost is near zero. It is left undone here delibera
 the memory sizing of every kernel this port builds, including the 030-based lines that boot from
 motherboard RAM today, and that is a change that wants its own A/B rather than a ride-along.
 
-## ✅ ISSUE-102 (2026-08-20): `PANIC: page_free` at boot — the page-frame database is mapped-in DRAM and **nothing zeroes it**
+## ✅ ISSUE-102 (2026-08-20, FIXED in the port tree — not yet confirmed on hardware): `PANIC: page_free` at boot — the page-frame database is mapped-in DRAM and **nothing zeroes it**
 
 > **Ledger: FIXED in the port tree, NOT YET CONFIRMED ON HARDWARE.** The diagnosis is static
 > and complete; the fix ships its own falsifier (`pgz_held_n`) and the next boot either proves
-> or refutes it. Not yet reflected in [`STATUS.md`](STATUS.md).
+> or refutes it. Canonical: [`STATUS.md`](STATUS.md) §4.
 
 **Not a 68040 defect either.** Like ISSUE-100 this is generic SVR4 VM code, and like ISSUE-100 the
 040 lane is simply where it finally got hit.
@@ -6084,7 +6088,7 @@ boot memory arrives dirty on this machine.
 ## ✅ ISSUE-104 (2026-08-20, FIXED 2026-08-21): the panic backtrace stopped after one frame because its frame-pointer window was 64 KiB wide
 
 > **Ledger: FIXED in the port tree 2026-08-21, NOT YET EXERCISED ON HARDWARE** (no panic has
-> occurred since it landed). Not yet reflected in [`STATUS.md`](STATUS.md). The diagnosis below is
+> occurred since it landed). Canonical: [`STATUS.md`](STATUS.md) §4. The diagnosis below is
 > unchanged; the fix is at the end.
 
 ### It is not a stall
@@ -6159,8 +6163,8 @@ diagnostic — it is what made this defect findable at all — and `bt_laststop`
 
 ## ✅ ISSUE-105 (2026-08-21, FIXED THE SAME DAY): `xpanic` decided whether to `sync()` from uninitialised bits
 
-> **Ledger: FIXED in the port tree 2026-08-21, NOT YET EXERCISED ON HARDWARE.** Not yet reflected
-> in [`STATUS.md`](STATUS.md). It mattered because it decided how much to trust a post-mortem
+> **Ledger: FIXED in the port tree 2026-08-21, NOT YET EXERCISED ON HARDWARE.** Canonical:
+> [`STATUS.md`](STATUS.md) §4. It mattered because it decided how much to trust a post-mortem
 > counter, which became a working diagnostic channel for this port during the 040 campaign.
 
 ### The observation that forced it
@@ -6974,7 +6978,7 @@ Step 2 is the one that matters, because it is the only one that can date the def
 
 ---
 
-## ⚠ ISSUE-53 (2026-08-27, OPEN — fix built, not yet run): `a3091intr` reads WD status for interrupts the SCSI controller never raised
+## ⚠ ISSUE-53 (2026-08-27, OPEN — fix run on hardware, but its subject event never occurred): `a3091intr` reads WD status for interrupts the SCSI controller never raised
 
 > **Ledger: OPEN.** The defect is established statically and by four runtime captures; the
 > unit that addresses it is in `68040/68060-260827-05` and **has not been run on either

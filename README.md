@@ -17,6 +17,8 @@ This project continues my AI-assisted adventure into this obscure and commercial
 operating system. It makes AMIX run on a **68040** and a **68060** by patching the stock kernel
 binary rather than rebuilding it from a complete source tree, which is not publicly available.
 
+Support for Z3660 (emulated 030/040) and LC060 + various bug fixes have been provided by Jusii.
+
 You supply your own licensed AMIX 2.1c installation. This repository distributes neither the
 stock nor a patched AMIX kernel image, and it does not contain the Commodore or AT&T source trees.
 
@@ -40,10 +42,10 @@ project is meant to be fun, not production infrastructure, so please treat it ac
 
 This repository is both a build system and a record of my AI-assisted work with Claude Code and
 Codex. It deliberately keeps the errors, corrected conclusions, findings and history. It may not
-be the smallest or neatest possible tree. As I myself am not an experienced developer nor do I 
-decerve a true UNIX beard or have the deep understanding of the actual code, the intention therefore 
-is to make the process visible and auditable. This approach should also support further examination
-of this project with your own AI-asissistant.
+be the smallest or neatest possible tree. As I am not an experienced developer, and neither
+deserve a true UNIX beard nor have a deep understanding of the actual code, the intention is to
+make the process visible and auditable. This approach should also support further examination of
+this project with your own AI assistant.
 
 This work is not affiliated with Commodore, AT&T, Amiga Corporation or anyone else. It is not
 supported and not for production use. This is a technical exercise and a preservation project,
@@ -56,7 +58,7 @@ This project builds on groundwork by:
 
 - Markus Wild - thank you for the `unix_boot` utility and its source code
 - `isoriano1968` - the AMIX GCC cross-toolchain
-- `jusii` and the wider AMIX community
+- the wider AMIX community
 - Commodore's original Amiga UNIX team
 
 
@@ -83,10 +85,13 @@ AmigaOS has simply been the more convenient way to work.
 One kernel image boots both processors. Everything below has been done on a real Amiga 3000,
 unless it says otherwise.
 
-* **Boots to login** on a 68040 and on a 68060, and in Amiberry
+* **Boots to login** on a 68040 and on a 68060, 680LC60, Z3660 (cpu emulation), and in Amiberry
 * **Caches on** — instruction cache and data cache, in copyback mode, by default
 * **X11R5 on real RTG hardware**, with two different cards and drivers: Xsvga on a Piccolo, and
-  the Xrtg server on a Zorro II VA2000. The twm desktop works
+  the Xrtg server on a VA2000. The twm desktop works
+* **Zorro III graphics** — the VA2000 with its Zorro III firmware, on both CPUs, at 2.45 times the
+  bandwidth of the same card on Zorro II. Stock AMIX cannot reach a Zorro III board at all
+* **68LC060** — the FPU-less 68060 boots to multiuser (tested on an A4000 with a Z3660 (by Jusii))
 * **Console and telnet login**, A2065 Ethernet
 * **SCSI root filesystem**, `init`/`rc`, `fsck`, reboot and shutdown
 * **NFS client**, read and write
@@ -103,20 +108,37 @@ result. A listed capability means measured coverage, not a claim that every poss
 ### What works less well
 
 * Long-term stability is better than it was, but unproven
-* Two ways to crash it are known and captured, but not explained (`ISSUE-9`, `ISSUE-10`)
+* Two intermittent faults are captured on real hardware but not attributed there (`ISSUE-9`,
+  `ISSUE-10`)
+* A few kernel panics reachable from ordinary use are recorded but not fixed yet — see
+  `KNOWN-ISSUES.md`
 * `shutdown -i0` crashes on the halt path — the system survives it, and `reboot` works
 * `init 6` hangs, but that one turned out to be userland (`rc6`), not the kernel
 * The s5 filesystem is unsupported; its remaining 2 KiB/4 KiB problem is structural rather than
   merely untested
 * Booting needs the patched `unix_boot040` loader; the native boot-partition path is still
   68030-only
-* Zorro III is not available yet — see below
-* 68LC060 is unsupported and untested; the FPU-absent initialization path is not implemented
+* Zorro III has been proven with one card, the VA2000; other Zorro III boards are untested
+
 
 ### Next
 
-* Zorro III RTG cards
+* `ISSUE-9` and `ISSUE-10` on real silicon — the last two release blockers
+* The 68060's store buffer and branch cache, both still switched off
 * Reconstructing the kernel sources from the SVR4 3B2 tree — maybe?
+
+## Jusii's development line
+
+Since 2026-08-19 the port has been developed on two machines, by two people, each with their own
+AI assistant. The second line is Jussi's, on an **A4000 with a Z3660 accelerator**. Among what 
+came from it:
+
+* **the first 68040 install medium**, and the kernel the installed system then boots — run on the
+  Z3660's 68040
+* **kernel fixes that benefit every image on both CPUs**, mostly on the boot and panic paths
+* **AMIX on a real 68LC060**, and a software FPU (NetBSD's FPE) being brought up for it
+* **two new platform classes**, each with its own list of what it does not model
+  (`docs/PLATFORM-Z3660.md`, `docs/PLATFORM-LC060-Z3660.md`)
 
 ## Where it runs
 
@@ -124,6 +146,9 @@ result. A listed capability means measured coverage, not a claim that every poss
 a 68040 and a 68060 fitted, and on an A3640 — three configurations, because the A3640 has no RAM
 of its own and the kernel ends up in a different place in memory. On a 68060, run **SetPatch**
 before booting; it is a precondition, not a tweak.
+
+Jussi's patches provide support for A4000 with a Z3660 which have been testes on the card's 
+emulated 68030/68040 and a real 68LC060 in its socket.
 
 **Emulators.** It also boots under UAE, and most of the development happened there — principally
 **Amiberry**, on both emulated CPUs. You can try the whole thing without an accelerator card.
@@ -279,16 +304,18 @@ first — and the current boot/kernel path counts only the region containing the
 
 ### Zorro III
 
-The current port does not yet provide a supported kernel mapping for high-address Zorro III
-device apertures. The loader can record Zorro III AutoConfig entries, but recognizing a card is
-different from safely mapping its MMIO and framebuffer with the correct cache policy.
+It works now, with one card: an MNT VA2000 with its Zorro III firmware, driving X11 on both CPUs
+at 2.45 times the bandwidth of the same card on Zorro II
+(`docs/REALHW-Z3-VA2000-ACCEPTANCE-260819.md`, `docs/REALHW-Z3-040-260906.md`).
+
+Stock AMIX could not reach such a board at all: its drivers use the AutoConfig address directly
+as a kernel address, and Zorro III addresses fall inside the kernel's own virtual range.
 
 At least one Zorro III-only card existed, and it is a telling one: the [Ameristar
 1600GX](https://bigbookofamigahardware.com/bboah/product.aspx?id=474) was a Zorro III graphics
 card designed specifically for the X Window System under Amiga UNIX. So AMIX was expected to
-drive Zorro III graphics at the time, and the claim that "AMIX does not support Zorro III" might
-be too broad. Modern Zorro III RTG support is the next substantial feature being considered here
-— which makes it less a new feature than a restoration.
+drive Zorro III graphics at the time, and the claim that "AMIX does not support Zorro III" was
+always too broad — which makes this less a new feature than a restoration.
 
 ### Is it possible to compile the Amiga UNIX kernel from source?
 
@@ -309,7 +336,7 @@ That is a separate and much larger project, not the goal of this binary port.
 | path | what |
 |---|---|
 | `relink-040.sh` | the build: assembles the replacements, links them in, applies the byte patches, validates |
-| `relink-040-*.sh` | variants: debug probes, serial mirror, and the RTG graphics kernels |
+| `relink-040-*.sh` | variants: debug probes, serial mirror, the RTG graphics kernels, and the software FPU for the 68LC060 |
 | `src/*.s` | replacement routines, wrappers, support-package glue and diagnostic probes — see [`src/README.md`](src/README.md) |
 | `src/patch_*.py` | the in-place edits, one script per group of changes |
 | `tools/` | environment check, kernel verification, and the script that generates the live counter addresses |
@@ -317,6 +344,7 @@ That is a separate and much larger project, not the goal of this binary port.
 | `docs/` | acceptance records and analysis — the evidence behind the table above |
 | `STATUS.md` | what is proven, on which machine, with links to the evidence |
 | `KNOWN-ISSUES.md` | every defect found, in order |
+| `CONTRACTS.md` | what the two development lines have agreed between themselves |
 
 ## Documentation
 
@@ -325,6 +353,10 @@ That is a separate and much larger project, not the goal of this binary port.
 * **[`BUILDING.md`](BUILDING.md)** — dependencies, build, verification, and how the port works.
 * **[`KNOWN-ISSUES.md`](KNOWN-ISSUES.md)** — every defect found, including the ones that turned
   out not to be defects.
+* **[`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)** — how a kernel is tested and accepted, and
+  what each platform class can and cannot be evidence for.
+* **[`CONTRACTS.md`](CONTRACTS.md)** — what the two development lines have agreed between
+  themselves: allocation blocks for issue numbers and build ids, and the request channel.
 * **[`docs/METHOD.md`](docs/METHOD.md)** — how the work was done, and an honest account of what
   the AI assistance did and did not do.
 * **[`docs/contracts/INDEX.md`](docs/contracts/INDEX.md)** — the static contracts the code is
