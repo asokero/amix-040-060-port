@@ -415,7 +415,7 @@ separates them (contract §6.2):
 | fmt/vec word | shape | disposition |
 |---|---|---|
 | `0x402c` | eight-word format 4, 68060 FP disabled | **ours.** Every real LC060 event. |
-| `0x202c` | six-word format 2, 68040 unimplemented FP | counted, declined. The documented third arm; not implemented this round. |
+| `0x202c` | six-word format 2, unimplemented FP instruction (68040 or 68060-with-FPU) | counted, declined. The documented third arm; not implemented this round. |
 | `0x002c` | four-word format 0, genuine bad F-line word | counted, declined. **SIGSYS, unchanged.** |
 | anything else | — | counted with its word latched, declined. Must stay 0. |
 
@@ -855,8 +855,12 @@ round-5 pointer is `Amix/tmp/2026-08-27-fpe-r5/RESULTS.md`.
   the vector-60 form gate and the one instruction class it refuses, the split counter families,
   and the correction to §4.4's instruction-length instrument (it is format-4 only, which is what
   it always meant). §4.4's *"The two must be equal"* was already refuted by round 9.
-* The format-2 arm (68040 unimplemented FP) is documented and not implemented — decision 6's third
+* The format-2 arm (unimplemented FP instruction) is documented and not implemented — decision 6's third
   arm, and §9 item 10 is how the evidence for it gets collected.
+  *Correction (verified on 68060 silicon 2026-08-30): format 2 is NOT a 68040-specific frame. A 68060
+  with a working FPU takes the same six-word `0x202c` frame for unimplemented FP — `fpe_v11_n` and
+  `fpe_v11_fmt2_n` both moved 0 → 12 on that run while `fpe_v11_fmtx_n` stayed 0, so both shapes decode
+  and only the label was wrong, never the dispatch. Contract §6.2 carries the same correction.*
 * **Packed decimal is not emulated at all**, by either arm: the extracted tree's `fpu_emul_arith`
   rejects source format 3 before decoding an effective address and `fpu_explode` has no
   `FTYPE_BCD` case. Round 10 made the refusal visible and correctly classified (SIGILL rather than

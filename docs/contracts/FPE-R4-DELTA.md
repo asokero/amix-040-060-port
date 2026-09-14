@@ -371,12 +371,17 @@ it is, behind both gates, so the never-engage bar is untouched.
 ```text
 	fpe_v11_n            every vector-11 event, armed or not, user or supervisor
 	fpe_v11_fmt4_n       0x402c   eight-word, 68060 FP disabled
-	fpe_v11_fmt2_n       0x202c   six-word, 68040 unimplemented FP
+	fpe_v11_fmt2_n       0x202c   six-word, unimplemented FP instruction (68040 or 68060-w/FPU)
 	fpe_v11_fmt0_n       0x002c   four-word, a genuine bad F-line word
 	fpe_v11_fmtx_n       anything else            + fpe_v11_last_fmtvec
 	fpe_v11_fmt2_word    the format/vector word of the last format-2 frame
 	fpe_v11_fmt2_ia      ... and its +8 instruction address
 ```
+
+*Label corrected (verified on 68060 silicon 2026-08-30): `fpe_v11_fmt2_n`'s frame is the
+unimplemented-INSTRUCTION shape, not a 68040-specific one — a 68060 with a working FPU raises the
+same `0x202c` frame for unimplemented FP, and on that run `fpe_v11_n`/`fpe_v11_fmt2_n` both moved
+0 → 12 with `fpe_v11_fmtx_n` still 0. Contract §6.2 carries the full correction.*
 
 The census is memory-to-memory and memory-immediate throughout, so it changes CCR and nothing
 else — the register discipline `src/fpsp060_glue.s` records at length after M2a broke it, and the
