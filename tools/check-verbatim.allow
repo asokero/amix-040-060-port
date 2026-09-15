@@ -33,6 +33,29 @@ include-modelb/	The Model-B header override: <sys/param.h> and <sys/immu.h> with
 
 
 # ============================================================================================
+# SPAN IDS RECOMPUTED 2026-09-14.  The id is now the first 12 hex digits of the SHA-1 of the
+# span's normalised token stream; it was SHA-256 before.  No decision below changed -- the same
+# spans, the same paths, the same reasons.  Only the key is different.
+#
+# WHY.  The companion scanner on the other machine computes the same kind of id with SHA-1, so
+# the two tools named one quotation with two different strings and neither could read the
+# other's allowlist.  Truncated to 12 hex digits the two hashes are equally strong against the
+# only collision that can occur here -- an accidental one, at a birthday bound four orders of
+# magnitude above the number of spans this repository has -- so the algorithm was the cheap
+# thing to concede and comparability the expensive thing to gain.  `;` entered COMMENT_LEAD in
+# the same change and for the same reason; see span_id() and COMMENT_LEAD in check-verbatim.py.
+#
+# HOW THE 25 ENTRIES BELOW WERE MAPPED, and the one thing that went wrong, because it is the
+# kind of thing that goes wrong again: this file was emptied, both versions of the checker were
+# run over the same tree, and the reported spans were joined on (pass, label, line).  The first
+# attempt joined on label and line ALONE and silently lost five entries -- a location can carry
+# one span in the exact-line pass and a different, longer one in the joined-stream pass, and a
+# commit-message label contains spaces, which a path-shaped pattern does not match.  The gate
+# then read 5 unexplained, 42 known instead of 0 and 47, which is how it was caught.  The proof
+# that the mapping is right is that this file explains every span again.
+# ============================================================================================
+
+# ============================================================================================
 # SPAN DECISIONS, 2026-08-30.  The first joined-stream run of this gate produced 38 unexplained
 # spans; eleven were closed by widening the boilerplate rules and by rewriting five quotations
 # as descriptions (commit 258726f).  What follows is the residue, decided one span at a time.
@@ -46,17 +69,17 @@ include-modelb/	The Model-B header override: <sys/param.h> and <sys/immu.h> with
 # expression is derivable from the binary WE are patching, so it can be stated as what the code
 # does rather than as what the source says.  Recorded here rather than done now.
 
-src/patch_mincore.py 84f0ec1de292	The mincore alignment gate: the source contract this patcher
+src/patch_mincore.py 0a23a11fbe80	The mincore alignment gate: the source contract this patcher
 	converts, quoted so the byte assertion at 0x585e2 has something to be checked against.
-src/patch_ufsbmap.py 60a8a1ed2e5b	The blocks-per-page expression ufs_bmap computes; the patch
+src/patch_ufsbmap.py 0e70e42544e0	The blocks-per-page expression ufs_bmap computes; the patch
 	changes the page term of it and the canaries assert the neighbouring block terms.
-src/segvn_softunlock_dbg.s f763a6f244b3	The anon-slot test this instrument sits in front of; the
+src/segvn_softunlock_dbg.s 386db819e537	The anon-slot test this instrument sits in front of; the
 	debug unit exists to report when it is reached and with what.
-src/swapconf_dbg.s d78302facf1b	The swap-device lookup call whose arguments this instrument
+src/swapconf_dbg.s 40150dc199be	The swap-device lookup call whose arguments this instrument
 	prints; the argument order IS what the probe reports.
-test-tools/bmaptest.c bdec73a9cb89	The allocation-size condition this test exercises, in the
+test-tools/bmaptest.c 7f0dee654d3b	The allocation-size condition this test exercises, in the
 	comment that states what the test is for.
-test-tools/pgcold.c a7dc5207cba0	The page-boundary condition under test, in the comment that
+test-tools/pgcold.c cfc7ae25aea5	The page-boundary condition under test, in the comment that
 	states the contract the program checks.
 
 # -- signatures and declarations: the identifiers ARE the interface ----------------------------
@@ -64,29 +87,29 @@ test-tools/pgcold.c a7dc5207cba0	The page-boundary condition under test, in the 
 # their order are the contract, and two implementations that agree on behaviour but not on the
 # signature do not interoperate.  Same for a struct whose field order is an ABI.
 
-docs/contracts/HAT-EXEC-AUDIT.md 0ee46bff4d2d	as_exec's signature.  The audit is about argument
+docs/contracts/HAT-EXEC-AUDIT.md de46a631a063	as_exec's signature.  The audit is about argument
 	handling, so the parameter names and their order are its subject rather than its decoration.
-src/segkmem040.s 9322ca09b903	segkmem_setprot's signature, stated where this override has to
+src/segkmem040.s 06f3366a081b	segkmem_setprot's signature, stated where this override has to
 	match it exactly.
-docs/archive/RAM-BEYOND-16MB-CODEX-TASK.md 90010eba3aae	The bootinfo struct's first member.  The
+docs/archive/RAM-BEYOND-16MB-CODEX-TASK.md 110da59cbfcb	The bootinfo struct's first member.  The
 	task is about reading this structure from a running kernel, so field order is the subject.
-docs/archive/RAM-BEYOND-16MB-CODEX-TASK.md cb44e91ee620	The same struct's second member, for the
+docs/archive/RAM-BEYOND-16MB-CODEX-TASK.md 5e152f20934a	The same struct's second member, for the
 	same reason.
-docs/archive/ISSUE40-AVAILRMEM-TASK.md a6e629bb52e1	The USIZE declaration and its unit comment.
+docs/archive/ISSUE40-AVAILRMEM-TASK.md 458300cf9cef	The USIZE declaration and its unit comment.
 	The whole issue is that the constant's UNIT is 2048 bytes; the comment is the evidence.
-src/fpe-compat/sys/cdefs.h a284a85e10a6	BSD short type names, absent from AMIX.  There is one
+src/fpe-compat/sys/cdefs.h 188280d0e371	BSD short type names, absent from AMIX.  There is one
 	spelling of `typedef unsigned char u_char;` and code compiled against it must agree.
-src/fpe-compat/sys/cdefs.h b6ec9ec897ba	The same four typedefs, matched as a run.
+src/fpe-compat/sys/cdefs.h 04ed449b53ef	The same four typedefs, matched as a run.
 
 # -- strings that identify a message or locate code in a binary --------------------------------
 # A printf format string is how a line observed on a serial port is traced back to the code that
 # printed it.  Describing it instead would make the identification unrepeatable.
 
-docs/060-F4-M2-ATT5-RESULTS-260825.md 4680d0b4d0a4	The swap-configuration diagnostic, quoted to
+docs/060-F4-M2-ATT5-RESULTS-260825.md 750a88356bb1	The swap-configuration diagnostic, quoted to
 	identify which message the machine printed.
-docs/060-F4-M2-ATT6-PREREG-260825.md 4680d0b4d0a4	The same message, in the pre-registration that
+docs/060-F4-M2-ATT6-PREREG-260825.md 750a88356bb1	The same message, in the pre-registration that
 	predicted it.
-docs/A3091-WEDGE-PRESTUDY-260826.md b73f1727cc0e	The A3091 driver's own diagnostic call.  The
+docs/A3091-WEDGE-PRESTUDY-260826.md 2655758084e6	The A3091 driver's own diagnostic call.  The
 	format string is what appeared on the wire and the three argument names are the mapping this
 	section exists to state; the section decodes exactly this line.
 
@@ -94,10 +117,10 @@ docs/A3091-WEDGE-PRESTUDY-260826.md b73f1727cc0e	The A3091 driver's own diagnost
 # These are transcripts.  The AT&T and Lachman copyright banner is printed by the kernel under
 # test at every boot; a log that edited it would no longer be a record of what happened.
 
-test-tools/issue10-amixadm-emu-repro-260729.log 81b793745557	Kernel boot banner in a captured log.
-test-tools/issue22-serial36-260728.log 81b793745557	Kernel boot banner in a captured log.
-test-tools/issue22-serial45-260728.log 81b793745557	Kernel boot banner in a captured log.
-test-tools/pagecreate-issue27-COLD-PROOF-260725.txt 1f173e302301	The contract expression quoted in
+test-tools/issue10-amixadm-emu-repro-260729.log df03ad9b5de0	Kernel boot banner in a captured log.
+test-tools/issue22-serial36-260728.log df03ad9b5de0	Kernel boot banner in a captured log.
+test-tools/issue22-serial45-260728.log df03ad9b5de0	Kernel boot banner in a captured log.
+test-tools/pagecreate-issue27-COLD-PROOF-260725.txt 5027022ff7cb	The contract expression quoted in
 	a captured verification run; the file is a record of that run and is not edited after the fact.
 
 # -- commit messages: recorded because they CANNOT be rewritten --------------------------------
@@ -110,12 +133,12 @@ test-tools/pagecreate-issue27-COLD-PROOF-260725.txt 1f173e302301	The contract ex
 # The rule this pays for: the gate now sees a message BEFORE it is pushed, which is the only
 # moment at which this is cheap.
 
-commit 13544a9 message 839153b4e3de	The zero-fill expression the patch converts, in the message
+commit 13544a9 message e2afe1e6d143	The zero-fill expression the patch converts, in the message
 	that converted it.
-commit 13544a9 message a37bde31ab92	One sentence from the source comment that states why the
+commit 13544a9 message 73d98ee41241	One sentence from the source comment that states why the
 	tail is zeroed.  The file copy of this quotation was rewritten as a description in 258726f;
 	the message cannot be.
-commit 9c6a886 message 1f173e302301	The page-boundary condition, in the message that converted it.
-commit eab3c45 message bdec73a9cb89	The allocation-size condition, in the message that converted it.
-commit f35ddef message ddb096081399	The device-mmap failure contract, in the message that
+commit 9c6a886 message 5027022ff7cb	The page-boundary condition, in the message that converted it.
+commit eab3c45 message 7f0dee654d3b	The allocation-size condition, in the message that converted it.
+commit f35ddef message f573cd5e53ac	The device-mmap failure contract, in the message that
 	converted it.

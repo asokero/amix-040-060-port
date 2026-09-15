@@ -30,7 +30,21 @@ import hashlib, os, re, subprocess, sys
 
 # The reference trees, relative to the repository root.  All gitignored.
 REFERENCE_TREES = ["svr4-src-3b2", "usl-svr42", "svr4-v4", "amix-src"]
-REF_EXT = (".c", ".h", ".s", ".S")
+
+# THE EXTENSION FILTER IS THE INPUT THAT NARROWS THE CORPUS WITHOUT SAYING SO, and it did.  Until
+# 2026-09-14 this was (".c", ".h", ".s", ".S") -- no `.sa`, so the Motorola FPSP/060SP packages
+# could not be compared even when handed to it, and no C++ extension, so an emulator tree could
+# not be.  The companion scanner had the same defect measured against Amiberry on 2026-08-30: it
+# read 628 of 1071 files, reported a clean run, and said nothing about the 442 it never opened.
+# A check that silently checks nothing is worse than no check, so the default is wide and every
+# run prints what it read AND what it did not.
+#
+# `.C` (uppercase -- C++ in that era's naming) is deliberately NOT here yet: the three USL/SVR4
+# trees carry 557 of them, adding it did not move the count on either machine, and the two
+# scanners are kept at the same extension set so their numbers stay comparable.  Widen both or
+# neither.
+DEFAULT_REF_EXT = (".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".hh", ".s", ".S", ".sa")
+REF_EXT = DEFAULT_REF_EXT
 
 # A line must have at least this many significant characters to be considered expression.
 # 36 was chosen by measurement, not taste: at 24 the output is dominated by idiomatic C that
@@ -50,7 +64,13 @@ BOILERPLATE = re.compile(r'''^(
     | \*+ .*
 )$''', re.X)
 
-COMMENT_LEAD = re.compile(r'^\s*(?:[#|]+\s?|//\s?|\*\s?|/\*\s?)')
+# `;` IS IN THIS LIST BECAUSE THE MOTOROLA PACKAGES USE IT.  The GNU m68k sources this port
+# writes comment with `|`, so `;` never mattered while the corpus was the four SVR4 trees -- but
+# the FPSP/060SP `.sa` sources comment with `;`, and the moment those enter the corpus a `;`-led
+# line would tokenise differently here than in the companion scanner on the other machine,
+# giving one quotation two different span ids with nothing to say why.  Measured 2026-09-14
+# against mail/tools/verbatim-scan/verbatim-scan.py, which already had it.
+COMMENT_LEAD = re.compile(r'^\s*(?:[#|]+\s?|//\s?|\*\s?|/\*\s?|;\s?)')
 
 
 def normalise(line):
@@ -82,8 +102,22 @@ def span_id(text):
     borrowed text into this repository in order to record that we had decided not to put it
     there.  The hash names the span without reproducing it, and it changes if the span changes
     -- so an edited quotation comes back for a fresh decision instead of inheriting the old one.
+
+    THE ALGORITHM IS SHA-1 BECAUSE THE OTHER SIDE'S SCANNER USES SHA-1, not because SHA-1 is the
+    better hash.  Both tools truncate to 12 hex digits, and that truncation -- 48 bits --
+    dominates completely: SHA-256 cut to 48 bits is no safer against an ACCIDENTAL collision than
+    SHA-1 cut to 48 bits, and the birthday bound either way is around 2**24 spans against the few
+    hundred this repository has.  SHA-1's real weakness is CRAFTED collisions, and there is no
+    adversary here -- the inputs are this project's own text and the reference trees.  So the
+    choice was free, and it was spent on the one thing that is not: an allowlist entry written on
+    one machine naming the same span on the other.  Changing it means recomputing every id in
+    check-verbatim.allow, so do not change it casually.
+
+    `usedforsecurity=False` does not alter the digest.  It states what this hash is for, keeps the
+    call working in a FIPS-mode Python, and keeps the weak-hash linters quiet once this repository
+    is public -- none of which is worth a different answer than the other scanner gives.
     """
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha1(text.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 
 # ---------------------------------------------------------------- joined-stream pass ---
@@ -148,7 +182,33 @@ def substantial(run):
     return len(set(ids)) >= MIN_TOKENS
 
 
-def joined_hits(streams, trees):
+def collect_refs(trees):
+    """Every reference file REF_EXT selects, plus a tally of what it did NOT select.
+
+    ONE WALK FOR BOTH PASSES.  The exact-line pass and the joined-stream pass used to walk the
+    trees separately with the same filter written twice, which is two places for the corpus to
+    drift apart and no way to notice: the two passes would simply be answering about different
+    file sets under one "scanned N reference files" line.  They now read the same list.
+
+    The tally is the point of the rest of it.  A file skipped for its extension is invisible --
+    it produces no hit, no warning and no difference in the exit status -- so the count is
+    carried out of here and printed, per extension, on every run.
+    """
+    files, skipped = [], {}
+    for tree in trees:
+        for dirpath, _, names in os.walk(tree):
+            if ".git" in dirpath.split(os.sep):
+                continue
+            for name in names:
+                if name.endswith(REF_EXT):
+                    files.append(os.path.join(dirpath, name))
+                else:
+                    ext = os.path.splitext(name)[1] or "(none)"
+                    skipped[ext] = skipped.get(ext, 0) + 1
+    return files, skipped
+
+
+def joined_hits(streams, ref_files):
     """Return {(label, line): (run-text, [(ref, line), ...])} for shared runs.
 
     `streams` is {label: (tokens, line-numbers)} so that a commit message, which is not a file,
@@ -160,43 +220,36 @@ def joined_hits(streams, trees):
             index.setdefault(tuple(toks[i:i + SHINGLE]), []).append((f, i))
 
     found = {}
-    for tree in trees:
-        for dirpath, _, names in os.walk(tree):
-            if ".git" in dirpath.split(os.sep):
+    for rp in ref_files:
+        try:
+            with open(rp, encoding="latin1") as fh:
+                rtoks, rat = stream_tokens(fh)
+        except OSError:
+            continue
+        j = 0
+        while j <= len(rtoks) - SHINGLE:
+            key = tuple(rtoks[j:j + SHINGLE])
+            posts = index.get(key)
+            if not posts:
+                j += 1
                 continue
-            for name in names:
-                if not name.endswith(REF_EXT):
-                    continue
-                rp = os.path.join(dirpath, name)
-                try:
-                    with open(rp, encoding="latin1") as fh:
-                        rtoks, rat = stream_tokens(fh)
-                except OSError:
-                    continue
-                j = 0
-                while j <= len(rtoks) - SHINGLE:
-                    key = tuple(rtoks[j:j + SHINGLE])
-                    posts = index.get(key)
-                    if not posts:
-                        j += 1
-                        continue
-                    best = 0
-                    for f, i in posts:
-                        toks, at = streams[f]
-                        k = SHINGLE
-                        while (i + k < len(toks) and j + k < len(rtoks)
-                               and toks[i + k] == rtoks[j + k]):
-                            k += 1
-                        run = toks[i:i + k]
-                        if substantial(run):
-                            key2 = (f, at[i])
-                            prev = found.get(key2)
-                            if prev is None or len(' '.join(run)) > len(prev[0]):
-                                found[key2] = (' '.join(run), [(rp, rat[j])])
-                            elif (rp, rat[j]) not in prev[1]:
-                                prev[1].append((rp, rat[j]))
-                        best = max(best, k)
-                    j += max(1, best - SHINGLE + 1)
+            best = 0
+            for f, i in posts:
+                toks, at = streams[f]
+                k = SHINGLE
+                while (i + k < len(toks) and j + k < len(rtoks)
+                       and toks[i + k] == rtoks[j + k]):
+                    k += 1
+                run = toks[i:i + k]
+                if substantial(run):
+                    key2 = (f, at[i])
+                    prev = found.get(key2)
+                    if prev is None or len(' '.join(run)) > len(prev[0]):
+                        found[key2] = (' '.join(run), [(rp, rat[j])])
+                    elif (rp, rat[j]) not in prev[1]:
+                        prev[1].append((rp, rat[j]))
+                best = max(best, k)
+            j += max(1, best - SHINGLE + 1)
     return found
 
 
@@ -264,18 +317,33 @@ def tracked_files(paths):
 
 def main():
     args = sys.argv[1:]
-    global MIN_CHARS
+    global MIN_CHARS, REF_EXT
     if "--min" in args:
         i = args.index("--min"); MIN_CHARS = int(args[i+1]); del args[i:i+2]
+
+    # --reference ADDS a tree, it never replaces the four.  Narrowing the corpus is the failure
+    # this whole option exists to answer, so the gate's own reference set cannot be argued away
+    # from the command line -- only extended.  The Motorola packages live where the FPSP build
+    # unpacks them:
+    #     python3 tools/check-verbatim.py --reference build/fpsp-work --reference build/fpsp060-work
+    extra = []
+    while "--reference" in args:
+        i = args.index("--reference"); extra.append(args[i+1]); del args[i:i+2]
+    if "--ref-ext" in args:
+        i = args.index("--ref-ext")
+        REF_EXT = tuple(e if e.startswith(".") else "." + e
+                        for e in args[i+1].split(",") if e)
+        del args[i:i+2]
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     os.chdir(root)
 
-    trees = [t for t in REFERENCE_TREES if os.path.isdir(t)]
-    missing = [t for t in REFERENCE_TREES if not os.path.isdir(t)]
+    wanted = REFERENCE_TREES + extra
+    trees = [t for t in wanted if os.path.isdir(t)]
+    missing = [t for t in wanted if not os.path.isdir(t)]
     if not trees:
         print("NO REFERENCE TREE AVAILABLE -- nothing was checked.")
-        print("  looked for: " + ", ".join(REFERENCE_TREES))
+        print("  looked for: " + ", ".join(wanted))
         print("  This check can only run where the reference sources are unpacked.")
         sys.exit(2)
 
@@ -314,24 +382,32 @@ def main():
                              ("   (absent: %s)" % ", ".join(missing)) if missing else ""))
     print()
 
-    hits, scanned = {}, 0
-    for tree in trees:
-        for dirpath, _, names in os.walk(tree):
-            for name in names:
-                if not name.endswith(REF_EXT):
-                    continue
-                p = os.path.join(dirpath, name)
-                scanned += 1
-                try:
-                    with open(p, encoding="latin1") as fh:
-                        for n, line in enumerate(fh, 1):
-                            k = normalise(line)
-                            if k and k in candidates:
-                                hits.setdefault(k, []).append((p, n))
-                except OSError:
-                    continue
+    ref_files, skipped_by_ext = collect_refs(trees)
 
-    print("scanned %d reference files" % scanned)
+    hits = {}
+    for p in ref_files:
+        try:
+            with open(p, encoding="latin1") as fh:
+                for n, line in enumerate(fh, 1):
+                    k = normalise(line)
+                    if k and k in candidates:
+                        hits.setdefault(k, []).append((p, n))
+        except OSError:
+            continue
+
+    # WHAT WAS READ, AND WHAT WAS NOT.  A run that reports nothing is only worth something if
+    # you can see what it opened; the extension filter is the one input that can turn this into
+    # a clean-looking run over 59% of a tree, which is how it read 628 of Amiberry's 1071 files
+    # and said so nowhere.  Both numbers print every time, unasked.
+    print("scanned %d reference files" % len(ref_files))
+    print("  extensions read (--ref-ext): %s" % " ".join(REF_EXT))
+    if skipped_by_ext:
+        top = sorted(skipped_by_ext.items(), key=lambda x: (-x[1], x[0]))[:6]
+        rest = len(skipped_by_ext) - len(top)
+        print("  NOT read, wrong extension: %d file%s  (%s%s)" % (
+            sum(skipped_by_ext.values()), "" if sum(skipped_by_ext.values()) == 1 else "s",
+            ", ".join("%s %d" % (e, n) for e, n in top),
+            ", +%d more extension%s" % (rest, "" if rest == 1 else "s") if rest else ""))
     print()
 
     allowed_prefixes, allowed_spans = allowlist()
@@ -348,7 +424,7 @@ def main():
                  for k, refs in sorted(hits.items()) for f, line in candidates[k]]
     allowed, failing = classify(line_rows)
 
-    joined = joined_hits(streams, trees)
+    joined = joined_hits(streams, ref_files)
     jrows = [(f, line, text, refs) for (f, line), (text, refs) in sorted(joined.items())]
     jallowed, jfailing = classify(jrows)
 
