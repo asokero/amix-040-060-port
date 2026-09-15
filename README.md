@@ -144,11 +144,21 @@ came from it:
 
 **Real hardware.** An Amiga 3000 with a 68040 or 68060 accelerator. Tested on a Mercury with both
 a 68040 and a 68060 fitted, and on an A3640 — three configurations, because the A3640 has no RAM
-of its own and the kernel ends up in a different place in memory. On a 68060, run **SetPatch**
-before booting; it is a precondition, not a tweak.
+of its own and the kernel ends up in a different place in memory: bound at `0x07000000` rather
+than `0x08000000`, which moves every address derived from the load base by 16 MiB. On a 68060, run
+**SetPatch** before booting; it is a precondition, not a tweak.
 
-Jussi's patches provide support for A4000 with a Z3660 which have been testes on the card's 
-emulated 68030/68040 and a real 68LC060 in its socket.
+**The graphics card is part of the configuration.** The Zorro III work is accepted on both CPUs
+with one card — an **MNT VA2000 carrying its Zorro III firmware**, 32 MB — on a 68060 on
+2026-08-19 (`docs/REALHW-Z3-VA2000-ACCEPTANCE-260819.md`, 7.66 MB/s against 3.12 on Zorro II) and
+on a 68040 on 2026-09-06 (`docs/REALHW-Z3-040-260906.md`), with a full Xrtg session — twm, xclock,
+xeyes, a scrolling xterm — on the 68040 the day after. The firmware is a requirement rather than a
+detail: stock AMIX cannot reach a Zorro III board at all, so a VA2000 left in Zorro II is a
+different machine as far as this port is concerned. On Zorro II, Xsvga drives a Piccolo. No other
+Zorro III board has been tried.
+
+Jussi's patches provide support for an A4000 with a Z3660, tested on the card's emulated
+68030/68040 and on a real 68LC060 in its socket.
 
 **Emulators.** It also boots under UAE, and most of the development happened there — principally
 **Amiberry**, on both emulated CPUs. You can try the whole thing without an accelerator card.
