@@ -203,9 +203,21 @@ m68k-linux-gnu-as  -m68040 isp61ea_asm.s -o isp61ea_asm.o
 m68k-cbm-sysv4-gcc -m68040 -o isp61ea isp61ea.c isp61ea_asm.o
 ```
 
-`test-tools/mk060.sh` carries these notes at the site. `fpenab060_asm.s` does not assemble with
-the GNU assembler either and has no recorded recipe — if you need it, that is the first thing to
-solve.
+`test-tools/mk060.sh` carries these notes at the site. `fpenab060_asm.s` needs one step more than
+the three above, and the recipe is recorded: it is **cpp-macro assembly** — lines 35, 50 and 59
+are `#define`s with `\` continuations — so a bare `as` reads the first continuation as an
+instruction and dies at line 36. Preprocess it rather than assembling it:
+
+```sh
+m68k-linux-gnu-gcc -m68060 -c -x assembler-with-cpp -o x.o test-tools/fpenab060_asm.s
+m68k-cbm-sysv4-gcc -m68020 -m68881 -O -o fpenab060 test-tools/fpenab060.c x.o
+```
+
+That is how the instrument was built and run on silicon on 2026-08-11 against kernel
+`68060-260810-03`: `test-tools/f3-m4-enabled-hw-260811.txt`, recipe at
+`docs/archive/NEXT-SESSION-PROMPT-260812.md:105-106`. The sentence that stood here until
+2026-09-14 — “has no recorded recipe” — was written before that run and was never revisited
+after it.
 
 ## 6. What the CPU adds
 

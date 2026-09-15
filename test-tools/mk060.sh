@@ -16,8 +16,16 @@
 #   m68k-cbm-sysv4-gcc -m68040 -o fp060probe fp060probe.c
 #   m68k-linux-gnu-as -m68040 isp61ea_asm.s -o isp61ea_asm.o
 #   m68k-cbm-sysv4-gcc -m68040 -o isp61ea isp61ea.c isp61ea_asm.o
-# fpenab060_asm.s does not assemble with the GNU as here either (line 36); its
-# recipe is still unknown and it was skipped on 2026-08-21.
+# fpenab060 needs one step more, and the recipe IS recorded -- the note that stood
+# here until 2026-09-14 said it was unknown, and it predated the run it contradicts.
+# fpenab060_asm.s is cpp-macro assembly: lines 35, 50 and 59 are #defines with `\`
+# continuations, so a bare `as` reads the first continuation as an instruction and
+# dies at line 36.  Preprocess it instead of assembling it:
+#   m68k-linux-gnu-gcc -m68060 -c -x assembler-with-cpp -o x.o fpenab060_asm.s
+#   m68k-cbm-sysv4-gcc -m68020 -m68881 -O -o fpenab060 fpenab060.c x.o
+# Built and run on silicon that way on 2026-08-11 against kernel 68060-260810-03:
+# the log is test-tools/f3-m4-enabled-hw-260811.txt, the recipe
+# docs/archive/NEXT-SESSION-PROMPT-260812.md:105-106.
 CC=/usr/ccs/bin/cc
 cd /tmp
 echo "==== $CC fp060probe"
