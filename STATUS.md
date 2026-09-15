@@ -489,9 +489,9 @@ Decided 2026-08-13: **MIT licence · history rewritten rather than truncated · 
 | | State | Check |
 |---|---|---|
 | Licence | MIT + `NOTICE` bounding what is *not* ours | `LICENSE`, `NOTICE` |
-| Redistribution hygiene | 463 tracked files after the contract import, no AT&T or Commodore source among them | `.gitignore` excludes `amix-src/`, `svr4-src-3b2/`, `usl-svr42/`, `ghindra-unix/`, kernel binaries, the distribution archives |
+| Redistribution hygiene | no AT&T or Commodore source among the tracked files (the count is not carried here — `git ls-files \| wc -l`; it was 463 at the contract import) | `.gitignore` excludes `amix-src/`, `svr4-src-3b2/`, `usl-svr42/`, `ghindra-unix/`, kernel binaries, the distribution archives |
 | Root password | **gone from the working tree and from every commit** | `git log --all -S` finds no commit containing it |
-| Hard-coded home paths | 59 → **10, in 8 files, all prose** — none in any build script | `git grep /home/asokero` |
+| Hard-coded home paths | 59 at the release-plan audit → **all prose, none in any build script**. The count is not carried here because it rots; note when you run it that two of the remaining occurrences are audit lines naming the string — this row and `RELEASE-PLAN.md:157` | `git grep -c /home/asokero` |
 | One configuration point | `config.sh` (gitignored) from `config.sh.example`; `tools/check-env.sh` verifies every dependency and exits non-zero | phase 2 |
 | Stock-kernel gate | `tools/verify-stock.sh`, positive and negative tested | phase 3 |
 | Build fails loudly | ISSUE-45: a broken patch site now stops the build, measured against the old behaviour | phase 3 |
