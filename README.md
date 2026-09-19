@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/img/logo.png" alt="AMIGA/UNIX 68040/68060" width="560">
+  <img src="docs/img/logo.png" alt="The Unofficial AMIGA/UNIX 68040/68060" width="560">
 </p>
 
 # AMIX 68040/68060 Port
