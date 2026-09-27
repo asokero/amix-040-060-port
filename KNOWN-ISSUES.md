@@ -9439,3 +9439,100 @@ and no `.Xauthority` exists in `/root`, in `/usr/X/lib/xdm/authdir` or in `/tmp`
 reboot the same command needed no cookie. The change coincides with the XDM work in `xrtg-amix`.
 Whoever retries should run `xwd` from a shell inside the X session, which has the cookie by
 construction — and will then be measuring ISSUE-70 rather than the authorisation.
+
+## ⚠ ISSUE-71 (2026-09-27, RECORDED — the hazard is real, its effect on this tree today is nil): `-traditional` erases every `volatile` and `const`, so the compiler may optimise MMIO
+
+`AMIX_KERNEL_CFLAGS` carries `-traditional`. That turns off `__STDC__`, and the stock
+`vanilla/usr/include/sys/types.h:204-210` then reads:
+
+```c
+#ifndef const
+#define const
+#endif
+
+#ifndef volatile
+#define volatile
+#endif
+```
+
+So every `volatile` in C compiled for this kernel is deleted before the compiler sees it, MMIO
+register pointers included, and the compiler is free to hoist a register read out of a poll loop,
+fold two reads into one, or narrow an access. `sys/inline.h`'s spl primitives are exposed the same
+way: they become a plain `asm` with an unused output, which gcc deletes, taking `splx()` and any
+`s = spl6()` that only fed it.
+
+**Found by the driver line** (`amix-mail`, `2026-09-27-kickoff-questions`, their tracking number
+T-9), who measured 1 of 8 spl sites surviving in one of their own objects and a 32-bit register
+read narrowed to a byte `btst` in another. What follows is this tree measured independently, not
+their result carried over.
+
+### The whole exposure is three C targets
+
+Every relink script was searched. Across all of them the compiler is handed `.c` in exactly three
+places; the other ~80 compilations are hand-written `.s`, which `-traditional` cannot reach.
+
+| target | spl calls | `volatile` | effect of restoring both |
+|---|---|---|---|
+| `build/va2000_040.c` (`relink-040-va2000.sh`, `relink-040-rtg.sh`) | 0 | 5, all MMIO | 16 bytes of codegen, no access changed |
+| the 20 extracted FPE emulator files (`relink-040-fpe.sh`) | 0 | 1, no effect | 19/20 byte-identical |
+| `src/fpe_glue.c` | 0 | 0 | byte-identical |
+
+### What was measured, and how
+
+`m68k-cbm-sysv4-gcc -E -dM` over `<sys/types.h>` with our own flags: `volatile` and `const` both
+define to nothing, `__STDC__` undefined, and the header read is our own vanilla copy. The claim's
+premise holds here and is not specific to their toolchain.
+
+**`va2000_040.c`.** Built four ways — current flags, `-Dvolatile` only, `-Dconst` only, both.
+`-Dconst` alone is **byte-identical**; the whole 16-byte difference comes from `volatile`. Six
+functions differ and each was read instruction by instruction: `va2_blit_wait` re-reads
+`%a0@(42)` as a word once per iteration **in both** (the current build branches back to the read
+itself at `25a`; the rebuilt one uses `movew`+`bnew`), `va2000init`'s `movew %a0@,%d0` is
+identical with only the push sequence rearranged to the same big-endian longword, `va2000ioctl`
+restructures two stores to the ioctl output struct and selects a different addressing mode for
+the palette writes at the same effective addresses and the same width, and the remaining three
+differ only by branch displacement. **No register access is lost, added, moved or narrowed.**
+
+**The FPE.** 19 of 20 objects byte-identical, `fpe_glue.o` byte-identical. The single exception is
+`fpu_cordic.o`: 796 bytes (`0x31c`) move from `.data` to a new `.rodata`, `.text` unchanged, total
+unchanged. The driver line reported the same `0x31c` from their own tree, which is two machines
+agreeing on one number.
+
+### Why the fix is half a fix, applied in one place
+
+`relink-040-va2000.sh` and `relink-040-rtg.sh` now compile the driver with
+`-Dvolatile=__volatile__`. That is where MMIO lives, the cost is the 16 bytes measured above, and
+the reason it is worth 16 bytes is that **the driver is correct today by luck rather than by
+construction** — gcc did not take a freedom it had at `-O`, and nothing stops it taking that
+freedom after an edit or an optimisation-level change.
+
+`-Dconst` is deliberately not applied anywhere. Erasing `const` cannot produce wrong code, only
+weaker diagnostics; restoring it moves tables into `.rodata`, and in the FPE that is a layout
+change to a kernel whose layout is hardware-proven (`68060-260807-11` onwards). A correctness fix
+and a layout risk should not ride in on the same flag.
+
+The FPE is left alone entirely: no spl calls, no MMIO, and its one `volatile` compiles identically
+either way, so the flag would buy nothing there and cost the `.rodata` split.
+
+### What is NOT fixed, and what would catch it
+
+Any C added later that masks interrupts or polls a register is exposed again the moment it is
+compiled by a relink that does not carry the define — and there is no gate that would say so. The
+driver line runs `tools/spl-gate.py`, which asserts **per function** that every function calling
+an spl contains a `,%sr` write (per function rather than by count, because gcc merged three
+`splx(); return` exits and 8 sites produced 6 writes). There is nothing here for it to check
+today — zero spl calls in all three targets — so it is not imported yet.
+
+### Separately: the wrapper has no `-E`
+
+The first attempt at the measurement above returned "no matches", which was a **false negative**:
+`m68k-cbm-sysv4-gcc` is a wrapper script with cases for `-c` and `-S` but not `-E`, so an
+unrecognised dash-argument falls through to the catch-all, is filed as an ld flag, and the
+invocation links instead of preprocessing — emitting nothing and reporting 0 macros. The real
+figures came from calling `m68k-cbm-sysv4-gcc.real` directly.
+
+The driver line sent a patch for exactly this on 2026-08-29
+(`amix-mail/2026-08-28-040-060-port/patches/gcc-wrapper-pr2/0002-wrapper-implement-E-*.patch`,
+one of four) and it has not been applied to this machine's toolchain. That is a
+`gcc-cross-amix` decision rather than a change to this repository, so it is recorded here rather
+than fixed here.

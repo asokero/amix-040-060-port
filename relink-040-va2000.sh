@@ -85,7 +85,20 @@ echo "[*] VA2000: cross-compile build/va2000_040.c"
 # in transparently translated Zorro II space.  Without the define the same source
 # still builds for the vanilla 68030 kernel, unchanged.
 VA2000_CFLAGS=$(echo "$AMIX_KERNEL_CFLAGS" | sed 's/-m68020/-m68040/')
-m68k-cbm-sysv4-gcc $VA2000_CFLAGS -DVA2000_KVA -I"$HERE/build" \
+# -Dvolatile: AMIX_KERNEL_CFLAGS carries -traditional, which turns off __STDC__, and the stock
+# <sys/types.h>:204-210 then defines `const` and `volatile` to NOTHING.  Every `volatile` in this
+# driver is an MMIO register pointer, so without this the compiler is free to hoist a register
+# read out of a poll loop or fold two reads into one.  Measured 2026-09-27 (ISSUE-71): with and
+# without, every register access in va2000_040.o is the same address at the same width -- gcc
+# simply did not take the freedom at -O.  The driver is therefore correct today by luck and not
+# by construction, which is what this define fixes.  Cost, measured: 16 bytes of codegen churn
+# (a rotated loop in va2_blit_wait, a different counter register), no semantic change.
+#
+# `const` is deliberately NOT defined here.  Erasing it cannot produce wrong code, only weaker
+# diagnostics, and restoring it moves const tables into a new .rodata section -- which is a
+# layout change to a linked kernel, not a correctness fix.  See ISSUE-71 for the FPE measurement
+# where exactly that happens.
+m68k-cbm-sysv4-gcc $VA2000_CFLAGS -Dvolatile=__volatile__ -DVA2000_KVA -I"$HERE/build" \
 	-c "$HERE/build/va2000_040.c" -o "$HERE/build/va2000_040.o"
 sh "$HERE/src/check_page_geometry.sh" "$HERE/build/va2000_040.o" | sed 's/^/      /'
 echo "[*] VA2000: assemble dev_kvmap (MMIO window with an explicit cache class)"
