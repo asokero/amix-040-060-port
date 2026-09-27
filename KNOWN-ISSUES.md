@@ -4795,10 +4795,11 @@ person changes `hardbus` and concludes from a green boot that the crossing path 
 
 ---
 
-## ⚠ ISSUE-48 (2026-08-19, OPEN): `va2_restore_passthrough()` does not restore passthrough on Zorro III firmware
+## ✅ ISSUE-48 (2026-08-19, NOT REPRODUCIBLE 2026-09-27 — the diagnosis below is REFUTED and the mechanism is unknown): `va2_restore_passthrough()` was said not to restore passthrough on Zorro III firmware
 
-> **Ledger: OPEN** — driver defect in `va2000-amix`, found the evening the Zorro III firmware went
-> in. Canonical: [`STATUS.md`](STATUS.md) §4.
+> **Ledger: SUPERSEDED** — the symptom was real and is gone; the cause named below was not the
+> cause. Kept whole, because what it got wrong is the useful part. Canonical:
+> [`STATUS.md`](STATUS.md) §4.
 
 When a client exits, the VA2000 driver's `close` path calls `va2_restore_passthrough()` to hand the
 display back to the Amiga's native output. On the Zorro III firmware the display **freezes**
@@ -4851,6 +4852,61 @@ So the failure mode of ISSUE-48 is not only cosmetic: **it makes a healthy machi
 from a dead one at the console**, and on a machine with five genuinely unexplained events open it
 invites attributing a reset to the hardware. Anyone judging liveness after an RTG server exits
 should use the serial mirror or the network, not the screen.
+
+---
+
+### 2026-09-27: it does not happen, and the reason given above cannot be the reason
+
+The owner has run this machine for weeks since the entry was written: X started and stopped
+uncountable times, Quake and Doom played, the saku 2026 demo watched. **Passthrough has been
+restored every time.** Checked again deliberately on this date: X shut down, the native picture
+came back.
+
+**That refutes the diagnosis rather than merely ageing it.** The section above names the cause as
+`va2_restore_passthrough()` writing a 640x480 timing set tuned against the Zorro II firmware's
+state machine. Those writes are still there, unchanged: `va2000-amix` `src/va2000.c:271-290` has
+not been touched since 2026-08-19 (`6ddfc79`), still writes `H_SS 840`, `H_SE 968`, `H_MAX 1056`,
+`PIX_CLK 40 MHz`, `CAPTURE_MODE 1`, and `va2000close():398-403` still calls it on last close. The
+same code that was said to be the defect now restores the display correctly. So whatever failed on
+2026-08-19, it was not that.
+
+**One thing this entry already got wrong on re-reading.** The 2026-09-06 section above is an
+ATTRIBUTION, not a second observation: "ISSUE-48 means passthrough is never restored" reasons from
+this entry rather than measuring the routine. It was written to explain why a live machine looked
+crashed, and for that it stands. But it means there is exactly **one** observation day here, not
+two, and the impression that the fault "stopped happening" may partly be that nobody measured it
+again for five weeks.
+
+### What was excluded, and what is left as a guess
+
+**ISSUE-64 is excluded, though the dates invite it.** The combined RTG kernel shipped without
+`-DVA2000_KVA` from 2026-08-19, and its driver wrote registers into the fixed u-area instead of the
+board. That would explain a display that never changes. It is ruled out by this entry's own
+measurements: the register window read firmware 90 **through the Zorro III kernel mapping**, and
+every subsequent open/close made the display **flicker**. The writes were reaching the card.
+
+**ISSUE-65 fits and is not proven.** Until `c539537` (2026-09-07) our own write-back replay
+decomposed an aligned 16-bit register write into per-byte `moves.b`, and the Zorro III register
+window refused the odd byte. `va2_restore_passthrough()` is sixteen consecutive 16-bit register
+writes; if some did not land, the board would keep a stale timing and the display would freeze
+while the card stayed alive and flickered — which is the symptom, exactly. `src/wb040.s` carries
+060 paths (`wb060_sswsynth`, `wb060_xpage`), so the replay machinery was live on the 68060 this was
+seen on. The symptom stopped about when that fix landed.
+
+**But there is no measurement from 2026-08-19 showing a write-back replay fired during those
+register writes, and this is written down as a hypothesis rather than a finding.** Settling it
+would mean reverting `c539537` on a machine that needs it, which is not worth the answer.
+
+### Why this is closed as SUPERSEDED rather than FIXED
+
+Nobody fixed it. The symptom is gone, the named cause is disproved, and the real cause is unknown.
+Calling it FIXED would claim a repair this project cannot point at.
+
+The lesson worth keeping is narrower than the entry and more useful: **a display that will not
+change was attributed to the routine that writes it, without first establishing that the writes
+arrived.** The card was probed afterwards and answered, which was read as "the card is fine, so the
+routine is wrong" — but a card that answers a read is not a card that accepted sixteen writes. The
+instrument that would have settled it in one step is the one ISSUE-65 later produced.
 
 ## ⚠ ISSUE-49 (2026-08-21, OPEN): a 2048-aligned device mmap offset yields the NEXT page — and two bugs were cancelling to keep the test green
 
@@ -9413,8 +9469,11 @@ Reported by the owner at the machine: **switching virtual terminals still works,
 keyboard and the mouse do not.** So the kernel is alive enough to service the VT switch while the
 input path into userland is wedged. That is not a clean panic, and it is not a hang either.
 
-It rhymes with ISSUE-48 — after `Xrtg` exits the VA2000 is never handed back — but on the input
-side rather than the display side. That is a resemblance, not a claim; nobody has looked.
+It was written here on 2026-09-18 that this rhymes with ISSUE-48 — after `Xrtg` exits the VA2000
+is never handed back — on the input side rather than the display side. **That analogy is withdrawn
+on 2026-09-27**: ISSUE-48 turned out not to be reproducible and its diagnosis was refuted, so there
+is no established display-side counterpart to rhyme with. The observation itself stands; only the
+comparison went.
 
 ### The prediction to test first
 
