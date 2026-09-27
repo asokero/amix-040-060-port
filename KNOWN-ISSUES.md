@@ -9370,3 +9370,72 @@ One byte: turn the `bne.w` at `.text 0x44fe0` (`0x66`) into `bra.w` (`0x60`). Th
 then falls through to the normal range check and returns `EINVAL` like every other negative uid.
 A patcher would assert the ten bytes `0c92 fffe 1dc0 6600 0014` at `.text 0x44fda` first.
 **Deliberately not done** (owner's decision, 2026-09-26).
+
+## ⚠⚠ ISSUE-70 (2026-09-18, RECORDED — reproduced twice, attributed nowhere): reading the whole VA2000 framebuffer with `xwd -root` wedges the machine seconds later
+
+Trying to take a screenshot of the running X11 desktop for `README.md` wedged the machine, twice
+out of two attempts. The capture itself succeeds every time; the machine dies afterwards. Nothing
+here is attributed — this entry exists so the next attempt does not start from zero, and because
+two-for-two with one trigger is a pattern rather than an anecdote.
+
+**Platform.** `solon`, A3000 + Mercury with the 68060 fitted, kernel `68060-260908-03`, MNT VA2000
+in Zorro III, `Xrtg :0` at 1280x720 with `tvtwm`. Not tried on a 68040, and not tried in Amiberry.
+
+### The sequence, identical both times
+
+1. `DISPLAY=:0 /usr/bin/X11/xwd -root -out <file>` returns **`rc=0`**, and `ls -l` reports
+   **1 843 307 bytes** — exactly 1280 x 720 x 2 plus the header, so the capture is complete and
+   correctly sized for 16 bpp.
+2. One or two further commands still run in the same telnet session.
+3. The next connection never opens. The machine then goes from `ping` and from the host's ARP
+   table.
+
+**It is not the transfer.** The first run had an FTP attempt between the capture and the death,
+and FTP was the obvious suspect. The second run had nothing between them but an ordinary telnet
+connection, and the machine died just the same. What both runs share is the full-framebuffer read.
+
+### The write never reaches the disk, which dates the wedge
+
+The second capture was written to `/root/desktop.xwd` specifically so it would survive a reboot.
+It did survive — at **0 bytes**, although `ls -l` had reported the full 1 843 307 immediately
+after `xwd` returned. The data was in the buffer cache and never flushed.
+
+So the machine lives long enough to return from `xwd` and run another command or two, and dies
+before the next `sync`. That is a narrow window and it is the most useful fact here.
+
+**Consequence for anyone retrying: write to NFS, not to local disk.** `/mnt/nasu`
+(`mount -F nfs 10.0.10.52:/Public /mnt/nasu`) puts the bytes on the wire as they are produced,
+where a later wedge cannot take them back.
+
+### What the console showed
+
+Reported by the owner at the machine: **switching virtual terminals still works, but login, the
+keyboard and the mouse do not.** So the kernel is alive enough to service the VT switch while the
+input path into userland is wedged. That is not a clean panic, and it is not a hang either.
+
+It rhymes with ISSUE-48 — after `Xrtg` exits the VA2000 is never handed back — but on the input
+side rather than the display side. That is a resemblance, not a claim; nobody has looked.
+
+### The prediction to test first
+
+**Does a smaller read survive?** `xwd -id <window>` reads one window instead of the whole root.
+If that is safe and `-root` is not, the subject is the size or the placement of the read through
+the Zorro III aperture, and not `xwd`. If it wedges too, the subject is the driver's read path at
+any size. Either answer is worth more than another `-root` attempt.
+
+No serial capture exists for either wedge: the host has had no `/dev/ttyUSB0` since 2026-09-11,
+so there is no record of whether a panic was printed.
+
+### Unrelated obstacle in the way, noted so it is not mistaken for this
+
+After the reboot on 2026-09-18, `xwd` no longer reaches the server at all:
+
+```
+Xlib: connection to ":0.0" refused by server
+Xlib: Client is not authorized to connect to Server
+```
+
+and no `.Xauthority` exists in `/root`, in `/usr/X/lib/xdm/authdir` or in `/tmp`. Before that
+reboot the same command needed no cookie. The change coincides with the XDM work in `xrtg-amix`.
+Whoever retries should run `xwd` from a shell inside the X session, which has the cookie by
+construction — and will then be measuring ISSUE-70 rather than the authorisation.
