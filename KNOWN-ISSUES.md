@@ -9315,3 +9315,58 @@ stopped with `SIGINT` and with `SIGTERM`, the backend draining for **435 ms** in
 about **2.4 KB** still outstanding, the device reopening cleanly afterwards, machine up. So catching
 the signal and draining before close holds for every signal that *can* be caught. **`SIGKILL`
 cannot be**, which is exactly why this stays a kernel defect: the fix belongs in `audioclose`.
+
+## ⚠⚠ ISSUE-69 (2026-09-26, RECORDED — a stock defect, not fixed here by request): `setuid(-123456)` panics the kernel, for any user
+
+Found by the easter-egg line (`~/kehitys/amix-playground/amix-eastereggs`, egg 005), **to be
+written down and not pursued now**. The full write-up, with the disassembly and a screenshot, is
+theirs: `amix-eastereggs/eggs/005-setuid-test-panic.md`. Same category as ISSUE-41 and ISSUE-68: a
+defect of **stock** AMIX 2.1c, not of this port, recorded because no user program should be able to
+panic the kernel.
+
+### What happens
+
+The stock `setuid` system call begins with a leftover test hook. If the requested uid is
+**-123456** (`0xfffe1dc0`), it calls `cmn_err(CE_PANIC, "Test Panic!!!")`. The comparison comes
+before the `MAXUID` range check and before any credential check, so **any unprivileged user** can
+take the machine down:
+
+```c
+main() { setuid(-123456); }
+```
+
+Location in the stock image (sha256 `7d26cb6f…`, `.text` starts at file offset `0x34`):
+
+| | `.text` | file offset |
+|---|---|---|
+| `setuid` entry | `0x44fcc` | `0x45000` |
+| `cmpil #-123456,(a2)` | `0x44fda` | `0x4500e` |
+| `bne.w` past the panic | `0x44fe0` | `0x45014` |
+
+The same code is in `usr/sys/os/exp` at `.text 0x9194`, with the string `Test Panic!!!` just before
+it at `0x9186`.
+
+### Measured
+
+* **EMU, stock 2.1c kernel** (the easter-egg line's own Amiberry instance, 2026-09-26): run as
+  `daemon` (uid 1), the machine printed `PANIC: Test Panic!!!` and a backtrace and stopped.
+* **This port's kernels: not tested.** Prediction: they panic the same way. No override unit or
+  byte patcher touches `setuid` (no patch offset falls inside `.text 0x44fcc`–`0x450c0`, and
+  nothing under `src/` or in `relink-040.sh` names it), so the stock bytes should be carried over
+  unchanged. This is a prediction and has not been checked.
+
+### Origin
+
+Not AT&T's, and not in the earlier AMIX releases either: **Commodore added it in 2.1.** The
+`setuid()` in the 3B2 SVR4 tree (`uts/3b2/os/scalls.c`), in i386 SVR4 (`uts/i386/os/scalls.c`) and
+in SVR4.2 (`i386/uts/proc/scalls.c`) each begin directly with the `MAXUID` range check. So do the
+AMIX **2.01** and **2.03** kernels from the original install tapes (checked by disassembly; neither
+contains the string or the immediate). Both 2.1 kernels (`2.1_unix`, and `unix` = 2.1c) have it.
+
+### If it is ever fixed
+
+One byte: turn the `bne.w` at `.text 0x44fe0` (`0x66`) into `bra.w` (`0x60`). The `pea` and
+`jsr cmn_err` that are skipped keep their relocations, so the loader sees no change, and the uid
+then falls through to the normal range check and returns `EINVAL` like every other negative uid.
+A patcher would assert the ten bytes `0c92 fffe 1dc0 6600 0014` at `.text 0x44fda` first.
+**Deliberately not done** (owner's decision, 2026-09-26).
