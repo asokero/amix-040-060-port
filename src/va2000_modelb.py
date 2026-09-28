@@ -75,7 +75,13 @@ NEW = ("        /* Model-B (4 KiB page, PNUMSHFT=12) adaptation of the vanilla\n
 # takes its aperture size from AutoConfig instead of a 4 MB constant.  That work sits
 # on wip/zorro3, which BRANCHED FROM the 8-bit branch -- so the wolf3d 8-bit support
 # is still in, and this pin still fails closed if the checkout moves back to main.
-EXPECT_SHA256 = "97ac5cd1483bad520af9e22cf3e2cbfa092abca3a5b8122fedc00ef09674c394"
+# Re-pinned 2026-09-28: wip/zorro3 was fast-forwarded into va2000-amix `main`, so the
+# branch note above is history rather than instruction -- `main` now carries the Zorro III
+# work.  The content change in this re-pin is SVGAIOCSetMonitorSwitch driving the hardware
+# instead of storing the value: Amiga restores passthrough, SVGA replays the stored
+# modeline, anything else is EINVAL.  Agreed with the driver line as the one seam every
+# RTG driver implements its own way (amix-mail, 2026-09-28).
+EXPECT_SHA256 = "0803d3f79b129e247b65027a9ddfe880348f3f29ce99b05f140380b855b1bb05"
 EXPECT_BRANCH = "wip/zorro3"              # va2000-amix, branched from va2000-8bit-support
 EXPECT_NOTE = ("the 8-bit display mode support wolf3d needs, plus the Zorro III "
                "address-agnostic work; main is 16-bit only and Zorro II only")
