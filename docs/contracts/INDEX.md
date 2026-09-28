@@ -168,3 +168,18 @@ were written here, are not in that repository, and have no `vm-map/...` origin l
 
 The FPE documents arrived with the `fpe` branch and are a collaborator's work; the A3091 one is
 this line's.
+
+## Written here, not imported
+
+The 39 records above came one-to-one from the analysis repository. This one did not: it was
+written in this repository, from an agreement between the two development lines rather than from
+a prior analysis, and it is listed separately so that distinction survives.
+
+| Contract | Units | Origin |
+|---|---|---|
+| [DMA040-SERVICE-RECORD.md](DMA040-SERVICE-RECORD.md) | `dma_cache040.s` (`dma_prepare`, `dma_complete`); the record itself lives in each controller's own object | agreed with the driver line 2026-09-28, `amix-mail` thread `2026-09-27-kickoff-questions` |
+
+It exists because `tools/status-facts.sh` cannot enumerate that block: it finds counter blocks by
+`*_magic` symbols and their members by symbol prefix, and a C structure inside an array in a
+driver object exposes no field symbols. The offsets in that document are therefore the only
+contract there is, which is exactly the case where one has to be written down.
