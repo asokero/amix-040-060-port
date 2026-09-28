@@ -81,7 +81,7 @@ NEW = ("        /* Model-B (4 KiB page, PNUMSHFT=12) adaptation of the vanilla\n
 # instead of storing the value: Amiga restores passthrough, SVGA replays the stored
 # modeline, anything else is EINVAL.  Agreed with the driver line as the one seam every
 # RTG driver implements its own way (amix-mail, 2026-09-28).
-EXPECT_SHA256 = "e97a0494e9cc138eef660d6564a53845b0483649ef1818be3a590c004bee6e06"
+EXPECT_SHA256 = "b542e9019ae37fba2452e6833e77bbe1364298c1d17921255b6b6836364b424b"
 EXPECT_BRANCH = "wip/zorro3"              # va2000-amix, branched from va2000-8bit-support
 EXPECT_NOTE = ("the 8-bit display mode support wolf3d needs, plus the Zorro III "
                "address-agnostic work; main is 16-bit only and Zorro II only")
