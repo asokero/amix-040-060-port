@@ -45,6 +45,7 @@ a named test on a named platform is.
 
 | Build id | sha256 (prefix) | Platform accepted on | What it established | Evidence |
 |---|---|---|---|---|
+| `68040-260928-05` | `a1fa4337` | 68060 hardware (Mercury), 2026-09-28 | The D42 DMA service added to the base beside the A3091 pilot, and the pilot unmoved: ~11 600 transactions with `prep_to == cmpl_to`, `prep_from == cmpl_from` and the three must-stay-zero counters at zero. Also the first artifact carrying the reinstalled cross-compiler wrapper (byte-identical rebuild) and the ISSUE-72 VA2000 fix | `docs/REALHW-D42-BASE-260928.md` |
 | `68040-260908-03` | `8a14754c` | 68040 hardware (Mercury), 2026-09-08 | ISSUE-66 accepted: a 2 KiB-aligned `shmat` address is an ordinary `EINVAL` where it panicked, and `SHM_RND` rounds down. The most recent image accepted on hardware | `KNOWN-ISSUES.md` ISSUE-66 |
 | `68040-260907-17` | not recorded | 68040 hardware (Mercury), 2026-09-07 | ISSUE-62 accepted: every `shmget` size that panicked now survives, and no other panic replaced it | `KNOWN-ISSUES.md` ISSUE-62 |
 | `68040-260907-04` | not recorded | 68040 hardware (Mercury), 2026-09-07 | **Xrtg runs on a 68040 over Zorro III** (ISSUE-65), and a full X session — twm, xclock, xeyes, a scrolling xterm — stays quiet on serial | `docs/REALHW-Z3-040-260906.md` |
