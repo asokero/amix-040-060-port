@@ -122,6 +122,199 @@ Lst_ovf:
 	addql	&1,dma_range_ovf	| impossible-range diagnostic; arm without
 	braw	Lst_call		| ownership (counter must stay 0)
 
+
+| ============================================================================
+| dma_prepare / dma_complete -- the generalized D42 service (agreed with the
+| driver line 2026-09-28, amix-mail 2026-09-28-04-antti.md).
+|
+| WHY THESE EXIST BESIDE THE A3091 WRAPPERS.  The pilot above keeps ONE global
+| record, and that is justified in this file by "dma_on: one global byte -> at
+| most ONE armed segment ever exists".  An A4091 is a second host-RAM master and
+| removes the premise.  The cut agreed with the driver line is: one protocol and
+| one state machine, here; the per-controller RECORD lives in that controller's
+| own object and arrives as an argument.  So this needs no registration and each
+| client is testable on the machine that has that controller.
+|
+| The A3091 wrappers above are NOT retargeted onto these.  They stay as they are
+| and remain hardware-proven; moving them is a separate step with its own run.
+|
+|   int  dma_prepare (struct dma_rec *r, ulong pa, ulong len, int dir);
+|   void dma_complete(struct dma_rec *r, ulong pa, ulong len, int dir);
+|   dir: 0 = TO_DEVICE (device reads RAM), 1 = FROM_DEVICE (device writes RAM)
+|
+| Callable at any IPL the driver runs at.  Never sleeps, never panics, never
+| touches the device.  d0/d1/a0/a1 scratch, everything else preserved.
+|
+| PER-RANGE, NOT WHOLE-CACHE.  cpushl over the owned lines, not cpusha: with
+| several owners a whole-cache push makes the ownership bookkeeping decorative
+| and costs the whole cache per arm.  cpusha stays SAFE (it writes dirty data
+| back rather than discarding, unlike cinva) -- it is imprecise, not wrong, and
+| that is why the pilot could ship with it.
+|
+| EACH cpushl IS PAIRED WITH A cinvl, and that is not caution.  On a 68060
+| CPUSH's invalidation depends on CACR bit 28 (DPI), and CACR is not a constant
+| of the machine: the exception handlers reload it from sup_cacr on every entry
+| and the FP paths write it again on every vector-11 event.  The pair is correct
+| in all four cases -- 040, and 060 with DPI either way -- so the unit stops
+| depending on a bit it neither owns nor can see.  src/swapconf_dbg.s already
+| declined to assume this bit; a second instrument should not assume otherwise.
+|
+| EDGE LINES ARE COUNTED, NOT REPAIRED.  The range is rounded outward to 16-byte
+| lines, so an unaligned buffer shares its edge lines with unrelated data.  If
+| the CPU dirties such a line mid-transfer the data is lost whichever way this
+| goes: cinvl discards the CPU's write, and a cpushl before it would write the
+| line back WHOLE -- over the bytes the device has just delivered.  There is no
+| byte-granular writeback on this part.  The case is outside B2's contract (the
+| CPU may not touch the owned rounded range until complete) and no cache op here
+| can pull it back in, so it is named in a counter and left to the acceptance
+| invariant.  Block-aligned sd transfers never hit it.
+|
+| 040 ops as .word: cpushl dc,(a0) = 0xf468, cinvl dc,(a0) = 0xf448.  Checked
+| with the assembler, not derived from the encoding.
+| ============================================================================
+
+| struct dma_rec, 0x60 bytes, every field a longword.  The offsets ARE the
+| contract (D42 as amended); docs/contracts/ carries the same table.
+	DR_MAGIC   = 0x00		| "DMAR" 0x444D4152, driver-written, static
+	DR_OFF     = 0x10		| nonzero: seam off, count and do nothing
+	DR_STATE   = 0x14		| 0 EMPTY, 1 PREPARING, 2 PREPARED
+	DR_DIR     = 0x18
+	DR_PA      = 0x1c
+	DR_LEN     = 0x20
+	DR_SEQ     = 0x24
+	DR_PREPTO  = 0x28
+	DR_PREPFR  = 0x2c
+	DR_CMPLTO  = 0x30
+	DR_CMPLFR  = 0x34
+	DR_PREPOWN = 0x38
+	DR_NOPREP  = 0x3c
+	DR_MISMAT  = 0x40
+	DR_OVF     = 0x44
+	DR_EDGE    = 0x48
+	DR_OFFN    = 0x4c
+
+	.globl	dma_prepare
+dma_prepare:
+	moveml	%d2-%d4/%a2,%sp@-	| 16 bytes -> args at sp@(20..32)
+	moveal	%sp@(20),%a2		| a2 = r
+	movel	%sp@(24),%d2		| d2 = pa
+	movel	%sp@(28),%d3		| d3 = len
+	movel	%sp@(32),%d4		| d4 = dir
+	tstl	%a2@(DR_OFF)
+	beqw	Ldp_on
+	addql	&1,%a2@(DR_OFFN)	| seam off: count, no cache op, no ownership
+	braw	Ldp_fail
+Ldp_on:
+	movel	%d2,%d0
+	addl	%d3,%d0			| pa + len
+	bcsw	Ldp_ovf			| wrapped
+	tstl	%a2@(DR_STATE)
+	beqw	Ldp_empty
+	addql	&1,%a2@(DR_PREPOWN)	| a segment is still owned: never overwrite
+	braw	Ldp_fail		| the live record
+Ldp_empty:
+	movel	%d2,%d1
+	orl	%d0,%d1
+	andil	&15,%d1
+	beqw	Ldp_aligned
+	addql	&1,%a2@(DR_EDGE)	| shared edge line: named, not refused
+Ldp_aligned:
+	movel	&1,%a2@(DR_STATE)	| PREPARING -- record before the cache op
+	movel	%d2,%a2@(DR_PA)
+	movel	%d3,%a2@(DR_LEN)
+	movel	%d4,%a2@(DR_DIR)
+	addql	&1,%a2@(DR_SEQ)
+	tstl	%d4
+	beqw	Ldp_cntto
+	addql	&1,%a2@(DR_PREPFR)
+	braw	Ldp_push
+Ldp_cntto:
+	addql	&1,%a2@(DR_PREPTO)
+Ldp_push:
+	tstl	%d3
+	beqw	Ldp_done		| zero length: nothing to push
+	movel	%d2,%d0
+	andil	&-16,%d0		| first line
+	moveal	%d0,%a0
+	movel	%d2,%d1
+	addl	%d3,%d1
+	addil	&15,%d1
+	andil	&-16,%d1		| first byte past the final line
+Ldp_loop:
+	.word	0xf468			| cpushl dc,(a0) -- write dirty bytes out
+	.word	0xf448			| cinvl  dc,(a0) -- and leave nothing behind
+	addaw	&16,%a0			| whatever CACR.DPI says
+	cmpal	%d1,%a0
+	bnew	Ldp_loop
+Ldp_done:
+	movel	&2,%a2@(DR_STATE)	| PREPARED -- visible before the hardware arm
+	moveq	&0,%d0
+	moveml	%sp@+,%d2-%d4/%a2
+	rts
+Ldp_ovf:
+	addql	&1,%a2@(DR_OVF)
+Ldp_fail:
+	moveq	&-1,%d0			| nonzero: not PREPARED.  The driver arms anyway
+	moveml	%sp@+,%d2-%d4/%a2
+	rts
+
+	.globl	dma_complete
+dma_complete:
+	moveml	%d2-%d4/%a2,%sp@-
+	moveal	%sp@(20),%a2		| a2 = r
+	movel	%sp@(24),%d2		| d2 = pa  (as passed, for the mismatch test)
+	movel	%sp@(28),%d3		| d3 = len
+	movel	%sp@(32),%d4		| d4 = dir
+	tstl	%a2@(DR_OFF)
+	beqw	Ldc_on
+	addql	&1,%a2@(DR_OFFN)
+	braw	Ldc_out
+Ldc_on:
+	cmpil	&2,%a2@(DR_STATE)	| PREPARED?
+	beqw	Ldc_owned
+	addql	&1,%a2@(DR_NOPREP)	| no record: no cache op, expose via counter
+	braw	Ldc_out
+Ldc_owned:
+	cmpl	%a2@(DR_PA),%d2
+	bnew	Ldc_mismatch
+	cmpl	%a2@(DR_LEN),%d3
+	bnew	Ldc_mismatch
+	cmpl	%a2@(DR_DIR),%d4
+	beqw	Ldc_agreed
+Ldc_mismatch:
+	addql	&1,%a2@(DR_MISMAT)	| the OWNED segment is used, not the argument
+Ldc_agreed:
+	movel	%a2@(DR_PA),%d2		| always act on what prepare took ownership of
+	movel	%a2@(DR_LEN),%d3
+	movel	%a2@(DR_DIR),%d4
+	tstl	%d4
+	bnew	Ldc_from
+	addql	&1,%a2@(DR_CMPLTO)	| TO_DEVICE: no cache op at complete
+	braw	Ldc_consume
+Ldc_from:
+	addql	&1,%a2@(DR_CMPLFR)
+	tstl	%d3
+	beqw	Ldc_consume
+	movel	%d2,%d0
+	andil	&-16,%d0
+	moveal	%d0,%a0
+	movel	%d2,%d1
+	addl	%d3,%d1
+	addil	&15,%d1
+	andil	&-16,%d1
+Ldc_loop:
+	.word	0xf448			| cinvl dc,(a0) -- fresh device bytes become
+	addaw	&16,%a0			| visible; unrelated dirty lines untouched
+	cmpal	%d1,%a0
+	bnew	Ldc_loop
+Ldc_consume:
+	clrl	%a2@(DR_STATE)		| EMPTY -- consumed
+Ldc_out:
+	moveml	%sp@+,%d2-%d4/%a2
+	rts
+
+	.balign	4
+
 | ============================================================================
 | dma_a3091_stopdma -- completion wrapper (all four stop sites; B1 retargets
 | kept).  Quiesce FIRST (real stopdma: fdma/poll/cint/srst, clears dma_on),
