@@ -4897,6 +4897,16 @@ seen on. The symptom stopped about when that fix landed.
 register writes, and this is written down as a hypothesis rather than a finding.** Settling it
 would mean reverting `c539537` on a machine that needs it, which is not worth the answer.
 
+**2026-09-28: a better candidate than that guess, and it is measured.** ISSUE-72 —
+`va2000_open_count` counts every `open()` but is decremented only by `d_close`, which SVR4 calls
+once per device rather than once per file. Any second opener during a session raises the count for
+good, `count == 0` never holds again, and **passthrough is never restored again until reboot**. It
+fits these observations in a way the ISSUE-65 guess does not: it is intermittent exactly as they
+were, it depends on something else having touched the device, and it stops mattering the moment X
+is the only opener — which is ordinary use, and which is why this stopped appearing with no code
+change. This entry stays SUPERSEDED: its own diagnosis was still wrong. ISSUE-72 is where the
+defect lives.
+
 ### Why this is closed as SUPERSEDED rather than FIXED
 
 Nobody fixed it. The symptom is gone, the named cause is disproved, and the real cause is unknown.
@@ -9618,3 +9628,68 @@ The driver line sent a patch for exactly this on 2026-08-29
 one of four) and it has not been applied to this machine's toolchain. That is a
 `gcc-cross-amix` decision rather than a change to this repository, so it is recorded here rather
 than fixed here.
+
+## ⚠⚠ ISSUE-72 (2026-09-28, RECORDED — measured on hardware, not fixed): `va2000_open_count` counts opens but is decremented once, so passthrough restore dies for the rest of the boot
+
+The VA2000 driver restores the Amiga's own video on last close, guarded by a counter:
+
+```c
+va2000open:   va2000_open_count[dev]++;
+va2000close:  if (va2000_open_count[mindev] > 0) {
+                  va2000_open_count[mindev]--;
+                  if (va2000_open_count[mindev] == 0 && va2000_regs[mindev]) {
+                      va2_restore_passthrough(va2000_regs[mindev]);
+```
+
+**SVR4 calls a character driver's `d_close` on the LAST close, not on every close.** So the
+increment is per `open()` and the decrement is per *device*, and the two do not pair. Every
+program that opens `/dev/va2000` while another holds it open raises the count by one and nothing
+ever lowers it. Once the count is above zero it stays there, `count == 0` is never true again, and
+**passthrough is never restored again until the machine reboots** — not on exit, not on a crash.
+
+### Measured, 2026-09-28, kernel `68040-260928-01`, Zorro III VA2000
+
+Found while testing the monitor-switch ioctl, which is how the count came to be inflated: each
+`monswtest` run opened the device while Xrtg held it.
+
+* `kill -9` on the X server left the RTG picture **stuck on screen**. SVR4's last close did not
+  restore the Amiga video.
+* A later `open`/`close` from another program did not restore it either.
+* `va2000_open_count[0]` read **8** through `/dev/mem`.
+* Two further open/close cycles with no other opener left it at **8** — so the counter is not
+  stuck, it is *balanced around a residue*: +1 on open, −1 on the close that is now the last one.
+  The eight is what leaked while Xrtg was co-open.
+
+The address arithmetic was checked before any of those numbers were believed:
+`va2000_monitor_switch` at the same computed base read `00020001`, which is board 0 = SVGA and
+board 1 = Amiga — exactly what the ioctl had just reported.
+
+### This is the better explanation for ISSUE-48
+
+ISSUE-48 recorded that passthrough was not restored on Zorro III firmware, was superseded on
+2026-09-27 as not reproducible, and left ISSUE-65 as a labelled guess. **This mechanism fits the
+evidence better than that guess did**, and it should be read as the likely cause:
+
+* it is **intermittent in exactly the way the observations were** — the fault appears only when
+  something else has opened the device during the session, and the 2026-08-19 evening had X11 and
+  wolf3d and a great deal of poking;
+* it explains why the fault stopped appearing without any code change: in ordinary use X is the
+  only opener, the count returns to zero, and the restore fires every time;
+* it needs no theory about which registers reached the card, which is what made the original
+  diagnosis wrong.
+
+Not merged into ISSUE-48, which stays superseded: that entry is about a diagnosis that was
+refuted, and this is a defect measured separately. The cross-reference belongs in both directions
+and nothing else moves.
+
+### The fix, not applied
+
+The counter is the wrong abstraction rather than the wrong value. `d_close` is already called once
+per device teardown, which is the event the driver wants, so the guard can go: restore passthrough
+in `va2000close` unconditionally and delete `va2000_open_count` entirely.
+
+Two reasons it is written down rather than done here. It belongs in `va2000-amix`, and it wants
+its own hardware run — the case to prove is the one that failed above, `kill -9` with a second
+opener having been and gone. And the crash-safety half of the monitor-switch seam agreed with the
+driver line on 2026-09-28 rests on exactly this path, so the fix and that agreement should be
+measured together.
