@@ -9625,9 +9625,22 @@ figures came from calling `m68k-cbm-sysv4-gcc.real` directly.
 
 The driver line sent a patch for exactly this on 2026-08-29
 (`amix-mail/2026-08-28-040-060-port/patches/gcc-wrapper-pr2/0002-wrapper-implement-E-*.patch`,
-one of four) and it has not been applied to this machine's toolchain. That is a
-`gcc-cross-amix` decision rather than a change to this repository, so it is recorded here rather
-than fixed here.
+one of four).
+
+**2026-09-28: not a missing patch — a stale install.** All four have been on `gcc-cross-amix`
+`main` since `206bc95` (2026-08-30), and this machine's checkout was already there. What was a
+month old was the *installed* copy under `opt/amix-cross/bin`, which still matched `ec36b07`
+byte for byte — no local edits, just an install nobody had re-run. So the fix was
+`install-gcc-wrapper`'s two lines, not `git am`.
+
+**The rebuild is the regression test, and it passes.** `relink-040.sh` under the new wrapper
+produces a base kernel of identical size differing in **three bytes**, all inside the build-id
+string at `.data+0x10ef08` (`260914-01` → `260928-03`). The four wrapper fixes — `-E`, two
+link-line behaviours and an SGS bit-field spelling — change no code this kernel contains.
+
+`-E -dM` now works through the wrapper rather than only through `.real`, and reports the same
+49 macros with `volatile` and `const` both empty. The measurement above stands; what changed is
+that reproducing it no longer needs a workaround.
 
 ## ✅ ISSUE-72 (2026-09-28, FIXED AND HARDWARE-ACCEPTED the same day): `va2000_open_count` counted opens but was decremented once, so passthrough restore died for the rest of the boot
 
