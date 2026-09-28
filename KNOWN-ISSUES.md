@@ -9427,7 +9427,7 @@ then falls through to the normal range check and returns `EINVAL` like every oth
 A patcher would assert the ten bytes `0c92 fffe 1dc0 6600 0014` at `.text 0x44fda` first.
 **Deliberately not done** (owner's decision, 2026-09-26).
 
-## ⚠⚠ ISSUE-70 (2026-09-18, RECORDED — reproduced twice, attributed nowhere): reading the whole VA2000 framebuffer with `xwd -root` wedges the machine seconds later
+## ⚠⚠ ISSUE-70 (2026-09-18, RECORDED — reproduced twice, NARROWED 2026-09-28 to the VA2000/Zorro III path): reading the whole VA2000 framebuffer with `xwd -root` wedges the machine seconds later
 
 Trying to take a screenshot of the running X11 desktop for `README.md` wedged the machine, twice
 out of two attempts. The capture itself succeeds every time; the machine dies afterwards. Nothing
@@ -9498,6 +9498,29 @@ and no `.Xauthority` exists in `/root`, in `/usr/X/lib/xdm/authdir` or in `/tmp`
 reboot the same command needed no cookie. The change coincides with the XDM work in `xrtg-amix`.
 Whoever retries should run `xwd` from a shell inside the X session, which has the cookie by
 construction — and will then be measuring ISSUE-70 rather than the authorisation.
+
+### 2026-09-28: the generic reading is ruled out — measured by the driver line, not here
+
+The driver line ran the obvious control on their own hardware, and it came back negative. That is
+worth more to this entry than anything measured here so far.
+
+**Their run.** An A4000T, 68060, the Z3660 RTG window at 1280x800x16 — a different bus and a
+different driver from the VA2000 over Zorro III. `xwd -root` twice. Both reads **completed in about
+four seconds with full-size files showing the live desktop**, the X server and a second client
+stayed up, nothing appeared on the console, and synthetic input was accepted afterwards.
+
+**So a large user read of an NCS aperture does not wedge a machine by itself.** That was the
+broadest reading of this entry and it is now refuted. What remains is narrower and more useful: the
+wedge belongs to **the VA2000 over Zorro III**, not to the size or the shape of the read.
+
+**Two limits they state, kept here rather than dropped.** It is a different bus and a different
+driver, which bounds the general claim without touching the specific one. And there was no HID rig
+on that box, so the physical keyboard path — the symptom this entry records from the console, VT
+switching alive while keyboard and mouse are not — remains unmeasured on either side.
+
+The prediction written above is unchanged, and is now the obvious next step: `xwd -id <window>`
+against `-root` on the VA2000, which separates the size of the read from the path it takes.
+
 
 ## ⚠ ISSUE-71 (2026-09-27, RECORDED — the hazard is real, its effect on this tree today is nil): `-traditional` erases every `volatile` and `const`, so the compiler may optimise MMIO
 
