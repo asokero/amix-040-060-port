@@ -9629,7 +9629,7 @@ one of four) and it has not been applied to this machine's toolchain. That is a
 `gcc-cross-amix` decision rather than a change to this repository, so it is recorded here rather
 than fixed here.
 
-## ⚠⚠ ISSUE-72 (2026-09-28, RECORDED — measured on hardware, not fixed): `va2000_open_count` counts opens but is decremented once, so passthrough restore dies for the rest of the boot
+## ✅ ISSUE-72 (2026-09-28, FIXED AND HARDWARE-ACCEPTED the same day): `va2000_open_count` counted opens but was decremented once, so passthrough restore died for the rest of the boot
 
 The VA2000 driver restores the Amiga's own video on last close, guarded by a counter:
 
@@ -9688,8 +9688,33 @@ The counter is the wrong abstraction rather than the wrong value. `d_close` is a
 per device teardown, which is the event the driver wants, so the guard can go: restore passthrough
 in `va2000close` unconditionally and delete `va2000_open_count` entirely.
 
-Two reasons it is written down rather than done here. It belongs in `va2000-amix`, and it wants
-its own hardware run — the case to prove is the one that failed above, `kill -9` with a second
-opener having been and gone. And the crash-safety half of the monitor-switch seam agreed with the
-driver line on 2026-09-28 rests on exactly this path, so the fix and that agreement should be
-measured together.
+### Fixed and accepted the same day, on `68040-260928-02`
+
+`va2000-amix` `7f82edc` deletes the counter. `va2000close` is already the event it was trying to
+detect — SVR4 calls it once, when the device is released — so nothing needs counting, and the
+restore is now guarded only by `va2000_regs[mindev]` being mapped.
+
+**The accepting run, and the order matters.** XDM stopped and `Xrtg` started from the console, so
+nothing could restart the server and confound the observation — an earlier attempt under XDM only
+produced a flash of native video before XDM brought X straight back, which is why this was re-run.
+
+1. `Xrtg` up on the Zorro III VA2000, RTG picture on screen.
+2. **A second opener ran** — `monswtest get`, which opens and closes `/dev/va2000`. This is the
+   step that is the whole test: it is what permanently inflated the old counter. Without it the
+   old driver would also have passed. **The RTG picture survived it**, which separately confirms
+   the premise of the fix: `d_close` really is last-close and the unconditional restore does not
+   fire at the wrong moment.
+3. `kill -9` on the X server. Nothing restarted it.
+4. **The native Amiga picture came back and stayed.**
+
+Before the fix the identical sequence left the RTG picture stuck on screen with no flash at all.
+
+**This is also the crash-safety property the monitor-switch seam needs.** The agreement with the
+driver line on 2026-09-28 has the X server hold a descriptor so that a crash ends in the driver's
+true last close, back to the Amiga video. That now happens on this card, and it did not before —
+so the seam rests on something measured rather than assumed.
+
+One case the simpler form does not serve, recorded at the site rather than found later: a client
+that closes its descriptor while keeping the `mmap` would have its picture taken away. No client
+here does that, and step 2 above is the evidence — the count reached 8 rather than staying at 0
+precisely because `Xrtg` holds its descriptor for as long as it holds the mapping.
