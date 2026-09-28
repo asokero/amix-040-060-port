@@ -29,8 +29,17 @@ def _load_env():
                 k, v = line.split("=", 1)
                 env[k.strip()] = v.strip()
     except IOError:
-        sys.exit("hw.py: %s not found -- copy local/secrets.env.example to it and fill it in"
-                 % os.path.normpath(path))
+        pass                      # the environment may carry everything; checked below
+    # THE REAL ENVIRONMENT WINS over the file.  A password in a file is a password on disk, and
+    # an operator who would rather keep it nowhere can pass it for one command:
+    #     AMIX_PASS=... python3 test-tools/hw.py '...'
+    # The file stays supported because the host and the user rarely change and are not secret.
+    for k in ("AMIX_HOST", "AMIX_PORT", "AMIX_USER", "AMIX_PASS"):
+        if os.environ.get(k):
+            env[k] = os.environ[k]
+    if not env.get("AMIX_HOST"):
+        sys.exit("hw.py: no AMIX_HOST -- set it in the environment, or copy "
+                 "local/secrets.env.example to %s and fill it in" % os.path.normpath(path))
     return env
 
 _ENV = _load_env()
