@@ -302,6 +302,24 @@ not prove that every larger or fragmented memory configuration works.
   constraints, but they were not part of this port's hardware acceptance and are not a kernel
   RAM limit.
 
+There is, however, a **stock-kernel mechanism that looks exactly like a 16 MB ceiling**, and the
+driver line measured it (their letter 06, 2026-09-29, on their emulator). Stock 2.1c registers the
+A3000's internal WD33C93 only through a guess in `autocon()` that tests the kernel's own `end`
+symbol against `0x07000000`. `end` is where the loader put the kernel. With 16 MB of Fast RAM the
+kernel lands above that address, the guess fires, and the internal controller exists. With 64 MB
+starting at `0x04000000` the loader binds the kernel at the bank base instead, the guess is
+skipped, no card 0 is registered, `sdopen` answers `ENXIO`, and the boot ends in `vfs_mountroot
+errno 89` — a root-mount failure that reads as "more RAM broke it". The one-byte reads near
+`0xfffffffe` that follow are `backtrace` decoding its terminal frame after the panic, not a probe.
+So the symptom is real and the diagnosis was wrong: what the kernel could not survive was being
+loaded somewhere else, not having more memory.
+
+Nothing on this port's mainline addresses that guess. The Z3660 relink
+(`relink-040-z3660.sh`) replaces the stock three-row `scsicard[]` table with a four-row one and so
+does not depend on it, but that is a different mechanism and applies only to that image. On an
+A3640 the kernel binds at `0x07000000` anyway and the guess fires, which is why this port has
+never met the failure.
+
 On an **A3640** the accelerator has no RAM of its own, so the kernel runs from the A3000
 motherboard's Fast RAM, whose standard maximum is 16 MB before the kernel and other reservations.
 That is a property of the hardware configuration, not an AMIX 16 MB ceiling. With a Mercury, the

@@ -42,6 +42,16 @@ On the A4000 + Z3660 rig, card 0 is the phantom A3000 controller at `0xDD0000` �
 nothing on that machine answers. The kernel did exactly what it was stamped to do: it mounted
 root through card 0, `sd` called a3091's `initialize()`, and the first register write bus-errored.
 
+**The phantom does not always bus-error, and that is worth knowing before reading a silent boot as
+an MMU fault.** The driver line hit the same phantom on an emulated A4000 with a 68040 (their
+letter 06, 2026-09-29): a kernel without their probe went silent right after the MMU enable, and
+the cause was the WD driver's `cipwait` polling `$DD0041`/`$DD0043` through phantom card 0, where
+the A4000's **Gayle IDE bank answers `0xFF` forever**. They report a real A4000 doing the same,
+while on the A3000 model the real DMAC answers. So the phantom has two failure shapes depending on
+what occupies that bank on the machine — a bus error here, an unbounded poll there — and the
+second is the one that looks like the MMU. Their 040/060 families all carry the probe now; this
+port's equivalent is the four-row `scsicard[]` table below, which never issues I/O to card 0.
+
 The known-good metal kernel `build/unix-060-f8a1-CARD1-ced0s1`
 (`efd743c9d48667287995e17c7bf32cfe7734d1267778c54f141b8e4351e50441`) descends from the **same**
 `build/unix-040`, and its `.text` is byte-identical to it for all 1,004,392 bytes of that
