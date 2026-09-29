@@ -9741,13 +9741,15 @@ fields that is still dirty in cache when the sense transfer completes is **disca
 
 ### The layout, computed here rather than taken on trust
 
-From the reader's own `usr/sys/amiga/alien/`:
+From the reader's own `usr/sys/amiga/alien/`, described rather than quoted:
 
-```c
-struct sdcom { next; reading; okay; status; cdb[12]; addr; nbyte; card; unit; (*intr)(); };
-struct dd    { uint state; struct buf *bhead, *btail; struct sdcom com; uchar sense[16]; };
-static struct dd ddtab[SDCARDS][SDUNITS];
-```
+* `struct sdcom` is the request block handed to the host adapter: a link pointer, a `reading`
+  flag, an `okay` flag, a status byte, a 12-byte CDB, a buffer address, a byte count, a card and a
+  unit number, and a completion function pointer.
+* `struct dd` is the per-unit state: a state word, a pair of `struct buf *` queue pointers (head
+  and tail), one embedded `struct sdcom`, and a 16-byte sense buffer as its **last** member.
+* The units are one statically allocated two-dimensional array of `struct dd`, indexed by card and
+  then by unit — so the elements are adjacent in `.bss` with nothing between them.
 
 `sizeof(struct sdcom)` is `0x28`, which cross-checks against the offsets `src/dma_cache040.s`
 already records from the pinned binary (`sdcom: +0x04 reading, +0x14 addr, +0x18 nbyte`). That puts
