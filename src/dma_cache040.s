@@ -167,7 +167,16 @@ Lst_ovf:
 | byte-granular writeback on this part.  The case is outside B2's contract (the
 | CPU may not touch the owned rounded range until complete) and no cache op here
 | can pull it back in, so it is named in a counter and left to the acceptance
-| invariant.  Block-aligned sd transfers never hit it.
+| invariant.
+|
+| Which buffers actually hit it was measured on the driver line 2026-09-29 and
+| this comment had it wrong: it is not raw I/O but the stock GSIO path, whose
+| iobuf is an unaligned .bss char array, so INQUIRY / REQUEST SENSE / READ
+| CAPACITY all count while ~4200 block and raw prepares counted none.  Every
+| counted transfer was benign in fact.  The answer is a driver-side 16-aligned
+| bounce with the length rounded up to a multiple of 16; see
+| docs/contracts/DMA040-SERVICE-RECORD.md.  The A3091 pilot has the same
+| exposure through dp->sense and does not report it (ISSUE-73).
 |
 | 040 ops as .word: cpushl dc,(a0) = 0xf468, cinvl dc,(a0) = 0xf448.  Checked
 | with the assembler, not derived from the encoding.
