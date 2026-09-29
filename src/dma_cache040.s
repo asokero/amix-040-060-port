@@ -213,12 +213,6 @@ Ldp_on:
 	addql	&1,%a2@(DR_PREPOWN)	| a segment is still owned: never overwrite
 	braw	Ldp_fail		| the live record
 Ldp_empty:
-	movel	%d2,%d1
-	orl	%d0,%d1
-	andil	&15,%d1
-	beqw	Ldp_aligned
-	addql	&1,%a2@(DR_EDGE)	| shared edge line: named, not refused
-Ldp_aligned:
 	movel	&1,%a2@(DR_STATE)	| PREPARING -- record before the cache op
 	movel	%d2,%a2@(DR_PA)
 	movel	%d3,%a2@(DR_LEN)
@@ -227,6 +221,18 @@ Ldp_aligned:
 	tstl	%d4
 	beqw	Ldp_cntto
 	addql	&1,%a2@(DR_PREPFR)
+	| The edge test belongs HERE, inside the FROM_DEVICE arm, and not before the
+	| direction is known.  It counts a hazard that exists only in this direction:
+	| complete's cinvl is what can discard a neighbour's dirty bytes, and complete
+	| does no cache operation at all for TO_DEVICE.  Counting a misaligned write
+	| (a GSIO command, MODE SELECT) named nothing and broke the invariant
+	| edge_shared <= prep_from.  Found by the driver line 2026-09-29 reading this
+	| against the contract prose, which had said FROM_DEVICE from the start.
+	movel	%d2,%d1
+	orl	%d0,%d1
+	andil	&15,%d1
+	beqw	Ldp_push
+	addql	&1,%a2@(DR_EDGE)	| shared edge line: named, not refused
 	braw	Ldp_push
 Ldp_cntto:
 	addql	&1,%a2@(DR_PREPTO)

@@ -9731,3 +9731,79 @@ One case the simpler form does not serve, recorded at the site rather than found
 that closes its descriptor while keeping the `mmap` would have its picture taken away. No client
 here does that, and step 2 above is the evidence — the count reached 8 rather than staying at 0
 precisely because `Xrtg` holds its descriptor for as long as it holds the mapping.
+
+## ⚠⚠ ISSUE-73 (2026-09-29, RECORDED — a latent hazard in an accepted path, not observed): the A3091 B2 sense read invalidates a cache line holding the NEXT disk unit's queue state
+
+`getsense` reads 16 bytes of REQUEST SENSE data by DMA straight into `dp->sense`, a field inside an
+array element, and the B2 completion invalidates the cache lines covering it. On three units in
+four those lines also hold the **next unit's** `state`, `bhead` and `btail`. A write to those
+fields that is still dirty in cache when the sense transfer completes is **discarded**.
+
+### The layout, computed here rather than taken on trust
+
+From the reader's own `usr/sys/amiga/alien/`:
+
+```c
+struct sdcom { next; reading; okay; status; cdb[12]; addr; nbyte; card; unit; (*intr)(); };
+struct dd    { uint state; struct buf *bhead, *btail; struct sdcom com; uchar sense[16]; };
+static struct dd ddtab[SDCARDS][SDUNITS];
+```
+
+`sizeof(struct sdcom)` is `0x28`, which cross-checks against the offsets `src/dma_cache040.s`
+already records from the pinned binary (`sdcom: +0x04 reading, +0x14 addr, +0x18 nbyte`). That puts
+`sense` at `dd+0x34` and makes `sizeof(struct dd)` `0x44` — **68 bytes, 4 mod 16**. So the array
+stride walks the sense buffer through four alignments, and the 16-byte rounded range the completion
+invalidates reaches into the following element on three of them:
+
+| unit | `sense` | mod 16 | rounded range | what else is in it |
+|---|---|---|---|---|
+| 0 | `+0x034` | 4 | `0x030..0x050` | next unit's `state`, `bhead`, `btail` |
+| 1 | `+0x078` | 8 | `0x070..0x090` | next unit's `state`, `bhead` |
+| 2 | `+0x0bc` | 12 | `0x0b0..0x0d0` | next unit's `state` |
+| 3 | `+0x100` | 0 | `0x100..0x110` | **nothing — one line, no sharing** |
+
+### It is a real DMA on this path, not a memcpy
+
+`getsense` sets `dp->com.addr = vtop(dp->sense, ...)`, `reading = TRUE`, `nbyte = 16`, and calls
+`sdqueue`. So it goes through the ordinary sd path, through the A3091 arm, through our B2 prepare
+wrapper, and its completion runs the per-range `cinvl` loop in `src/dma_cache040.s`.
+
+### Why this is a defect and not a caller's mistake
+
+B2's rule is that the CPU must not touch the owned rounded range until complete. Here **the owned
+rounded range contains fields that other code is entitled to write**: `ddstrategy` writes `bhead`
+and `btail` when it queues a request, and the completion path writes `state`. Those are a different
+unit's fields, and nothing tells their writers that a neighbour's sense buffer has borrowed their
+cache line. The precondition cannot be honoured by anyone; the layout breaks it.
+
+**Not observed.** It needs a failing command on one unit, concurrent queueing or completion on the
+adjacent unit, and the write to land in that line inside the transfer window. Narrow, and the
+consequence — a lost queue-head pointer or a lost state transition — would look like a hang or a
+lost request rather than corrupted data, which is exactly the kind of thing this project has
+chased before without a mechanism.
+
+### What our own records got wrong
+
+`docs/contracts/DMA-INITIATOR-CENSUS.md:243` classifies this transfer as *"request sense | small
+static driver buffer"*. That is true and it is not enough: it says nothing about the buffer being a
+field inside an array whose neighbour is live, which is the whole hazard. Raised by the driver line
+on 2026-09-29 while reading our census against their own sd audit; the layout above was then
+computed here from the vanilla source.
+
+### The fix, not applied
+
+Three shapes, and the choice is not obvious:
+
+1. **Bounce**, as the driver line chose for the A4091: DMA into a 16-aligned driver-owned buffer
+   and copy out after completion. Correct and self-contained, and it costs one copy of 16 bytes.
+2. **Invalidate only the interior lines** and read the partial edges back some other way. Cheap to
+   describe, fiddly to get right, and it leaves the stale-edge problem in a different place.
+3. **Pad `struct dd`** so `sense` starts on a line and the element size is a multiple of 16. The
+   smallest change to state, but it is a stock layout: every byte patcher and every recorded offset
+   against `ddtab` would move.
+
+Option 1 is the one that does not depend on knowing who else might write, which is the property
+that makes this hazard hard to reason about. Not applied here, because the A3091 pilot is
+hardware-proven as it stands and the fix wants its own acceptance run — and because the generalized
+service already names this class in `edge_shared`, which is where the A3091 would be measured if it
+ever moves onto `dma_prepare`.

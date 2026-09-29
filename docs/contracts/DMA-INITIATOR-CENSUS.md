@@ -240,7 +240,7 @@ The controller hooks cover more than filesystem disk buffers:
 |---|---|---|
 | `dd` disk | `buf`, page I/O, buffer cache, or raw user I/O | original cacheable alias can survive the direct physical handoff |
 | `ct` tape | raw/kernel buffers and controller commands | character path is not fully represented by `gen_strategy`; lengths may be partial-line |
-| request sense | small static driver buffer | callback parses it before final `iodone` |
+| request sense | a 16-byte field INSIDE an array element, not a standalone buffer | callback parses it before final `iodone` — and the rounded invalidate range reaches the next element's live fields on three units in four. See ISSUE-73; this row said "small static driver buffer" until 2026-09-29, which was true and said nothing about the neighbour |
 | generic SCSI ioctl | caller-supplied data and command callback | may not use a block `buf` completion at all |
 | disconnect/reconnect segment | subrange of one `sdcom` | one logical request may have several hardware ownership intervals |
 
