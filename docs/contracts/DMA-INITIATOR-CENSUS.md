@@ -387,3 +387,71 @@ searches is assigned to one of those rows.
 
 This closes the **analysis** part of CM-B1 matrix item 8. It does not close the
 kernel implementation or real-hardware acceptance gate.
+
+## DMA reach on a Z3660 rig, measured 2026-09-30
+
+The census assumes throughout that an initiator's DMA can reach the memory the kernel's buffers
+live in. On one accelerator that assumption is reported not to hold, so it is worth writing down
+what was measured here rather than leaving it assumed.
+
+**The claim to be checked.** The driver line passed on Chris Hooper's note (their letter 08) that
+the Z3660's DDR sits in Zorro address space as Gary decodes it, and that **Zorro bus-master DMA
+cannot reach it** — any Zorro device's DMA into that region fails, and so does the A3000 onboard
+SCSI's. Their conclusion was that on a Z3660 machine every transfer would have to be bounced
+through Zorro-reachable memory, not only the misaligned ones, which would make the counters in
+`DMA040-SERVICE-RECORD.md` blind to the direct case.
+
+**What this machine is.** An A3000 with a Z3660 carrying a 68060, running `68040-260928-05`
+(sha `a1fa4337`) — the same image STATUS records as accepted on a Mercury. The kernel carries
+**no** Z3660 SCSI driver (zero `z3660` symbols against seventeen `a3091` ones) and roots through
+`/dev/dsk/c6d0s1`, card 0, which is the A3000's own internal A3091/SDMAC. So every byte of root
+I/O on this machine is that controller's DMA into the kernel's buffers.
+
+**Where those buffers are.** Read from the live `bootinfo` in `/dev/mem`, its `memory[]` array
+decoded as AmigaOS `MemHeader`s:
+
+| region | `mh_Lower` | `mh_Upper` | size | attributes |
+|---|---|---|---|---|
+| 0 | `0x08000020` | `0x10000000` | **128 MB** | `FAST\|LOCAL\|KICK\|PUBLIC`, pri 40 |
+| 1 | `0x07000020` | `0x08000000` | 16 MB | `FAST\|LOCAL\|KICK\|PUBLIC`, pri 30 |
+| 2 | `0x00001020` | `0x00200000` | 2 MB | chip |
+
+Region 1 is the A3000 motherboard Fast RAM, whose documented maximum is exactly that 16 MB.
+Region 0 is the Z3660's own RAM, it is the largest, and it is where the loader put the kernel —
+which is why the load base here is `0x08000000` and not the `0x07000000` an A3640 gives.
+
+**The measurement.** The A3091 B2 record read live, `dma_magic` checked first and reading `DMA!`:
+
+| field | value |
+|---|---|
+| `dma_seg_pa` — the last segment the controller owned | **`0x0fe41800`** |
+| `dma_seg_seq` | 6147 |
+| `dma_prep_to` / `dma_cmpl_to` | 2626 / 2626 |
+| `dma_prep_from` / `dma_cmpl_from` | 3521 / 3521 |
+| `prep_owned`, `cmpl_noprep`, `range_ovf`, `zero_arm`, `reconn_arm` | 0 |
+
+2626 + 3521 = 6147, so the block is internally consistent as well as correctly addressed.
+`0x0fe41800` is inside region 0. **The A3000's internal SCSI DMA'd into the Z3660's RAM, 6147
+segments in one uptime, with every pairing equal and every must-stay-zero counter at zero**, while
+the machine booted from that memory, ran an X session and rebuilt the X server three times.
+
+**Why this does not contradict the note.** This Z3660 is configured with **no Zorro III memory, no
+RTG and no sound card** — the 68060 and its CPU RAM only. So region 0 is the CPU-local aperture,
+not a Zorro III autoconfigured one. Hooper's statement is about the DDR *as Gary decodes it in
+Zorro space*, and on the driver line's own rig that aperture is populated: they describe the A4092
+configuring at `$40000000`, or at `$50000000` "with the Z3660's RAM autoconfigured ahead of it".
+
+**So the variable is named rather than the claim refuted:** whether the accelerator's RAM is
+autoconfigured into Zorro III space. Where it is not, and the kernel lives in the CPU-local
+aperture, Zorro bus-master DMA reaches it — measured, 6147 times. That is a cheap thing for the
+driver line to test before committing to a bounce-everything kernel, and it is not something this
+machine can test for them, because the configuration that would answer it is the one it does not
+have.
+
+**What it means for the service contract.** On a platform where the initiator cannot reach the
+kernel's memory, every transfer is bounced through an aligned staging buffer, so `edge_shared`
+cannot fire and the direct case is never exercised. A run of all-zero counters there is a weaker
+result than the same run on a machine with direct reach: it shows the protocol is consistent, not
+that it is coherent against a live bus master. Worth stating in `DMA040-SERVICE-RECORD.md` beside
+the acceptance invariants, since a reader comparing two clean runs has no other way to tell them
+apart.

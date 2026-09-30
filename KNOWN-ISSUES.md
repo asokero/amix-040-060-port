@@ -9036,6 +9036,19 @@ Note the two fixes are independent and both are worth having:
 Also still open: whether this is the same failure the owner hit before ISSUE-64 was found. Both are
 `kstack` cascades. Nothing distinguishes them yet, and the earlier one was not captured on serial.
 
+### 2026-09-30: an outside data point on the byte write itself
+
+The driver line reports (their letter 08) that they wrote an A4092's SPI flash in circuit from
+AmigaOS **through a Z3660** and read it back byte-exact against the release image. So byte writes
+through that bridge into a Zorro III card are not refused as a class.
+
+That narrows the space without closing it, and the differences matter: their card is an A4092 and
+ours a VA2000, their bridge is the Z3660's and the refusal here was seen on a different machine,
+and a flash-programming path need not touch the same register decode as a framebuffer register
+window. What it does rule out is the widest reading — that a Zorro III card cannot be written a
+byte at a time at all. The refusal here remains a property of some specific decode, and which side
+owns it is still unsettled.
+
 ## ✅ ISSUE-66 (2026-09-07, FIXED AND HARDWARE-ACCEPTED 2026-09-08): `shmat` accepted a 2 KiB-aligned attach address on a 4 KiB kernel, and the segment then outran its anon map
 
 Found by the probe written to ask whether the second 2 KiB survivor from ISSUE-62's hunt was a
@@ -9810,7 +9823,7 @@ hardware-proven as it stands and the fix wants its own acceptance run — and be
 service already names this class in `edge_shared`, which is where the A3091 would be measured if it
 ever moves onto `dma_prepare`.
 
-## ✅ ISSUE-74 (2026-09-30, FIXED AND ACCEPTED on `68060-260928-05`): Xrtg took the console keyboard with `SIOCACTIVATE` and never gave it back, so the console was deaf after every X session
+## ✅ ISSUE-74 (2026-09-30, FIXED AND ACCEPTED on `68040-260928-05`, A3000 + Z3660/68060): Xrtg took the console keyboard with `SIOCACTIVATE` and never gave it back, so the console was deaf after every X session
 
 **Symptom, as the driver line reported it.** After an RTG X session ends, the console shell
 receives no keystrokes. Telnet is unaffected. Switching to another virtual console and back
@@ -9845,7 +9858,8 @@ independent sites and `displayedscreen` at two, to two different addresses.
 
 | what | value |
 |---|---|
-| running kernel | `build/unix-040-rtg`, bound at `0x08000000` (entry bytes and relocated operands match the image) |
+| machine | A3000 with a **Z3660** carrying a 68060 — not the Mercury the same image was first accepted on. The accelerator is named because it mattered elsewhere the same day (see the reach note below) |
+| running kernel | `build/unix-040-rtg` = `68040-260928-05`, sha `a1fa4337`, bound at `0x08000000` (entry bytes and relocated operands match the image; the banner's `68060-` prefix is the CPU, not the image) |
 | `screens` | `0x08142dc8` (three sites agree) |
 | `activescreen` | at `0x08136b80` |
 | `displayedscreen` | at `0x08139b1c` |
@@ -9909,6 +9923,12 @@ Under XDM, with the fixed server, the log shows the hand-back running and succee
 still caught `activescreen` at zero for a moment before the next generation claimed it. The
 hand-started A/B above is unambiguous and is the case the report is about, so this is recorded as
 an observation rather than given a mechanism it has not earned.
+
+The driver line offers one candidate, and it is written down as a candidate (their letter 08): a
+race between the old generation's hand-back and the new server's `SIOCACTIVATE` when the respawn
+happens inside a second — something the hand-started case cannot show by construction. They run no
+display manager on their images (a console login and `startx-rtg`), so they have not seen it. Worth
+testing if it ever matters; not tested here.
 
 ### Scope beyond here
 

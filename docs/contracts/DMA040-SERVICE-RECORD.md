@@ -108,6 +108,14 @@ to "paths whose buffers are block-aligned" — the wording this document carried
 it would instead excuse them, which is the opposite of what a counter is for. A nonzero value means a
 driver bug or a caller that has not bounced.
 
+**All-zero counters mean less on a platform with no direct DMA reach.** Where the initiator cannot
+DMA into the kernel's memory at all, every transfer is bounced through an aligned staging buffer:
+`edge_shared` cannot fire, and no segment the service owns was ever touched by a live bus master.
+Such a run shows the protocol is self-consistent, not that it is coherent. Two clean runs are not
+interchangeable, and the reader cannot tell them apart from the counters alone, so the platform
+belongs beside the numbers. `docs/contracts/DMA-INITIATOR-CENSUS.md` records the measurement that
+raised this — and the configuration variable it turns on.
+
 **Read `magic` first.** A stale address does not fail; it returns a plausible number from whatever
 now lives there. That rule is not specific to this block — it is why every counter block in this
 port starts with one.
