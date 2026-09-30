@@ -9809,3 +9809,101 @@ that makes this hazard hard to reason about. Not applied here, because the A3091
 hardware-proven as it stands and the fix wants its own acceptance run — and because the generalized
 service already names this class in `edge_shared`, which is where the A3091 would be measured if it
 ever moves onto `dma_prepare`.
+
+## ✅ ISSUE-74 (2026-09-30, FIXED AND ACCEPTED on `68060-260928-05`): Xrtg took the console keyboard with `SIOCACTIVATE` and never gave it back, so the console was deaf after every X session
+
+**Symptom, as the driver line reported it.** After an RTG X session ends, the console shell
+receives no keystrokes. Telnet is unaffected. Switching to another virtual console and back
+restores it. They found it on an A4000T with a real keyboard, fixed it on their side, and wrote to
+say they expected Xrtg to have it too, because both descend from the same isoriano rtg input code
+(their letter 07, 2026-09-30).
+
+It was reported here as a known annoyance rather than a bug — the operator had learned the virtual
+console workaround and stopped noticing. That workaround is the diagnosis: switching consoles is
+the one other thing in the system that calls `SelectScreen`.
+
+### The mechanism, read here from the console source before anything was measured
+
+* `rtgOpenInput` issues `SIOCACTIVATE` (`rtg/rtgInit.c`) and nothing in the tree ever issues
+  `SIOCBACK` — the whole server had one half of a pair.
+* The kernel's own `CloseScreen` does not cover for that. Its successor search begins at
+  `sp->next`, and for a screen that is alone in its group `sp->next` is null, so the loop body
+  never executes. It then falls through to setting `activescreen` to zero.
+* The keyboard interrupt path reads `activescreen`, finds no screen, and returns — for every key.
+  Nothing is slow or wedged: the key has nowhere to be delivered.
+* `SIOCBACK` maps to `HideScreen`, which does the thing `CloseScreen` omits: when `sp->next` is
+  null it walks the **whole** `screens[]` table for any screen still in use with both a `kbfunc`
+  and a `mifunc`, and selects that one. It acts only while we are the displayed or the active
+  screen, so calling it when we are neither is harmless.
+
+### Measured, not inferred: the kernel's own globals, read live
+
+Read through `/dev/mem` with stock `od` — no instrument had to be compiled. Addresses came from
+`tools/status-facts.sh`'s COMMON relocation-site table against `build/unix-040-rtg`, load base
+`0x08000000`, which the machine confirmed by content: `activescreen` resolved identically at three
+independent sites and `displayedscreen` at two, to two different addresses.
+
+| what | value |
+|---|---|
+| running kernel | `build/unix-040-rtg`, bound at `0x08000000` (entry bytes and relocated operands match the image) |
+| `screens` | `0x08142dc8` (three sites agree) |
+| `activescreen` | at `0x08136b80` |
+| `displayedscreen` | at `0x08139b1c` |
+| stride | 300 bytes — from `MAXSCREENS` 32 against the symbol's 9600-byte size, and independently from the `0x12c` multiplier in the indexing code and the `0x08145348` loop bound |
+| console | `screens[0]`, flags `0x0003` (`INUSE|DISPLAY`), `kbfunc` `0x080018dc`, `mifunc` `0x08001858` |
+| Xrtg | `screens[10]` (`0xBB8` = 10 × 300) |
+
+The console row is the one that matters: **a successor existed the whole time.** `HideScreen`
+would have found it at the first slot it looked at. Nothing was missing but the call.
+
+### The accepting run: A/B on one harness, hand-started session, clean `SIGTERM`
+
+XDM had to go first. It masks the fault — the server is respawned within a second and re-activates
+the same screen — and an earlier attempt under XDM produced a reading that took three rebuilds to
+stop misreading. ISSUE-72 had already recorded that XDM confounds exactly this kind of observation;
+the lesson did not transfer on its own.
+
+| binary | during the session | after a clean exit, three samples |
+|---|---|---|
+| before the fix | `0x08143980` (Xrtg's screen) | `0`, `0`, `0` — and it stays there |
+| after the fix | — | `0x08142dc8`, `0x08142dc8`, `0x08142dc8` = `screens[0]`, the console |
+
+The fixed server's log carries `rtgCloseScreen: entered i=0 mapped=1 fd=5` and
+`rtg: SIOCBACK fd=5 rc=0`, so the path is not inferred from the effect.
+
+### The fix
+
+`xrtg-amix`: `rtgHandBackInput()` issues `SIOCBACK`, called at the **top** of `rtgCloseScreen` and
+from `rtgAbort()` for the `FatalError` / `GiveUp` path, which does not run `CloseScreen` at all.
+
+**Placement is the whole fix, and the first attempt had it wrong.** Putting the hand-back after the
+chained `CloseScreen` call — where it reads naturally — produced a server that changed nothing,
+because the chained call is `amixCloseScreen`, which closes `amixFbs[i].fd` and then memsets the
+entire `amixFbs[i]` record. By the time the hand-back ran, its guard was false and the descriptor
+was closed. The same is true of the `CloseScreen(amixFbs[i].fd)` block that was already sitting
+there: it has never run either, and is now marked as such rather than quietly removed.
+
+### Two wrong turns worth keeping
+
+1. **A grep that could not match.** Checking the server log for the new line with
+   `grep "rtgCloseScreen: entered\|SIOCBACK"` returned nothing, and was read as "the code did not
+   run". The guest's 1991 `grep` has no alternation in a basic regular expression, so the pattern
+   matched nothing that exists. The line had been in the file since the first rebuild. This is the
+   project's own "no `-E` on the guest" note, met again from the other direction — there the flag
+   was missing, here the escape was inert.
+2. **A binary grep read as evidence.** `grep -c SIOCBACK` on the installed server returned 0 and
+   was briefly taken to mean the build had not picked up the change. The control — the same grep
+   for `va2000InitHW` and `rtgScreenInit`, strings the running server was printing at that moment —
+   also returned 0. The test had no power; only running the control showed that.
+
+### Not explained, and deliberately left so
+
+Under XDM, with the fixed server, the log shows the hand-back running and succeeding, yet the poll
+still caught `activescreen` at zero for a moment before the next generation claimed it. The
+hand-started A/B above is unambiguous and is the case the report is about, so this is recorded as
+an observation rather than given a mechanism it has not earned.
+
+### Scope beyond here
+
+The input code is shared ancestry, so the ZZ9000 driver's author may carry the same half-pair. The
+driver line has already fixed their side.
