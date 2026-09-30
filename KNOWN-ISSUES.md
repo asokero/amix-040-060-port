@@ -9871,6 +9871,13 @@ the lesson did not transfer on its own.
 The fixed server's log carries `rtgCloseScreen: entered i=0 mapped=1 fd=5` and
 `rtg: SIOCBACK fd=5 rc=0`, so the path is not inferred from the effect.
 
+**And the symptom itself, on the operator's own keyboard.** Leaving XDM now returns the console
+keyboard immediately. The same operator had reported the opposite before the fix — that leaving XDM
+left the keyboard dead until a virtual-console switch and back — so this is a before-and-after on
+the original complaint, taken on the hardware by the person who first noticed it. The variable and
+the keyboard agree, which is the only combination that closes an issue like this one: a measurement
+nobody can feel is not a fix, and a feeling nobody can measure is not a diagnosis.
+
 ### The fix
 
 `xrtg-amix`: `rtgHandBackInput()` issues `SIOCBACK`, called at the **top** of `rtgCloseScreen` and
