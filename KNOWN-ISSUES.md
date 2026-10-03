@@ -9932,3 +9932,104 @@ testing if it ever matters; not tested here.
 
 The input code is shared ancestry, so the ZZ9000 driver's author may carry the same half-pair. The
 driver line has already fixed their side.
+
+## ⚠⚠ ISSUE-75 (2026-10-03, ROOT-CAUSED AND REPRODUCED ON DEMAND on `68060-260928-05`, A3000 + Z3660/68060 — a stock defect, not fixed): a `TCSBRK` on the built-in serial port arms a timer that `close` never cancels, and it runs `getq(0x40)`
+
+**Symptom.** Twice on 2026-10-03 the machine panicked shortly after a user program finished on the
+built-in serial port (`sl`, `c 5,1`, the minor without hardware flow control). Both times the text
+was the same, and it carried no serial-driver frame at all:
+
+```
+WARNING: DBG krnxflt FAILEXIT w=2 va=614E6167 rw=1 depth=1
+TRAP proc = … (pid 156, inetd) psw = 2400, pc = 802BB28
+PANIC: KERNEL FAULT psw=0x2400, pc=0x802BB28, fmt=0x4, vector=0x2 (Bus Error)
+```
+
+The program set the port raw at `B200`, wrote a few dozen bytes, issued `ioctl(fd, TCSBRK, 1)` and
+closed. A third program that did the same writes **without** the `TCSBRK` played to completion and
+left the machine up, including through two telnet connections afterwards.
+
+### The mechanism, read from the stock driver and confirmed against the image
+
+Stock source `usr/sys/amiga/driver/sl.c`, as shipped with 2.1c:
+
+* `slsrvioc`, `TCSBRK` case (around line 844): it acknowledges the ioctl and then calls
+  `slproc(tp, T_BREAK)` **whatever the argument is**. SVR4 defines a non-zero argument as "wait for
+  output to drain, send no break"; this driver always sends the break.
+* `slproc`, `T_BREAK` case (around line 514): sets the break condition and calls
+  `timeout(sl_ttrstrt, tp, HZ/4)`. The callout id is discarded.
+* `slclose` (lines 166–211): clears `t_state`, sets `t_rdqp` and `sl.rdq` to NULL, disables the
+  serial interrupts, and returns. It never cancels the callout. The file has an `untimeout` only for
+  `tictoc`, which nothing ever assigns.
+* `sl_ttrstrt` (line 867) calls `slproc(tp, T_TIME)`, which calls `getoblk(tp)`. `getoblk`
+  (line 216) takes `WR(tp->t_rdqp)` with no NULL check.
+
+So a `TCSBRK` followed by a `close` within a quarter of a second leaves a callout that, 250 ms
+later, calls `getq((queue_t *)0 + 1)` = **`getq(0x40)`** (`sizeof(queue_t)` is `0x40`). In the
+image `build/unix-040-rtg` of `260928-05`, `getoblk` (`.text 0x11e86`) forms that address as
+`moveq #64` plus `t_rdqp`, with no test in front of it, and `pc 0x802BB28` is `getq+0x4c`
+(`.text 0x2bb28`) at load base `0x08000000`.
+
+### What `getq(0x40)` reads on this machine, measured
+
+Kernel VA `0x40` is inside DTT0 (`0x003FC060`: 0–1 GB, supervisor), so it is physical chip RAM
+`0x40`. The kernel's VBR is `&M68Kvec`, so that memory is **not** the live vector table: it is the
+exception vector table Kickstart left behind. Read live through `/dev/kmem` on solon (Kickstart
+with exec 47.13), identical before and after the measurements below:
+
+```
+ 40: 00f80b4a 00f80b4c 00f80b4e 00f80b50
+ 50: 00f80b52 00f80b54 00f80b56 00f80b58
+ 60: 00f80b5a 00f8122c 00f81284 00f812c4
+ 70: 00f8131c 00f813bc 00f81406 00f80e9e
+```
+
+Following `getq` instruction by instruction over those bytes, with ROM read through `/dev/kmem`:
+
+| step | read | value |
+|---|---|---|
+| `q_first` = `*(0x44)` | vector 17 | `0x00f80b4c` — a ROM address, so non-NULL |
+| `b_flag` low byte = `*(0x00f80b4c + 27)` | ROM | `0xef` — bit 3, `MSGNOGET`, is set |
+| so `getq` takes its "skip `MSGNOGET` messages" loop; `b_next` = `*(0x00f80b4c)` | ROM code bytes | `0x614e614c` |
+| next `btst #3, 27(a3)` | `0x614e614c + 27` | **`0x614e6167`** — unmapped, bus error at `getq+0x4c` |
+
+That is the panic's `va` and `pc` exactly. The process the panic names is whatever happened to be
+current when the callout ran (inetd twice, `flopd` in the reproduction), not a participant.
+
+### Reproduced on demand (HW, 060, 2026-10-03)
+
+A small program (open `c 5,1` with `O_NDELAY`, optionally `TCSBRK 1`, close, sleep 2 s, read
+`0x40`–`0x7f` again) was written with the prediction stated first: control survives and nothing at
+`0x40`–`0x7f` changes; with `TCSBRK` the machine panics with `va=614E6167`, `pc=0x802BB28` before
+the second read.
+
+* **Control** (open, close): machine up, the 64 bytes unchanged.
+* **With `TCSBRK 1`**: `TCSBRK rc=0`, `closed` printed, the second read never arrived, ping lost
+  within about a second; the console showed `va=614E6167`, `pc=0x802BB28`, `proc` = `flopd`
+  (pid 43). Prediction met.
+
+The two earlier panics were noticed at the next telnet login, about a minute later. That delay was
+not measured, and the reproduction shows the fault itself lands within two seconds of `close`.
+
+### Scope
+
+* **The defect is stock code**; nothing in this port touches `sl`. What the stale `getq` does next
+  depends on what the low 128 bytes of chip RAM hold, which depends on the Kickstart version, and
+  on how the kernel maps VA `0x40`. **Stock 2.1c on a 68030 is not tested**: it may fault, loop
+  harmlessly, or quietly write into the leftover vectors, since `getq` also stores through `q`.
+* Even where it does not fault, it is wrong: `getq` writes `q_first`/`q_flag` at `0x44`/`0x5c`
+  and may hand a ROM "message" to `getoblk`.
+* A second, separate stock defect follows from the same lines: `TCSBRK` with a non-zero argument
+  should drain and must not send a break. Any program that "drains" with `TCSBRK 1` sends a
+  250 ms break down the line instead.
+
+### If it is fixed
+
+Two candidates, not chosen:
+1. Guard the callout: make `sl_ttrstrt` (`.text 0x12a5e`, 32 bytes) return at once when
+   `sl.tty.t_rdqp` is NULL. That covers every route into the stale callout.
+2. Keep the callout id and cancel it in `slclose`. That needs storage that the stock structure
+   does not have.
+
+`getoblk` exists as a local symbol in three drivers (`co`, `ql`, `sl`), so `--weaken-symbol` cannot
+select this one; a fix here is a byte patch or a replacement of the `sl` object as a whole.
