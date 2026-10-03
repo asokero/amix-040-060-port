@@ -9397,11 +9397,9 @@ cannot be**, which is exactly why this stays a kernel defect: the fix belongs in
 
 ## ⚠⚠ ISSUE-69 (2026-09-26, RECORDED — a stock defect, not fixed here by request): `setuid(-123456)` panics the kernel, for any user
 
-Found by the easter-egg line (`~/kehitys/amix-playground/amix-eastereggs`, egg 005), **to be
-written down and not pursued now**. The full write-up, with the disassembly and a screenshot, is
-theirs: `amix-eastereggs/eggs/005-setuid-test-panic.md`. Same category as ISSUE-41 and ISSUE-68: a
-defect of **stock** AMIX 2.1c, not of this port, recorded because no user program should be able to
-panic the kernel.
+Recorded at the owner's request, **to be written down and not pursued now**. Same category as
+ISSUE-41 and ISSUE-68: a defect of **stock** AMIX 2.1c, not of this port, recorded because no user
+program should be able to panic the kernel.
 
 ### What happens
 
@@ -9427,7 +9425,7 @@ it at `0x9186`.
 
 ### Measured
 
-* **EMU, stock 2.1c kernel** (the easter-egg line's own Amiberry instance, 2026-09-26): run as
+* **EMU, stock 2.1c kernel** (a separate Amiberry instance, 2026-09-26): run as
   `daemon` (uid 1), the machine printed `PANIC: Test Panic!!!` and a backtrace and stopped.
 * **This port's kernels: not tested.** Prediction: they panic the same way. No override unit or
   byte patcher touches `setuid` (no patch offset falls inside `.text 0x44fcc`–`0x450c0`, and
