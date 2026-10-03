@@ -229,6 +229,10 @@ and it is not accepted.
 @`0x07000000`, the second *below* the first) and AMIX counts only the one the kernel was loaded
 into. Codex's analysis found **no technical ceiling**; the blocker is that the boot-time
 algorithm does not recognise A and B as one pool. Bounded boot/startup work, not a counter bump.
+Commodore documented the limit itself. Commodore's *UNIX System V Release 4, Amiga Version 2.1 — Addendum* (public mirror: amigaunix.com, `amix_packages:v2releasenotes.pdf`), pp. 2 and 17, says the system uses one
+contiguous region, that the loader picks the largest and the kernel uses only that, and that chip
+RAM does not count. So it is a stated design limit of 2.1, not a defect found here. It is also why
+solon's kernel sits in the Z3660's 128 MB at `0x08000000` with the motherboard's 16 MB unused.
 
 **Zorro III.** Works, with the VA2000 on its Zorro III firmware, on both CPUs. Accepted on the
 68060 on 2026-08-19 at **7.66 MB/s** against 3.12 MB/s for the same card on Zorro II, with a width

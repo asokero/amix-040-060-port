@@ -3912,6 +3912,13 @@ time buys nothing until there is a rate ([[feedback-pause-elusive-bug-hunting]] 
 > The text below is the working record and may contain hypotheses later refuted;
 > STATUS.md §7 lists which.
 
+**Commodore knew a kernel defect with this shape (added 2026-10-03).** The *Known problems* of
+Commodore's *UNIX System V Release 4, Amiga Version 2.1 — Addendum* (public mirror: amigaunix.com, `amix_packages:v2releasenotes.pdf`), p. 17–18, describe programs running out of virtual memory while swap space is still
+free. It happens mostly under OPEN LOOK with less than 20 MB of swap. Their symptoms are "too many
+processes", error 11, the dynamic linker failing to map libraries, and `as_map` retrying, and their
+workaround is more swap. That matches the family recorded here and in ISSUE-40. It is **not
+established** that it is the same defect: no stock kernel has been run against these symptoms.
+
 Seen on the console during the 16-burst acceptance run on `68040-260731-10`, by a human watching the
 screen. It is a kernel `cmn_err` warning, not a panic:
 
@@ -4330,6 +4337,9 @@ the fall-through visible was the one nobody expected to move.
 
 > **Ledger: FIXED** — 68040 hardware. Canonical: [`STATUS.md`](STATUS.md) §4.
 > ⚠ `ptd_wake_n` = 0: the `pt_waiting` branch of the fix has never been exercised.
+
+> Commodore's 2.1 addendum lists a stock out-of-virtual-memory problem with free swap as a known
+> defect. It may be this one or ISSUE-39, which is not established; see the note under ISSUE-39.
 
 This issue was worked entirely in its own documents and never had a section here, which made it
 invisible to anyone reading the numbering. The record, in order:
@@ -10013,7 +10023,10 @@ not measured, and the reproduction shows the fault itself lands within two secon
 
 ### Scope
 
-* **The defect is stock code**; nothing in this port touches `sl`. What the stale `getq` does next
+* **The defect is stock code**; nothing in this port touches `sl`. It is older than 2.1: the
+  `sl.c` shipped with 2.01 differs from 2.1c's only in the `B200` divisor (the MIDI rate), so the
+  `TCSBRK` callout and `slclose` are identical. The 2.1 addendum describes the serial driver as
+  rewritten since 1.1. What the stale `getq` does next
   depends on what the low 128 bytes of chip RAM hold, which depends on the Kickstart version, and
   on how the kernel maps VA `0x40`. **Stock 2.1c on a 68030 is not tested**: it may fault, loop
   harmlessly, or quietly write into the leftover vectors, since `getq` also stores through `q`.
