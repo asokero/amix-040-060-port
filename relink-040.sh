@@ -1053,6 +1053,9 @@ run_step 1 python3 "$HERE/src/patch_xpanic_sync.py" "$OUT"
 echo "[*] ISSUE-75: sl callouts after close -- T_TIME and delay skip getoblk when t_rdqp is NULL"
 run_step 2 python3 "$HERE/src/patch_sl_closedq.py" "$OUT"
 
+echo "[*] ISSUE-76: autocon's manufacturer shift is signed -- asrl -> lsrl"
+run_step 1 python3 "$HERE/src/patch_autocon_lsr.py" "$OUT"
+
 echo "[*] ISSUE-106: latch USP/u_ar0/u_comm at the fatal user-fault NOTICE"
 run_step 2 python3 "$HERE/src/patch_usptrap.py" "$OUT"
 

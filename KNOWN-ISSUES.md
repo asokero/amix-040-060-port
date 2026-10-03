@@ -10052,3 +10052,31 @@ Every run printed both reads with `0x44` = `0x00f80b4c`, unchanged. The machine 
 
 This run tested ISSUE-75 only. The regression battery has not been run on `261003-05`, and the
 image also carries the base changes made after `260928-05`.
+
+## ✅ ISSUE-76 (2026-10-03, a stock defect: FIXED, not exercised on hardware here — no board with such an id in this machine): `autocon()` never matches a manufacturer id at or above `0x8000`
+
+**Reported by the driver line** (their letter 12, 2026-10-03), found while bringing up an A4092,
+whose manufacturer id is `0xC0DE`. They carry the same one-instruction fix in their relink.
+
+### The mechanism, checked here against the source and the image
+
+Stock `usr/sys/amiga/kernel/support.c`, `autocon` (around line 314): the board key `pc` is a
+`long`, and the manufacturer half is compared as `pc >> 16`. In the image, `.text 0x19282` is
+`asrl %d7,%d0`, an arithmetic shift, so `0xC0DE0001` becomes `0xFFFFC0DE`. The table side is the
+16-bit `er_Manufacturer`, loaded with `movew` into a cleared `%d5`, so it is `0x0000C0DE`. The
+two can never be equal for any id with bit 15 set, and `autocon` reports the board absent.
+
+### Who it touches
+
+Nothing this tree looks up today. The manufacturer ids in the stock drivers are `0x0202`,
+`0x0406`, `0x041d` and `0x07ee`, and the external drivers use `0x6d6e` (VA2000) and `0x144b`
+(Z3660). All are below `0x8000`, and for those `asrl` and `lsrl` give the same result. The
+defect bites the first driver written for a board above that line.
+
+### The fix (`src/patch_autocon_lsr.py`)
+
+One byte: `eea0` → `eea8`, i.e. `lsrl %d7,%d0`. The product compare that follows masks with
+`0xffff` and is unchanged. The patcher asserts the ten bytes around the shift. A rebuild differs
+from the unpatched one in exactly that byte and the build-id stamp. **Not exercised on hardware
+here**, because no board in this machine has such an id. That the low-id path is unchanged follows
+from the instruction semantics, not from a run.
