@@ -9933,7 +9933,7 @@ testing if it ever matters; not tested here.
 The input code is shared ancestry, so the ZZ9000 driver's author may carry the same half-pair. The
 driver line has already fixed their side.
 
-## ⚠⚠ ISSUE-75 (2026-10-03, ROOT-CAUSED AND REPRODUCED ON DEMAND on `68060-260928-05`, A3000 + Z3660/68060 — a stock defect, not fixed): a `TCSBRK` on the built-in serial port arms a timer that `close` never cancels, and it runs `getq(0x40)`
+## ✅ ISSUE-75 (2026-10-03, a stock defect: REPRODUCED ON DEMAND on `68060-260928-05`, FIXED AND HARDWARE-ACCEPTED on `68060-261003-05`, A3000 + Z3660/68060): a `TCSBRK` on the built-in serial port arms a timer that `close` never cancels, and it runs `getq(0x40)`
 
 **Symptom.** Twice on 2026-10-03 the machine panicked shortly after a user program finished on the
 built-in serial port (`sl`, `c 5,1`, the minor without hardware flow control). Both times the text
@@ -10023,13 +10023,32 @@ not measured, and the reproduction shows the fault itself lands within two secon
   should drain and must not send a break. Any program that "drains" with `TCSBRK 1` sends a
   250 ms break down the line instead.
 
-### If it is fixed
+### The fix (2026-10-03, `src/patch_sl_closedq.py`, first in `68040-261003-05`)
 
-Two candidates, not chosen:
-1. Guard the callout: make `sl_ttrstrt` (`.text 0x12a5e`, 32 bytes) return at once when
-   `sl.tty.t_rdqp` is NULL. That covers every route into the stale callout.
-2. Keep the callout id and cancel it in `slclose`. That needs storage that the stock structure
-   does not have.
+Neither `sl_ttrstrt` (32 bytes, two fixed relocations) nor `getoblk`'s prologue has room for a
+test, and `getoblk` is a local symbol in three drivers (`co`, `ql`, `sl`), so `--weaken-symbol`
+cannot select this one. The guard therefore sits one level up, at the two places that call
+`getoblk` from a callout: `slproc`'s `T_TIME` case (`.text 0x12390`, 36 bytes) and `delay`
+(`.text 0x11fb6`, 16 bytes), the `M_DELAY` callout. Both clear `TIMEOUT` with a single
+`andiw` inside a `spltty`/`splx` pair. A read-modify-write of memory is one instruction, so no
+interrupt can split it, and the pair adds nothing. Its bytes pay for `tstl t_rdqp` and a branch
+past `getoblk` when the stream is closed. `sl_ttrstrt` still calls `slparam(OPEN)` first, so the
+break is still cleared after a close, as stock does.
 
-`getoblk` exists as a local symbol in three drivers (`co`, `ql`, `sl`), so `--weaken-symbol` cannot
-select this one; a fix here is a byte patch or a replacement of the `sl` object as a whole.
+The patcher asserts the old bytes and that no relocation lies inside either span. A rebuild
+differs from the unpatched build of the same tree by exactly those 52 bytes plus the build-id stamp.
+
+**Not covered:** the `bufcall(getoblk)` that `TCGETA`/`TCGETS` arm when `allocb` fails. It is a
+third way to reach `getoblk` after a close, and needs an allocation failure followed by a close.
+The other `TCSBRK` defect (a non-zero argument sends a break and does not drain) is unchanged.
+
+### Accepted on hardware (HW, 060, 2026-10-03, `68040-261003-05`)
+
+The prediction was written down before the boot: open + `TCSBRK 1` + close survives, and
+`0x40`–`0x7f` reads the same before and after. `uname -m` read `68060-261003-05`. The same program
+that panicked `260928-05` within two seconds then ran **four times** (once, then three in a loop).
+Every run printed both reads with `0x44` = `0x00f80b4c`, unchanged. The machine stayed up through
+`uptime` and a fresh telnet login afterwards. Prediction met.
+
+This run tested ISSUE-75 only. The regression battery has not been run on `261003-05`, and the
+image also carries the base changes made after `260928-05`.
