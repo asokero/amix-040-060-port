@@ -116,6 +116,15 @@ interchangeable, and the reader cannot tell them apart from the counters alone, 
 belongs beside the numbers. `docs/contracts/DMA-INITIATOR-CENSUS.md` records the measurement that
 raised this — and the configuration variable it turns on.
 
+**Nor do they show coherence where the memory snoops the bus master.** The driver line reported
+this in their letter 12 (2026-10-03); it was not measured here. The Z3660 asserts the 68060's
+`SNOOP` on every Amiga-side DMA into its RAM, so a `FROM_DEVICE` transfer into that RAM is
+coherent in hardware whether or not the service invalidates. On their rig, a control with the
+seam switched off read back just as correctly. On such a platform a clean run shows reach and
+self-consistency. Only the `TO_DEVICE` half (the push before the controller reads memory) can
+show the service doing work, and only a write test can show that. Whether the A3000's own
+SDMAC is covered by the same snoop when it writes into the Z3660 has not been measured here.
+
 **Read `magic` first.** A stale address does not fail; it returns a plausible number from whatever
 now lives there. That rule is not specific to this block — it is why every counter block in this
 port starts with one.

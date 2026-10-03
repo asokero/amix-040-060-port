@@ -455,3 +455,9 @@ result than the same run on a machine with direct reach: it shows the protocol i
 that it is coherent against a live bus master. Worth stating in `DMA040-SERVICE-RECORD.md` beside
 the acceptance invariants, since a reader comparing two clean runs has no other way to tell them
 apart.
+
+**Scoped further on 2026-10-03.** The driver line reports that the Z3660 snoops Amiga-side DMA
+into its RAM in hardware. If that covers the SDMAC too (not measured here), the 6147 segments
+above show reach and self-consistency, not that the service's invalidates were needed. The run
+was worded as a reach result, and that is what it remains. The contract records the point
+(`DMA040-SERVICE-RECORD.md`, beside the all-zero note).
