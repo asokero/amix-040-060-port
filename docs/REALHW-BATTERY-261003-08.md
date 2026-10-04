@@ -46,5 +46,10 @@ MUST-STAY-ZERO-OK
   changes are carried, and this run says nothing about whether they are correct. The branch has
   not run.
 * **ISSUE-76** cannot be exercised on this machine (no board with an id ≥ `0x8000`).
+
+*Update 2026-10-04:* both of these now have hardware evidence from the driver line's rig (their
+letter 15). For D42 version 2, see the evidence paragraph at the top of
+`DMA040-SERVICE-RECORD.md`. For ISSUE-76, see its entry in `KNOWN-ISSUES.md`. Neither was
+measured here.
 * On this card, clean `FROM_DEVICE` counters show reach and self-consistency, not coherence. The
   Z3660 snoops Amiga-side DMA into its RAM (`DMA040-SERVICE-RECORD.md`).

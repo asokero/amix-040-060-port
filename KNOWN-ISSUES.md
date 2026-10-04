@@ -10066,7 +10066,7 @@ Every run printed both reads with `0x44` = `0x00f80b4c`, unchanged. The machine 
 This run tested ISSUE-75 only. The regression battery has not been run on `261003-05`, and the
 image also carries the base changes made after `260928-05`.
 
-## ✅ ISSUE-76 (2026-10-03, a stock defect: FIXED, not exercised on hardware here — no board with such an id in this machine): `autocon()` never matches a manufacturer id at or above `0x8000`
+## ✅ ISSUE-76 (2026-10-03, a stock defect: FIXED; accepted on the driver line's hardware 2026-10-04 by byte identity — no board with such an id in this machine): `autocon()` never matches a manufacturer id at or above `0x8000`
 
 **Reported by the driver line** (their letter 12, 2026-10-03), found while bringing up an A4092,
 whose manufacturer id is `0xC0DE`. They carry the same one-instruction fix in their relink.
@@ -10093,3 +10093,11 @@ One byte: `eea0` → `eea8`, i.e. `lsrl %d7,%d0`. The product compare that follo
 from the unpatched one in exactly that byte and the build-id stamp. **Not exercised on hardware
 here**, because no board in this machine has such an id. That the low-id path is unchanged follows
 from the instruction semantics, not from a run.
+
+### Accepted on the driver line's hardware (their letter 15, 2026-10-04)
+
+Their fix is the same byte at the same site. They applied our patcher and theirs to copies of one
+base, and the images came out byte-identical; their patcher then logs a skip on ours. On that
+image their A4092 (`0xC0DE`) registers at `0x40000000` and has carried a root filesystem on the
+A4000D under a Z3660/68060. So this byte has run on hardware, but on **their** rig and as they
+reported it. It has not been re-measured here.

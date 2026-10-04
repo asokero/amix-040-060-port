@@ -6,6 +6,18 @@ call-shape note `attachments/D42-CALL-SHAPE.md`), and reconciled on 2026-09-29 a
 line's `attachments/D42-CONTRACT-v2.md` and their letters 05 and 06. The service is implemented in
 `src/dma_cache040.s`; the record lives in each controller's own object.
 
+**Hardware evidence for version 2 comes from the driver line, not from this tree's own runs.**
+Nothing in this port's image calls the service (`docs/REALHW-BATTERY-261003-08.md`). The
+driver line rebased onto `0e3c12e` before their runs from 2026-10-02 (their letter 15,
+2026-10-04). Since then every run on their A4000D, Z3660/68060 with an A4092 as card 1 has used
+this service. That covers the first boot, a seam-off control, two raw-write cells and two boots
+with the root behind the A4092. The record read `magic` `DMAR`, `version` 2, `ctlid` `0x02020054`,
+`unit` 1. `drv_prep == drv_cmpl`, both prepare/complete pairs were equal, `edge_shared` was 0
+(≤ `prep_from`), and every must-stay-zero counter was zero over about 80 000 segments. This
+tree's `src/dma_cache040.s` is unchanged between `0e3c12e` and `df6f637` (checked here with
+`git diff`), so that evidence covers the service as it stands. Platform: **the driver line's
+hardware**, as reported, not re-measured here.
+
 **Why this document exists rather than the source alone.** `tools/status-facts.sh` locates counter
 blocks by `*_magic` **symbols** and enumerates their members by symbol prefix, which is how every
 other counter block in this port is read and kept honest. This record is a C structure inside an
@@ -122,8 +134,30 @@ this in their letter 12 (2026-10-03); it was not measured here. The Z3660 assert
 coherent in hardware whether or not the service invalidates. On their rig, a control with the
 seam switched off read back just as correctly. On such a platform a clean run shows reach and
 self-consistency. Only the `TO_DEVICE` half (the push before the controller reads memory) can
-show the service doing work, and only a write test can show that. Whether the A3000's own
-SDMAC is covered by the same snoop when it writes into the Z3660 has not been measured here.
+show the service doing work, and only a write test can show that.
+
+**That write test has been run, and today it cannot show the push either** (driver line, letter
+15). Raw writes with the seam switched off for the write read back byte-identical. The reason is
+the mapping, not the cache. The raw-I/O staging buffers come from the kernel heap
+(`segkmem_alloc`, where `ngeteblk` draws), and `segkmem040.s` maps that write-through (CM = 00)
+on purpose for the B1 target. No dirty line can exist there, so there is nothing to push. So on
+this port today:
+* `FROM_DEVICE` into Z3660 RAM is coherent by the card's snoop;
+* raw `TO_DEVICE` is coherent by the write-through staging;
+* page-cache I/O is coherent by `bp_map040`'s whole-cache push.
+
+The service is correct and balanced through all of it, but **its `TO_DEVICE` push is defensive
+until the B2 copyback target** (`CM-PTE-WRITER-MATRIX.md`) turns ordinary kernel RAM copyback.
+From that change on it carries the load. The two belong together, and the seam stays.
+
+**The A3000's SDMAC is probably covered by the same snoop**, with one assumption not verified.
+The driver line read the card's CPLD source (`CPLD/DMA_WIP/z3660.vhd` in the Z3660 project). It
+asserts `SNOOP` for any master that owns the 68030-side local bus and drives `_AS` into
+`0x08000000`–`0x0FFFFFFF`. Its only arbitration inputs are `_BR`/`_BGACK` at the CPU slot, so it
+cannot tell the SDMAC from a Zorro III card. The open assumption is that the SDMAC takes the
+local bus through `_BR`/`_BGACK`. That is a matter of the A3000 board design, and it is not checked
+here. If it holds, the `FROM_DEVICE` counters on this machine's Z3660 also show reach and
+self-consistency only.
 
 **Read `magic` first.** A stale address does not fail; it returns a plausible number from whatever
 now lives there. That rule is not specific to this block — it is why every counter block in this
