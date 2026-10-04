@@ -150,14 +150,33 @@ The service is correct and balanced through all of it, but **its `TO_DEVICE` pus
 until the B2 copyback target** (`CM-PTE-WRITER-MATRIX.md`) turns ordinary kernel RAM copyback.
 From that change on it carries the load. The two belong together, and the seam stays.
 
-**The A3000's SDMAC is probably covered by the same snoop**, with one assumption not verified.
-The driver line read the card's CPLD source (`CPLD/DMA_WIP/z3660.vhd` in the Z3660 project). It
-asserts `SNOOP` for any master that owns the 68030-side local bus and drives `_AS` into
+**The A3000's SDMAC is covered by the same snoop: checked on paper, not measured.** The driver
+line read the card's CPLD source (`CPLD/DMA_WIP/z3660.vhd` in the Z3660 project). It asserts
+`SNOOP` for any master that owns the 68030-side local bus and drives `_AS` into
 `0x08000000`–`0x0FFFFFFF`. Its only arbitration inputs are `_BR`/`_BGACK` at the CPU slot, so it
-cannot tell the SDMAC from a Zorro III card. The open assumption is that the SDMAC takes the
-local bus through `_BR`/`_BGACK`. That is a matter of the A3000 board design, and it is not checked
-here. If it holds, the `FROM_DEVICE` counters on this machine's Z3660 also show reach and
-self-consistency only.
+cannot tell the SDMAC from a Zorro III card. That reading is theirs and has not been repeated here.
+
+The board side was read here on 2026-10-04 from Commodore's *A3000 System Schematics*
+(PN 314677-01, schematic #313311 Rev. A):
+* the Super DMAC's `_BR`/`_BG` (pins 81/82) are the private nets `_SBR`/`_SBG`, and its
+  `_BGACK` (pin 83) is the **common** `_BGACK` net;
+* Fat Buster (U700) arbitrates for it. It takes `_SBR` and gives `_SBG` (pins 16/17), and
+  requests the CPU bus on its own `_BR`/`_BG` (pins 23/24). Its `_BGACK` (pin 25) is on the same
+  common net;
+* the CPU slot, CN606 ("Amiga 32 bit local slot", where the Z3660 sits), carries that common
+  `_BGACK` on pin 8, together with `_BR` (25), `_BG` (105), `_SBR` (9) and `_BOSS` (17).
+
+So an SDMAC transfer is granted through the card in the CPU slot, and while the SDMAC owns the bus
+it pulls the same `_BGACK` the card watches. ReSDMAC, an open CPLD re-implementation of the SDMAC
+(`github.com/mbtaylor1982/ReSDMAC`, `RTL/RESDMAC.v`), behaves the same way: it holds `_BGACK`
+low and drives `_AS` exactly while it owns the bus. That is a re-implementation, not
+Commodore's logic, but it is what the 68030 bus protocol requires of a master.
+
+**Consequence:** on this machine's Z3660, `FROM_DEVICE` from the internal SCSI is coherent in
+hardware, as on the driver line's rig. The A3091 pilot's invalidates are defensive there, and
+clean counters show reach and self-consistency only. On a Mercury or an A3640 the software
+invalidate is still what keeps it coherent. **Not measured:** probing CN606 pin 8 during SCSI
+reads would settle it on solon itself, whose board revision is not recorded here.
 
 **Read `magic` first.** A stale address does not fail; it returns a plausible number from whatever
 now lives there. That rule is not specific to this block — it is why every counter block in this
