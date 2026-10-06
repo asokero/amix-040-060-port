@@ -10066,7 +10066,7 @@ Every run printed both reads with `0x44` = `0x00f80b4c`, unchanged. The machine 
 This run tested ISSUE-75 only. The regression battery has not been run on `261003-05`, and the
 image also carries the base changes made after `260928-05`.
 
-## ✅ ISSUE-76 (2026-10-03, a stock defect: FIXED; accepted on the driver line's hardware 2026-10-04 by byte identity — no board with such an id in this machine): `autocon()` never matches a manufacturer id at or above `0x8000`
+## ✅ ISSUE-76 (2026-10-03, a stock defect: FIXED; exercised on the driver line's hardware 2026-10-05 — no board with such an id in this machine): `autocon()` never matches a manufacturer id at or above `0x8000`
 
 **Reported by the driver line** (their letter 12, 2026-10-03), found while bringing up an A4092,
 whose manufacturer id is `0xC0DE`. They carry the same one-instruction fix in their relink.
@@ -10101,3 +10101,13 @@ base, and the images came out byte-identical; their patcher then logs a skip on 
 image their A4092 (`0xC0DE`) registers at `0x40000000` and has carried a root filesystem on the
 A4000D under a Z3660/68060. So this byte has run on hardware, but on **their** rig and as they
 reported it. It has not been re-measured here.
+
+**Exercised directly (their letter 18, 2026-10-05).** On the A4000D, with a Z3660 carrying a
+68LC060 and an A4092 with ROM 42.39, build `68060-261005-51` carried the `lsr.l` at
+`.text 0x19282`. There, `autocon()` matched `0xC0DE/0x01` and the driver attached at `0x40000000`.
+A `cdfs` mount of a ZuluSCSI CD image read four packages with exact checksums, with 9841
+`FROM_DEVICE` transfers balanced in the D42 record. A full install from that CD then completed,
+and the installed system cold-booted twice. So the byte has now been run, not only matched,
+though still on **their** hardware and as they reported it. The driver line has also merged this
+tree's `main` (`8f272c1`, their merge `45613c2`). Our ISSUE-75 and ISSUE-76 patchers run in their
+base build unchanged.
