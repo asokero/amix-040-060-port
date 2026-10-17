@@ -142,3 +142,29 @@ commit 9c6a886 message 5027022ff7cb	The page-boundary condition, in the message 
 commit eab3c45 message 7f0dee654d3b	The allocation-size condition, in the message that converted it.
 commit f35ddef message f573cd5e53ac	The device-mmap failure contract, in the message that
 	converted it.
+
+# ============================================================================================
+# SPAN DECISIONS, 2026-09-27: THE MOTOROLA PACKAGES.  Seven spans appeared the first time the
+# FPSP/060SP work trees were given to this gate (--reference build/fpsp-work --reference
+# build/fpsp060-work).  Five are dictated and recorded here; nothing was rewritten.
+# ============================================================================================
+
+test-tools/fpenab060_asm.s c11947fe99e4	An expected FP0 bit pattern.  The test exists to compare
+	against the package's own value, so writing a different triple would break it.
+docs/REALHW-260807-11-ACCEPTANCE.md 98a594093c10	Captured stdout of Motorola's ftest060, inside a
+	fenced block of the acceptance record.  Rewording a capture would falsify the record.
+test-tools/issue34-060-unimpl-integer-260727.txt d6154f75faf4	Motorola's name for the exception,
+	in a captured log.  The same category as the boot banners above.
+commit 612d4c8 message 321200550e01	The licence's own retention clause, in the message of the
+	commit that imported the package.  A pushed message cannot be rewritten.
+commit 612d4c8 message 1261a7b89b43	The second line of the same clause, same commit.
+
+# The other two are covered by THIRD_PARTY_NOTICES/MOTOROLA-M68060-SP.txt, which names this file
+# as a modified version carrying short sequences from the package's integrator skeleton
+# (dist/fskeletn.s; the gate finds them in NetBSD's fill of it, fnetbsd.S).  They are recorded so
+# the gate stays green once the package trees are in the default corpus.
+
+src/fpsp060_glue.s 972baea9b9c2	The skeleton's BSUN prelude (save, clear the NaN condition), with
+	only the destination changed, as the notice says.
+src/fpsp060_glue.s 5e52be45fead	The skeleton's FPU-disabled exit: restore d0 and make the stacked
+	PC name the faulting instruction.  The notice names the file.

@@ -10151,3 +10151,217 @@ ships in every kernel of their 1.0, including their 68030 kit at `ttcompatopen` 
 It is to arrive here as an opt-in pass. Asked of them (letter 23): the 64 bytes have room for
 thirteen `clrl`, which would clear all of 12..0x43, the same as the USL `bzero`, instead of three
 chosen fields.
+
+## ⚠ DRIVER-LINE-6 (2026-10-05, BUILT — host-proven, EMU-proven on nine cells, HW not run): the kernel roots on its compiled `rootdev`, so every family needed one kernel per target unit
+
+**Symptom (by design, not a crash).** The boot loader hands the kernel `d0 = 3` and `d1 = struct bootinfo *`
+and nothing about the disk it came from. The root is therefore the compiled `rootdev`, and the swap is the
+compiled `swapfile.bo_name`. To install on another unit, a family existed as one kernel file per controller
+and unit, 14 per family. The files differed in two bytes: the low byte of `rootdev` and the controller
+digit of `bo_name`.
+
+**Fix (this line): the RTH1 root hint, `docs/contracts/RTH1-ROOT-HINT.md`.**
+- **The loader** (the kerntools line's `good_040_rth` / `good_rth`) leaves a record in `bootinfo.reserved`
+  at kernel `bootinfo+0x678`. The record names the BootNode that was booted and, when the installer wrote
+  one, a root record. The loader has the root record from the kernel info block's `ib_pad`.
+- **`relink-040-rth1.sh`** links `src/rth1.c`. `src/patch_rth1_hook.py` retargets the one relocation of
+  main's `jsr vfs_mountroot` (`.text 0x5983a`, operand `0x5983c`, in the merged base) to
+  `rth1_mountroot()`.
+- **`rth1_apply()`:**
+  - checks the record and resolves the named controller among sd's two;
+  - then sets `rootdev` (slice 1) and the `bo_name` digit (slice 2) together, or leaves both;
+  - prints one `RTH1:` console line in every case;
+  - keeps what it did in `rth1_used` / `rth1_why`.
+- **A valid record naming an empty unit fails the mount; it never falls back.**
+- **Old and new mix:** an old loader leaves zeros, so the kernel uses the built-in root. An old kernel never
+  reads the area.
+
+**Two facts this work found, kept here because each would be rediscovered the hard way:**
+- **sd registers its controllers lazily.** Its static `init()` (`.text 0xd736`) runs only from `sdopen()`
+  (`.text 0xd6c4`) on the first disk open, which is normally the root's own open inside `vfs_mountroot`.
+  Before that, `sdcardbase()` answers 0 for every card. The first emulator cells resolved nothing until
+  `rth1_apply()` called `sdopen(0)` itself. The call is guarded, so the root's open later finds the init
+  done.
+- **`/dev/dsk/c` must occur exactly once in the image**, at `swapfile.bo_name`. `check_root_family.py` and
+  the 68030 line's stamper find the swap name by that anchor, so `rth1.c` compares the prefix without the
+  `c`.
+
+**Also corrected:** a wrong swap name is not harmless. `swapconf` (`.text 0xb401e`) calls `cmn_err` at level 3
+(panic) when `lookupname(bo_name)` fails (`0xb405c`), so the swap digit must move with the root.
+
+**Verified:**
+- `tools/test-rth1.sh` (the real object on qemu-m68k, 21 cases: every reject reason, both cards, unit 7 →
+  `f`, motherboard rows, a damaged root record without fallback, the lazy sd init, the wrapper order).
+- `scan060` CLEAN on `rth1.o`: no divide, no multiply.
+- The pass is idempotent (`[skip]`). `patch_rth1_hook.py --check` passes on the fpe output.
+- **Emulated 68060 (A3000 + Z3660), nine cells:**
+  - Kernels: KD060-Z and KD060-ZA on the merged base, with this pass before fpe.
+  - Loaders: the kerntools line's final `good_040_rth` (b14ba6b5), and `good_040` for the old-loader case.
+    A first run with an interim loader (a186bf69, void: a twin-disk bug in it) gave the same table.
+  - Read back from `/dev/mem` (`rth1_used`, `rth1_why`, `rootdev`, `bo_name`, the record), not only the
+    console.
+
+  | cell | case | result |
+  |---|---|---|
+  | 1 | old loader + new kernel | `built in (no record)`, root `c6d0s1`, as today |
+  | 2 | new + new, booted from the A3000 SCSI | record BOOT\|BMOBO; no motherboard controller registered (AGA: W-D7 skips it), so `built in (controller not present)` and `c6d0s1` |
+  | 3 | root record, Z3660 unit 6 | `from the root record`, `c6d0s1` |
+  | 4 | root record, Z3660 unit 3, disk moved there | `c3d0s1` / `c3d0s2`, multiuser |
+  | 5 | root record naming the empty Z3660 unit 2 | `RTH1: root c2d0s1 from the root record ...`, then `vfs_mountroot` fails: no fallback |
+  | 6 | root record, A4091 unit 1 (card 1) | `c9d0s1` |
+  | 7 | root record, A4091 unit 6 | `ced0s1` |
+  | 8 | the A4091 boots its own disk, unit 6 (BOOT\|BCDEV, board 0x48000000) | `from the boot disk`, `ced0s1` |
+  | 9 | as 8, the disk moved to unit 2 | `cad0s1`, multiuser |
+
+  Cells, logs and decoded dumps are kept with the driver line's evidence, outside this tree.
+- **Not verified:** metal.
+
+## ⚠ DRIVER-LINE-8 (2026-10-06, a stock defect: BUILT — opt-in pass, OFF by default; host-proven, no EMU regression; the deadlock did NOT reproduce in 25 unfixed runs (14 I3-shape installs, 11 synthetic), so the fix rests on the mechanism, not on a tally; HW not run): `page_get()` keeps no reserve, so pageout can wait forever for the page its own push needs
+
+**Symptom.** An interactive install on the 32 MB rig stopped at `apkg install (11 packages)`: no disk write
+for 58 minutes, the console still echoing, Ctrl-C ignored (installng's I3 cell, 2026-10-06; the re-run with
+the same media completed in 1080 s). The savestate (kept outside this tree):
+- `freemem` 0, `freemem_wait` 3; pageout, fsflush and apkg all asleep on `&freemem` at priority 2 (below
+  PZERO, hence no Ctrl-C);
+- **pageout's own stack:** `page_get ← segkmem_alloc ← sptalloc ← kmem_alloc ← kmem_zalloc ← getfreeblk ←
+  getblk ← bread ← ufs_bmap ← ufs_putpage ← checkpage ← pageout`. To push a dirty file page it needed an
+  indirect block, the buffer cache grew by an 8 KiB `kmem_zalloc(KM_SLEEP)`, and that waited for a free page
+  that only pageout could produce;
+- apkg's last page went in a fault inside `read(2)` (`pvn_kluster → page_get`); fsflush blocks the same way
+  in `ufs_sync`;
+- no I/O was outstanding: nothing in z3660, sd or `biowait`; the z3660 completion queue empty; sptmap with
+  622 free units. Swap present and nearly empty (110 of 7680 slots) — irrelevant, the push is of a file page.
+
+**The stock code.** `page_get` waits only while `freemem < npages`, so any caller may take the last page.
+The SVR4.0 3B2 source has the same loop (`vm/vm_page.c`, `page_get`'s wait: `cleanup`, `outofmem`,
+`freemem_wait++`, `sleep(&freemem, PSWP+2)`), with its own `XXX` comment that nothing guarantees the
+wait is ever satisfied. SVR4.2 closed it: ordinary callers must leave `minpagefree` pages free
+(`common/uts/mem/vm_page.c`, `page_get`'s `reqfree`; `vm_pageout.c` adds `minpagefree` to every
+threshold), and kernel memory is exempt (`seg_kmem.c` passes `P_NORESOURCELIM`), as is sched. Mtune's
+`MINPAGEFREE` defaults to 20 (range 10..50).
+
+**Fix (this line, opt-in): `relink-040-pgrsv.sh`, the SVR4.2 shape without editing a stock byte.**
+- **`src/pgrsv.c`**, `pgrsv_get(bytes, flags)`: for a caller that may wait, while
+  `freemem < npages + pgrsv_pages` it wakes pageout, bumps `freemem_wait` and sleeps on `&freemem` at
+  `PSWP+2` — the stock wait, on the stock channel and counter, only `pgrsv_pages` earlier; for a caller
+  that may not wait it returns 0 below the reserve. Then it calls `page_get`. sched and pageout are exempt;
+  so are requests `page_get` refuses anyway (`npages >= max_page_get`). `pgrsv_pages` is a `.data`
+  tunable, 20 by default, 0 disables; counters `pgrsv_calls/_waits/_fails` behind the magic `pgrv`.
+- **`src/patch_pgrsv_sites.py`** retargets the R_68K_32 of `jsr page_get` at the 11 ordinary call sites
+  (anon_private, anon_zero, hat_dup and the unnamed body after hat_devload, pvn_kluster, rfc_pageget,
+  rfc_writefill, s5getapage, segmap_pagecreate, segu_get_orig, ufs_getapage) to `pgrsv_get`. Kernel
+  memory keeps the direct path: `segkmem_alloc` (every kmem page, pageout's buffer included), the
+  page-table allocators `hat_ptalloc`/`hat_sdtalloc` (a kernel mapping can need one, at interrupt level
+  too), and `page_delmem`. A caller the tool does not know aborts the pass instead of being classified by
+  default. `page_get`'s file-static `freemem_wait` and `max_page_get` are exposed by the instructions that
+  use them (`addql #1,` / `cmpl …,%d2`).
+- **Why not the tunables:** `page_get` compares against 0, not against `minfree`, so no retune of
+  `minfree/desfree/lotsfree` closes the window; a smaller buffer cache does not stop pageout needing a
+  fresh buffer when the one it wants was freed.
+- **No new deadlock shape:** the added sleep is the stock sleep at the stock point, earlier; kernel memory
+  can still reach the last pages, as before.
+- **Gates:** exact import/export sets, no `.rodata`, no COMMON, scan060 CLEAN, both SR writes present
+  (`-traditional` can drop an asm), the sites asserted and re-checked, `check_relink_relocs` 0 complaints.
+- **Order:** before `relink-040-fpe.sh`: `… → rth1 → ttcompat → pgrsv → [isp060] → fpe`. Off by default.
+- `tools/test-pgrsv.sh`: the real object on qemu-m68k against 17 rules (the SR helpers come from the
+  harness: qemu user mode cannot run them); with a built kernel, `--check`, an idempotent second patch,
+  and a refusal of a base without the unit.
+
+**Verified (2026-10-06):**
+- Host: the 17 rules; the pass on the r6 KD060-Z input (11 sites, 0 complaints); both rebuilds
+  byte-identical; the default chain unchanged — `relink-040-fpe.sh` on the same input without the pass
+  equals r6's unstamped fpe output byte for byte, and the emitted chain equals r6's unstamped chain.
+- EMU, the I3 shape (installng's recipe: the hang run's media `k1/old-swap2`, blank 200 MB targets at
+  z3/z0, the same answers, done = `INSTALL COMPLETE` in the target's `install.log`, hang = no target write
+  for 900 s then two savestates 120 s apart):
+  - **32 MB** (the I3 rig): unfixed **8/8 complete**, fixed **8/8 complete**;
+  - **16 MB** (the same shape with the kernel's bank cut to 16 MB to raise the pressure; the miniroot boots
+    and reaches the same `apkg install (11 packages)` step): unfixed **6/6 complete**, fixed **6/6
+    complete**;
+  - no hang in either arm, so the tally cannot tell them apart. installng saw 1 hang in 4 such installs on
+    a quieter host; here eight emulators shared one host and an install took 1380-1860 s instead of 1080 s,
+    which plausibly changes the timing the deadlock needs. What the series does show is no regression:
+    the fixed kernel completed all 14 installs.
+- EMU, synthetic load, the same load on both kernels (`memstress /var/tmp/ms 48 2 2 2 4 900 2`: two
+  readers of a 48 MB file, two writers of 3 MB files, two mappers dirtying random pages of the big file
+  through `MAP_SHARED`, a 4 MB anonymous hog, two small-file extractors; 32 MB rig; when telnet stops
+  answering, two savestates 120 s apart decide between "progress" and "stall"):
+  - **unfixed** (r6, 4 runs, 6 checks): `freemem` **0** at every check, pageout idle with its scan quota
+    spent, forks waiting on `free_pts`; progress between the states (page-ins, faults, syscalls), so
+    starved, not deadlocked. No run reached the I3 signature;
+  - **fixed** (1 run, 3 checks through 2467 s): `freemem` pinned at **20**, the reserve, at every check;
+    `pgrsv_waits` climbing (10567 → 23957), `pgrsv_fails` almost flat (195 → 339, refused no-wait
+    klusters); alive to the end.
+  The deadlock itself did not reproduce under synthetic load (0 of 7 unfixed runs); what the pair shows is
+  the reserve doing its job: ordinary consumers stop at 20 free pages and kernel memory keeps them.
+- **Not verified:** metal. 128 MB metal has never shown the hang; it is a small-memory failure.
+
+## ✅ DRIVER-LINE-9 (2026-10-06, BUILT — opt-in pass, OFF by default; EMU-proven against a 68030; HW-proven 2026-10-11 on a full 68060 on the Z3660): on the 68060, every unimplemented-integer form `isp61_vec` declines kills the process, the 64-bit divides among them
+
+**Symptom.** On the 68060 the July APKGENG 1.12.0 (`fb2f08f4`, the one live on pkg.amigaux.org) cannot
+upgrade itself: its `installf -f`, `pkgchk` and `pkgadd` are `Killed (137)` (installng,
+2026-10-05). The cause is vector 61. `installf` holds a
+`divs.l (16,%fp),%d2:%d1` — a 64-bit dividend from memory, in its hashing — and `isp61_vec` accepts only
+the 64-bit *multiplies* the 2026-08 census found (`#imm`, `Dn`, `(An)`, `(d16,An)`). Every other form ends
+at `nullvect`, which sends SIGKILL. The forms that die: `divs.l`/`divu.l` with a 64-bit dividend (any EA),
+`muls.l`/`mulu.l` with an indexed, absolute or PC-relative source, `movep`, `cmp2`/`chk2`, `cas2` and a
+misaligned `cas`.
+
+**Fix (this line, opt-in): Motorola's M68060 Integer Support Package behind `isp61`.**
+- **`build-isp060.sh`** builds `build/isp060_pkg.o` the way `build-fpsp060.sh` builds the FPSP: the pinned
+  NetBSD tarball's `060sp/isp.S` (the `isp.sa` image, `.text` 0x1880) between `src/isp060_head.s` (the
+  128-byte call-out table) and `src/isp060_glue.s`, one assembly unit, `copyright.S` linked in. The entry
+  table is decoded from the result every build: all 32 slots inside the glue, all 8 entry points `bra.l`
+  into the image.
+- **`relink-040-isp060.sh`** links the package, and `src/patch_isp060_hook.py` retargets the one relocation
+  every `isp61` decline ends at (`Lisp_stock`'s `jmp nullvect`) to `isp060_unimp`. `M68Kvec[61]` still
+  names `isp61_vec`, so the forms measured on hardware for cc1 and wolf3d keep their path; only what
+  `isp61` declines reaches the package. `isp060_unimp` sends anything that is not a user-origin vector-61
+  format-0 frame on a 68060 to `nullvect` itself.
+- **Call-outs**, the FPSP glue's policy: chk, divide by zero, trace and access arrive with the frame the CPU
+  would have pushed for that exception and go to `nullvect`, which dispatches on the frame's vector.
+  `M68Kvec[5]`, `[6]` and `[9]` are `nullvect` in this kernel, so this is where a 68030's own exception
+  goes. `_060_isp_done` rebuilds the `ureturn` state as `Lco_done` does. The memory call-outs are the FPSP
+  glue's (the package keeps the stacked SR at the same `a6` offset).
+- **`cas2` and misaligned `cas` are terminated, not emulated.** The package's locked sequence uses `moves`
+  under masked interrupts and cannot take a page fault; this glue has no way to pin a user page, so
+  `_060_real_lock_page` refuses and the package ends the instruction through its own access-error exit
+  (SIGSEGV instead of SIGKILL). No installed binary uses either (scan060 census). A real lock
+  (`as_fault` with `F_SOFTLOCK`) is follow-up work.
+- **Gates:** the pin, the image size, zero unresolved in the image, the table and entry decode, the exact
+  import set (`copyin copyout cputype nullvect panic sup_cacr ureturn`, all in the base), no collision,
+  the hook asserted and re-checked, `check_relink_relocs` 0 complaints. scan060 of the package reports one
+  candidate, a data word (`0x010a`, decoded as `movepw`) inside the image's 16-bit offset table at package
+  `.text` 0x5e4; the pass allows exactly that hit, pinned by its neighbours' bytes.
+- **Order:** after `relink-040.sh`, before `relink-040-fpe.sh` (the last link):
+  `… → rth1 → ttcompat → [pgrsv] → isp060 → fpe`. Off by default: no default chain changes.
+- `tools/test-isp060.sh`: the package build and its gates; with a built kernel, `--check`, an idempotent
+  second patch (byte-identical), and a refusal of a base without the package.
+
+**Verified (EMU, 2026-10-06; the r6 KD060-Z chain with the pass vs without; the 68030 reference is the E1
+rig's stock kernel):**
+- **Probe set** (`isp060probe`, every form above in a child process each, at `-O0`, `-O`, `-O2`):
+  - without the pass every case is SIGKILLed;
+  - with it, 370 of 370 result lines equal the 68030's once the condition-code bits the M68000 PRM leaves
+    undefined are masked (N and Z after a divide overflow, N and V after `cmp2`); quotient, remainder,
+    the overflow rule (registers unchanged, V set) and every defined flag are identical;
+  - divide by zero (`divs.l Dn`, `divu.l (d16,An)`) and `chk2` out of bounds deliver SIGFPE, as on the
+    68030; `cas2` gets SIGSEGV (terminated, see above).
+- **July `installf`:** `installf core /stand/unix` and `installf -f core` return 0 and register
+  `/stand/unix` with its size and checksum, as on the 68030; without the pass `installf -f` and `pkgchk` are
+  Killed (137). July `pkgchk core` segfaults on the 68030 as well, so that one is the engine's own.
+- **gcc-cross-amix `tests/mul64`** (probe.c with the 64-bit multiplies kept, five shapes):
+  - all five shapes (`-O0`, `-O`, `-O2`, `-O2 -fomit-frame-pointer`, `-m68040 -O`) print checksum
+    `89d09b77` over 0x15c590 vectors, the 68030's;
+  - without the pass three of the five are Killed (forms `isp61` declines, e.g. the indexed source);
+  - the run takes about 13 minutes against about 2 on the 68030 rig: every declined multiply is a trap
+    into the package.
+- **Rebuilds are byte-identical**, and the default chain is unchanged: `relink-040-fpe.sh` on the r6 Z input
+  without the pass reproduces r6's unstamped fpe output byte for byte.
+- **Verified on metal (2026-10-11)**, class `060-Z3660`: a full 68060 (PCR `0x04300600`, rev 6) on the
+  A4000T's Z3660, kernel KD060-Z `68060-261006-83` (sha256 `1d4771b5…`, `sum -r` 55171; the pass linked
+  in, `--check` confirms the hook). `isp060probe`: 369/369 lines identical to the EMU reference with the
+  pass, 0 killed; `isp61_unsupported_n` 1 → 0x65; zero divide and `chk2` out of bounds → SIGFPE, `cas2`
+  → SIGSEGV, as designed.
+- Performance: an emulated form costs a trap plus copyin-based operand reads, so a binary dense in
+  declined forms runs visibly slower than with `isp61`'s fast path.

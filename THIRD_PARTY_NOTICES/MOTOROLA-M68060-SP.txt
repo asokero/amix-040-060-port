@@ -16,7 +16,12 @@ MODIFIED VERSIONS IN THIS REPOSITORY, clearly identified as the licence requires
   src/fpsp060_head.s   The 128-byte call-out table required by the package contract, built as a
                        table of symbol differences and concatenated ahead of the package image.
   src/isp61_060.s      NOT derived from Motorola's ISP.  An independent emulation of a measured
-                       subset of the 64-bit multiply forms; Motorola's ISP is not integrated.
+                       subset of the 64-bit multiply forms, and the first stop at vector 61.
+  src/isp060_head.s    The 128-byte call-out table of the ISP (the opt-in relink-040-isp060.sh
+                       pass), built like fpsp060_head.s and concatenated ahead of the package.
+  src/isp060_glue.s    AMIX-specific call-out layer for the ISP: what isp61_060.s declines goes to
+                       the package, and the package's exits go to this port's signal path.  It
+                       follows the call-out contract of Motorola's iskeletn.s; the code is ours.
 
 The text below is Motorola's, taken verbatim from the package's own copyright.S.
 
