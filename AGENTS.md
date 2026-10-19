@@ -224,7 +224,8 @@ Three of those need care rather than a glance:
   cloned it. `git ls-files --others --exclude-standard` must print nothing before you stage.
 * **`tools/check-verbatim.py` only sees files git tracks.** A new file you have not added is not
   checked, so `git add` it before you trust the result. And **exit 2 is not a pass** — it means
-  the reference trees are not on this machine and nothing was compared. Note how this rule and the
+  a reference tree is not on this machine and nothing was compared. A tree you cannot have is
+  waived by name (`--waive build/isp060-work`), never left out silently. Note how this rule and the
   previous one pull in opposite directions: an untracked file is invisible to the verbatim gate
   *and* liable to be staged wholesale. Neither is safe. Decide, per file, whether it belongs in
   the repository or in `.gitignore`, and leave nothing in between.

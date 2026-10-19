@@ -217,7 +217,11 @@ pasting their lines is. The distinction is easy to state and easy to lose across
 documents, so it is checked rather than remembered: every tracked line is compared against the
 reference trees, and anything that matches has to be either rewritten as a description or
 argued for in `tools/check-verbatim.allow`. The check only runs where those trees are unpacked,
-and it says so when they are not, rather than passing silently.
+and it says so when they are not, rather than passing silently. The reference set is the four
+System V trees and the three Motorola package trees (`build/fpsp-work`, `build/fpsp060-work`,
+`build/isp060-work`, made by `build-fpsp040.sh`, `build-fpsp060.sh` and `build-isp060.sh`). If any
+of them is absent the run stops with exit 2, unless that tree is waived by name
+(`--waive build/isp060-work`). A waiver is printed in the header of the run.
 
 ### Reproducibility
 
