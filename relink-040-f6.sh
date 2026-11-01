@@ -224,6 +224,14 @@ if [ "$SWA" = 1 ]; then
 		swa_magic swa_n swa_vp swa_lowblk swa_nblks swa_name swa_si_pre swa_nsf_pre \
 		swa_ret swa_si_post swa_nsf_post swa_si_start swa_si_npgs swa_si_flags swa_stamp
 	run_step indent python3 "$HERE/src/patch_swapadd.py" "$OUT"
+	# ISSUE-111: with the swapadd guard in the base, swapconf now reaches it through the latch
+	if $NM "$OUT" | grep -qE " T swapadd_guarded\$"; then
+		run_step indent python3 "$HERE/tools/swapguard-retarget.py" --check "$OUT"
+		SWGCALLERS=$(m68k-linux-gnu-objdump -dr "$OUT" | awk '/^[0-9a-f]+ <[^>]+>:$/{fn=$2} /R_68K_32[ \t]+swapadd_guarded$/{gsub(/[<>:]/,"",fn); print fn}' | sort | tr '\n' ' ')
+		[ "$SWGCALLERS" = "swa_latch swapctl swapfunc " ] \
+			|| { echo "[FAIL] swapadd_guarded callers are '$SWGCALLERS', expected swa_latch swapctl swapfunc"; exit 1; }
+		echo "[OK] ISSUE-111: swapconf -> swa_latch -> swapadd_guarded; swapadd_guarded from $SWGCALLERS"
+	fi
 fi
 
 # The standard packaging guards -- the same ones relink-040-f4arms.sh runs, for the same

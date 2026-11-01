@@ -18,7 +18,9 @@
 #   1. no relocation at 0xb409e                  -> the base drifted; the address is wrong
 #   2. relocation is not R_68K_32                -> not the call operand this was measured on
 #   3. current target is not swapadd             -> something already retargeted this site
-#                                                   (already-swa_latch is a skip)
+#                                                   (already-swa_latch is a skip; swapadd_guarded,
+#                                                   the ISSUE-111 base, is taken and the latch's own
+#                                                   call is pointed at the guard -- 2026-11-01)
 #   4. swa_latch undefined                       -> swapadd_dbg.o is not in the link
 #   5. swa_magic is not a .data symbol           -> the block has no file storage, so
 #                                                   status-facts.sh cannot read its magic out
@@ -35,6 +37,7 @@ IMG = sys.argv[1] if len(sys.argv) > 1 else "build/unix-040"
 RELOC = 0x000B409E
 OLD, NEW = "swapadd", "swa_latch"
 REAL = "swapadd_real"
+GUARD = "swapadd_guarded"         # src/swapguard.c (ISSUE-111), when the base links it
 BLOCK_MAGIC = "swa_magic"
 R_68K_32 = 1
 
@@ -103,6 +106,28 @@ def main():
     if sec_of_magic != ".data":
         raise SystemExit("ABORT: %s is in %r, expected .data" % (BLOCK_MAGIC, sec_of_magic))
 
+    # ISSUE-111: with the swapadd guard in the base (src/swapguard.c), swapconf's site already names
+    # swapadd_guarded.  The latch then takes the site as before, and its own call -- the one relocation naming
+    # swapadd_real, inside swa_latch -- is pointed at swapadd_guarded, so the boot-time swap add keeps the guard.
+    gi = sym_index(GUARD)
+    lo = symvalue(new_idx)
+
+    def guard_latch():
+        if gi is None:
+            return
+        hits = []
+        for j in range(rela["size"] // rela["entsize"]):
+            q = rela["offset"] + j * rela["entsize"]
+            name = symname(u32(buf, q + 4) >> 8)
+            if name in (REAL, GUARD) and lo <= u32(buf, q) < lo + 0x100:
+                hits.append((q, name))
+        if len(hits) != 1:
+            raise SystemExit("ABORT: %d relocations in %s name %s or %s (want 1)" % (len(hits), NEW, REAL, GUARD))
+        q, name = hits[0]
+        if name == REAL:
+            struct.pack_into(">I", buf, q + 4, (gi << 8) | (u32(buf, q + 4) & 0xFF))
+        print("  [ok]   %s calls %s" % (NEW, GUARD))
+
     for i in range(rela["size"] // rela["entsize"]):
         o = rela["offset"] + i * rela["entsize"]
         if u32(buf, o) != RELOC:
@@ -113,6 +138,15 @@ def main():
         cur = symname(r_info >> 8)
         if cur == NEW:
             print("  [skip] swapadd operand latch already bound @0x%x" % RELOC)
+            guard_latch()
+            open(IMG, "wb").write(buf)
+            return
+        if cur == GUARD:            # ISSUE-111: the base routes swapconf through the swapadd guard
+            struct.pack_into(">I", buf, o + 4, (new_idx << 8) | R_68K_32)
+            guard_latch()
+            open(IMG, "wb").write(buf)
+            print("  [ok]   swapadd operand latch bound @0x%x  swapconf -> %s -> %s -> swapadd"
+                  % (RELOC, NEW, GUARD))
             return
         if cur != OLD:
             raise SystemExit(

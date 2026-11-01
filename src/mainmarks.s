@@ -239,6 +239,8 @@ Lidw_done:
 	moveml	%sp@+,%d3/%a2
 Lidw_skip:
 	stop	&0x2000			| stock idle wait -- let the boot run naturally
+	.globl	waitloc			| the PC clock() and clock_int() take for idle (runtime040.s)
+waitloc:
 	rts
 	nop
 

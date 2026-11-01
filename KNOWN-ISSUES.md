@@ -10423,3 +10423,67 @@ rig's stock kernel):**
   → SIGSEGV, as designed.
 - Performance: an emulated form costs a trap plus copyin-based operand reads, so a binary dense in
   declined forms runs visibly slower than with `isp61`'s fast path.
+
+---
+
+## ✅ ISSUE-112 (2026-11-01, a defect of this port: MEASURED and FIXED in emulation; NOT YET ON HARDWARE): ITT0 and DTT0 matched user accesses, so a user process could read, write and execute physical memory below 1 GiB
+
+> **Ledger: FIXED (emulation).** `src/pstart040.s` loads ITT0 `0x003fa000` and DTT0 `0x003fa060`
+> (S field 01, supervisor only), as DTT1 (`0x807fa060`) already was. The kernel's 0-1 GiB identity
+> window is unchanged; a user access there now walks the process's own tables and faults where
+> nothing is mapped, as on the 68030. Ships only together with ISSUE-110, which it exposes.
+
+ITT0 `0x003fc000` and DTT0 `0x003fc060` have S = 1x, which matches both supervisor and user accesses.
+Measured in emulation (Amiberry, A3000, LC060/Z3660, 16 MB) on this tree's main with a gcc14 user
+program: a read of `0xc` returned `0x00f80b8e` (the chip-RAM vector holding a Kickstart address), a read
+of `0x0` returned `0x4afc0000`, and a write to a mapped read-only page at each 32 MiB step from
+`0x00100000` to `0x1e100000` went through. With the fix, `0xc` faults (SIGSEGV), and a dynamic
+executable linked by SVR4 ld, which carries a read-only zero page (PT_LOAD at vaddr 0, memsz 0x1000,
+R), reads 0 at NULL and faults on a write: a NULL dereference behaves as on the 68030. A gcc14 binary has
+no such segment, so a NULL read faults there.
+
+## ✅ ISSUE-110 (2026-11-01, a defect of this port's retained stock code, EXPOSED by ISSUE-112's fix: MEASURED and FIXED in emulation; NOT YET ON HARDWARE): the stock 030 section descriptors share the user root page with the native 040 tree, so user pages at 0-256 MiB walk chip RAM as page tables
+
+> **Ledger: FIXED (emulation).** hat_map's one call of `hat_growsdt` is retargeted to
+> `hat_growsdt_user` (`src/hatmap_nosdt040.s`, `tools/hatmap-nosdt-retarget.py`), which writes nothing
+> for a user address space and tail-calls `hat_growsdt` for the kernel's; `legacysdt040.o`'s teardown
+> (ISSUE-40 part 1) is retired with it. `HATMAP_NOSDT=0` restores the previous build byte for byte.
+
+The 040 root (128 four-byte entries) lives in the page at `as@(20)`. The retained stock `hat_map` grows a
+legacy 030 segment table per new segment, and `hat_growsdt` writes the 8-byte 030 section descriptor for
+quadrant s at root + s*8: native entries A(2s) and A(2s+1). The descriptor's first long (limit | DT) in
+an even entry reads as a resident pointer descriptor whose base is just above physical 0, so user pages
+at 0-256 MiB in A0/A2/A4/A6 were looked up through chip-RAM words: a write to a read-only page at
+`0x00100000` looped in the fault path, and a page at `0x09000000` ended in `PANIC: hat_pt2ptdat: invalid
+pte ptr`. Invisible while ITT0/DTT0 matched user accesses (ISSUE-112). With both fixes, a write to a
+read-only page in each of A0..A15 ends in SIGSEGV, 16 of 16, no spin (emulation, the row above).
+
+## ✅ ISSUE-111 (2026-11-01, a stock defect: MEASURED and GUARDED in emulation; NOT YET ON HARDWARE): `swap -a` of an area whose anon array finds no free kvseg run sleeps for ever
+
+> **Ledger: FIXED by a guard.** `src/swapguard.c` and `tools/swapguard-retarget.py`; relink-040.sh binds
+> it by default (`SWAP_GUARD=0` leaves it out, byte for byte), and relink-040-f6.sh `--swa` keeps
+> swapconf's operand latch on the guard. Both relinks check the callers by name.
+
+swapadd allocates the area's anon array, 16 bytes per 4 KiB slot (patch_swapgeom.py), as one
+`kmem_zalloc(npages * 16, KM_SLEEP)`. Over 4 KiB that is a run of kvseg (sptmap, 0x400 clicks); when no
+free run is large enough, kmem_alloc sleeps on `Km_OsizeWanted` until a large kmem_free that may never
+come. Measured in emulation on the fork's module kernel, which runs the same stock swapadd and the same
+guard (A4000, LC060/Z3660, a 929 MiB scratch slice): the largest free run at boot is
+413 clicks at 64 MB and 636 at 16 MB, so `swap -a` of 512 MiB at 64 MB and 768 MiB at 16 MB hung, asleep
+on `Km_OsizeWanted`. `swapadd_guarded` sizes the array as swapadd does, allocates it KM_NOSLEEP and hands
+it over through `swapguard_take`; a request that does not fit fails at once (`swap: Not enough space`).
+The same guard exists for the 68030 kernel (amigaux/amix kernel/k30/src/swapguard030.c). On this tree the
+guard is proven by the link checks and boots; `swap -a` itself was not run here.
+
+## ✅ ISSUE-113 (2026-11-01, a defect of this port: MEASURED and FIXED in emulation; NOT YET ON HARDWARE): every idle clock tick is booked as system time to the last process that ran
+
+> **Ledger: FIXED.** The idle override in `src/runtime040.s` defines `waitloc` after its `stop`;
+> relink-040.sh weakens the stock one and checks that the strong `waitloc` is the strong `idle` + 4;
+> `src/mainmarks.s` does the same for the dbg build. Accounting only: no CPU was spent.
+
+`clock()` and `clock_int()` count a tick as idle only when the interrupted PC equals `waitloc`, the stock
+label after the stock idle's `stop #0x2000` (`.text 0x19c`/`0x1a0`). runtime040.s replaces `idle`
+(`--weaken-symbol idle`) and left `waitloc` at `0x1a0`, so an idle tick took the system-time branch and
+went to `p_stime` of the process that ran last, usually fsflush, which wakes every second; sysinfo's idle
+counter stayed 0. Measured in emulation on this tree's main: fsflush +2:31 and +2:30 in two idle 5-minute
+windows with the load average at 0.00; with the fix, 0:00 and 0:00.

@@ -319,12 +319,20 @@ Lkroot:
 	.word	0x4e7b,0x0806		| movec %d0,%urp
 
 	| transparent translation registers
-	movel	&0x003fc000,%d0
-	.word	0x4e7b,0x0004		| movec %d0,%itt0  (0-1GB code, WT-cacheable)
+	| ITT0 and DTT0 are S=01 SUPERVISOR-ONLY, as DTT1 below (2026-11-01).  With S=10 (both,
+	| 0x003fc000/0x003fc060) every user access to logical 0-1 GiB bypassed the URP tables and
+	| reached physical memory: a user process could read, write and execute chip RAM, the
+	| custom chips and the low-linked kernel, a null read returned chip-RAM bytes instead of
+	| the zero page SVR4 ld gives a dynamic executable (PT_LOAD vaddr 0, memsz 0x1000, R), and
+	| a null write landed in chip RAM.  Supervisor-only, the kernel keeps its identity window
+	| and a user access there walks the process's own tables: the zero page reads 0 where an
+	| executable has one, and anything unmapped faults (SIGSEGV), as on the 68030.
+	movel	&0x003fa000,%d0
+	.word	0x4e7b,0x0004		| movec %d0,%itt0  (0-1GB code, WT-cacheable, supervisor)
 	clrl	%d0
 	.word	0x4e7b,0x0005		| movec %d0,%itt1  (unused)
-	movel	&0x003fc060,%d0
-	.word	0x4e7b,0x0006		| movec %d0,%dtt0  (0-1GB data, cache-inhibited)
+	movel	&0x003fa060,%d0
+	.word	0x4e7b,0x0006		| movec %d0,%dtt0  (0-1GB data, cache-inhibited, supervisor)
 	movel	&0x807fa060,%d0
 	.word	0x4e7b,0x0007		| movec %d0,%dtt1  (0x80000000+ I/O, cache-inhib,
 					|   S=01 SUPERVISOR-ONLY: user VAs >=0x80000000 are
@@ -353,7 +361,7 @@ Lkroot:
 	| ---- caches-on Step B1 (2026-07-23): enable INSTRUCTION + DATA cache, DATA in
 	| WRITETHROUGH.  CACR = 0x80008000: bit31 DE(040)/EDC(060) + bit15 IE(040)/EIC(060)
 	| -- the SAME bits on both CPUs, so no cputype gate is needed.  Spec:
-	| docs/contracts/DTT0-NARROWING-SPEC.md "B1 CACR enable sequence": DTT0 (0x003fc060) is KEPT
+	| docs/contracts/DTT0-NARROWING-SPEC.md "B1 CACR enable sequence": DTT0 (0-1 GiB, NC) is KEPT
 	| -- it matches LOGICAL 0-1GB only, so high PTE-backed kvseg/segmap/user mappings
 	| take CM from their leaf PTEs (hat_cm_ram=0x00 WT in B1) while the low identity
 	| window keeps direct phys/page-table/MMIO access NC.  The 040 DC is physically

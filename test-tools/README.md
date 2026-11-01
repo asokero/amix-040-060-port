@@ -162,10 +162,10 @@ status is 1 if either check fails.
   dirty file pages came from `write(2)`, not from mapped stores.
 - **This version** raises each mapper's soft `RLIMIT_VMEM` to the hard limit (unlimited by default),
   keeps the offset inside the mapping, bounds the children and reports how they ended. Checked on the
-  32 MB rig with `48 1 0 2 0 60`: both mappers alive at 40 s with the 48 MB mapping, all three children
-  ended by signal 9, for the native `cc` build and the cross build alike.
+  32 MB Amiberry rig (emulated 68060) with `48 1 0 2 0 60`: both mappers alive at 40 s with the 48 MB
+  mapping, all three children ended by signal 9, for the native `cc` build and the cross build alike.
 
-The shapes we ran with the proof version, all on a 32 MB rig:
+The shapes we ran with the proof version, all on a 32 MB Amiberry rig (emulated 68060):
 
 | Invocation | Load | What it gave on the unfixed kernel |
 |---|---|---|

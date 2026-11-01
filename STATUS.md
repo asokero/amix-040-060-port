@@ -362,6 +362,10 @@ survives as history but its conclusion has been replaced.
 | 104 | the panic backtrace stopped after one frame | FIXED, **not yet exercised on hardware** | — | second line |
 | 105 | `xpanic` decided whether to `sync()` from uninitialised bits | FIXED, **not yet exercised on hardware** | — | second line |
 | 106 | PID 1 dies at exec with a kernel-shaped user stack pointer | CLOSED — symptom record | Z3660 | a defect of the card's emulation, not of this port |
+| 110 | the stock 030 section descriptors share the user root page with the native 040 tree: user pages at 0-256 MiB walk chip RAM as page tables | FIXED, **not yet exercised on hardware** | emu | second line; exposed by ISSUE-112's fix; `HATMAP_NOSDT=0` restores the previous build |
+| 111 | `swap -a` of an area whose anon array has no free kvseg run sleeps for ever | FIXED (guard), **not yet exercised on hardware** | emu | second line; stock defect; `SWAP_GUARD=0` restores the previous build |
+| 112 | ITT0/DTT0 matched user accesses: a user process read, wrote and executed physical memory below 1 GiB | FIXED, **not yet exercised on hardware** | emu | second line; ships only with ISSUE-110 |
+| 113 | every idle tick was booked as system time to the last process (fsflush about half the CPU) | FIXED, **not yet exercised on hardware** | emu | second line; accounting only |
 
 ---
 

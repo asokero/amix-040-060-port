@@ -12,6 +12,7 @@
 #
 #   sh relink-040-fpe.sh [base-kernel] [output]
 #   FPE=0 sh relink-040-fpe.sh ...        rollback: reproduce the base image byte for byte
+#   RLIMITS=0 sh relink-040-fpe.sh ...    opt out of step 8.5: the stock 16 MiB soft data and vmem limits
 #
 #   FPE_REQUIRE_QUEUE=z3660queue FPE_REQUIRE_CARD=1 sh relink-040-fpe.sh ...
 #                                         refuse a base whose root-storage family is not the
@@ -258,6 +259,18 @@ echo "[*] vector-11 arm"
 run_step indent python3 "$HERE/src/patch_fpe_vec11.py" "$OUT"
 echo "[*] vector-60 arm (FP unimplemented effective address)"
 run_step indent python3 "$HERE/src/patch_fpe_vec60.py" "$OUT"
+
+# ---------------------------------------------------------------- 8.5 per-process limits
+# The stock rlimits[] gives a process 16 MiB of data and 16 MiB of address space (SDATLIM, SVMMLIM soft;
+# the hard limits are already unlimited).  Both soft limits become 0x7fffffff; SSTKLIM stays 16 MiB.  Two
+# .data longwords, so after the link.  Idempotent; RLIMITS=0 is the deliberate opt-out (stock limits).
+if [ "${RLIMITS:-1}" = 0 ]; then
+	echo "[*] rlimits: per-process soft limits SKIPPED (RLIMITS=0, deliberate opt-out)"
+else
+	echo "[*] rlimits: SDATLIM and SVMMLIM 16 MiB -> unlimited"
+	run_step all python3 "$HERE/src/patch_rlimits.py" "$OUT"
+	run_step all python3 "$HERE/src/patch_rlimits.py" --check "$OUT"
+fi
 
 # ---------------------------------------------------------------- 9. packaging guards
 # The standard pair every relink in this tree runs, plus the .text one that this build is the

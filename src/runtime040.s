@@ -36,10 +36,16 @@ Lrt_sch:
 	nop
 
 | ---------------------------------------------------------------------------
-| idle OVERRIDE -- stock idle wait.  --weaken-symbol idle.
+| idle OVERRIDE -- stock idle wait.  --weaken-symbol idle --weaken-symbol waitloc.
+| waitloc must be the address right after the stop: clock() and clock_int() count a tick
+| as idle only when the interrupted PC equals waitloc (the stock pair sits at .text
+| 0x19c/0x1a0).  Without this label every idle tick is booked as system time to the
+| last process that ran (fsflush, which wakes every second) and sysinfo's idle stays 0.
 	.globl	idle
+	.globl	waitloc
 idle:
 	stop	&0x2000
+waitloc:
 	rts
 
 | ---------------------------------------------------------------------------
