@@ -13,12 +13,16 @@
 #
 # Input is the ALREADY-patched build/unix-040 (all Model B / PMMU patches baked in),
 # so we do NOT re-run the byte patchers here (same contract as relink-040-dbg.sh).
+#
+# Usage: sh relink-040-quiet.sh [input-kernel] [output]
+# The input may also be an already-built graphics kernel (2026-10-28): mirroring an
+# accepted image adds only serdbg.o and a new build id, and rebuilds nothing else.
 set -e
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$(cd "$(dirname "$0")" && pwd)/tools/config-load.sh"
 . "$(cd "$(dirname "$0")" && pwd)/tools/build-step.sh"
-IN="$HERE/build/unix-040"
+IN="${1:-$HERE/build/unix-040}"
 
 [ -f "$IN" ] || { echo "ERROR: $IN missing -- run sh relink-040.sh first"; exit 1; }
 
@@ -31,7 +35,7 @@ m68k-linux-gnu-objcopy \
 	--weaken-symbol conputc \
 	"$HERE/build/unix-040-quiet-stage1"
 
-OUT="$HERE/build/unix-040-quiet"
+OUT="${2:-$HERE/build/unix-040-quiet}"
 echo "[*] relinking -> $OUT"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-040-quiet-stage1" \
 	"$HERE/build/serdbg.o"
