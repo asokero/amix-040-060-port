@@ -10423,3 +10423,239 @@ rig's stock kernel):**
   → SIGSEGV, as designed.
 - Performance: an emulated form costs a trap plus copyin-based operand reads, so a binary dense in
   declined forms runs visibly slower than with `isp61`'s fast path.
+
+## ⚠⚠ ISSUE-80 (2026-10-29, OPEN — mechanism measured live on 060 HW, A/B-confirmed with `-m 64`; not fixed): the 4 MB kernel virtual arena (`sptmap`) is too small for 128 MB, and a heavy NFS load wedges the machine in an oversize `kmem_alloc` that never wakes
+
+**Platform.** 060 HW only: solon, A3000 + Z3660 (68060 Rev6), 128 MB at `0x08000000`. Kernel
+`68060-261028-01` = the accepted `68060-261003-08` plus the serial mirror only
+(`build/unix-040-rtg-quiet`, sha256 `78999867…`). Not run on the 040, the emulator or stock.
+
+**Symptom.** `tar xf` of a 149 MB archive (7058 entries), NFS to NFS (NFSv2/UDP, A2065 `aen0`). It stops
+partway and does not recover: at entry 1655 (hard mount), 1471 (hard mount, ISSUE-81 poked) and 1528 and
+996 (`soft,intr,timeo=30,retrans=10`, ISSUE-81 poked). Pings still answer, serial shows only
+`NFS server nasu not responding`, and in some runs new logins never complete.
+
+**Mechanism (live reads on the wedged machine, 2026-10-29 18:40–18:42 solon time).**
+- `tar` sleeps (S) on `&Km_OsizeWanted`; `Km_OsizeWanted` = `0x2260` = 8800 = `UDPMSGSIZE`.
+- `chtable` (3B2 `fs/nfs/nfs_subr.c`, `clget`, MAXCLIENTS 6): `[0]` and `[1]` have clients and are free
+  now, `[2]` is `ch_inuse` 1 with no client yet, `[3]`–`[5]` are empty; `cltoomany` 0. So `clget` took
+  the first free slot while two RPCs were in flight and is creating a new **cached** handle:
+  `clnt_tli_kcreate` → `clnt_clts_kcreate` (3B2 `rpc/clnt_clts.c` ~213) allocates its `cku_outbuf`
+  with a `KM_SLEEP` `kmem_alloc(UDPMSGSIZE)`, an oversize request that needs 3 contiguous clicks.
+- `sptmap`: `2:4043b 1:4043f`, later `1:4043c 1:4043f`. Never 3 contiguous clicks, and nothing frees
+  arena space, so the sleeper never wakes. `kmeminfo` fails 0/0/0; the large pool had room.
+- The concurrency was most likely tar plus `fsflush` and the instrument's own per-sample `sync`
+  (inferred). Created handles stay cached, so each new concurrency high-water mark costs 3 clicks once,
+  at whatever moment it happens.
+
+**Why the arena is that full.** `sptmap` is 1024 × 4 KiB clicks at `syssegs` `0x40040000`
+(`.text` 0x48b64). At idle on 128 MB, 991 of 1024 clicks are in use and the one free extent is 33
+clicks at `0x4041f`. `kmeminfo` accounts for about 2 MB of the arena. Codex (private
+`NFS-HANG-KMA-CODEX-RESULT.md`, inferred) attributes about 1.9 MB to `kvm_init`'s permanent `page_t` and
+page-hash allocation, which scales with RAM. Under the load, the small and large pools grow on top of
+that.
+- The large-pool growth is the NFS rnode working set. `makenfsnode` allocates `0x10c` = 268 bytes
+  (merged `.text` 0x8782e). That is just above `MAXSMALL`, so rnodes go to the large pool. It reuses
+  rnodes only from the freelist, and the DNLC (`ncsize` 300, `.data` 0x9980) holds each entry's vnode
+  active.
+- On the 64 MB run, `rnew` levelled at 498 from entry 4384 to 7058 while `rreuse` kept rising.
+  **Bounded, not a leak.**
+
+**A/B (060 HW, 2026-10-29), loader option `-m 64`** (amix-unix-boot, new). Same kernel, same load base,
+64 MB:
+- idle `sptmap`: one 331-click extent, against 33. `alloc_o` 0x14f000, against 0x187000, so some
+  oversize tables also scale with RAM;
+- the same patient soft tar, with ISSUE-81 poked and the same instrument, **completed 7058/7058 in about
+  25 min**;
+- `Km_OsizeWanted` 0 in every sample, the smallest big extent 238 clicks, fails 0, pings clean
+  throughout;
+- the machine paged at `lotsfree` for most of the run.
+
+**Fix: BUILT 2026-10-30 as an opt-in pass on branch `wip/issue80-arena`, EMU-tested, not run on HW.**
+The fix is to enlarge the arena, and that is not one constant: `sysseginit` maps only 16 leaf
+pointers, and `kvsegmap` sits right above at `0x40440000`.
+- Codex compared two routes (private `ISSUE80-ARENA-ROUTE-CODEX-RESULT.md`):
+  - **A**, an 8 MB arena;
+  - **B**, moving the page-frame database out of the arena into the DTT0 window.
+- It recommended A, because B would make the hot page database uncached (DTT0 is CM=11) and would
+  need an identity-placement contract.
+- Until A is accepted on metal, `unix_boot040 -m 64` is the workaround on 128 MB machines.
+- Stock 2.1c has the same 4 MB in bytes (2048 × 2 KiB) and was not tested.
+
+**Implementation:** `relink-040-arena8m.sh`, `src/patch_arena8m.py`, applied together with
+ISSUE-82's pass. It changes same-size immediates and two `SHN_ABS` values, and adds no code.
+- `mlsetup` `mfree` count 0x400 → 0x800.
+- `kvm_init` `kvseg` size 0x400000 → 0x800000.
+- `sysseginit` loop bound 1023 → 2047: 32 pointers and 8 KiB of leaves. Its return value follows
+  the loop, so the first free click moves on by 2.
+- `kvsegmap` 0x40440000 → 0x40840000 and `kvsegu` 0x48440000 → 0x48840000. The segmap window keeps
+  its 128 MB.
+- `hat_pteload`'s segmap probe window moves with `kvsegmap`.
+- The `ksegtbl` key `(va - syssegs) >> 17` → `>> 18`. Codex's spec grew the 32-byte table to 64
+  bytes instead.
+  - `kseg` calls `ptmalloc(sptmap, n, 0x3f)`, and `ptmalloc` returns a start aligned to the mask
+    (3B2 `os/machdep.c`, `ptmalloc`), i.e. 256 KiB. So the 32 keys of `>> 18` stay one per
+    allocation over 8 MB.
+  - Observed: the boot-time `kseg` allocations sat at keys 20 and 24 under `>> 17` (sizes 2 and 4)
+    and at keys 10 and 12 under `>> 18`.
+
+**Test kernel** `build/unix-040-rtg-quiet-iplr-a8m`, **`68040-261030-02`**: `68040-261030-01`
+(ISSUE-81) plus both passes. 14 bytes differ, and `check_relink_relocs` reports 0 complaints.
+
+**EMU results (Amiberry, live `READ_MEM` of `sptmap` and `kptr040`):**
+
+| Machine | Kernel | Idle free clicks | Biggest extent |
+|---|---|---|---|
+| 060, 128 MB @ 0x08000000 (`060m128`) | 261030-01 (4 MB) | 62 | 61 |
+| 060, 128 MB @ 0x08000000 (`060m128`) | 261030-02 (8 MB) | **1086** | **1085** |
+| 040, 32 MB @ 0x08000000 | 261030-01 / -02 | 497 / **1521** | |
+| A3640, 16 MB @ 0x07000000 | 261030-01 / -02 | 570 / **1594** | |
+
+- **+1024 clicks exactly** on all three machines. Available memory is 4096 bytes lower: the extra
+  leaf page.
+- `kptr040[17..32]` point at the new contiguous leaves, and segmap starts at `[33]` = 0x40840000.
+- **The upper half was exercised on `060m128`.**
+  - 60 pipes each held 4 KiB unread, and allocations reached click 0x404ae, 110 past the old end.
+  - The MMU set the used bit on pointers 17 and 18.
+  - Killing the pipes retired pools above the old boundary.
+  - Then four cycles of 60 pipes passed the first 4 KiB of `/stand/unix` through the kernel and
+    `sum`med it: **240/240 correct**.
+  - Free settled at 901 clicks and stayed there across the cycles, with no ratchet.
+- On 040 and A3640 one 60-pipe cycle gave 60/60 correct sums each; their load stays below the old
+  boundary.
+
+**Not yet done:**
+- the hardware run on solon without `-m` (soft and hard tar, the ISSUE-80 instruments);
+- a controlled ISSUE-82 wakeup test;
+- 040 metal.
+
+An emulator pass is layout and control-flow evidence only.
+
+**Evidence.**
+- Instruments: `hangwatch.sh` and `qwatch.sh` (session scratchpad, copies in solon `/usr/local/hwt`).
+- Logs on the NAS `va2000dev/x11r63/`: `hangwatch3.log` (996 wedge), `idle64.log`, `hangwatch4.log`
+  and `*-r7.log` (64 MB pass), `*-r6.log` (128 MB re-run).
+- Host serial log `~/amix-serial-261028.log`.
+- solon's `S05RMTMPFILES` empties `/tmp` and `/var/tmp` at boot. Keep instruments and logs elsewhere.
+
+## ⚠ ISSUE-81 (2026-10-28, FIX HW-ACCEPTED 2026-10-30 on 060 HW at `-m 64` — stock value; opt-in pass, OFF by default): IP's lower read queue has `q_hiwat` 0x2000, smaller than one 8 KiB NFS reply's fragments, so the A2065 driver drops received frames at `canput`
+
+**Platform.** 060 HW, solon (as ISSUE-80), A2065 `aen0`, NFSv2/UDP rsize 8192.
+
+**Symptom.** RPC timeouts and retransmissions under NFS reads. `aen -s` "Failed putq()" (the driver's
+`couldnt_put`, `aen_board+0x74`) rises: 156 drops in a 149 MB soft-mount read. Drops persist at rsize
+4096 and 2048, and also at idle.
+
+**Cause.** The first queue above the driver with a service procedure is IP's lower read queue
+(`qinit` `iplrinit` at `.data` 0xf5dc, `qi_srvp` `ipintr`). Its `q_hiwat` comes from `ipm_info[3]`:
+`.data` 0xf52c, stride 24, `mi_hiwat` +16, so `.data+0xf584`, value `0x2000`. This was read from the
+binary by Codex and corrects an earlier misreading as entry `[2]`/0xf56c. Stock 2.1c has the same
+value, as do the 3B2, i386 SVR4 and SVR4.2 trees (8192/1024).
+
+**A/B (060 HW, one boot).** A live `kpoke` of the instantiated queue's `q_hiwat` 0x2000 → 0x10000
+(the queue address changes per boot; find it with `qwatch.sh`) gave:
+- drops 156 → 0 and RPC timeouts 6 → 0 in the same 149 MB read;
+- a pure 98 MB write clean;
+- in the 64 MB ISSUE-80 run, `putq` 0 throughout.
+
+**Fix (2026-10-30, opt-in): `relink-040-iplrhiwat.sh`, `src/patch_ip_lrhiwat.py`.**
+- The pass rewrites the four bytes of `ipm_info[3].mi_hiwat`, 0x2000 → 0x10000. It finds the entry
+  through `iplrinit`'s `qi_minfo` relocation, not by index, and asserts that `qi_srvp` is `ipintr`.
+- It also checks that the entry has its stock shape (`minpsz` 0, `maxpsz` 0x2000, `lowat` 0x400), that
+  the other four entries keep 0x2000, and that no relocation writes into the field.
+- `--check` reports the value. On the 040/060 base, the RTG image and stock 2.1c it lands at the same
+  `.data` 0xf584.
+- On a stamped input it stamps a new build id itself.
+- Test kernel: `build/unix-040-rtg-quiet-iplr`, **`68040-261030-01`** (sha256 `4005fa22…`). It is
+  `68060-261028-01` plus this pass: 4 bytes differ, 2 in the field and 2 in the build id.
+  `check_relink_relocs` reports 0 complaints.
+
+**Acceptance (060 HW, 2026-10-30, run "r8").** solon booted `68060-261030-01` with
+`unix_boot040 -m 64` (ISSUE-80 still wedges 128 MB). The pass is the only change; no `kpoke`.
+These were Codex's open conditions; each was run:
+- **Post-boot queue.** The instantiated `ipintr` queue was read with `/kpeek` at `4027f300`:
+  - `q_qinfo` `0810f234` = `iplrinit`, `qi_srvp` `080ca320` = `ipintr`;
+  - `minpsz` 0, `maxpsz` 0x2000, **`hiwat` 0x10000**, `lowat` 0x400.
+  Nothing rewrote it after link, so `INITQPARMS` and the startup scripts do not touch it here.
+- **Read A/B.** The same 149 MB soft-mount (`retrans=3`) read that dropped 156 frames ran in
+  7 min 27 s with `Failed putq()` 0 → 0 and no new "RPC: Timed out" on serial. The control was
+  measured at 128 MB, before `-m` existed; there is no unfixed 64 MB control.
+- **Full tar.** 7058/7058 entries on a soft mount (`timeo=30,retrans=10`, 26 min 40 s) and on a hard
+  mount (26 min 58 s), with no hang.
+  - `putq` was 0 throughout, and every hangwatch wait flag was 0 in every sample.
+  - The minimum big `sptmap` extent was 235 and 233 clicks, against 238 in the kpoke run. So no
+    measurable arena cost from the larger queue. Two torn samples in the soft run were discounted,
+    as in ISSUE-80.
+- **The next gate.** The NFS client endpoints have no `timod`: `t_kopen` pushes it and
+  `clnt_tli_kcreate` pops it again through `poptimod`.
+  - Read from the binary: `.text` 0xbc878 and 0xbf7b2, and the `I_POP` at 0xc5430.
+  - The contract is in usl-svr42 `net/rpc/clnt_gen.c`, `clnt_tli_kcreate`; the 3B2 tree predates it.
+  - So the stream is head ← UDP ← IP. UDP's upper read queue (`udpurinit`) has no put or service
+    procedure, which makes the stream head read queue (`hiwat` 0x4000) the gate above UDP.
+  - It was sampled on both handles every ~15 s through the soft tar's last quarter-hour and the
+    whole hard tar: `c` 0 and no `QFULL` in every sample. Point samples cannot rule out short
+    bursts; there were no RPC timeouts.
+- Logs: NAS `va2000dev/x11r63/` `*-r8*.log`, and `walk-r8.sh` for the endpoint walk.
+
+What these runs do NOT show:
+- **Zero drops at the UDP endpoint.** `udp_input` tests `canput` on the endpoint's next queue, at
+  `.text` 0xd5f18. On failure it frees the datagram, at 0xd5f22 → 0xd6002, and counts nothing.
+  `udps_fullsock` is declared but never incremented on that path. A polled `c=0` with no `QFULL`
+  says the queue was never seen full; it does not count what was dropped. Proving zero would need
+  an event instrument on that branch.
+- **A matched unfixed control at 64 MB.** The causal A/B is the 128 MB kpoke run above. At 64 MB
+  only the fixed kernel ran.
+- **RPC retransmissions that succeeded.** AMIX has no `nfsstat`, so only the console's
+  "RPC: Timed out" and "not responding" lines were counted.
+
+**Codex review of the pass (2026-10-30, private `ISSUE81-IPHIWAT-REVIEW-CODEX-RESULT.md`).** It found
+the named test image correct: the 4-byte delta, no other byte, the same length, and the site
+confirmed through `setq`. It found four defects in the build tooling, all reproduced on host
+fixtures and all fixed the same day:
+- **F1.** A restamp could keep the input's id. The stamp sequence is per output directory, so a
+  fresh directory restarts it.
+  - The script now stamps a scratch copy inside `build/`, so the id comes from `build/.build-seq`.
+  - It fails if a restamped id equals the input's.
+- **F2.** The patcher ignored relocation types, and its overlap test missed a record that starts
+  before `mi_hiwat`.
+  - It now requires every `.rela.data` record to be `R_68K_32`, one per offset, which is true of all
+    five images.
+  - It requires `qi_srvp` to name `.text` `ipintr`.
+  - It rejects any record whose 4 bytes intersect the field.
+- **F3.** In-place operation could leave the input patched under its old id when stamping failed.
+  - The script now refuses `OUT` = `IN`, aliases included, and writes `OUT` only after every check.
+- **F4.** The byte gate counted differences without placing them.
+  - It now requires equal length and allows differences only inside `mi_hiwat` and, when
+    restamped, the 16-byte `buildid`.
+
+Codex's three fixtures (PC32 `qi_minfo`, PC32 `qi_srvp`, a record at 0xf582) are rejected and
+left unmodified. Re-running the fixed script on `unix-040-rtg-quiet` in an isolated tree gave a
+file byte-identical to the accepted `4005fa22…` image.
+
+Still open: the decision whether the pass joins the default chain.
+
+## ISSUE-82 (2026-10-28, OPEN — inherited stock defect, read from the binary by Codex; not observed): `kmem_freepool` compares the clicks it returned with the byte-valued `Km_OsizeWanted`, so retiring a pool never wakes an oversize sleeper
+
+**Read from the binary (Codex, private `NFS-HANG-KMA-CODEX-RESULT.md` §Q1).**
+- In the merged image, `kmem_freepool` leaves d2 = 4 (a big pool) or 1 (a small pool), the click count
+  it passed to `sptfree`.
+- At `.text` 0x42cfa it compares that d2 with `Km_OsizeWanted`, and 0x42d00 skips the wakeup when d2 is
+  smaller. Every oversize request exceeds 4096, so it always skips.
+- Stock has the same shape at `.text` 0x42cf0, with d2 = 8/2.
+- The direct `kmem_free` path (0x424a4) compares bytes and wakes correctly.
+
+**Effect (inferred).** An oversize sleeper whose space could be freed only by a pool retirement stays
+asleep. In ISSUE-80's wedge no extent of 3 clicks ever reappeared, so this defect was not what kept
+tar asleep there; it would matter once it does.
+
+**Fix: BUILT 2026-10-30 (`src/patch_freepool_wake.py`, applied by `relink-040-arena8m.sh`, branch
+`wip/issue80-arena`); not tested in a controlled wakeup.**
+- The dead `ble.w` before the compare (merged `.text` 0x42cf6) becomes `moveq #12,%d0; lsll %d0,%d2`.
+  So d2 is the bytes returned, after `sptfree` has had the click count. `sptfree`'s count is not
+  changed.
+- The patcher requires the 4 KiB-click shape (`moveq #4`/`#1` before the two `sptfree` calls), so it
+  refuses stock 2.1c.
+- Cost: without the `ble`, a retirement with nobody waiting calls `wakeprocs` on an empty channel.
+  That happens only when a pool is retired.
+- Not claimed: requests that only several returns together could satisfy are still not retried by
+  this single-return test (Codex).
