@@ -5,6 +5,7 @@ proprietary reference source tree.
     python3 tools/check-verbatim.py                     # every tracked file
     python3 tools/check-verbatim.py docs/contracts       # one path
     python3 tools/check-verbatim.py --min 16 FILE ...    # stricter threshold
+    python3 tools/check-verbatim.py --waive build/isp060-work   # run without that default tree
 
 WHY THIS EXISTS
 
@@ -24,12 +25,29 @@ appears identically in a reference tree, and which is long enough and structured
 expression rather than fact.  Short forms -- a closing brace, `#endif`, a two-token constant, a
 field name -- are not authorship and are not reported.
 
-Exit status: 0 clean, 1 hits found, 2 no reference tree available to check against.
+Exit status: 0 clean, 1 hits found, 2 not checked: a default reference tree is absent and was not
+waived, a tree named with --reference is absent, or no reference tree is available at all.
 """
 import hashlib, os, re, subprocess, sys
 
-# The reference trees, relative to the repository root.  All gitignored.
-REFERENCE_TREES = ["svr4-src-3b2", "usl-svr42", "svr4-v4", "amix-src"]
+# The reference trees, relative to the repository root.  All gitignored.  The first four are the
+# System V sources; the last three are the Motorola packages as the FPSP and ISP builds unpack
+# them from the pinned NetBSD tarball.
+#
+# THE PACKAGE TREES ARE DEFAULT, AND AN ABSENT DEFAULT TREE FAILS THE RUN.  Until 2026-10-19 the
+# packages were only checked when handed in with --reference, and any default tree that was
+# missing was named in the header and skipped.  Both were the same defect: a machine that had not
+# run the FPSP build, or had not unpacked one of the source trees, checked less than one that had
+# and still reported a clean run.  Now every default tree must be present, or be waived BY NAME
+# on the command line (--waive build/isp060-work), so that a narrower corpus is visible in the
+# invocation and in the header of every run, never only in the absence of a line.
+REFERENCE_TREES = ["svr4-src-3b2", "usl-svr42", "svr4-v4", "amix-src",
+                   "build/fpsp-work", "build/fpsp060-work", "build/isp060-work"]
+
+# What makes each package tree, for the message an absent one gets.
+TREE_MAKER = {"build/fpsp-work": "sh build-fpsp040.sh",
+              "build/fpsp060-work": "sh build-fpsp060.sh",
+              "build/isp060-work": "sh build-isp060.sh"}
 
 # THE EXTENSION FILTER IS THE INPUT THAT NARROWS THE CORPUS WITHOUT SAYING SO, and it did.  Until
 # 2026-09-14 this was (".c", ".h", ".s", ".S") -- no `.sa`, so the Motorola FPSP/060SP packages
@@ -321,14 +339,24 @@ def main():
     if "--min" in args:
         i = args.index("--min"); MIN_CHARS = int(args[i+1]); del args[i:i+2]
 
-    # --reference ADDS a tree, it never replaces the four.  Narrowing the corpus is the failure
+    # --reference ADDS a tree, it never replaces the defaults.  Narrowing the corpus is the failure
     # this whole option exists to answer, so the gate's own reference set cannot be argued away
-    # from the command line -- only extended.  The Motorola packages live where the FPSP build
-    # unpacks them:
-    #     python3 tools/check-verbatim.py --reference build/fpsp-work --reference build/fpsp060-work
+    # from the command line -- only extended, or excused tree by tree with --waive, which says so.
+    #     python3 tools/check-verbatim.py --reference /path/to/another/tree
     extra = []
     while "--reference" in args:
         i = args.index("--reference"); extra.append(args[i+1]); del args[i:i+2]
+    # --waive names ONE default tree that may be absent on this run.  Only a default tree can be
+    # waived, so a typo is refused rather than waiving nothing; a waived tree that is present is
+    # still checked.
+    waived = []
+    while "--waive" in args:
+        i = args.index("--waive"); waived.append(args[i+1].rstrip("/")); del args[i:i+2]
+    bad = [t for t in waived if t not in REFERENCE_TREES]
+    if bad:
+        print("--waive takes a default reference tree; not one: " + ", ".join(bad))
+        print("  the default trees: " + ", ".join(REFERENCE_TREES))
+        sys.exit(2)
     if "--ref-ext" in args:
         i = args.index("--ref-ext")
         REF_EXT = tuple(e if e.startswith(".") else "." + e
@@ -345,6 +373,18 @@ def main():
         print("NO REFERENCE TREE AVAILABLE -- nothing was checked.")
         print("  looked for: " + ", ".join(wanted))
         print("  This check can only run where the reference sources are unpacked.")
+        sys.exit(2)
+    unwaived = [t for t in missing if t not in waived]
+    if unwaived:
+        print("REFERENCE TREE ABSENT -- nothing was checked.  Make each one, or waive it by name:")
+        for t in unwaived:
+            if t in extra:
+                how = "named with --reference; drop the argument or fix the path"
+            elif t in TREE_MAKER:
+                how = "made by `%s`, or --waive %s" % (TREE_MAKER[t], t)
+            else:
+                how = "unpack the source tree there, or --waive %s" % t
+            print("  %-20s %s" % (t, how))
         sys.exit(2)
 
     # Index what we are checking, not what we are checking against: the repository is small
@@ -378,8 +418,10 @@ def main():
     print("checking %d distinct lines from %d tracked files%s" % (
         len(candidates), nfiles,
         (" and %d commit messages" % (len(units) - nfiles)) if len(units) > nfiles else ""))
-    print("against: %s%s" % (", ".join(trees),
-                             ("   (absent: %s)" % ", ".join(missing)) if missing else ""))
+    print("against: %s" % ", ".join(trees))
+    if waived:
+        print("WAIVED: %s" % ", ".join(
+            t + ("" if t in missing else " (present, so checked)") for t in waived))
     print()
 
     ref_files, skipped_by_ext = collect_refs(trees)
