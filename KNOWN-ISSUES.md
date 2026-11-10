@@ -10594,6 +10594,13 @@ What this shows on the 040: the larger arena, the moved `kvsegmap`/`kvsegu` and 
 work under paging and NFS load on 16 MB. It does not test the arena's capacity on the 040, which needs
 more RAM than an A3640 machine has.
 
+**r10s, the soft mount (040 HW, A3640, 2026-11-10, same boot).** The same tar over r9's mount options
+(`soft,intr,timeo=30,retrans=10`), 19:16–19:57 solon time: `tar` rc 0, no `cannot create`, 27 650
+log lines as in r10. The RPC client counters gained 124 244 calls; badcalls, retrans, badxids and
+timeouts stayed 0 (`rctimers` gained 8, which is not an error). r9's 22 timeouts with `retrans` 0
+(060 HW, 128 MB, the PR #4 kernel) did not reproduce on a 68040 with 16 MB; why they were counted
+that way is still not explained.
+
 **Evidence.**
 - Instruments: `hangwatch.sh` and `qwatch.sh` (session scratchpad, copies in solon `/usr/local/hwt`).
 - Logs on the NAS `va2000dev/x11r63/`: `hangwatch3.log` (996 wedge), `idle64.log`, `hangwatch4.log`
@@ -10732,3 +10739,61 @@ not show that it wakes a sleeper.
 **In the default chain since 2026-11-10**, with ISSUE-80's arena (`relink-040.sh`; `ARENA8M=0`
 builds the previous image). The controlled wakeup test is still owed. On 040 HW (A3640, 2026-11-10,
 ISSUE-80's r10) `Km_OsizeWanted` was again 0 in every sample.
+
+**Controlled wakeup attempts (040 HW, A3640, `68040-261110-08`, 2026-11-10): not achieved.**
+`test-tools/wake82.c` and `test-tools/w82.sh`. The idea: queue big-pool data in pipes, hide every free
+`sptmap` extent of 2 clicks or more with `kpoke` (size field to 1), then fault a private 8 MB
+`/dev/zero` mapping, whose first fault asks `kmem_zalloc(8192, KM_SLEEP)` for the anon array (3B2
+`vm/seg_vn.c`, the fault path's anon-map allocation). Releasing the pipes should then retire a big pool
+and return 4 contiguous clicks.
+- **Run 1, one filler (30 pipes, 120 messages of 1000 bytes).** The sleeper formed: `Km_OsizeWanted`
+  0x2000. After the release `Km_freepool` stayed at 0x31 for 90 s: no pool retired, so the changed
+  test never ran. After the script restored the extent, a second faulting process allocated and freed
+  8192 bytes, and the first woke after 97 s. That is `kmem_free`'s direct path, which is already right
+  in stock.
+- **Why no pool retired.** A pool is queued for `kmem_freepool` only when it is entirely free after
+  coalescing, which the lazy buddy scheme delays while `fl_slack` ≥ 2, and when it is not its class's
+  newest (3B2 `os/kma.c`, `kmem_free` and `kmem_coalesce`). Eight fillers did retire pools, with the
+  arena untouched: big-pool memory 0x158000 → 0x144000 and `Km_freepool` 0x3d → 0x42.
+- **Run 2, eight fillers: the machine had to be reset.** The fill left 0x2c00 bytes free in the big
+  pools. After the hide, the script's own next `kpeek` (fork and exec) needed a new big pool, which
+  needs 4 contiguous clicks, and slept. So did logins on telnet and on the console, and the restore
+  step never ran. Ping answered, serial stayed silent, and the console cursor moved. The machine was
+  reset and booted normally after `fsck`.
+- **The lesson.** Hiding the arena stops big-pool growth as well. A state in which only a retired pool
+  could satisfy an 8192-byte request, while new big pools can still be made, cannot exist: both need
+  contiguous clicks. This test does not belong on hardware. An emulator run with the debugger holding
+  the other allocators is the place for it, if it is done at all.
+
+**Open observation, not acted on.** Jussi's fork's commit `c3c571a` describes a lost wakeup.
+`kmem_alloc` stores `Km_OsizeWanted` and calls `sleep` without raising the priority level (3B2
+`os/kma.c`, `kmem_alloc`'s oversize path). An interrupt-level oversize `kmem_free` in between clears
+it and wakes the channel before the process sleeps; the process then sleeps with `Km_OsizeWanted` 0.
+Stock `kmem_free` wakes only when `Km_OsizeWanted > 0`. This port's pass removed that gate in
+`kmem_freepool` only. Recorded here; the fork's version arrives as a pull request if Jussi wants it.
+
+---
+
+## ISSUE-83 (2026-11-10, RECORDED — inherited user-space behaviour, probably stock; not fixed): `uptime` always reports a load average of 0.00, and `sadc` fails with "Not enough space"
+
+**Platform.** 040 HW (A3640, `68040-261110-08`) and 060 HW (solon, 2026-11-04). Seen on every image of
+this port.
+
+**Mechanism.**
+- **The kernel is right.** During ISSUE-80's r10s tar, `avenrun` (runtime 0x0712fe60, from its `.text`
+  site) read 0x1c7, 0xd1 and 0x42, that is 1.78, 0.82 and 0.26 in units of 1/256. `vmmeter` runs
+  `vmtotal` and `loadav` normally: `lotsfree` 0x40, `dopageout` 1 (3B2 `os/vm_meter.c`, `vmmeter`).
+- **User space reads the wrong addresses.** `/usr/ucb/uptime` and `w` find `avenrun` with
+  `nlist("/stand/unix")` and read `/dev/kmem`. `sadc` does the same for `v`, `minfo` and the rest
+  (3B2 `cmd/sa/sadc.c`, around lines 148–167).
+- **Why the addresses are wrong.** The AMIX kernel file is relocatable. In solon's `/stand/unix`
+  (stock, 1 479 684 bytes) `avenrun` and `minfo` are COMMON, whose `nm` value is an alignment (4), and
+  `v` has the section offset 37972. None is a runtime address, whichever kernel is booted. `/stand/unix`
+  on solon is also not the running kernel: the port boots from the AmigaOS side.
+- `sadc` sizes its tables from what it reads as `v` and fails with "Not enough space"; `sar` is
+  therefore unusable.
+
+**Fix: not done.** A namelist with runtime addresses would satisfy these readers, but they hard-code
+`/stand/unix`, which on this machine must stay the bootable stock kernel. Jussi's distribution
+installs the running kernel as `/stand/unix` and writes a namelist with kbootset; its changelog says
+`sar` and `sadc` work there. Not a priority (user, 2026-11-10).
