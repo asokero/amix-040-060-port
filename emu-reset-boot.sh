@@ -12,7 +12,7 @@
 #      pause after 10 s (pass -w in the startup-sequence for the old
 #      wait-forever behaviour on real-HW photo sessions)
 #
-# usage: sh emu-reset-boot.sh [040|060|lc060|040unimp|a3640] [serial-logfile] [kernel-image]
+# usage: sh emu-reset-boot.sh [040|060|lc060|040unimp|a3640|060m128] [serial-logfile] [kernel-image]
 #
 # THE THIRD ARGUMENT (2026-07-31).  The guest's startup-sequence loads DH2:
 # unix-040-dbg, i.e. build/unix-040-dbg by name, so every test used to be staged
@@ -103,7 +103,13 @@ case "$CPU" in
   # FSLW MA bit mask and a diagnostic print gate), so this config exists to test
   # that claim rather than to fix anything.
   a3640) CONF=$AMIBERRY_CONF/a3000ux-a3640.uae ;;
-  *) echo "usage: $0 [040|060|lc060|040unimp|a3640] [serial-logfile]"; exit 1 ;;
+  # 060m128 (2026-10-30, ISSUE-80): the 060 machine with 128 MB of processor-slot fast RAM at
+  # 0x08000000 instead of 32 MB -- solon's bank layout.  Made from the 060 config with one sed:
+  #     sed 's/^mbresmem_size=32$/mbresmem_size=128/'      a3000ux060.uae > a3000ux060-128.uae
+  # It is the only bed here where the page-frame database is large enough to fill the old 4 MB
+  # kernel VA arena, so it is where the 8 MB arena can be told apart from the 4 MB one.
+  060m128) CONF=$AMIBERRY_CONF/a3000ux060-128.uae ;;
+  *) echo "usage: $0 [040|060|lc060|040unimp|a3640|060m128] [serial-logfile]"; exit 1 ;;
 esac
 
 [ -f "$GOLDEN" ] || { echo "ERROR: golden image missing: $GOLDEN"; exit 1; }
