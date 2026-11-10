@@ -1,9 +1,13 @@
 #!/bin/sh
-# relink-040-iplrhiwat.sh -- OPT-IN: raise IP's lower read queue high-water mark 0x2000 -> 0x10000
-# (ISSUE-81, src/patch_ip_lrhiwat.py, 2026-10-30).
+# relink-040-iplrhiwat.sh -- (was OPT-IN, now also in the base) raise IP's lower read queue
+# high-water mark 0x2000 -> 0x10000 (ISSUE-81, src/patch_ip_lrhiwat.py, 2026-10-30).
 #
-# Not in relink-040.sh's base list, on purpose: the default chain changes only by a decision recorded
-# in STATUS.  It links nothing; it is a four-byte .data patch located through iplrinit's relocation.
+# IN THE DEFAULT CHAIN SINCE 2026-11-10: relink-040.sh runs the same patcher(s) on its finished link
+# (STATUS, ISSUE-81), so over a current base this script changes only the build id.  It stays for
+# older stamped kernels, such as an accepted image or its serial-mirror twin.  Before that date it
+# was kept out of the base on purpose: the default chain changes only by a decision recorded in
+# STATUS.
+# It links nothing; it is a four-byte .data patch located through iplrinit's relocation.
 #
 # BUILD IDS.  On an unstamped base, run it before relink-040-fpe.sh, which stamps the id.  On an
 # already-stamped kernel (an accepted image, or its serial-mirror twin) it stamps a new id itself,

@@ -10424,7 +10424,7 @@ rig's stock kernel):**
 - Performance: an emulated form costs a trap plus copyin-based operand reads, so a binary dense in
   declined forms runs visibly slower than with `isp61`'s fast path.
 
-## ⚠⚠ ISSUE-80 (2026-10-29, OPEN — mechanism measured live on 060 HW, A/B-confirmed with `-m 64`; not fixed): the 4 MB kernel virtual arena (`sptmap`) is too small for 128 MB, and a heavy NFS load wedges the machine in an oversize `kmem_alloc` that never wakes
+## ⚠ ISSUE-80 (2026-10-29, FIXED — 8 MB arena; no wedge on 060 HW at 128 MB, 2026-11-02; 040 metal not run): the 4 MB kernel virtual arena (`sptmap`) is too small for 128 MB, and a heavy NFS load wedges the machine in an oversize `kmem_alloc` that never wakes
 
 **Platform.** 060 HW only: solon, A3000 + Z3660 (68060 Rev6), 128 MB at `0x08000000`. Kernel
 `68060-261028-01` = the accepted `68060-261003-08` plus the serial mirror only
@@ -10471,7 +10471,8 @@ that.
   throughout;
 - the machine paged at `lotsfree` for most of the run.
 
-**Fix: BUILT 2026-10-30 as an opt-in pass on branch `wip/issue80-arena`, EMU-tested, not run on HW.**
+**Fix: BUILT 2026-10-30 as an opt-in pass on branch `wip/issue80-arena`, EMU-tested; run on 060 HW
+2026-11-02 (below).**
 The fix is to enlarge the arena, and that is not one constant: `sysseginit` maps only 16 leaf
 pointers, and `kvsegmap` sits right above at `0x40440000`.
 - Codex compared two routes (private `ISSUE80-ARENA-ROUTE-CODEX-RESULT.md`):
@@ -10524,12 +10525,49 @@ ISSUE-82's pass. It changes same-size immediates and two `SHN_ABS` values, and a
 - On 040 and A3640 one 60-pipe cycle gave 60/60 correct sums each; their load stays below the old
   boundary.
 
-**Not yet done:**
-- the hardware run on solon without `-m` (soft and hard tar, the ISSUE-80 instruments);
-- a controlled ISSUE-82 wakeup test;
-- 040 metal.
-
 An emulator pass is layout and control-flow evidence only.
+
+**Hardware run (060 HW, solon, 2026-11-02/03): no wedge at 128 MB without `-m`.**
+- **Kernel:** `68060-261102-05` (`build/unix-040-rtg-quiet-iplr-a8m` on branch `wip/solon-combined`,
+  sha256 `a64cdf5b…`). It is main, this pass, ISSUE-81's pass, and Jussi's PR #4 without its rlimits
+  commit.
+- **Setup:** 128 MB at `0x08000000`, loader without `-m`, the same 149 MB archive and the same
+  hangwatch instrument. The instrument's block addresses were moved to this image (`hangwatch9.sh`).
+- **Idle after boot:** `sptmap` had 1062 free clicks in one extent, against 33 on the 4 MB arena.
+
+| Run | Mount | Time (solon) | Result | Arena minimum | `Km_OsizeWanted` |
+|---|---|---|---|---|---|
+| r9 | `soft,intr,timeo=30,retrans=10` | 23:09–23:34 | `tar` rc 0; tree 7056/7058 | 1011 free | 0 in every sample |
+| r9b | hard | 23:52–00:20 | `tar` rc 0; **7058/7058** | 1002 free, biggest extent 1001 | 0 in every sample |
+
+- **Arena figures.** Two torn samples were discounted in r9, as before. `freemem` bottomed at about 40
+  pages in both runs, so the machine paged as it did at 64 MB.
+- **How the trees were counted.** Each tree was counted with `find` on the NAS, not from `tar`'s `x`
+  lines, which interleave with stderr in one log. r9b's sorted name list equals run 8's except for
+  run 8's own `extract.log`; names were compared, not contents.
+- **r9's two missing files** were `cannot create` errors: `xc/lib/Xmu/StrToCurs.c` and
+  `xc/programs/Xserver/hw/xfree86/mono/USING`. They are RPC failures of the soft mount.
+- **RPC counters.** The RPC client counters (`rcstat`, runtime `0x08146058`; order as 3B2
+  `rpc/clnt_clts.c`) read 192083 calls, 23 badcalls, **0 retrans**, 23 badxids and 22 timeouts after
+  r9. The first failure came early, while `freemem` was still high.
+- **During r9b** the same counters gained no badcalls and no timeouts.
+- **Not explained:** why timeouts are counted with `retrans` 0 under `retrans=10`. It is unknown
+  whether this is new, because run 8 did not read `rcstat`. Not filed.
+
+The defect is fixed on this machine under this load. 040 metal and a controlled ISSUE-82 wakeup test
+are still not done.
+
+**In the default chain since 2026-11-10.** `relink-040.sh` applies `patch_arena8m.py`,
+`patch_freepool_wake.py` and ISSUE-81's `patch_ip_lrhiwat.py` to its finished link, before the
+build id is stamped; `ARENA8M=0` and `IPLRHIWAT=0` build the previous image.
+- The new base, `68040-261110-04` (rebuilt as `-06` under the kernel below), equals the previous
+  base with the two opt-in passes run over it, byte for byte except one byte of the build id. With
+  both variables 0 it equals the previous base except the build id.
+- `unix-040-rtg-quiet` built over it (`68040-261110-08`, sha256 `3836cdd6…`) differs from the
+  emulator-tested `68040-261030-02` only inside the build id, so that image's emulator results apply
+  to it unchanged.
+- The opt-in scripts stay for older stamped kernels; over the new base they change only the build id.
+- 040 metal is still not run.
 
 **Evidence.**
 - Instruments: `hangwatch.sh` and `qwatch.sh` (session scratchpad, copies in solon `/usr/local/hwt`).
@@ -10538,7 +10576,7 @@ An emulator pass is layout and control-flow evidence only.
 - Host serial log `~/amix-serial-261028.log`.
 - solon's `S05RMTMPFILES` empties `/tmp` and `/var/tmp` at boot. Keep instruments and logs elsewhere.
 
-## ⚠ ISSUE-81 (2026-10-28, FIX HW-ACCEPTED 2026-10-30 on 060 HW at `-m 64` — stock value; opt-in pass, OFF by default): IP's lower read queue has `q_hiwat` 0x2000, smaller than one 8 KiB NFS reply's fragments, so the A2065 driver drops received frames at `canput`
+## ⚠ ISSUE-81 (2026-10-28, FIX HW-ACCEPTED 2026-10-30 on 060 HW at `-m 64` — stock value; in the default chain since 2026-11-10): IP's lower read queue has `q_hiwat` 0x2000, smaller than one 8 KiB NFS reply's fragments, so the A2065 driver drops received frames at `canput`
 
 **Platform.** 060 HW, solon (as ISSUE-80), A2065 `aen0`, NFSv2/UDP rsize 8192.
 
@@ -10632,7 +10670,8 @@ Codex's three fixtures (PC32 `qi_minfo`, PC32 `qi_srvp`, a record at 0xf582) are
 left unmodified. Re-running the fixed script on `unix-040-rtg-quiet` in an isolated tree gave a
 file byte-identical to the accepted `4005fa22…` image.
 
-Still open: the decision whether the pass joins the default chain.
+**In the default chain since 2026-11-10** (`relink-040.sh`; `IPLRHIWAT=0` builds the previous image).
+See ISSUE-80 for the byte comparison against the opt-in result.
 
 ## ISSUE-82 (2026-10-28, OPEN — inherited stock defect, read from the binary by Codex; not observed): `kmem_freepool` compares the clicks it returned with the byte-valued `Km_OsizeWanted`, so retiring a pool never wakes an oversize sleeper
 
@@ -10659,3 +10698,10 @@ tar asleep there; it would matter once it does.
   That happens only when a pool is retired.
 - Not claimed: requests that only several returns together could satisfy are still not retried by
   this single-return test (Codex).
+
+**060 HW, 2026-11-02/03.** The patched image ran ISSUE-80's two tars. `Km_OsizeWanted` was 0 in every
+sample, so the changed wakeup was never needed. The run shows that the pass breaks nothing; it does
+not show that it wakes a sleeper.
+
+**In the default chain since 2026-11-10**, with ISSUE-80's arena (`relink-040.sh`; `ARENA8M=0`
+builds the previous image). The controlled wakeup test is still owed.

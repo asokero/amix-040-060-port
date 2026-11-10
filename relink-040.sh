@@ -1259,6 +1259,41 @@ echo
 echo "[*] ISP: retarget M68Kvec[61] (unimplemented integer) -> isp61_vec"
 run_step 2 python3 "$HERE/src/patch_isp_vec61.py" "$OUT"
 
+# ISSUE-80/82 and ISSUE-81, PROMOTED INTO THE BASE 2026-11-10 (were the opt-in passes
+# relink-040-arena8m.sh and relink-040-iplrhiwat.sh).  Evidence, all on 060 HW (solon, A3000 +
+# Z3660, 128 MB): the 4 MB arena wedged a heavy NFS tar in clget's KM_SLEEP kmem_alloc; with the
+# 8 MB arena and no unix_boot040 -m the same tar ran 7058/7058, soft and hard (68040-261102-05),
+# and idle sptmap free went from ~33 clicks to 1062.  The IP high-water mark took a 149 MB read
+# from 156 A2065 drops to 0 (68040-261030-01).  The 040 arena is EMU-only so far (32 MB and
+# A3640 +1024 free clicks each); KNOWN-ISSUES ISSUE-80 to ISSUE-82 carry the rest.
+#
+# Same-size writes only (immediates, two SHN_ABS values, four .data bytes), so the order against
+# the FPSP link does not matter; they run here, on the finished link, because that is the image
+# both opt-in passes were accepted on.  The patchers are idempotent: the opt-in scripts still work
+# on an older stamped kernel, and over this base they change only the build id.
+#     ARENA8M=0 sh relink-040.sh      <- the 4 MB arena and stock freepool wake test
+#     IPLRHIWAT=0 sh relink-040.sh    <- IP's lower read queue back at 0x2000
+ARENA8M="${ARENA8M:-1}"
+IPLRHIWAT="${IPLRHIWAT:-1}"
+if [ "$ARENA8M" = "1" ]; then
+	echo
+	echo "[*] ISSUE-80: 8 MB kernel VA arena; ISSUE-82: kmem_freepool wakes an oversize sleeper in bytes"
+	run_step 2 python3 "$HERE/src/patch_arena8m.py" "$OUT"
+	run_step 2 python3 "$HERE/src/patch_arena8m.py" --check "$OUT"
+	run_step 2 python3 "$HERE/src/patch_freepool_wake.py" "$OUT"
+	run_step 2 python3 "$HERE/src/patch_freepool_wake.py" --check "$OUT"
+else
+	echo
+	echo "[*] ARENA8M=0 -- 4 MB arena, stock kmem_freepool wake test (A/B build)"
+fi
+if [ "$IPLRHIWAT" = "1" ]; then
+	echo "[*] ISSUE-81: IP lower read queue high-water mark 0x2000 -> 0x10000"
+	run_step 2 python3 "$HERE/src/patch_ip_lrhiwat.py" "$OUT"
+	run_step 2 python3 "$HERE/src/patch_ip_lrhiwat.py" --check "$OUT"
+else
+	echo "[*] IPLRHIWAT=0 -- IP lower read queue high-water mark stays 0x2000 (A/B build)"
+fi
+
 echo
 echo "[*] FPU relink assertions (FPU-TIER1-ENABLE-SPEC.md:205-210), on the finished image:"
 if [ "$FPUINIT060" = "1" ]; then

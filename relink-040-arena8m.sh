@@ -1,10 +1,15 @@
 #!/bin/sh
-# relink-040-arena8m.sh -- OPT-IN: the 8 MB kernel VA arena (ISSUE-80, src/patch_arena8m.py) and the
-# unit-correct kmem_freepool wakeup (ISSUE-82, src/patch_freepool_wake.py), 2026-10-30.
+# relink-040-arena8m.sh -- (was OPT-IN, now also in the base) the 8 MB kernel VA arena (ISSUE-80,
+# src/patch_arena8m.py) and the unit-correct kmem_freepool wakeup (ISSUE-82,
+# src/patch_freepool_wake.py), 2026-10-30.
 #
-# Not in relink-040.sh's base list, on purpose: the default chain changes only by a decision recorded
-# in STATUS.  It links nothing: same-size immediates in .text and two SHN_ABS symbol values.  The
-# route and its acceptance plan are Codex's (private ISSUE80-ARENA-ROUTE-CODEX-RESULT.md).
+# IN THE DEFAULT CHAIN SINCE 2026-11-10: relink-040.sh runs the same patcher(s) on its finished link
+# (STATUS, ISSUE-80/82), so over a current base this script changes only the build id.  It stays for
+# older stamped kernels, such as an accepted image or its serial-mirror twin.  Before that date it
+# was kept out of the base on purpose: the default chain changes only by a decision recorded in
+# STATUS.
+# It links nothing: same-size immediates in .text and two SHN_ABS symbol values.  The route and its
+# acceptance plan are Codex's (private ISSUE80-ARENA-ROUTE-CODEX-RESULT.md).
 #
 # BUILD IDS.  On an unstamped base, run it before relink-040-fpe.sh, which stamps the id.  On an
 # already-stamped kernel it stamps a new id itself.  As in relink-040-iplrhiwat.sh, the work is
