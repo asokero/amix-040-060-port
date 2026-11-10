@@ -10424,7 +10424,7 @@ rig's stock kernel):**
 - Performance: an emulated form costs a trap plus copyin-based operand reads, so a binary dense in
   declined forms runs visibly slower than with `isp61`'s fast path.
 
-## ⚠ ISSUE-80 (2026-10-29, FIXED — 8 MB arena; no wedge on 060 HW at 128 MB, 2026-11-02; 040 metal not run): the 4 MB kernel virtual arena (`sptmap`) is too small for 128 MB, and a heavy NFS load wedges the machine in an oversize `kmem_alloc` that never wakes
+## ⚠ ISSUE-80 (2026-10-29, FIXED — 8 MB arena; no wedge on 060 HW at 128 MB, 2026-11-02; 040 HW (A3640, 16 MB) 2026-11-10): the 4 MB kernel virtual arena (`sptmap`) is too small for 128 MB, and a heavy NFS load wedges the machine in an oversize `kmem_alloc` that never wakes
 
 **Platform.** 060 HW only: solon, A3000 + Z3660 (68060 Rev6), 128 MB at `0x08000000`. Kernel
 `68060-261028-01` = the accepted `68060-261003-08` plus the serial mirror only
@@ -10567,7 +10567,32 @@ build id is stamped; `ARENA8M=0` and `IPLRHIWAT=0` build the previous image.
   emulator-tested `68040-261030-02` only inside the build id, so that image's emulator results apply
   to it unchanged.
 - The opt-in scripts stay for older stamped kernels; over the new base they change only the build id.
-- 040 metal is still not run.
+- 040 metal: below.
+
+**040 HW (A3640, 16 MB), 2026-11-10: the default-chain kernel.**
+- **Kernel:** `68040-261110-08` = `build/unix-040-rtg-quiet` over the new base (sha256 `3836cdd6…`).
+  Load base `0x07000000` (motherboard RAM), loader without `-m`. The magic words read at the
+  addresses `tools/gen-battery.sh` derived for that base. X runs `xdm` with a large root image, so
+  memory was tight throughout.
+- **After boot:** `ipm_info[3].mi_hiwat` reads `0x10000` in memory. `sptmap` had 1574 free clicks in
+  two extents (6 and 1568); the 4 MB arena would leave about 550 on this machine. `Km_OsizeWanted` 0.
+- **Battery 12/12** (`test-tools/batteryrun-261110-08.sh`, run from `/hwt/bat` with exectest's own path
+  given): all 40 magics, `devmaptest fails=0 skips=0`, `MUST-STAY-ZERO-OK`. 1572 free clicks after it.
+- **NFS tar r10:** the same 149 MB archive as r9b, NAS to NAS over a hard mount, the same instrument
+  (`hangwatch10.sh`, its addresses read from `.text` sites in this image). 18:07–18:47 solon time;
+  `tar` rc 0, no `cannot create`. The tree has 7058/7058 names, and all 6473 files have the same md5 as
+  r9b's (060 HW), which in turn matched run 8's names.
+- **During r10:** `freemem` between 50 and 391 pages, so the machine paged for the whole run. Arena
+  minimum 1518 free clicks, biggest extent never below 1517. Two samples (18:23:13, 18:30:54) are torn:
+  `sptmap` reports three pairs but the third read as zero, as in r9; they are discounted. Every
+  `Wanted` flag 0 in every sample. `aen` received 141 686 frames with `putq` and `miss` unchanged at 0.
+  The RPC client counters after the run: 123 755 calls and every error counter 0.
+- Telnet logins took more than 60 s during the last minutes of the tar, and answered within seconds
+  after it. Serial (kernel `NOTICE`s and `cmn_err`) stayed silent for the whole run.
+
+What this shows on the 040: the larger arena, the moved `kvsegmap`/`kvsegu` and the `ksegtbl` shift
+work under paging and NFS load on 16 MB. It does not test the arena's capacity on the 040, which needs
+more RAM than an A3640 machine has.
 
 **Evidence.**
 - Instruments: `hangwatch.sh` and `qwatch.sh` (session scratchpad, copies in solon `/usr/local/hwt`).
@@ -10671,7 +10696,8 @@ left unmodified. Re-running the fixed script on `unix-040-rtg-quiet` in an isola
 file byte-identical to the accepted `4005fa22…` image.
 
 **In the default chain since 2026-11-10** (`relink-040.sh`; `IPLRHIWAT=0` builds the previous image).
-See ISSUE-80 for the byte comparison against the opt-in result.
+See ISSUE-80 for the byte comparison against the opt-in result. On 040 HW (A3640, 2026-11-10, ISSUE-80's
+r10) the A2065 received 141 686 frames under the 149 MB tar with `putq` and `miss` at 0.
 
 ## ISSUE-82 (2026-10-28, OPEN — inherited stock defect, read from the binary by Codex; not observed): `kmem_freepool` compares the clicks it returned with the byte-valued `Km_OsizeWanted`, so retiring a pool never wakes an oversize sleeper
 
@@ -10704,4 +10730,5 @@ sample, so the changed wakeup was never needed. The run shows that the pass brea
 not show that it wakes a sleeper.
 
 **In the default chain since 2026-11-10**, with ISSUE-80's arena (`relink-040.sh`; `ARENA8M=0`
-builds the previous image). The controlled wakeup test is still owed.
+builds the previous image). The controlled wakeup test is still owed. On 040 HW (A3640, 2026-11-10,
+ISSUE-80's r10) `Km_OsizeWanted` was again 0 in every sample.
